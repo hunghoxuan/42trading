@@ -2,6 +2,7 @@ import TRADE_PLAN_SCHEMA from "../../../../../config/schema/trade.json";
 import ANALYSIS_SCHEMA from "../../../../../config/schema/analysis.json";
 import GUIDE_SYSTEM from "../../../../../config/guide/system.md?raw";
 import SCHEMA_CONFIG from "../../../../../config/config.json";
+import { PROFILE_PRESETS } from "../../components/timeframePresetOptions";
 
 // Merge analysis.json into trade_plan_schema.analysis (backend does this at runtime too)
 const MERGED_TRADE_PLAN_SCHEMA = {
@@ -762,40 +763,7 @@ export const STRATEGY_CHECKLIST = Object.fromEntries(
 //      min_rr of 1.0 allowed Grade A at 1:1 RR which is unacceptably low.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const PROFILE_PRESETS = {
-  position: {
-    label: "Position (w+d / 4h / 1h)",
-    htf_tfs: ["w", "d"],
-    exec_tfs: ["4h"],
-    conf_tfs: ["1h"],
-    sessions: "Any",
-    rr: "3",
-  },
-  swing: {
-    label: "Swing (d+4h / 1h / 15m)",
-    htf_tfs: ["d", "4h"],
-    exec_tfs: ["1h"],
-    conf_tfs: ["15m"],
-    sessions: "Any",
-    rr: "2",
-  },
-  day: {
-    label: "Daily (d+4h / 15m / 5m)",
-    htf_tfs: ["d", "4h"],
-    exec_tfs: ["15m"],
-    conf_tfs: ["5m"],
-    sessions: "Any",
-    rr: "1.5",
-  },
-  scalper: {
-    label: "Scalping (4h+1h / 5m / 1m)",
-    htf_tfs: ["4h", "1h"],
-    exec_tfs: ["5m"],
-    conf_tfs: ["1m"],
-    sessions: "Any",
-    rr: "1",
-  },
-};
+export { PROFILE_PRESETS };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DEFAULT CONFIG

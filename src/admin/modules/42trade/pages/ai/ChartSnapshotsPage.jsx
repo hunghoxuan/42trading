@@ -36,13 +36,12 @@ import {
   normalizeSymbolGroupsData,
   getWatchlistGroup,
   getCustomSymbolGroups,
-} from "../../../../shared/utils/symbolGroups";
+} from "../../../../../config/symbolGroups.js";
 
 const SymbolChart = lazy(() => import("../../components/charts/SymbolChart"));
 import {
   STRATEGY_OPTIONS,
   STRATEGY_ENTRY_MODELS,
-  PROFILE_PRESETS,
   DEFAULT_CONFIG,
   GUIDE_SYSTEM,
   GUIDE_USER_DEFAULT,
@@ -58,64 +57,24 @@ import {
 import ANALYSIS_SCHEMA from "../../../../../config/schema/analysis.json";
 import InputComboSelect from "../../../../shared/components/InputComboSelect";
 import { mergeWatchlistIntoSymbolGroups } from "../../../../shared/utils/watchlistGroups.js";
+import TimeframePresetPicker from "../../components/TimeframePresetPicker";
+import {
+  DEFAULT_ANALYZE_BROWSER_TFS,
+  findMatchingTimeframePreset,
+  normalizeTimeframeSelection,
+  PROFILE_PRESETS,
+  PROFILE_PRESET_SELECT_OPTIONS,
+  SHARED_TIMEFRAME_PRESET_OPTIONS,
+  TIMEFRAME_PICKER_TF_OPTIONS,
+} from "../../components/timeframePresetOptions";
 
 const STORAGE_KEY = "chart_prompt_builder_templates_v2";
 
 const DEFAULT_TEMPLATE_ID = "__default__";
-const DEFAULT_ANALYZE_BROWSER_TFS = [
-  ...new Set([
-    ...PROFILE_PRESETS.day.htf_tfs,
-    ...PROFILE_PRESETS.day.exec_tfs,
-    ...PROFILE_PRESETS.day.conf_tfs,
-  ]),
-];
-
-const BROWSER_TF_OPTIONS = [
-  { value: "w", label: "1w" },
-  { value: "d", label: "1d" },
-  { value: "4h", label: "4h" },
-  { value: "1h", label: "1h" },
-  { value: "15m", label: "15m" },
-  { value: "5m", label: "5m" },
-  { value: "1m", label: "1m" },
-];
-
-const ANALYZE_HEADER_PRESET_OPTIONS = [
-  ...Object.entries(PROFILE_PRESETS).map(([value, preset]) => ({
-    value,
-    label: preset.label,
-    type: "profile",
-  })),
-  { value: "4h|15m", label: "4h | 15m", type: "tfs", tfs: ["4h", "15m"] },
-  {
-    value: "4h|15m|5m|1m",
-    label: "4h | 15m | 5m | 1m",
-    type: "tfs",
-    tfs: ["4h", "15m", "5m", "1m"],
-  },
-  { value: "15m|1m", label: "15m | 1m", type: "tfs", tfs: ["15m", "1m"] },
-];
-
-function normalizeAnalyzeTfList(list = []) {
-  const normalized = Array.isArray(list)
-    ? list
-        .map((item) =>
-          String(item || "")
-            .trim()
-            .toLowerCase(),
-        )
-        .filter(Boolean)
-    : [];
-  const uniq = [...new Set(normalized)];
-  const order = BROWSER_TF_OPTIONS.map((option) => option.value);
-  return uniq.sort((a, b) => {
-    const leftIndex = order.indexOf(a);
-    const rightIndex = order.indexOf(b);
-    const safeLeft = leftIndex >= 0 ? leftIndex : Number.MAX_SAFE_INTEGER;
-    const safeRight = rightIndex >= 0 ? rightIndex : Number.MAX_SAFE_INTEGER;
-    return safeLeft - safeRight;
-  });
-}
+const DEFAULT_ANALYZE_HEADER_PRESET = "day";
+const ANALYZE_HEADER_PRESET_OPTIONS = SHARED_TIMEFRAME_PRESET_OPTIONS;
+const BROWSER_TF_OPTIONS = TIMEFRAME_PICKER_TF_OPTIONS;
+const normalizeAnalyzeTfList = normalizeTimeframeSelection;
 
 const SYMBOL_FILTER_TAB_OPTIONS = [
   { value: "WATCHLIST", label: "Watchlist" },
@@ -2912,12 +2871,31 @@ export default function ChartSnapshotsPage() {
   const [cfg, setCfg] = useState(DEFAULT_CONFIG);
   const [browserTf, setBrowserTf] = useState(DEFAULT_ANALYZE_BROWSER_TFS[0] || "d");
   const [browserTfs, setBrowserTfs] = useState(DEFAULT_ANALYZE_BROWSER_TFS);
-  const [analyzeHeaderPreset, setAnalyzeHeaderPreset] = useState("day");
-  const [analyzeTfMenuOpen, setAnalyzeTfMenuOpen] = useState(false);
-  const analyzeTfMenuRef = useRef(null);
+  const [analyzeHeaderPreset, setAnalyzeHeaderPreset] = useState(
+    DEFAULT_ANALYZE_HEADER_PRESET,
+  );
+  const singleSymbolDefaultPresetRef = useRef("");
 
   // Load ANALYSE_SETTINGS from user_settings on mount
   useEffect(() => {
+    const isSingleSymbolAnalyzeDefaultRoute = (() => {
+      if (!location.pathname.startsWith("/trades/analyze")) return false;
+      const search = new URLSearchParams(location.search || "");
+      const searchSymbols = String(search.get("symbols") || "")
+        .trim()
+        .split(",")
+        .map((item) => normalizeWatchSymbol(item))
+        .filter(Boolean);
+      if (searchSymbols.length > 0) return searchSymbols.length === 1;
+      const decodedParam = String(paramSymbol || "")
+        .trim();
+      if (!decodedParam) return false;
+      const slugSymbols = decodedParam
+        .split("-")
+        .map((item) => normalizeWatchSymbol(item))
+        .filter(Boolean);
+      return slugSymbols.length === 1;
+    })();
     api
       .getSettings()
       .then((res) => {
@@ -2925,34 +2903,43 @@ export default function ChartSnapshotsPage() {
           (x) => x.type === "settings" && x.name === "ANALYSE_SETTINGS",
         );
         if (s?.data && typeof s.data === "object") {
-          setCfg((prev) => ({ ...prev, ...s.data }));
+          setCfg((prev) => ({
+            ...prev,
+            ...s.data,
+            ...(isSingleSymbolAnalyzeDefaultRoute ? { profile: DEFAULT_ANALYZE_HEADER_PRESET } : {}),
+          }));
           const savedProfile = String(
             s.data.profile || DEFAULT_CONFIG.profile || "day",
           );
           const savedBrowserTfs = Array.isArray(s.data.browserTfs)
-            ? s.data.browserTfs
-                .map((item) =>
-                  String(item || "")
-                    .trim()
-                    .toLowerCase(),
-                )
-                .filter(Boolean)
+            ? normalizeAnalyzeTfList(
+                s.data.browserTfs
+                  .map((item) =>
+                    String(item || "")
+                      .trim()
+                      .toLowerCase(),
+                  )
+                  .filter(Boolean),
+              )
             : [];
-          if (savedBrowserTfs.length > 0) {
+          if (savedBrowserTfs.length > 0 && !isSingleSymbolAnalyzeDefaultRoute) {
             setBrowserTfs(savedBrowserTfs);
             setBrowserTf(savedBrowserTfs[0] || "4h");
-            const matchingPreset = ANALYZE_HEADER_PRESET_OPTIONS.find(
-              (option) =>
-                option.type === "tfs" &&
-                Array.isArray(option.tfs) &&
-                option.tfs.length === savedBrowserTfs.length &&
-                option.tfs.every((tf, index) => tf === savedBrowserTfs[index]),
+            const matchingPreset = findMatchingTimeframePreset(
+              savedBrowserTfs,
+              ANALYZE_HEADER_PRESET_OPTIONS,
+              BROWSER_TF_OPTIONS,
             );
             setAnalyzeHeaderPreset(
-              matchingPreset?.value || savedProfile || "4h|15m",
+              matchingPreset?.value ||
+                (PROFILE_PRESETS[savedProfile]
+                  ? savedProfile
+                  : DEFAULT_ANALYZE_HEADER_PRESET),
             );
           } else {
-            const preset = PROFILE_PRESETS[savedProfile] || PROFILE_PRESETS.day;
+            const preset = isSingleSymbolAnalyzeDefaultRoute
+              ? PROFILE_PRESETS.day
+              : PROFILE_PRESETS[savedProfile] || PROFILE_PRESETS.day;
             const profileTfs = normalizeAnalyzeTfList([
               ...(preset.htf_tfs || []),
               ...(preset.exec_tfs || []),
@@ -2960,43 +2947,30 @@ export default function ChartSnapshotsPage() {
             ]);
             setBrowserTfs(profileTfs);
             setBrowserTf(profileTfs[0] || "d");
-            setAnalyzeHeaderPreset(savedProfile || "day");
+            setAnalyzeHeaderPreset(
+              isSingleSymbolAnalyzeDefaultRoute
+                ? DEFAULT_ANALYZE_HEADER_PRESET
+                : PROFILE_PRESETS[savedProfile]
+                  ? savedProfile
+                  : DEFAULT_ANALYZE_HEADER_PRESET,
+            );
           }
         }
       })
       .catch(() => {});
-  }, []);
-  const activeAnalyzeTfPreset = useMemo(() => {
-    const current = normalizeAnalyzeTfList(browserTfs).join("|");
-    return (
-      ANALYZE_HEADER_PRESET_OPTIONS.find(
-        (option) =>
-          normalizeAnalyzeTfList(option.tfs || []).join("|") === current,
-      ) || null
-    );
-  }, [browserTfs]);
-  const analyzeTfSummaryLabel = useMemo(() => {
-    if (activeAnalyzeTfPreset?.label) return activeAnalyzeTfPreset.label;
-    const normalized = normalizeAnalyzeTfList(browserTfs);
-    const labels = normalized.map((tf) => {
-      const match = BROWSER_TF_OPTIONS.find((option) => option.value === tf);
-      return match?.label || tf;
-    });
-    return labels.length ? labels.join(" / ") : "Select TFs";
-  }, [activeAnalyzeTfPreset, browserTfs]);
+  }, [location.pathname, location.search, paramSymbol]);
+  const activeAnalyzeTfPreset = useMemo(
+    () =>
+      findMatchingTimeframePreset(
+        browserTfs,
+        ANALYZE_HEADER_PRESET_OPTIONS,
+        BROWSER_TF_OPTIONS,
+      ),
+    [browserTfs],
+  );
   useEffect(() => {
     setAnalyzeHeaderPreset(activeAnalyzeTfPreset?.value || "");
   }, [activeAnalyzeTfPreset]);
-  useEffect(() => {
-    if (!analyzeTfMenuOpen) return undefined;
-    const handlePointerDown = (event) => {
-      if (!analyzeTfMenuRef.current) return;
-      if (analyzeTfMenuRef.current.contains(event.target)) return;
-      setAnalyzeTfMenuOpen(false);
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [analyzeTfMenuOpen]);
 
   const [templates, setTemplates] = useState(() => loadTemplates());
   const [templateId, setTemplateId] = useState(DEFAULT_TEMPLATE_ID);
@@ -3958,7 +3932,9 @@ export default function ChartSnapshotsPage() {
       .trim()
       .toLowerCase();
     const preset = PROFILE_PRESETS[key] || PROFILE_PRESETS.day;
-    setAnalyzeHeaderPreset(PROFILE_PRESETS[key] ? key : "day");
+    setAnalyzeHeaderPreset(
+      PROFILE_PRESETS[key] ? key : DEFAULT_ANALYZE_HEADER_PRESET,
+    );
     setCfg((prev) => ({
       ...prev,
       profile: PROFILE_PRESETS[key] ? key : "day",
@@ -4517,6 +4493,11 @@ export default function ChartSnapshotsPage() {
         } catch {
           // Backend will still validate symbol-matched snapshots and return clear error if unavailable.
         }
+      }
+      if (!Array.isArray(payload.files) || !payload.files.length) {
+        throw new Error(
+          "No snapshot images were available for analysis. Capture or refresh snapshots first, then retry Analyze.",
+        );
       }
 
       let out;
@@ -6116,10 +6097,11 @@ export default function ChartSnapshotsPage() {
               onChange={(e) => setProfilePreset(e.target.value)}
               style={{ width: "100%" }}
             >
-              <option value="position">{PROFILE_PRESETS.position.label}</option>
-              <option value="swing">{PROFILE_PRESETS.swing.label}</option>
-              <option value="day">{PROFILE_PRESETS.day.label}</option>
-              <option value="scalper">{PROFILE_PRESETS.scalper.label}</option>
+              {PROFILE_PRESET_SELECT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </InputComboSelect>
           </div>
           <div style={{ minWidth: 100 }}>
@@ -6734,6 +6716,27 @@ export default function ChartSnapshotsPage() {
   const selectedSymbols = Array.isArray(cfg?.symbols)
     ? cfg.symbols.map((x) => normalizeWatchSymbol(x)).filter(Boolean)
     : [];
+  useEffect(() => {
+    if (!isAnalyzeRoute || isResultRoute) {
+      singleSymbolDefaultPresetRef.current = "";
+      return;
+    }
+    if (selectedSymbols.length !== 1) {
+      singleSymbolDefaultPresetRef.current = "";
+      return;
+    }
+    const routeKey = selectedSymbols[0];
+    if (!routeKey || singleSymbolDefaultPresetRef.current === routeKey) return;
+    const dailyTfs = normalizeAnalyzeTfList([
+      ...PROFILE_PRESETS.day.htf_tfs,
+      ...PROFILE_PRESETS.day.exec_tfs,
+      ...PROFILE_PRESETS.day.conf_tfs,
+    ]);
+    singleSymbolDefaultPresetRef.current = routeKey;
+    setAnalyzeHeaderPreset(DEFAULT_ANALYZE_HEADER_PRESET);
+    setBrowserTfs(dailyTfs);
+    setBrowserTf(dailyTfs[0] || "d");
+  }, [isAnalyzeRoute, isResultRoute, selectedSymbols]);
   const effectiveGridCols = useMemo(
     () =>
       masterGridCols ??
@@ -7185,186 +7188,27 @@ export default function ChartSnapshotsPage() {
             ) : null}
           </>
         )}
-        <div ref={analyzeTfMenuRef} style={{ position: "relative" }}>
-          <button
-            type="button"
-            className="secondary-button"
-            style={{
-              minWidth: 220,
-              height: "34px",
-              padding: "0 12px",
-              fontSize: "12px",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 10,
-              borderColor: analyzeTfMenuOpen
-                ? "rgba(34,211,238,0.45)"
-                : "var(--border)",
-              color: analyzeTfMenuOpen ? "#22d3ee" : "inherit",
-              background: analyzeTfMenuOpen
-                ? "rgba(34,211,238,0.10)"
-                : undefined,
-            }}
-            onClick={() => setAnalyzeTfMenuOpen((open) => !open)}
-          >
-            <span>{analyzeTfSummaryLabel}</span>
-            <span style={{ fontSize: 10, opacity: 0.8 }}>▼</span>
-          </button>
-          {analyzeTfMenuOpen ? (
-            <div
-              style={{
-                position: "absolute",
-                top: "calc(100% + 8px)",
-                left: 0,
-                width: 260,
-                maxHeight: 420,
-                overflowY: "auto",
-                zIndex: 40,
-                borderRadius: 14,
-                border: "1px solid rgba(255,255,255,0.08)",
-                background: "rgba(9,15,28,0.96)",
-                boxShadow: "0 18px 48px rgba(0,0,0,0.28)",
-                padding: 12,
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 10,
-                  textTransform: "uppercase",
-                  letterSpacing: 0.08,
-                  color: "var(--muted)",
-                  marginBottom: 8,
-                }}
-              >
-                Templates
-              </div>
-              <div style={{ display: "grid", gap: 6 }}>
-                {ANALYZE_HEADER_PRESET_OPTIONS.map((option) => {
-                  const active = activeAnalyzeTfPreset?.value === option.value;
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      className="secondary-button"
-                      style={{
-                        width: "100%",
-                        justifyContent: "flex-start",
-                        borderColor: active
-                          ? "rgba(34,211,238,0.45)"
-                          : "rgba(255,255,255,0.08)",
-                        color: active ? "#22d3ee" : "inherit",
-                        background: active
-                          ? "rgba(34,211,238,0.10)"
-                          : undefined,
-                      }}
-                      onClick={() => {
-                        setAnalyzeHeaderPreset(option.value);
-                        if (option.type === "profile") {
-                          setProfilePreset(option.value);
-                          const preset = PROFILE_PRESETS[option.value];
-                          if (preset) {
-                            const newTfs = normalizeAnalyzeTfList([
-                              ...(preset.htf_tfs || []),
-                              ...(preset.exec_tfs || []),
-                              ...(preset.conf_tfs || []),
-                            ]);
-                            if (newTfs.length > 0) {
-                              setBrowserTfs(newTfs);
-                              setBrowserTf(newTfs[0] || "4h");
-                            }
-                          }
-                          return;
-                        }
-                        if (Array.isArray(option.tfs) && option.tfs.length > 0) {
-                          const newTfs = normalizeAnalyzeTfList(option.tfs);
-                          setBrowserTfs(newTfs);
-                          setBrowserTf(newTfs[0] || "4h");
-                        }
-                      }}
-                    >
-                      {option.label}
-                    </button>
-                  );
-                })}
-              </div>
-              <div
-                style={{
-                  height: 1,
-                  background: "rgba(255,255,255,0.08)",
-                  margin: "12px 0",
-                }}
-              />
-              <div
-                style={{
-                  fontSize: 10,
-                  textTransform: "uppercase",
-                  letterSpacing: 0.08,
-                  color: "var(--muted)",
-                  marginBottom: 8,
-                }}
-              >
-                Individual TFs
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: 6,
-                }}
-              >
-                {BROWSER_TF_OPTIONS.map((option) => {
-                  const active = browserTfs.includes(option.value);
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      className="secondary-button"
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        minWidth: 44,
-                        height: 28,
-                        padding: "0 10px",
-                        borderRadius: 999,
-                        borderColor: active
-                          ? "rgba(34,211,238,0.55)"
-                          : "rgba(255,255,255,0.12)",
-                        background: active
-                          ? "rgba(34,211,238,0.10)"
-                          : "rgba(15,23,42,0.55)",
-                        color: active ? "#22d3ee" : "inherit",
-                        fontSize: 11,
-                        fontWeight: 700,
-                      }}
-                      onClick={() => {
-                        setBrowserTfs((prev) => {
-                          const nextSet = new Set(normalizeAnalyzeTfList(prev));
-                          if (nextSet.has(option.value)) {
-                            if (nextSet.size === 1) return [...nextSet];
-                            nextSet.delete(option.value);
-                          } else {
-                            nextSet.add(option.value);
-                          }
-                          const nextTfs = normalizeAnalyzeTfList([...nextSet]);
-                          setBrowserTf((current) =>
-                            nextTfs.includes(current)
-                              ? current
-                              : nextTfs[0] || "4h",
-                          );
-                          return nextTfs;
-                        });
-                      }}
-                    >
-                      {option.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
-        </div>
+        <TimeframePresetPicker
+          selectedTfs={browserTfs}
+          presetOptions={ANALYZE_HEADER_PRESET_OPTIONS}
+          timeframeOptions={BROWSER_TF_OPTIONS}
+          buttonMinWidth={220}
+          buttonHeight={34}
+          align="left"
+          onChange={(nextTfs, meta) => {
+            if (!nextTfs.length) return;
+            if (meta?.reason === "preset" && meta?.preset?.value) {
+              setAnalyzeHeaderPreset(meta.preset.value);
+              if (meta.preset.type === "profile") {
+                setProfilePreset(meta.preset.value);
+              }
+            }
+            setBrowserTfs(nextTfs);
+            setBrowserTf((current) =>
+              nextTfs.includes(current) ? current : nextTfs[0] || "4h",
+            );
+          }}
+        />
         {!isMobileViewport ? (
           <>
             <div style={{ display: "flex", gap: 4 }}>

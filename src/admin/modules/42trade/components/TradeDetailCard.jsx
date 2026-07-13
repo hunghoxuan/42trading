@@ -33,8 +33,11 @@ import { buildSingleTradeForChart } from "./charts/backtestChartTheme";
 
 import {
   DEFAULT_TF_TABS,
-  PROFILE_PRESETS,
 } from "../pages/ai/AiPromptBuilder";
+import {
+  SHARED_TIMEFRAME_PRESET_OPTIONS,
+  TIMEFRAME_PICKER_TF_OPTIONS,
+} from "./timeframePresetOptions";
 
 const MODE_PRESETS = {
   generic: {
@@ -76,36 +79,52 @@ const REPLAY_SPEED_OPTIONS = [
   { value: 5000, label: "5s" },
 ];
 
-const TRADE_CHART_TF_PRESET_OPTIONS = [
-  ...Object.entries(PROFILE_PRESETS).map(([value, preset]) => ({
-    value,
-    label: preset.label,
-    tfs: [
-      ...new Set([
-        ...(Array.isArray(preset?.htf_tfs) ? preset.htf_tfs : []),
-        ...(Array.isArray(preset?.exec_tfs) ? preset.exec_tfs : []),
-        ...(Array.isArray(preset?.conf_tfs) ? preset.conf_tfs : []),
-      ]),
-    ],
-  })),
-  { value: "4h|15m", label: "4h | 15m", tfs: ["4h", "15m"] },
-  {
-    value: "4h|15m|5m|1m",
-    label: "4h | 15m | 5m | 1m",
-    tfs: ["4h", "15m", "5m", "1m"],
-  },
-  { value: "15m|1m", label: "15m | 1m", tfs: ["15m", "1m"] },
-];
+const TRADE_CHART_TF_PRESET_OPTIONS = SHARED_TIMEFRAME_PRESET_OPTIONS;
+const TRADE_CHART_INDIVIDUAL_TF_OPTIONS = TIMEFRAME_PICKER_TF_OPTIONS;
 
-const TRADE_CHART_INDIVIDUAL_TF_OPTIONS = [
-  { value: "w", label: "1w" },
-  { value: "d", label: "1d" },
-  { value: "4h", label: "4h" },
-  { value: "1h", label: "1h" },
-  { value: "15m", label: "15m" },
-  { value: "5m", label: "5m" },
-  { value: "1m", label: "1m" },
-];
+function firstObject(...values) {
+  for (const value of values) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return value;
+    }
+  }
+  return {};
+}
+
+function isTerminalTradeChartStatus(status) {
+  const key = String(status || "").trim().toUpperCase();
+  return [
+    "CLOSED",
+    "TP",
+    "SL",
+    "WIN",
+    "LOSS",
+    "PROFIT",
+    "STOPPED",
+    "REJECTED",
+    "CANCELLED",
+    "EXPIRED",
+    "MANUAL",
+    "MANUAL_CLOSE",
+    "CLOSE_MANUAL",
+    "BREAKEVEN",
+    "BREAK_EVEN",
+    "BE",
+  ].includes(key);
+}
+
+function resolveTradeChartStatus(...values) {
+  const normalized = values
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  const specificTerminal = normalized.find((value) => {
+    if (!isTerminalTradeChartStatus(value)) return false;
+    const key = String(value).trim().toUpperCase();
+    return !["CLOSED", "CANCELLED", "REJECTED", "EXPIRED"].includes(key);
+  });
+  const terminal = normalized.find((value) => isTerminalTradeChartStatus(value));
+  return specificTerminal || terminal || normalized[0] || "";
+}
 
 function resolveDetailHashState(rawHash = "", fallbackTab = "chart") {
   const hash = String(rawHash || "")
@@ -2004,18 +2023,35 @@ export default function TradeDetailCard({
     rawData?.tp3 ||
     selectedPlanRaw?.tp3 ||
     tradePlan?.value?.tp3;
+  const brokerData = firstObject(
+    chart?.brokerData,
+    response?.metadata?.broker_data,
+    response?.broker_data,
+    rawData?.metadata?.broker_data,
+    rawData?.broker_data,
+    response?.raw_json?.broker_data,
+    response?.raw?.broker_data,
+  );
   const chartCreatedAt =
     chart?.createdAt ||
     response?.created_at ||
     response?.createdAt ||
     rawData?.created_at ||
-    rawData?.createdAt;
+    rawData?.createdAt ||
+    brokerData?.created_at ||
+    brokerData?.createdAt ||
+    brokerData?.signal_time ||
+    brokerData?.signalTime;
   const chartOpenedAt =
     chart?.openedAt ??
     response?.opened_at ??
     response?.openedAt ??
     rawData?.opened_at ??
     rawData?.openedAt ??
+    brokerData?.opened_at ??
+    brokerData?.openedAt ??
+    brokerData?.entry_time ??
+    brokerData?.entryTime ??
     null;
   const chartClosedAt =
     chart?.closedAt ??
@@ -2023,6 +2059,10 @@ export default function TradeDetailCard({
     response?.closedAt ??
     rawData?.closed_at ??
     rawData?.closedAt ??
+    brokerData?.closed_at ??
+    brokerData?.closedAt ??
+    brokerData?.exit_time ??
+    brokerData?.exitTime ??
     null;
   const chartOpenedAtUnix =
     chart?.openedAtUnix ||
@@ -2032,6 +2072,10 @@ export default function TradeDetailCard({
     response?.opened_at_unix ||
     rawData?.entry_time_unix ||
     rawData?.opened_at_unix ||
+    brokerData?.entry_time_unix ||
+    brokerData?.entryTimeUnix ||
+    brokerData?.opened_at_unix ||
+    brokerData?.openedAtUnix ||
     null;
   const chartCreatedAtUnix =
     chart?.createdAtUnix ||
@@ -2041,6 +2085,10 @@ export default function TradeDetailCard({
     response?.createdAtUnix ||
     rawData?.created_at_unix ||
     rawData?.createdAtUnix ||
+    brokerData?.created_at_unix ||
+    brokerData?.createdAtUnix ||
+    brokerData?.signal_time_unix ||
+    brokerData?.signalTimeUnix ||
     null;
   const chartClosedAtUnix =
     chart?.closedAtUnix ||
@@ -2048,32 +2096,52 @@ export default function TradeDetailCard({
     (mode === "trade" ? toEpochSec(chart?.closedAt) : null) ||
     response?.closed_at_unix ||
     rawData?.closed_at_unix ||
+    brokerData?.closed_at_unix ||
+    brokerData?.closedAtUnix ||
+    brokerData?.exit_time_unix ||
+    brokerData?.exitTimeUnix ||
     null;
   const hasChartClosedEvent = Boolean(
     chartClosedAt ||
       (Number.isFinite(Number(chartClosedAtUnix)) && Number(chartClosedAtUnix) > 0),
   );
-  const chartCloseStatus =
-    chart?.closeStatus ||
-    response?.execution_status ||
-    response?.close_status ||
-    response?.result ||
-    rawData?.execution_status ||
-    rawData?.close_status ||
-    rawData?.result ||
-    "";
+  const chartCloseStatus = resolveTradeChartStatus(
+    chart?.closeStatus,
+    response?.execution_status,
+    response?.close_status,
+    response?.result,
+    response?.close_reason,
+    rawData?.execution_status,
+    rawData?.close_status,
+    rawData?.result,
+    rawData?.close_reason,
+    brokerData?.execution_status,
+    brokerData?.close_status,
+    brokerData?.status,
+    brokerData?.result,
+    brokerData?.close_reason,
+  );
   const chartExitPrice =
     chart?.exitPrice ||
     response?.exit_price ||
     response?.exitPrice ||
     rawData?.exit_price ||
-    rawData?.exitPrice;
+    rawData?.exitPrice ||
+    brokerData?.exit_price ||
+    brokerData?.exitPrice ||
+    brokerData?.close_price ||
+    brokerData?.closePrice;
   const chartPnlRealized =
     chart?.pnlRealized ||
     response?.pnl_realized ||
     response?.pnlRealized ||
     rawData?.pnl_realized ||
-    rawData?.pnlRealized;
+    rawData?.pnlRealized ||
+    response?.broker_pnl ||
+    rawData?.broker_pnl ||
+    brokerData?.net_pnl ||
+    brokerData?.pnl ||
+    brokerData?.broker_pnl;
   const chartExitPriceForClosedTrade = hasChartClosedEvent ? chartExitPrice : null;
   const chartPnlRealizedForClosedTrade = hasChartClosedEvent
     ? chartPnlRealized
@@ -3287,7 +3355,6 @@ export default function TradeDetailCard({
                                     >
                                       {[
                                         tf?.trend,
-                                        tf?.bias,
                                         tf?.phase,
                                         tf?.market_structure?.narrative,
                                       ]
@@ -3348,7 +3415,6 @@ export default function TradeDetailCard({
                                     >
                                       {[
                                         tf?.trend,
-                                        tf?.bias,
                                         tf?.phase,
                                         tf?.structure,
                                         tf?.market_structure?.narrative,

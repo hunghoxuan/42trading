@@ -12,6 +12,7 @@ import ResponsivePanel from "../../../../shared/components/ResponsivePanel";
 import { StatusDisplay } from "../../../../shared/components/StatusBadge";
 import { showToast } from "../../../../shared/components/ToastContainer";
 import { resolveAdjusterValue, toNumLoose } from "./numberUtils";
+import TimeframePresetPicker from "../TimeframePresetPicker";
 import {
   createLineObject,
   createPointObject,
@@ -32,9 +33,6 @@ import {
   formatNumValue,
 } from "../../../../shared/utils/format";
 import {
-  mergeViewportArtifactObjects,
-} from "../../../../shared/utils/symbolChartStreaming.js";
-import {
   resolveTradeChartRenderBars,
   resolveTradeFetchBarsCount,
   resolveTradeFetchEndTimeSec,
@@ -44,6 +42,11 @@ import { evaluateChartStrategies } from "../../../../shared/utils/chartStrategyC
 import {
   buildClientChartArtifactEnvelope,
   buildClientChartMultiTfAnalysis,
+  createClientReplayArtifactEngineState,
+  mergeHybridArtifactItemsForTf,
+  mergeHybridTradePlansForTf,
+  normalizeHybridTradePlans,
+  updateClientReplayArtifactEngineState,
 } from "../../chartArtifacts/clientChartAnalysis.js";
 
 const BASE_MODES = ["live", "cache", "svg"];
@@ -70,8 +73,10 @@ const GENERIC_REPLAY_SPEED_OPTIONS = [
 const LAYERS_TAB_ITEMS = [
   { value: "chart", label: "Charts" },
   { value: "artifacts", label: "Artifacts" },
+  { value: "events", label: "Events" },
   { value: "momentum", label: "Momentum" },
   { value: "trend", label: "Trend" },
+  { value: "debug", label: "Debug" },
 ];
 const STATUS_COLORS = {
   IDLE: "var(--muted)",
@@ -107,6 +112,7 @@ const INDICATOR_GROUPS = [
       { key: "rsi", label: "RSI (14)", color: "#a855f7" },
       { key: "rsiEma9", label: "RSI EMA (9)", color: "#facc15" },
       { key: "rsiWma45", label: "RSI WMA (45)", color: "#34d399" },
+      { key: "volume", label: "Volume", color: "#60a5fa" },
       { key: "stochK", label: "Stoch %K", color: "#3b82f6" },
       { key: "stochD", label: "Stoch %D", color: "#f59e0b" },
     ],
@@ -173,6 +179,118 @@ function formatAnalysisSignedNumber(value = null, decimals = 0) {
   if (numeric > 0) return `+${formatted}`;
   if (numeric < 0) return `-${formatted}`;
   return formatted;
+}
+
+function formatAnalysisTargetPrice(value = null) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || Math.abs(numeric) <= 0) return "";
+  const magnitude = Math.abs(numeric);
+  const decimals =
+    magnitude >= 1000 ? 1 : magnitude >= 100 ? 2 : magnitude >= 1 ? 3 : 5;
+  return formatAnalysisNumber(numeric, decimals);
+}
+
+function analysisPricesDiffer(left, right) {
+  const a = Number(left);
+  const b = Number(right);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+  return Math.abs(a - b) > Math.max(Math.abs(a || b) * 0.00005, 0.00001);
+}
+
+function buildAnalysisTargetPair(startPrice, endPrice, tone) {
+  const startText = formatAnalysisTargetPrice(startPrice);
+  const endText = formatAnalysisTargetPrice(endPrice);
+  if (!startText || !endText) return null;
+  return {
+    text: `${startText} ${Number(endPrice) < Number(startPrice) ? "↘" : "↗"} ${endText}`,
+    tone,
+    hasInlineDirection: true,
+  };
+}
+
+function resolveAnalysisTargetVisual(entry = {}) {
+  const currentPrice = Number(entry?.last_close);
+  const bias = String(entry?.bias || "").trim().toLowerCase();
+  const trend = String(entry?.trend || "").trim().toLowerCase();
+  const rangeMode = String(entry?.phase_target?.range_mode || "").trim().toLowerCase();
+  const anchorPrice = Number(entry?.phase_target?.anchor_price);
+  const explicitTargetPrice = Number(entry?.phase_target?.target_price);
+  const low = Number(entry?.phase_target?.low);
+  const high = Number(entry?.phase_target?.high);
+  const targetPrice = Number(entry?.phase_target_price);
+  const validLow = Number.isFinite(low) && Math.abs(low) > 0 ? low : null;
+  const validHigh = Number.isFinite(high) && Math.abs(high) > 0 ? high : null;
+  const fallbackPrice =
+    Number.isFinite(targetPrice) && Math.abs(targetPrice) > 0 ? targetPrice : null;
+  const rangeLow = validLow ?? fallbackPrice;
+  const rangeHigh = validHigh ?? fallbackPrice;
+  if (!Number.isFinite(rangeLow) && !Number.isFinite(rangeHigh) && !Number.isFinite(fallbackPrice)) {
+    return null;
+  }
+  const lowPrice = Number.isFinite(rangeLow) ? rangeLow : fallbackPrice;
+  const highPrice = Number.isFinite(rangeHigh) ? rangeHigh : fallbackPrice;
+  const midPrice =
+    Number.isFinite(lowPrice) && Number.isFinite(highPrice)
+      ? (lowPrice + highPrice) / 2
+      : Number.isFinite(fallbackPrice)
+        ? fallbackPrice
+        : null;
+  if (!Number.isFinite(midPrice) || Math.abs(midPrice) <= 0) return null;
+  const directionalBullish = bias === "bullish" || trend === "up";
+  const directionalBearish = bias === "bearish" || trend === "down";
+  const tone = directionalBullish
+    ? "#22c55e"
+    : directionalBearish
+      ? "#ef4444"
+      : Number.isFinite(currentPrice) && midPrice < currentPrice
+        ? "#ef4444"
+        : Number.isFinite(currentPrice) && midPrice > currentPrice
+        ? "#22c55e"
+          : "rgba(226, 232, 240, 0.92)";
+  if (rangeMode === "anchor_to_target" && Number.isFinite(anchorPrice)) {
+    const pairedTarget =
+      Number.isFinite(explicitTargetPrice) && analysisPricesDiffer(anchorPrice, explicitTargetPrice)
+        ? explicitTargetPrice
+        : Number.isFinite(highPrice) && analysisPricesDiffer(anchorPrice, highPrice)
+          ? highPrice
+          : Number.isFinite(lowPrice) && analysisPricesDiffer(anchorPrice, lowPrice)
+            ? lowPrice
+            : Number.isFinite(fallbackPrice) && analysisPricesDiffer(anchorPrice, fallbackPrice)
+              ? fallbackPrice
+              : Number.isFinite(currentPrice) && analysisPricesDiffer(anchorPrice, currentPrice)
+                ? currentPrice
+                : null;
+    const anchorPair = buildAnalysisTargetPair(anchorPrice, pairedTarget, tone);
+    if (anchorPair) return anchorPair;
+  }
+  const hasRange =
+    Number.isFinite(lowPrice) &&
+    Number.isFinite(highPrice) &&
+    analysisPricesDiffer(lowPrice, highPrice);
+  if (!hasRange) {
+    if (Number.isFinite(currentPrice) && Number.isFinite(midPrice) && analysisPricesDiffer(currentPrice, midPrice)) {
+      const currentPair = buildAnalysisTargetPair(currentPrice, midPrice, tone);
+      if (currentPair) return currentPair;
+    }
+    const single = formatAnalysisTargetPrice(midPrice);
+    return single
+      ? {
+          text: single,
+          tone,
+          hasInlineDirection: false,
+        }
+      : null;
+  }
+  const descending = directionalBearish
+    ? true
+    : directionalBullish
+      ? false
+      : Number.isFinite(currentPrice)
+        ? midPrice < currentPrice
+        : lowPrice < highPrice;
+  const start = descending ? highPrice : lowPrice;
+  const end = descending ? lowPrice : highPrice;
+  return buildAnalysisTargetPair(start, end, tone);
 }
 
 function formatAnalysisComponent(component = {}) {
@@ -265,11 +383,18 @@ function buildTrendTooltip(entry = {}, tf = "") {
 }
 
 function buildPhaseTooltip(entry = {}, tf = "") {
+  const targetVisual = resolveAnalysisTargetVisual(entry);
   const lines = [
     `${displayTfLabel(tf)} Phase`,
     `State: ${formatAnalysisLabel(entry?.phase, "Unknown")}`,
     `Detail: ${formatAnalysisLabel(entry?.phase_detail, formatAnalysisLabel(entry?.phase, "Unknown"))}`,
     `Source: ${formatAnalysisLabel(entry?.phase_source, "Derived")}`,
+    ...(targetVisual?.text
+      ? [
+          `Target: ${targetVisual.text}`,
+          `Target source: ${formatAnalysisLabel(entry?.phase_target_label || entry?.phase_target_source, "Derived")}`,
+        ]
+      : []),
     "",
     "Logic:",
     phaseLogicText(entry),
@@ -293,6 +418,16 @@ function compactPhaseLabel(value = "") {
   return formatAnalysisLabel(normalized, "NA");
 }
 
+function phaseGlyph(phase = "") {
+  const normalized = String(phase || "").trim().toLowerCase();
+  if (normalized === "continuation") return "»";
+  if (normalized === "consolidation") return "▭";
+  if (normalized === "pullback") return "∿";
+  if (normalized === "reversal") return "↻";
+  if (normalized === "impulse") return "⚡";
+  return "•";
+}
+
 function analysisAccentColor(entry = {}) {
   const bias = String(entry?.bias || "").trim().toLowerCase();
   const trend = String(entry?.trend || "").trim().toLowerCase();
@@ -304,9 +439,9 @@ function analysisAccentColor(entry = {}) {
 function analysisArrow(entry = {}) {
   const bias = String(entry?.bias || "").trim().toLowerCase();
   const trend = String(entry?.trend || "").trim().toLowerCase();
-  if (bias === "bullish" || trend === "up") return "▲";
-  if (bias === "bearish" || trend === "down") return "▼";
-  return "•";
+  if (bias === "bullish" || trend === "up") return "↗";
+  if (bias === "bearish" || trend === "down") return "↘";
+  return "↔";
 }
 
 function trendGlyph(trend = "") {
@@ -332,10 +467,19 @@ function phaseColor(phase = "") {
   return "#94a3b8";
 }
 
+function targetDirectionGlyph(entry = {}) {
+  const bias = String(entry?.bias || "").trim().toLowerCase();
+  const trend = String(entry?.trend || "").trim().toLowerCase();
+  if (bias === "bullish" || trend === "up") return "↗";
+  if (bias === "bearish" || trend === "down") return "↘";
+  return "↔";
+}
+
 function RealtimeTfAnalysisOverlay({
   analysisByTf = {},
   orderedTfs = [],
   activeTf = "",
+  recentEventsByTf = {},
 }) {
   const requestedRows = (Array.isArray(orderedTfs) ? orderedTfs : [])
     .map((tf) => String(tf || "").trim().toLowerCase())
@@ -360,27 +504,30 @@ function RealtimeTfAnalysisOverlay({
         minWidth: 124,
         padding: "6px 7px",
         borderRadius: 7,
-        background: "rgba(15, 23, 42, 0.74)",
+        background: "transparent",
         border: "1px solid rgba(148, 163, 184, 0.26)",
-        boxShadow: "0 10px 24px rgba(2, 6, 23, 0.24)",
-        backdropFilter: "blur(10px)",
+        boxShadow: "none",
+        backdropFilter: "none",
       }}
     >
       {rows.map((tf) => {
         const entry = analysisByTf[tf];
         const isActive = String(activeTf || "").trim().toLowerCase() === tf;
+        const tfColor = artifactTimeframeColor(tf);
         const accent = analysisAccentColor(entry);
         const biasTooltip = buildBiasTooltip(entry, tf);
         const trendTooltip = buildTrendTooltip(entry, tf);
         const phaseTooltip = buildPhaseTooltip(entry, tf);
+        const phaseTargetVisual = resolveAnalysisTargetVisual(entry);
+        const recentEvent = recentEventsByTf?.[tf] || null;
         return (
           <div
             key={tf}
             style={{
               display: "grid",
-              gridTemplateColumns: "30px 12px 12px auto",
+              gridTemplateColumns: "22px auto",
               alignItems: "center",
-              gap: 5,
+              gap: 3,
               fontSize: 10,
               lineHeight: 1.1,
               color: isActive ? "#f8fafc" : "rgba(226, 232, 240, 0.94)",
@@ -388,19 +535,10 @@ function RealtimeTfAnalysisOverlay({
             }}
           >
             <span
-              style={{ color: isActive ? "#f8fafc" : "#cbd5e1" }}
+              style={{ color: tfColor }}
               title={`${displayTfLabel(tf)} analysis summary`}
             >
               {displayTfLabel(tf)}
-            </span>
-            <span style={{ color: accent, cursor: "help", pointerEvents: "auto" }} title={biasTooltip}>
-              {analysisArrow(entry)}
-            </span>
-            <span
-              style={{ color: trendColor(entry?.trend), cursor: "help", pointerEvents: "auto" }}
-              title={trendTooltip}
-            >
-              {trendGlyph(entry?.trend)}
             </span>
             <span
               style={{
@@ -413,18 +551,66 @@ function RealtimeTfAnalysisOverlay({
             >
               <span
                 style={{
-                  color: phaseColor(entry?.phase),
-                  border: "1px solid rgba(148, 163, 184, 0.2)",
+                  color: accent,
                   borderRadius: 999,
                   padding: "1px 5px",
                   letterSpacing: 0.15,
+                  background: `${accent}12`,
                   cursor: "help",
                   pointerEvents: "auto",
                 }}
                 title={phaseTooltip}
               >
-                {compactPhaseLabel(entry?.phase)}
+                <span>{phaseGlyph(entry?.phase)}</span>
+                <span>{compactPhaseLabel(entry?.phase)}</span>
               </span>
+              {phaseTargetVisual?.text ? (
+                <span
+                  style={{
+                    color: phaseTargetVisual.tone,
+                    borderRadius: 999,
+                    padding: "1px 5px",
+                    letterSpacing: 0.12,
+                    fontVariantNumeric: "tabular-nums",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                    background: "transparent",
+                  }}
+                  title={phaseTooltip}
+                >
+                  {phaseTargetVisual?.hasInlineDirection ? null : (
+                    <span>{targetDirectionGlyph(entry)}</span>
+                  )}
+                  {phaseTargetVisual.text}
+                </span>
+              ) : null}
+              {recentEvent?.markerText ? (
+                <span
+                  style={{
+                    color: recentEvent.color,
+                    border: `1px solid ${recentEvent.color}55`,
+                    borderRadius: 999,
+                    padding: "1px 5px",
+                    letterSpacing: 0.12,
+                    fontVariantNumeric: "tabular-nums",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                    background: `${recentEvent.color}12`,
+                  }}
+                  title={recentEvent.title}
+                >
+                  <span>
+                    {recentEvent.direction === "sell"
+                      ? "↓"
+                      : recentEvent.direction === "buy"
+                        ? "↑"
+                        : "•"}
+                  </span>
+                  {recentEvent.markerText}
+                </span>
+              ) : null}
             </span>
           </div>
         );
@@ -440,6 +626,7 @@ const DEFAULT_INDICATOR_VISIBILITY = {
   rsi: true,
   rsiEma9: true,
   rsiWma45: true,
+  volume: true,
   stochK: false,
   stochD: false,
   sma20: true,
@@ -610,6 +797,23 @@ function writeLocalMarketUiConfig(symbol, config) {
   } catch {
     // ignore storage quota/private mode
   }
+}
+
+function normalizeArtifactEventVisibility(rawVisibility = {}) {
+  if (
+    !rawVisibility ||
+    typeof rawVisibility !== "object" ||
+    Array.isArray(rawVisibility)
+  ) {
+    return {};
+  }
+  const next = {};
+  for (const [eventKeyRaw, value] of Object.entries(rawVisibility)) {
+    const eventKey = String(eventKeyRaw || "").trim();
+    if (!eventKey || typeof value !== "boolean") continue;
+    next[eventKey] = value;
+  }
+  return next;
 }
 
 function normalizeMasterChartConfig(rawConfig = {}) {
@@ -928,6 +1132,134 @@ function ViewportNavIcon({ action }) {
       <rect x="1.75" y="2" width="8.5" height="8" rx="1.25" stroke="currentColor" strokeWidth="1.2" />
       <path d="M4.25 2V10" stroke="currentColor" strokeWidth="1" opacity="0.75" />
       <path d="M7.75 2V10" stroke="currentColor" strokeWidth="1" opacity="0.75" />
+    </svg>
+  );
+}
+
+function RefreshIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 13 13"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <path
+        d="M10.75 3.25V5.9H8.1"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M2.9 9.95V7.3H5.55"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M3.98 5.02C4.33 4.04 5.25 3.34 6.33 3.26C7.41 3.18 8.42 3.75 8.93 4.7L10.75 5.9"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M9.02 7.98C8.67 8.96 7.75 9.66 6.67 9.74C5.59 9.82 4.58 9.25 4.07 8.3L2.25 7.1"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ReplayPlayIcon({ size = 14 }) {
+  const iconSize = Math.max(10, Number(size) || 14);
+  return (
+    <svg
+      width={iconSize}
+      height={iconSize}
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M5.5 3.75L12 8L5.5 12.25V3.75Z"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeWidth="1"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ReplayPauseIcon({ size = 14 }) {
+  const iconSize = Math.max(10, Number(size) || 14);
+  return (
+    <svg
+      width={iconSize}
+      height={iconSize}
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden="true"
+    >
+      <rect x="4" y="3.5" width="2.5" height="9" rx="0.75" fill="currentColor" />
+      <rect x="9.5" y="3.5" width="2.5" height="9" rx="0.75" fill="currentColor" />
+    </svg>
+  );
+}
+
+function ReplayStopIcon({ size = 14 }) {
+  const iconSize = Math.max(10, Number(size) || 14);
+  return (
+    <svg
+      width={iconSize}
+      height={iconSize}
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden="true"
+    >
+      <rect x="4" y="4" width="8" height="8" rx="1.25" fill="currentColor" />
+    </svg>
+  );
+}
+
+function LayersIcon({ size = 14 }) {
+  const iconSize = Math.max(10, Number(size) || 14);
+  return (
+    <svg
+      width={iconSize}
+      height={iconSize}
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M8 2.75L13 5.5L8 8.25L3 5.5L8 2.75Z"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M3 8.25L8 11L13 8.25"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M3 11L8 13.75L13 11"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -1478,12 +1810,34 @@ function artifactSourceTfTag(tf = "") {
 function artifactTypeAbbr(typeRaw = "") {
   const type = String(typeRaw || "").trim().toLowerCase();
   if (!type) return "";
+  if (
+    type === "swing_low_segment" ||
+    type === "swing_low_level" ||
+    type === "swing_low_source"
+  ) {
+    return "SL";
+  }
+  if (
+    type === "swing_high_segment" ||
+    type === "swing_high_level" ||
+    type === "swing_high_source"
+  ) {
+    return "SH";
+  }
   if (type === "trendline_support" || type === "trendline_resistance" || type === "trendline") {
     return "TL";
   }
   if (type === "bullish_divergence" || type === "bearish_divergence" || type === "divergence") {
     return "DIV";
   }
+  if (type === "bullish_engulfing" || type === "bearish_engulfing") {
+    return "ENG";
+  }
+  if (type === "bullish_pin_bar" || type === "bearish_pin_bar") {
+    return "PIN";
+  }
+  if (type === "inside_bar") return "INSI";
+  if (type === "outside_bar") return "OUTS";
   if (type === "ifvg" || type === "i_fvg" || type === "inverse_fvg" || type === "inversion_fvg") {
     return "iFVG";
   }
@@ -1564,24 +1918,210 @@ function artifactInlineLabel(item = {}, fallbackTf = "") {
     .toLowerCase();
   if (
     structureLabel &&
-    (typeRaw === "swing_high" || typeRaw === "swing_low")
+    (
+      typeRaw === "swing_high" ||
+      typeRaw === "swing_low" ||
+      typeRaw === "swing_high_segment" ||
+      typeRaw === "swing_low_segment" ||
+      typeRaw === "swing_high_level" ||
+      typeRaw === "swing_low_level"
+    )
   ) {
-    return structureLabel;
+    return "";
   }
   const type = artifactTypeAbbr(artifactDisplayTypeKey(item));
   return type;
+}
+
+function humanizeArtifactLabel(text = "") {
+  const raw = String(text || "").trim();
+  if (!raw) return "";
+  return raw
+    .replaceAll("_", " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function artifactFullLabel(item = {}) {
+  const candidates = [
+    item?.label,
+    item?.artifact_payload?.label,
+    item?.payload?.pattern_type,
+    item?.artifact_payload?.payload?.pattern_type,
+    item?.type,
+    item?.artifact_type,
+  ];
+  for (const candidate of candidates) {
+    let value = humanizeArtifactLabel(candidate);
+    value = value.replace(/^(Bullish|Bearish)\s+/i, "").trim();
+    if (value) return value;
+  }
+  return "";
 }
 
 function artifactLevelLabel(item = {}, fallbackTf = "") {
   return artifactInlineLabel(item, fallbackTf);
 }
 
+function artifactEventSourceAbbr(item = {}) {
+  const payload =
+    item?.payload && typeof item.payload === "object"
+      ? item.payload
+      : item?.artifact_payload?.payload && typeof item.artifact_payload.payload === "object"
+        ? item.artifact_payload.payload
+        : {};
+  const rawType =
+    String(
+      payload.converted_from ||
+        payload.converted_to ||
+        payload.source_artifact_type ||
+        item?.type ||
+        item?.artifact_type ||
+        "",
+    )
+      .trim()
+      .toLowerCase();
+  if (!rawType) return "";
+  return artifactTypeAbbr(rawType).slice(0, 6).toUpperCase();
+}
+
 function artifactMarkerText(item = {}) {
+  const eventKey = String(item?.event_key || "").trim().toLowerCase();
+  if (eventKey === "reject") {
+    const source = artifactEventSourceAbbr(item);
+    return source ? `REJ ${source}` : "REJ";
+  }
+  if (eventKey === "breakout") {
+    const source = artifactEventSourceAbbr(item);
+    return source ? `BRK ${source}` : "BRK";
+  }
   const type = artifactDisplayTypeKey(item);
   if (type === "bos") return "BOS";
   if (type === "choch") return "CH";
   if (type === "sweep_high" || type === "sweep_low") return "SW";
+  if (type === "inside_bar") return "INSI";
+  if (type === "outside_bar") return "OUTS";
+  if (type === "bullish_divergence" || type === "bearish_divergence" || type === "divergence") {
+    return "DIV";
+  }
   return artifactTypeAbbr(type).slice(0, 4).toUpperCase();
+}
+
+const DEFAULT_HIDDEN_SIGNAL_EVENT_KEYS = new Set(["INSI", "OUTS", "LH", "LL"]);
+const DEFAULT_VISIBLE_SIGNAL_EVENT_KEYS = new Set([
+  "SW",
+  "BOS",
+  "CH",
+  "ENG",
+  "PIN",
+]);
+
+function resolveArtifactEventDirection(item = {}) {
+  const artifactPayload =
+    item?.artifact_payload && typeof item.artifact_payload === "object"
+      ? item.artifact_payload
+      : {};
+  const payload =
+    item?.payload && typeof item.payload === "object"
+      ? item.payload
+      : item?.artifact_payload?.payload && typeof item.artifact_payload.payload === "object"
+        ? item.artifact_payload.payload
+        : {};
+  const directionCandidates = [
+    item?.event_direction,
+    item?.direction,
+    artifactPayload?.event_direction,
+    artifactPayload?.direction,
+    payload?.bias,
+    item?.subtype,
+    artifactPayload?.subtype,
+    item?.type,
+    artifactPayload?.type,
+    item?.label,
+    artifactPayload?.label,
+  ]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+  const direction = directionCandidates.find(Boolean) || "";
+  if (direction === "sell" || direction === "bearish") return "sell";
+  if (direction === "buy" || direction === "bullish") return "buy";
+  if (directionCandidates.some((value) => value.includes("sell") || value.includes("bear"))) {
+    return "sell";
+  }
+  if (directionCandidates.some((value) => value.includes("buy") || value.includes("bull"))) {
+    return "buy";
+  }
+  return "neutral";
+}
+
+function defaultArtifactEventVisible(item = {}) {
+  if (!item?.is_event) return true;
+  const eventKey = artifactMarkerText(item);
+  if (!eventKey) return false;
+  if (eventKey.startsWith("BRK ") || eventKey.startsWith("REJ ")) return true;
+  if (DEFAULT_VISIBLE_SIGNAL_EVENT_KEYS.has(eventKey)) return true;
+  if (DEFAULT_HIDDEN_SIGNAL_EVENT_KEYS.has(eventKey)) return false;
+  return resolveArtifactEventDirection(item) !== "neutral";
+}
+
+function isSignalArtifactPanelItem(item = {}) {
+  if (!item || typeof item !== "object") return false;
+  const groupKey = artifactGroupKeyForItem(item);
+  if (
+    groupKey === "bos" ||
+    groupKey === "choch" ||
+    groupKey === "sweep" ||
+    groupKey === "patterns" ||
+    groupKey === "swings"
+  ) {
+    return true;
+  }
+  return item?.is_event === true;
+}
+
+function signalEventColorFromDirection(direction = "neutral") {
+  if (direction === "sell") return "#ef4444";
+  if (direction === "buy") return "#22c55e";
+  return "#94a3b8";
+}
+
+function resolveZoneEventMarkerPrice(item = {}, top = null, bottom = null, fallbackPrice = null) {
+  const payload =
+    item?.payload && typeof item.payload === "object"
+      ? item.payload
+      : item?.artifact_payload?.payload && typeof item.artifact_payload.payload === "object"
+        ? item.artifact_payload.payload
+        : {};
+  const lifecycleState = String(payload.lifecycle_state || "").trim().toLowerCase();
+  const eventKey = String(item?.event_key || "").trim().toLowerCase();
+  const direction = String(
+    item?.event_direction || item?.direction || payload?.bias || item?.subtype || "",
+  )
+    .trim()
+    .toLowerCase();
+  const bearish = direction === "sell" || direction === "bearish";
+  const bullish = direction === "buy" || direction === "bullish";
+  if (
+    eventKey === "breakout" ||
+    lifecycleState === "broken_through" ||
+    lifecycleState === "converted_active" ||
+    lifecycleState === "converted_touched_no_resolution"
+  ) {
+    if (bearish && Number.isFinite(bottom)) return bottom;
+    if (bullish && Number.isFinite(top)) return top;
+  }
+  if (
+    eventKey === "reject" ||
+    lifecycleState === "rejected_touch" ||
+    lifecycleState === "converted_rejected_touch"
+  ) {
+    if (bearish && Number.isFinite(top)) return top;
+    if (bullish && Number.isFinite(bottom)) return bottom;
+  }
+  if (Number.isFinite(fallbackPrice)) return fallbackPrice;
+  if (Number.isFinite(top) && Number.isFinite(bottom)) return (top + bottom) / 2;
+  return Number.isFinite(top) ? top : bottom;
 }
 
 function strategyHitMarkerText(hit = {}) {
@@ -1827,11 +2367,33 @@ function artifactTimeframeColor(tf = "") {
   return "#94a3b8";
 }
 
-function shouldShowArtifactSourceTf(sourceTf = "", chartTf = "") {
+function canProjectArtifactAcrossTf(item = {}) {
+  if (item?.is_event) return false;
+  const groupKey = artifactGroupKeyForItem(item);
+  return new Set([
+    "fvg",
+    "ifvg",
+    "ob",
+    "bb",
+    "support",
+    "demand",
+    "pdh",
+    "pdl",
+  ]).has(groupKey);
+}
+
+function shouldShowArtifactOnChart(item = {}, sourceTf = "", chartTf = "") {
   const hasSourceTf = String(sourceTf || "").trim().length > 0;
   const hasChartTf = String(chartTf || "").trim().length > 0;
   if (!hasSourceTf || !hasChartTf) return true;
-  return true;
+  const normalizedSourceTf = artifactSourceTfLabel(sourceTf);
+  const normalizedChartTf = artifactSourceTfLabel(chartTf);
+  if (normalizedSourceTf === normalizedChartTf) return true;
+  const sourceSeconds = Number(timeframeToSeconds(normalizedSourceTf)) || 0;
+  const chartSeconds = Number(timeframeToSeconds(normalizedChartTf)) || 0;
+  if (!sourceSeconds || !chartSeconds) return true;
+  if (sourceSeconds < chartSeconds) return false;
+  return canProjectArtifactAcrossTf(item);
 }
 function defaultTpSlFromEntry(entry, direction) {
   const e = Number(entry);
@@ -1863,8 +2425,6 @@ function buildSnapshotGridTfs(timeframes = []) {
   return ["1D", "4H", "15m", "5m"];
 }
 
-const CLIENT_ANALYSIS_ARTIFACT_TFS = ["1d", "4h", "15m"];
-
 function buildRequestedDataTimeframes(timeframes = [], includeAnalysisTfs = false) {
   const visible = (Array.isArray(timeframes) ? timeframes : [])
     .map((tf) =>
@@ -1873,9 +2433,7 @@ function buildRequestedDataTimeframes(timeframes = [], includeAnalysisTfs = fals
         .toLowerCase(),
     )
     .filter(Boolean);
-  const merged = includeAnalysisTfs
-    ? [...visible, ...CLIENT_ANALYSIS_ARTIFACT_TFS]
-    : visible;
+  const merged = includeAnalysisTfs ? [...visible] : visible;
   return sortTimeframes([...new Set(merged)], "desc");
 }
 
@@ -1928,6 +2486,10 @@ function formatObjectLabel(type, rawLabel) {
 }
 
 function artifactColorForItem(item = {}) {
+  if (item?.is_event) {
+    const direction = resolveArtifactEventDirection(item);
+    return signalEventColorFromDirection(direction);
+  }
   const timeframeColor = artifactTimeframeColor(item?.timeframe || item?.tf || item?.source_tf);
   if (timeframeColor) return timeframeColor;
   const group = artifactGroupKeyForItem(item);
@@ -2115,39 +2677,14 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
 
   if (groupKey === "swings") {
     if (!Number.isFinite(price) || !Number.isFinite(timeSec)) return null;
-    const tfSeconds = Math.max(1, Number(timeframeToSeconds(tf)) || 60);
-    const swingLevelEndTimeSec = timeSec + tfSeconds * 20;
-    const previousSameTypeTime = Number(
-      item?.payload?.previous_same_type_time ??
-        item?.payload?.previousSameTypeTime,
-    );
-    const previousSameTypePrice = Number(
-      item?.payload?.previous_same_type_price ??
-        item?.payload?.previousSameTypePrice,
-    );
-    const swingPoint = {
-      id: String(item.id || `${family}-${type}-${timeSec}`),
-      kind: "point",
-      type: "",
-      label: "",
-      visible: true,
-      tf,
-      color,
-      price,
-      time: timeSec,
-      anchorTimeMs: timeSec * 1000,
-      anchorPrice: price,
-      line_style: "dot",
-      line_width: 0.1,
-      marker_shape: "circle",
-      marker_text: formatArtifactExactPrice(price),
-      marker_position: "price",
-      artifact_family: family,
-      artifact_type: type,
-      artifact_group: groupKey,
-      source_tf: tf,
-      artifact_payload: item,
-    };
+    const itemStatus = String(item?.status || "").trim().toLowerCase();
+    const lifecycleState = String(item?.payload?.lifecycle_state || "")
+      .trim()
+      .toLowerCase();
+    const explicitEndTimeSec =
+      Number(item?.bar_end ?? item?.end_bar ?? item?.payload?.structure_break_time) || null;
+    const extendUntouchedSwing =
+      itemStatus === "active" && lifecycleState === "awaiting_break";
     const swingLevelLine = {
       id: `${String(item.id || `${family}-${type}-${timeSec}`)}:level`,
       kind: "line",
@@ -2159,7 +2696,11 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
       price,
       time: timeSec,
       anchorTimeMs: timeSec * 1000,
-      anchorTimeMs2: swingLevelEndTimeSec * 1000,
+      anchorTimeMs2: extendUntouchedSwing
+        ? null
+        : Number.isFinite(explicitEndTimeSec)
+          ? explicitEndTimeSec * 1000
+          : null,
       anchorPrice: price,
       anchorPrice2: price,
       line_style: "dot",
@@ -2171,35 +2712,31 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
       source_tf: tf,
       artifact_payload: item,
     };
-    const swingConnection =
-      Number.isFinite(previousSameTypeTime) && Number.isFinite(previousSameTypePrice)
-        ? {
-            id: `${String(item.id || `${family}-${type}-${timeSec}`)}:segment`,
-            kind: "line",
-            type: "",
-            label: "",
-            visible: true,
-            tf,
-            color,
-            price: previousSameTypePrice,
-            time: previousSameTypeTime,
-            anchorTimeMs: previousSameTypeTime * 1000,
-            anchorTimeMs2: timeSec * 1000,
-            anchorPrice: previousSameTypePrice,
-            anchorPrice2: price,
-            line_style: "dot",
-            line_width: 0.6,
-            line_scope: "segment",
-            artifact_family: family,
-            artifact_type: `${type}_segment`,
-            artifact_group: groupKey,
-            source_tf: tf,
-            artifact_payload: item,
-          }
-        : null;
-    return swingConnection
-      ? [swingConnection, swingLevelLine, swingPoint]
-      : [swingLevelLine, swingPoint];
+    const swingPivotPoint = {
+      id: `${String(item.id || `${family}-${type}-${timeSec}`)}:pivot`,
+      kind: "point",
+      type: "",
+      label: "",
+      visible: true,
+      tf,
+      color,
+      price,
+      time: timeSec,
+      anchorTimeMs: timeSec * 1000,
+      anchorPrice: price,
+      line_style: "solid",
+      line_width: 0.1,
+      marker_shape: "circle",
+      marker_text: "",
+      marker_position: "inBar",
+      marker_size: 2.5,
+      artifact_family: family,
+      artifact_type: `${type}_pivot`,
+      artifact_group: groupKey,
+      source_tf: tf,
+      artifact_payload: item,
+    };
+    return [swingLevelLine, swingPivotPoint];
   }
 
   if (groupKey === "trendline" || groupKey === "divergence") {
@@ -2290,14 +2827,25 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
         ? price
         : null;
     if (!Number.isFinite(top) || !Number.isFinite(bottom)) return null;
-    const defaultZoneExtensionBars =
-      groupKey === "fvg" || groupKey === "ifvg" ? 5 : groupKey === "ob" || groupKey === "bb" ? 28 : 20;
-    const computedEndTimeSec =
-      Number.isFinite(timeSec)
-        ? artifactSourceSpanEndTimeSec(item, timeSec, tf) ??
-          (timeSec + artifactSourceTfSeconds(item, tf) * defaultZoneExtensionBars)
-        : null;
-    return {
+    const itemStatus = String(item?.status || "").trim().toLowerCase();
+    const lifecycleState = String(item?.payload?.lifecycle_state || "")
+      .trim()
+      .toLowerCase();
+    const isUnvisitedZone =
+      (groupKey === "fvg" || groupKey === "ob") &&
+      itemStatus === "active" &&
+      lifecycleState === "awaiting_touch";
+    const explicitEndTimeSec =
+      Number(item?.bar_end ?? item?.end_bar ?? item?.payload?.end_time) || null;
+    const tfSeconds = Math.max(1, Number(timeframeToSeconds(tf)) || 60);
+    const shouldExtendZoneOneBar = groupKey === "fvg" || groupKey === "ob";
+    const zoneEndTimeSec =
+      Number.isFinite(explicitEndTimeSec)
+        ? explicitEndTimeSec + (shouldExtendZoneOneBar ? tfSeconds : 0)
+        : Number.isFinite(timeSec)
+          ? timeSec + (shouldExtendZoneOneBar ? tfSeconds : 0)
+          : null;
+    const zoneObject = {
       id: String(item.id || `${family}-${type}-${timeSec || top}`),
       kind: "zone",
       type: type.toUpperCase() || "ZONE",
@@ -2310,10 +2858,10 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
       price_bottom: bottom,
       time: Number.isFinite(timeSec) ? timeSec : null,
       anchorTimeMs: Number.isFinite(timeSec) ? timeSec * 1000 : null,
-      anchorTimeMs2: Number.isFinite(computedEndTimeSec)
-        ? computedEndTimeSec * 1000
-        : Number.isFinite(timeSec)
-          ? (timeSec + Math.max(1, Number(timeframeToSeconds(tf)) || 60) * zoneExtensionBars) * 1000
+      anchorTimeMs2: isUnvisitedZone
+        ? null
+        : Number.isFinite(zoneEndTimeSec)
+          ? zoneEndTimeSec * 1000
           : null,
       anchorPrice: top,
       anchorPrice2: bottom,
@@ -2325,20 +2873,96 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
       source_tf: tf,
       artifact_payload: item,
     };
+    const suppressedZoneEventTypes = new Set(["fvg", "ifvg", "bb", "ob"]);
+    const normalizedZoneType = String(type || "").trim().toLowerCase();
+    const eventTimeSec = Number(item?.event_time ?? item?.anchor_time ?? item?.bar_end) || null;
+    const eventDirection = String(
+      item?.event_direction || item?.direction || item?.payload?.bias || item?.subtype || "",
+    )
+      .trim()
+      .toLowerCase();
+    const eventPrice = resolveZoneEventMarkerPrice(
+      item,
+      top,
+      bottom,
+      Number.isFinite(price) ? price : null,
+    );
+    if (
+      item?.is_event &&
+      !suppressedZoneEventTypes.has(normalizedZoneType) &&
+      Number.isFinite(eventTimeSec) &&
+      Number.isFinite(eventPrice)
+    ) {
+      return [
+        zoneObject,
+        {
+          id: `${String(item.id || `${family}-${type}-${eventTimeSec}`)}:event`,
+          kind: "point",
+          type: type.toUpperCase() || "POINT",
+          label: artifactFullLabel(item),
+          visible: true,
+          tf,
+          color,
+          price: eventPrice,
+          time: eventTimeSec,
+          anchorTimeMs: eventTimeSec * 1000,
+          anchorPrice: eventPrice,
+          line_style: "dot",
+          line_width: 0.1,
+          marker_shape:
+            eventDirection === "sell" || eventDirection === "bearish"
+              ? "arrowDown"
+              : "arrowUp",
+          marker_text: artifactMarkerText(item),
+          marker_position:
+            eventDirection === "sell" || eventDirection === "bearish"
+              ? "aboveBar"
+              : "belowBar",
+          marker_size: 4,
+          artifact_family: family,
+          artifact_type: `${type}_event`,
+          artifact_group: groupKey,
+          source_tf: tf,
+          artifact_payload: item,
+          is_event: true,
+          event_key: item?.event_key || "",
+          event_time: eventTimeSec,
+        },
+      ];
+    }
+    return zoneObject;
   }
 
   if (family === "pattern" || family === "structure") {
     if (!Number.isFinite(price) || !Number.isFinite(timeSec)) return null;
     const direction = String(
-      item?.direction || item?.payload?.bias || item?.subtype || "",
+      item?.event_direction || item?.direction || item?.payload?.bias || item?.subtype || "",
     )
       .trim()
       .toLowerCase();
+    const isEvent = item?.is_event !== false;
+    const markerText = artifactMarkerText(item);
+    const isStructureSegmentSignal =
+      family === "structure" &&
+      (type === "bos" ||
+        type === "choch" ||
+        type === "sweep_high" ||
+        type === "sweep_low");
+    const structureFromTimeSec = Number(
+      item?.payload?.source_swing_time ??
+        item?.payload?.swept_swing_time ??
+        item?.bar_start,
+    );
+    const structureFromPrice = Number(
+      item?.payload?.source_swing_price ??
+        item?.payload?.swept_swing_price ??
+        item?.price,
+    );
     const basePoint = {
       id: String(item.id || `${family}-${type}-${timeSec}`),
       kind: "point",
       type: type.toUpperCase() || "POINT",
-      label: artifactInlineLabel(item, tf),
+      label: artifactFullLabel(item),
       visible: true,
       tf,
       color,
@@ -2349,45 +2973,56 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
       line_style: "dot",
       line_width: 0.1,
       marker_shape:
-        direction === "sell" || direction === "bearish" ? "arrowDown" : "arrowUp",
-      marker_text: artifactMarkerText(item),
+        isEvent
+          ? direction === "sell" || direction === "bearish"
+            ? "arrowDown"
+            : "arrowUp"
+          : "circle",
+      marker_text: markerText,
       marker_position:
         direction === "sell" || direction === "bearish" ? "aboveBar" : "belowBar",
+      marker_size: isEvent ? 4 : 3,
       artifact_family: family,
       artifact_type: type,
       artifact_group: groupKey,
       source_tf: tf,
       artifact_payload: item,
+      is_event: isEvent,
+      event_key: item?.event_key || "",
+      event_time: Number(item?.event_time) || null,
     };
-    if (type === "bos" || type === "choch") {
-      const sourceSwingTime = Number(item?.payload?.source_swing_time);
-      const sourceSwingPrice = Number(item?.payload?.source_swing_price);
-      const connection =
-        Number.isFinite(sourceSwingTime) && Number.isFinite(sourceSwingPrice)
-          ? {
-              id: `${String(item.id || `${family}-${type}-${timeSec}`)}:source`,
-              kind: "line",
-              type: `${type.toUpperCase()}_SOURCE`,
-              label: "",
-              visible: true,
-              tf,
-              color,
-              price: sourceSwingPrice,
-              time: sourceSwingTime,
-              anchorTimeMs: sourceSwingTime * 1000,
-              anchorTimeMs2: timeSec * 1000,
-              anchorPrice: sourceSwingPrice,
-              line_style: "dot",
-              line_width: 0.5,
-              line_scope: "segment",
-              artifact_family: family,
-              artifact_type: `${type}_source`,
-              artifact_group: groupKey,
-              source_tf: tf,
-              artifact_payload: item,
-            }
-          : null;
-      return connection ? [connection, basePoint] : basePoint;
+    if (
+      isStructureSegmentSignal &&
+      Number.isFinite(structureFromTimeSec) &&
+      Number.isFinite(structureFromPrice)
+    ) {
+      return [
+        {
+          id: `${String(item.id || `${family}-${type}-${timeSec}`)}:segment`,
+          kind: "segment",
+          type: type.toUpperCase() || "SEGMENT",
+          label: artifactFullLabel(item),
+          visible: true,
+          tf,
+          color,
+          time: structureFromTimeSec,
+          time2: timeSec,
+          price: structureFromPrice,
+          price2: price,
+          anchorTimeMs: structureFromTimeSec * 1000,
+          anchorTimeMs2: timeSec * 1000,
+          anchorPrice: structureFromPrice,
+          anchorPrice2: price,
+          line_style: "dot",
+          line_width: 1,
+          artifact_family: family,
+          artifact_type: `${type}_segment`,
+          artifact_group: groupKey,
+          source_tf: tf,
+          artifact_payload: item,
+        },
+        basePoint,
+      ];
     }
     return basePoint;
   }
@@ -2431,6 +3066,149 @@ function artifactEnvelopeToChartObjects(artifacts, fallbackTf = "") {
       return Array.isArray(mapped) ? mapped : [mapped];
     })
     .filter(Boolean);
+}
+
+function analysisSummaryItemPrice(item = {}) {
+  const directPrice = Number(item?.price);
+  if (Number.isFinite(directPrice)) return directPrice;
+  const low = Number(item?.price_low);
+  const high = Number(item?.price_high);
+  if (Number.isFinite(low) && Number.isFinite(high)) return (low + high) / 2;
+  if (Number.isFinite(low)) return low;
+  if (Number.isFinite(high)) return high;
+  return null;
+}
+
+function analysisSummaryItemBounds(item = {}) {
+  const low = Number(item?.price_low);
+  const high = Number(item?.price_high);
+  if (Number.isFinite(low) && Number.isFinite(high)) {
+    return {
+      low: Math.min(low, high),
+      high: Math.max(low, high),
+    };
+  }
+  const price = analysisSummaryItemPrice(item);
+  return Number.isFinite(price)
+    ? { low: price, high: price }
+    : { low: null, high: null };
+}
+
+function buildSvgSummaryObjectsFromAnalysisEntry(entry = {}, tf = "") {
+  const tfKey = String(tf || entry?.timeframe || "").trim().toLowerCase();
+  const bucketConfigs = [
+    { key: "supports", label: "SUP", color: "#22c55e", kind: "line" },
+    { key: "resistances", label: "RES", color: "#ef4444", kind: "line" },
+    { key: "demands", label: "DEM", color: "#14b8a6", kind: "zone" },
+    { key: "supplies", label: "SUPPLY", color: "#f97316", kind: "zone" },
+  ];
+  return bucketConfigs.flatMap((bucket) => {
+    const items = Array.isArray(entry?.[bucket.key]) ? entry[bucket.key] : [];
+    return items
+      .map((item, index) => {
+        const summaryId = String(
+          item?.id || item?.source_id || `${tfKey}-${bucket.key}-${index + 1}`,
+        ).trim();
+        const bounds = analysisSummaryItemBounds(item);
+        const price = analysisSummaryItemPrice(item);
+        if (bucket.kind === "zone") {
+          if (!Number.isFinite(bounds.low) || !Number.isFinite(bounds.high)) return null;
+          return {
+            id: `svg-summary-zone:${summaryId}`,
+            kind: "zone",
+            type: bucket.key.toUpperCase(),
+            label: bucket.label,
+            visible: true,
+            tf: tfKey,
+            source_tf: tfKey,
+            color: bucket.color,
+            bg_color: `${bucket.color}12`,
+            price_top: bounds.high,
+            price_bottom: bounds.low,
+            anchorPrice: bounds.high,
+            anchorPrice2: bounds.low,
+            line_style: "dot",
+            line_width: 0.1,
+            artifact_family: "analysis_summary",
+            artifact_group: bucket.key,
+            artifact_type: bucket.key,
+            artifact_payload: item,
+          };
+        }
+        if (!Number.isFinite(price)) return null;
+        return {
+          id: `svg-summary-line:${summaryId}`,
+          kind: "line",
+          type: bucket.key.toUpperCase(),
+          label: bucket.label,
+          visible: true,
+          tf: tfKey,
+          source_tf: tfKey,
+          color: bucket.color,
+          price,
+          anchorPrice: price,
+          line_style: "dot",
+          line_width: 0.8,
+          line_scope: "full",
+          artifact_family: "analysis_summary",
+          artifact_group: bucket.key,
+          artifact_type: bucket.key,
+          artifact_payload: item,
+        };
+      })
+      .filter(Boolean);
+  });
+}
+
+function buildPhaseTargetBoundaryObjects(entry = {}, tf = "") {
+  const tfKey = String(tf || entry?.timeframe || "").trim().toLowerCase();
+  const low = Number(entry?.phase_target?.low);
+  const high = Number(entry?.phase_target?.high);
+  const tfColor = artifactTimeframeColor(tfKey || "1m");
+  const objects = [];
+  if (Number.isFinite(low)) {
+    objects.push({
+      id: `phase-target-range-low:${tfKey}:${low}`,
+      kind: "line",
+      type: "PHASE_TARGET_LOW",
+      label: "",
+      visible: true,
+      tf: tfKey,
+      source_tf: tfKey,
+      color: tfColor,
+      price: low,
+      anchorPrice: low,
+      line_style: "dot",
+      line_width: 0.9,
+      line_scope: "full",
+      artifact_family: "analysis_range",
+      artifact_group: "phase_target_range",
+      artifact_type: "phase_target_low",
+      artifact_payload: entry?.phase_target || entry,
+    });
+  }
+  if (Number.isFinite(high) && (!Number.isFinite(low) || Math.abs(high - low) > 1e-9)) {
+    objects.push({
+      id: `phase-target-range-high:${tfKey}:${high}`,
+      kind: "line",
+      type: "PHASE_TARGET_HIGH",
+      label: "",
+      visible: true,
+      tf: tfKey,
+      source_tf: tfKey,
+      color: tfColor,
+      price: high,
+      anchorPrice: high,
+      line_style: "dot",
+      line_width: 0.9,
+      line_scope: "full",
+      artifact_family: "analysis_range",
+      artifact_group: "phase_target_range",
+      artifact_type: "phase_target_high",
+      artifact_payload: entry?.phase_target || entry,
+    });
+  }
+  return objects;
 }
 
 function artifactObjectReferencePrice(item = {}) {
@@ -2514,31 +3292,132 @@ function artifactObjectTypeKey(item = {}) {
   return `${family}|${type}`;
 }
 
+function shouldCollapseArtifactHistory(item = {}) {
+  const kind = String(item?.kind || "").trim().toLowerCase();
+  if (kind !== "line") return false;
+  const artifactGroup = String(
+    item?.artifact_group || artifactGroupKeyForItem(item) || "",
+  )
+    .trim()
+    .toLowerCase();
+  const itemStatus = String(
+    item?.artifact_payload?.status || item?.status || "",
+  )
+    .trim()
+    .toLowerCase();
+  const lifecycleState = String(
+    item?.artifact_payload?.payload?.lifecycle_state ||
+      item?.artifact_payload?.lifecycle_state ||
+      "",
+  )
+    .trim()
+    .toLowerCase();
+  if (
+    artifactGroup === "swings" &&
+    itemStatus === "active" &&
+    lifecycleState === "awaiting_break"
+  ) {
+    return false;
+  }
+  const lineScope = String(item?.line_scope || "").trim().toLowerCase();
+  return lineScope !== "segment";
+}
+
+function isActiveSwingArtifactObject(item = {}) {
+  const artifactGroup = String(
+    item?.artifact_group || artifactGroupKeyForItem(item) || "",
+  )
+    .trim()
+    .toLowerCase();
+  const itemStatus = String(
+    item?.artifact_payload?.status || item?.status || "",
+  )
+    .trim()
+    .toLowerCase();
+  const lifecycleState = String(
+    item?.artifact_payload?.payload?.lifecycle_state ||
+      item?.artifact_payload?.lifecycle_state ||
+      "",
+  )
+    .trim()
+    .toLowerCase();
+  const kind = String(item?.kind || "").trim().toLowerCase();
+  return (
+    artifactGroup === "swings" &&
+    kind === "line" &&
+    itemStatus === "active" &&
+    lifecycleState === "awaiting_break"
+  );
+}
+
+function normalizeArtifactEventDirection(item = {}) {
+  return resolveArtifactEventDirection(item);
+}
+
+function latestArtifactEventTimeSec(item = {}) {
+  const eventTime = Number(item?.event_time);
+  if (Number.isFinite(eventTime) && eventTime > 0) return eventTime;
+  const anchorTime = Number(item?.anchor_time ?? item?.bar_end ?? item?.bar_start ?? item?.time);
+  return Number.isFinite(anchorTime) && anchorTime > 0 ? anchorTime : null;
+}
+
+function buildRecentArtifactEventsByTf({
+  artifactItemsByTf = {},
+  barsByTf = {},
+}) {
+  const output = {};
+  for (const [tfKeyRaw, itemsRaw] of Object.entries(artifactItemsByTf || {})) {
+    const tfKey = String(tfKeyRaw || "").trim().toLowerCase();
+    if (!tfKey) continue;
+    const items = Array.isArray(itemsRaw) ? itemsRaw : [];
+    const bars = Array.isArray(barsByTf?.[tfKey]) ? barsByTf[tfKey] : [];
+    const lastBarTime = Number(bars?.[bars.length - 1]?.time || 0);
+    const tfSeconds = Math.max(1, Number(timeframeToSeconds(tfKey)) || 60);
+    const recentCutoff = Number.isFinite(lastBarTime) && lastBarTime > 0
+      ? lastBarTime - tfSeconds * 1.25
+      : null;
+    const latestEvent = items
+      .filter((item) => item && item.is_event !== false)
+      .map((item) => ({
+        item,
+        eventTime: latestArtifactEventTimeSec(item),
+      }))
+      .filter(({ eventTime }) => Number.isFinite(eventTime))
+      .filter(({ eventTime }) => recentCutoff == null || eventTime >= recentCutoff)
+      .sort((left, right) => Number(right.eventTime) - Number(left.eventTime))[0];
+    if (!latestEvent) continue;
+    const item = latestEvent.item;
+    const markerText = artifactMarkerText(item);
+    const fullLabel = String(item?.label || item?.type || markerText).trim();
+    output[tfKey] = {
+      markerText,
+      fullLabel,
+      color: artifactColorForItem(item),
+      direction: normalizeArtifactEventDirection(item),
+      eventTime: latestEvent.eventTime,
+      title: `${displayTfLabel(tfKey)} ${fullLabel} at ${new Date(latestEvent.eventTime * 1000).toLocaleString()}`,
+    };
+  }
+  return output;
+}
+
 function limitArtifactObjectsNearLastBar(objects = [], bars = []) {
   const list = Array.isArray(objects) ? objects : [];
   const lastBar = Array.isArray(bars) && bars.length ? bars[bars.length - 1] : null;
   const lastClose = Number(lastBar?.close);
   if (!Number.isFinite(lastClose)) return list;
   const groups = new Map();
+  const keepIds = new Set();
   for (const item of list) {
+    if (!shouldCollapseArtifactHistory(item)) {
+      if (item?.id) keepIds.add(String(item.id));
+      continue;
+    }
     const key = artifactObjectTypeKey(item);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(item);
   }
-  const keepIds = new Set();
   for (const [groupKey, entries] of groups.entries()) {
-    const normalizedGroupKey = String(groupKey || "").trim().toLowerCase();
-    if (
-      normalizedGroupKey === "bos" ||
-      normalizedGroupKey === "choch" ||
-      normalizedGroupKey.startsWith("bos|") ||
-      normalizedGroupKey.startsWith("choch|")
-    ) {
-      entries.forEach((entry) => {
-        if (entry?.id) keepIds.add(String(entry.id));
-      });
-      continue;
-    }
     const ordered = [...entries].sort((a, b) => {
       const ta = artifactObjectReferenceTime(a) || 0;
       const tb = artifactObjectReferenceTime(b) || 0;
@@ -2663,17 +3542,6 @@ function TfHeader({
   const [busyAction, setBusyAction] = useState("");
   const [actionBusyLabel, setActionBusyLabel] = useState("");
   const [loadMoreBarsInput, setLoadMoreBarsInput] = useState("2000");
-
-  const htfBias = useMemo(() => {
-    const rawBias = context?.bias || analysisSnapshot?.htf_context?.bias;
-    if (!rawBias) return null;
-    const b = String(rawBias).toUpperCase();
-    if (b === "LONG" || b === "BULLISH")
-      return { label: "BULL", color: "#10b981" };
-    if (b === "SHORT" || b === "BEARISH")
-      return { label: "BEAR", color: "#ef4444" };
-    return { label: "NEUT", color: "var(--muted)" };
-  }, [context, analysisSnapshot]);
 
   const barStat = barsStatus?.[tf] || barsStatus?.[tf.toLowerCase()];
   const snapStat = snapshotStatus?.[tf] || snapshotStatus?.[tf.toLowerCase()];
@@ -3079,21 +3947,6 @@ function TfHeader({
           </span>
         </span>
       </button>
-      {htfBias && (
-        <span
-          style={{
-            fontSize: 9,
-            fontWeight: 800,
-            color: htfBias.color,
-            background: htfBias.color + "15",
-            padding: "0 4px",
-            borderRadius: 3,
-            border: `1px solid ${htfBias.color}30`,
-          }}
-        >
-          {htfBias.label}
-        </span>
-      )}
       {["cache", "replay"].includes(mode) && typeof onViewportNavigate === "function" ? (
         <div
           style={{
@@ -3530,7 +4383,6 @@ export default function SymbolChart({
 }) {
   const rootRef = useRef(null);
   const gridRef = useRef(null);
-  const timeframeMenuRef = useRef(null);
   const defaultModeValue = String(defaultMode || "live")
     .trim()
     .toLowerCase();
@@ -3556,7 +4408,6 @@ export default function SymbolChart({
   );
   const isStreamingMode = mode === "live";
   const [pendingMode, setPendingMode] = useState(null); // mode we're loading
-  const [timeframeMenuOpen, setTimeframeMenuOpen] = useState(false);
   const [lastError, setLastError] = useState(null);
   const [containerWidth, setContainerWidth] = useState(0);
   const [availableViewportGridHeight, setAvailableViewportGridHeight] =
@@ -3621,8 +4472,13 @@ export default function SymbolChart({
   );
   const [annotations, setAnnotations] = useState([]);
   const [artifactObjectsByChartId, setArtifactObjectsByChartId] = useState({});
+  const [rawArtifactObjectsByChartId, setRawArtifactObjectsByChartId] = useState({});
+  const [sharedEngineAnalysisByTf, setSharedEngineAnalysisByTf] = useState({});
+  const [sharedArtifactItemsByTf, setSharedArtifactItemsByTf] = useState({});
+  const [sharedTradePlansByTf, setSharedTradePlansByTf] = useState({});
   const [artifactGroupVisibility, setArtifactGroupVisibility] = useState({});
   const [artifactTfVisibility, setArtifactTfVisibility] = useState({});
+  const [artifactEventVisibility, setArtifactEventVisibility] = useState({});
   const [showStrategyMarkers, setShowStrategyMarkers] = useState(false);
   const [selectedObjectId, setSelectedObjectId] = useState(null);
   const [editObjects, setEditObjects] = useState(false);
@@ -3691,7 +4547,8 @@ export default function SymbolChart({
   }, [tradeSid, annotations]);
   const [forceRefresh, setForceRefresh] = useState(false);
   const [localReplayPlaying, setLocalReplayPlaying] = useState(false);
-  const [localReplaySpeedMs, setLocalReplaySpeedMs] = useState(500);
+  const [localReplaySpeedMs, setLocalReplaySpeedMs] = useState(100);
+  const [chartReplayCursorIndex, setChartReplayCursorIndex] = useState(-1);
   const [repairingTfKey, setRepairingTfKey] = useState("");
   const [viewports, setViewports] = useState({});
   const viewportsRef = useRef({});
@@ -3718,6 +4575,7 @@ export default function SymbolChart({
   const [liveBarsEnabled, setLiveBarsEnabled] = useState(
     shouldBootstrapLiveBars ? true : liveBars !== false,
   );
+  const [forceChartBootstrapLoad, setForceChartBootstrapLoad] = useState(false);
   const [hasCompletedLiveBarsBootstrap, setHasCompletedLiveBarsBootstrap] =
     useState(!shouldBootstrapLiveBars);
   const hasAutoExpandedBootstrapViewRef = useRef(false);
@@ -3807,6 +4665,7 @@ export default function SymbolChart({
     loadedMarketUiConfigRef.current = false;
     viewportAutoFitKeyRef.current = "";
     hasAutoExpandedBootstrapViewRef.current = false;
+    missingTfBackfillKeyRef.current = "";
     lastRenderableBarsByChartIdRef.current = {};
     setArtifactLoadStateByTf({});
     setLoadedTfs({});
@@ -3815,6 +4674,10 @@ export default function SymbolChart({
     setSavedTfViewportPrefs({});
     setAnnotations([]);
     setArtifactObjectsByChartId({});
+    setRawArtifactObjectsByChartId({});
+    setSharedEngineAnalysisByTf({});
+    setSharedArtifactItemsByTf({});
+    setSharedTradePlansByTf({});
     setArtifactGroupVisibility({});
     setSelectedObjectId(null);
     setActivePlanGroup("P1");
@@ -3907,6 +4770,9 @@ export default function SymbolChart({
         !Array.isArray(cfg.timeframes)
           ? cfg.timeframes
           : {};
+      const nextArtifactEventVisibility = normalizeArtifactEventVisibility(
+        cfg?.artifactEventVisibility,
+      );
       const nextSavedTfVisibleBars = {};
       const nextSavedTfViewportPrefs = {};
       loadedMarketUiConfigRef.current = true;
@@ -3938,6 +4804,7 @@ export default function SymbolChart({
       });
       setSavedTfVisibleBars(nextSavedTfVisibleBars);
       setSavedTfViewportPrefs(nextSavedTfViewportPrefs);
+      setArtifactEventVisibility(nextArtifactEventVisibility);
     };
     applyConfig(readLocalMarketUiConfig(cleanSym));
     api
@@ -4053,6 +4920,7 @@ export default function SymbolChart({
           : [],
     [normalizedSelectedTrade, normalizedTrades],
   );
+  const hasReplayCursor = chartReplayCursorIndex >= 0;
   const hasExternalReplayConfig = Boolean(backtestReplay?.enabled);
   const effectiveReplayConfig = hasExternalReplayConfig
     ? backtestReplay
@@ -4071,7 +4939,7 @@ export default function SymbolChart({
         currentTradeIndex: -1,
         totalTrades: 1,
         onSpeedChange: (nextSpeedMs) =>
-          setLocalReplaySpeedMs(Math.max(100, Number(nextSpeedMs) || 500)),
+          setLocalReplaySpeedMs(Math.max(100, Number(nextSpeedMs) || 100)),
         onToggle: () => setLocalReplayPlaying((prev) => !prev),
         onComplete: () => setLocalReplayPlaying(false),
       };
@@ -4083,8 +4951,8 @@ export default function SymbolChart({
   const replayActiveMode = hasExternalReplayConfig ? "cache" : REPLAY_MODE;
   const replayEnabledInChart = Boolean(
     effectiveReplayConfig?.enabled &&
-    effectiveReplayConfig?.playing &&
     activeMode === replayActiveMode &&
+    (effectiveReplayConfig?.playing || hasReplayCursor) &&
     (isTradeAnchoredReplay || !hasExternalReplayConfig),
   );
   const shouldLoadTradeFocusedData = Boolean(
@@ -4092,17 +4960,17 @@ export default function SymbolChart({
   );
   const tradeRunStartTimeSec = useMemo(
     () =>
-      showEventMarkers && normalizedTrades.length > 0
-        ? resolveTradeRunStartSec(normalizedTrades)
+      showEventMarkers && replayTrades.length > 0
+        ? resolveTradeRunStartSec(replayTrades)
         : null,
-    [normalizedTrades, showEventMarkers],
+    [replayTrades, showEventMarkers],
   );
   const tradeRunEndTimeSec = useMemo(
     () =>
-      showEventMarkers && normalizedTrades.length > 0
-        ? resolveTradeRunEndSec(normalizedTrades, Math.floor(Date.now() / 1000))
+      showEventMarkers && replayTrades.length > 0
+        ? resolveTradeRunEndSec(replayTrades, Math.floor(Date.now() / 1000))
         : null,
-    [normalizedTrades, showEventMarkers],
+    [replayTrades, showEventMarkers],
   );
   const selectedTradeViewportEndTimeSec = useMemo(() => {
     if (!anchorToTradeTime) return null;
@@ -4338,8 +5206,32 @@ export default function SymbolChart({
     requestedReplayEndTimeSec,
     requestedReplayStartTimeSec,
   ]);
+  const replayBufferedBarsTarget = useMemo(() => {
+    if (!hasExternalReplayConfig) return null;
+    const analyzedBars = Math.max(0, Number(effectiveReplayConfig?.barsAnalyzed) || 0);
+    const tfSeconds = Math.max(1, Number(replayPrimaryTfSeconds) || 60);
+    const bufferBars = Math.max(1, Math.ceil(replayBufferSeconds / tfSeconds));
+    if (analyzedBars <= 0) return null;
+    return analyzedBars + bufferBars;
+  }, [
+    effectiveReplayConfig?.barsAnalyzed,
+    hasExternalReplayConfig,
+    replayBufferSeconds,
+    replayPrimaryTfSeconds,
+  ]);
+  const replayManualBarsOverride = useMemo(() => {
+    if (!hasExternalReplayConfig) return Number(localBarsCount) || 0;
+    const localBars = Number(localBarsCount) || 0;
+    return localBars > SYMBOL_CHART_MIN_LOADED_BARS ? localBars : 0;
+  }, [hasExternalReplayConfig, localBarsCount]);
   const effectiveBarsCount =
-    replayEnabledInChart && Number.isFinite(Number(replayRequestedBarsCount))
+    replayEnabledInChart && hasExternalReplayConfig
+      ? Math.max(
+          Number(replayBufferedBarsTarget) || 0,
+          Number(replayRequestedBarsCount) || 0,
+          replayManualBarsOverride,
+        )
+      : replayEnabledInChart && Number.isFinite(Number(replayRequestedBarsCount))
       ? Math.max(
           SYMBOL_CHART_MIN_LOADED_BARS,
           Number(localBarsCount) || 0,
@@ -4372,14 +5264,22 @@ export default function SymbolChart({
         ? { ...effectiveBarsCountByTf }
         : {};
     const fallbackBars = Math.max(
-      SYMBOL_CHART_MIN_LOADED_BARS,
+      hasExternalReplayConfig && replayEnabledInChart
+        ? 0
+        : SYMBOL_CHART_MIN_LOADED_BARS,
       Number(effectiveBarsCount) || 0,
     );
     for (const tfKey of requestedDataTimeframes) {
       next[tfKey] = Math.max(Number(next?.[tfKey]) || 0, fallbackBars);
     }
     return Object.keys(next).length ? next : null;
-  }, [effectiveBarsCount, effectiveBarsCountByTf, requestedDataTimeframes]);
+  }, [
+    effectiveBarsCount,
+    effectiveBarsCountByTf,
+    hasExternalReplayConfig,
+    replayEnabledInChart,
+    requestedDataTimeframes,
+  ]);
 
   const replayFrozenChartDataRef = useRef(null);
   const frozenLiveBarsChartDataRef = useRef(null);
@@ -4387,7 +5287,8 @@ export default function SymbolChart({
   const [replaySeedCaptured, setReplaySeedCaptured] = useState(false);
   const isGenericChartReplay = isReplayMode && !hasExternalReplayConfig;
   const replayDisablesLive = isReplayMode || replayEnabledInChart;
-  const effectiveLiveBarsEnabled = liveBarsEnabled && !replayDisablesLive;
+  const effectiveLiveBarsEnabled =
+    (liveBarsEnabled || forceChartBootstrapLoad) && !replayDisablesLive;
   const canFreezeReplayChartData =
     isGenericChartReplay &&
     !externalChartData &&
@@ -4471,6 +5372,7 @@ export default function SymbolChart({
   } = resolvedChartData;
   const autoLoadKeyRef = useRef("");
   const backgroundRefreshKeyRef = useRef("");
+  const missingTfBackfillKeyRef = useRef("");
 
   const sortedTfs = useMemo(
     () => sortTimeframes(timeframes, "desc"),
@@ -4484,17 +5386,6 @@ export default function SymbolChart({
         : null;
     return buildClientChartMultiTfAnalysis(master?.bars, streamedAnalysis);
   }, [master?.analysis, master?.bars, replayDisablesLive]);
-  const analysisOrderedTfs = useMemo(() => {
-    const analysisKeys = Object.keys(
-      multiTfAnalysisByTf &&
-        typeof multiTfAnalysisByTf === "object" &&
-        !Array.isArray(multiTfAnalysisByTf)
-        ? multiTfAnalysisByTf
-        : {},
-    );
-    if (analysisKeys.length) return sortTimeframes(analysisKeys, "desc");
-    return sortedTfs;
-  }, [multiTfAnalysisByTf, sortedTfs]);
   const requestedSortedTfs = useMemo(
     () => sortTimeframes(requestedDataTimeframes, "desc"),
     [requestedDataTimeframes],
@@ -4529,6 +5420,37 @@ export default function SymbolChart({
       }),
     [master, sortedTfs],
   );
+  const requestedTfKeys = useMemo(
+    () =>
+      (Array.isArray(requestedSortedTfs) ? requestedSortedTfs : [])
+        .map((tf) => String(tf || "").trim().toLowerCase())
+        .filter(Boolean),
+    [requestedSortedTfs],
+  );
+  const hasAllRequestedBars = useMemo(() => {
+    if (!requestedTfKeys.length) return false;
+    return requestedTfKeys.every((tf) => {
+      const bars = Array.isArray(getTimeframeValue(master?.bars, tf))
+        ? getTimeframeValue(master?.bars, tf)
+        : [];
+      return bars.length > 0;
+    });
+  }, [master?.bars, requestedTfKeys]);
+  const hasAllRequestedSnapshots = useMemo(() => {
+    if (!requestedTfKeys.length) return false;
+    return requestedTfKeys.every((tf) => Boolean(getTimeframeValue(master?.snapshots, tf)));
+  }, [master?.snapshots, requestedTfKeys]);
+  const missingRequestedTfKeys = useMemo(
+    () =>
+      requestedTfKeys.filter((tf) => {
+        const hasBars = Array.isArray(getTimeframeValue(master?.bars, tf))
+          ? getTimeframeValue(master?.bars, tf).length > 0
+          : false;
+        const hasSnapshot = Boolean(getTimeframeValue(master?.snapshots, tf));
+        return !hasBars && !hasSnapshot;
+      }),
+    [master?.bars, master?.snapshots, requestedTfKeys],
+  );
   useEffect(() => {
     if (!shouldBootstrapLiveBars || hasCompletedLiveBarsBootstrap) return;
     if (!hasVisibleBars && primaryDebugLastBarSec <= 0) return;
@@ -4540,6 +5462,16 @@ export default function SymbolChart({
     primaryDebugLastBarSec,
     shouldBootstrapLiveBars,
   ]);
+  useEffect(() => {
+    if (!forceChartBootstrapLoad) return;
+    if (hasVisibleBars && (status === "READY" || status === "STALE")) {
+      setForceChartBootstrapLoad(false);
+      return;
+    }
+    if (status === "ERROR") {
+      setForceChartBootstrapLoad(false);
+    }
+  }, [forceChartBootstrapLoad, hasVisibleBars, status]);
   useEffect(() => {
     if (!cleanSym) {
       lastRenderableBarsByChartIdRef.current = {};
@@ -4554,6 +5486,9 @@ export default function SymbolChart({
       const barsForTf = getTimeframeValue(master?.bars, tfKey) || [];
       if (barsForTf.length > 0) {
         nextCache[chartId] = barsForTf;
+        changed = true;
+      } else if (Object.prototype.hasOwnProperty.call(nextCache, chartId)) {
+        delete nextCache[chartId];
         changed = true;
       }
     });
@@ -4616,80 +5551,31 @@ export default function SymbolChart({
     window.addEventListener("pointerdown", handlePointerDown);
     return () => window.removeEventListener("pointerdown", handlePointerDown);
   }, [showLiveDebugMenu]);
-  const normalizedSelectedTfs = useMemo(
-    () =>
-      sortTimeframes(
-        (Array.isArray(timeframes) ? timeframes : [])
-          .map((tf) =>
-            String(tf || "")
-              .trim()
-              .toLowerCase(),
-          )
-          .filter(Boolean),
-        "desc",
-      ),
-    [timeframes],
-  );
-  const activeTimeframePreset = useMemo(() => {
-    const selectedKey = normalizedSelectedTfs.join("|");
-    return (
-      (Array.isArray(timeframePresets) ? timeframePresets : []).find((preset) => {
-        const presetKey = sortTimeframes(
-          (Array.isArray(preset?.tfs) ? preset.tfs : [])
-            .map((tf) =>
-              String(tf || "")
-                .trim()
-                .toLowerCase(),
-            )
-            .filter(Boolean),
-          "desc",
-        ).join("|");
-        return presetKey && presetKey === selectedKey;
-      }) || null
-    );
-  }, [normalizedSelectedTfs, timeframePresets]);
-  const timeframeSummaryLabel = useMemo(() => {
-    if (activeTimeframePreset?.label) return activeTimeframePreset.label;
-    const labels = normalizedSelectedTfs.map((tf) => {
-      const matched = (Array.isArray(timeframeOptions) ? timeframeOptions : []).find(
-        (option) =>
-          String(option?.value || "")
-            .trim()
-            .toLowerCase() === tf,
-      );
-      return matched?.label || tf;
-    });
-    return labels.length ? labels.join(" / ") : "Select TFs";
-  }, [activeTimeframePreset, normalizedSelectedTfs, timeframeOptions]);
-  useEffect(() => {
-    if (!timeframeMenuOpen) return undefined;
-    const handlePointerDown = (event) => {
-      if (!timeframeMenuRef.current) return;
-      if (timeframeMenuRef.current.contains(event.target)) return;
-      setTimeframeMenuOpen(false);
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [timeframeMenuOpen]);
   const primaryReplayTf = useMemo(
     () => String(primaryReplayBaseTf || "").trim().toLowerCase(),
     [primaryReplayBaseTf],
   );
   const primaryReplayBars = useMemo(() => {
     if (!primaryReplayTf) return [];
-    return Array.isArray(master?.bars?.[primaryReplayTf])
-      ? master.bars[primaryReplayTf]
+    return Array.isArray(getTimeframeValue(master?.bars, primaryReplayTf))
+      ? getTimeframeValue(master?.bars, primaryReplayTf)
       : [];
   }, [master, primaryReplayTf]);
   const effectiveReplayStartTimeSec = useMemo(() => {
-    if (Number.isFinite(Number(requestedReplayStartTimeSec))) {
+    if (
+      requestedReplayStartTimeSec != null &&
+      Number.isFinite(Number(requestedReplayStartTimeSec))
+    ) {
       return Number(requestedReplayStartTimeSec);
     }
     const firstTime = Number(primaryReplayBars?.[0]?.time || 0);
     return Number.isFinite(firstTime) && firstTime > 0 ? firstTime : null;
   }, [primaryReplayBars, requestedReplayStartTimeSec]);
   const effectiveReplayEndTimeSec = useMemo(() => {
-    if (Number.isFinite(Number(requestedReplayEndTimeSec))) {
+    if (
+      requestedReplayEndTimeSec != null &&
+      Number.isFinite(Number(requestedReplayEndTimeSec))
+    ) {
       return Number(requestedReplayEndTimeSec);
     }
     const lastTime = Number(primaryReplayBars?.[primaryReplayBars.length - 1]?.time || 0);
@@ -4697,7 +5583,31 @@ export default function SymbolChart({
     return lastTime + Math.max(1, Number(replayPrimaryTfSeconds) || 1) - 1;
   }, [primaryReplayBars, replayPrimaryTfSeconds, requestedReplayEndTimeSec]);
   const isBacktestChartReplay = replayEnabledInChart;
-  const [chartReplayCursorIndex, setChartReplayCursorIndex] = useState(-1);
+  const effectiveMultiTfAnalysisByTf = useMemo(() => {
+    if (isBacktestChartReplay) {
+      return sharedEngineAnalysisByTf &&
+        typeof sharedEngineAnalysisByTf === "object" &&
+        !Array.isArray(sharedEngineAnalysisByTf)
+        ? sharedEngineAnalysisByTf
+        : {};
+    }
+    return multiTfAnalysisByTf &&
+      typeof multiTfAnalysisByTf === "object" &&
+      !Array.isArray(multiTfAnalysisByTf)
+      ? multiTfAnalysisByTf
+      : {};
+  }, [isBacktestChartReplay, multiTfAnalysisByTf, sharedEngineAnalysisByTf]);
+  const analysisOrderedTfs = useMemo(() => {
+    const analysisKeys = Object.keys(
+      effectiveMultiTfAnalysisByTf &&
+        typeof effectiveMultiTfAnalysisByTf === "object" &&
+        !Array.isArray(effectiveMultiTfAnalysisByTf)
+        ? effectiveMultiTfAnalysisByTf
+        : {},
+    );
+    if (analysisKeys.length) return sortTimeframes(analysisKeys, "desc");
+    return sortedTfs;
+  }, [effectiveMultiTfAnalysisByTf, sortedTfs]);
   const replayWindowIndices = useMemo(() => {
     if (!isBacktestChartReplay || !primaryReplayBars.length) {
       return {
@@ -4772,6 +5682,20 @@ export default function SymbolChart({
     setMode("cache");
   }, [effectiveReplayConfig]);
 
+  const handleStopReplay = useCallback(() => {
+    if (hasExternalReplayConfig) {
+      if (effectiveReplayConfig?.playing) {
+        effectiveReplayConfig?.onToggle?.();
+      }
+    } else {
+      setLocalReplayPlaying(false);
+    }
+    setChartReplayCursorIndex(-1);
+    setPendingMode(null);
+    setLastError(null);
+    setMode("cache");
+  }, [effectiveReplayConfig, hasExternalReplayConfig]);
+
   const enterReplayMode = useCallback(() => {
     setPendingMode(null);
     setLastError(null);
@@ -4815,7 +5739,7 @@ export default function SymbolChart({
 
   useEffect(() => {
     setChartReplayCursorIndex(-1);
-  }, [effectiveReplayConfig?.runKey, effectiveReplayConfig?.startTradeSid, isBacktestChartReplay]);
+  }, [effectiveReplayConfig?.runKey, effectiveReplayConfig?.startTradeSid]);
 
   useEffect(() => {
     if (!isBacktestChartReplay) return;
@@ -4828,10 +5752,9 @@ export default function SymbolChart({
     replayWindowIndices.startIndex,
   ]);
 
-  const hasReplayCursor = chartReplayCursorIndex >= 0;
-
   useEffect(() => {
     if (!isBacktestChartReplay) return;
+    if (!effectiveReplayConfig?.playing) return;
     if (!replayWindowIndices.ready) return;
     if (!hasReplayCursor) return;
     const lastReplayIndex = Math.max(0, replayWindowIndices.endIndex);
@@ -4865,6 +5788,7 @@ export default function SymbolChart({
     finalizeReplay,
     hasReplayCursor,
     isBacktestChartReplay,
+    effectiveReplayConfig?.playing,
     effectiveReplayConfig?.speedMs,
     replayWindowIndices.endIndex,
     replayWindowIndices.ready,
@@ -4952,6 +5876,10 @@ export default function SymbolChart({
     replayWindowIndices.ready,
     replayWindowIndices.startIndex,
   ]);
+  const replayCompletedBarsText = useMemo(() => {
+    if (!replayBarProgressText) return "";
+    return replayBarProgressText.replace(/\s+bars$/i, "");
+  }, [replayBarProgressText]);
   const activeReplayTrade = useMemo(() => {
     if (!isBacktestChartReplay) return null;
     if (!replayTrades.length) return null;
@@ -5020,16 +5948,11 @@ export default function SymbolChart({
         Number(effectiveClosedAtSec) > 0),
   );
   const effectiveCloseStatus = String(
-    hasExplicitClosedEvent
-      ? effectiveOverlayTrade?.closeStatus || closeStatus || ""
-      : "",
+    effectiveOverlayTrade?.closeStatus || closeStatus || "",
   );
-  const effectiveExitPrice = hasExplicitClosedEvent
-    ? effectiveOverlayTrade?.exitPrice ?? exitPrice
-    : null;
-  const effectivePnlRealized = hasExplicitClosedEvent
-    ? effectiveOverlayTrade?.pnlRealized ?? pnlRealized
-    : null;
+  const effectiveExitPrice = effectiveOverlayTrade?.exitPrice ?? exitPrice;
+  const effectivePnlRealized =
+    effectiveOverlayTrade?.pnlRealized ?? pnlRealized;
   const preferTradeAnchoredViewport = useMemo(() => {
     if (isBacktestChartReplay || !anchorToTradeTime) return false;
     return (
@@ -5071,6 +5994,163 @@ export default function SymbolChart({
   );
   const disableViewportPersistence = Boolean(
     anchorToTradeTime && !isBacktestChartReplay,
+  );
+  const replayBarsByTf = useMemo(() => {
+    if (!isBacktestChartReplay || !master?.bars) return {};
+    if (!Number.isFinite(effectiveReplayBarsClockTimeSec)) return {};
+    const output = {};
+    (sortedTfs || []).forEach((tfRaw) => {
+      const tf = String(tfRaw || "").trim().toLowerCase();
+      const barsForTf = Array.isArray(getTimeframeValue(master?.bars, tf))
+        ? getTimeframeValue(master?.bars, tf)
+        : [];
+      if (!barsForTf.length || !Number.isFinite(effectiveReplayBarsClockTimeSec)) return;
+      const replayBars = buildReplayBarsForTf({
+        bars: barsForTf,
+        baseBars: primaryReplayBars,
+        tf,
+        replayClockTimeSec: effectiveReplayBarsClockTimeSec,
+        replayStartTimeSec: effectiveReplayStartTimeSec,
+        maxBars: BACKTEST_REPLAY_MAX_BARS,
+      });
+      if (!Array.isArray(replayBars) || replayBars.length < 1) return;
+      output[tf] = replayBars;
+    });
+    return output;
+  }, [
+    effectiveReplayBarsClockTimeSec,
+    effectiveReplayStartTimeSec,
+    isBacktestChartReplay,
+    master?.bars,
+    primaryReplayBars,
+    sortedTfs,
+  ]);
+  const recentArtifactEventsByTf = useMemo(
+    () =>
+      buildRecentArtifactEventsByTf({
+        artifactItemsByTf: sharedArtifactItemsByTf,
+        barsByTf: isBacktestChartReplay ? replayBarsByTf : master?.bars,
+      }),
+    [sharedArtifactItemsByTf, isBacktestChartReplay, replayBarsByTf, master?.bars],
+  );
+  const clientStrategyTradePlansByTf = useMemo(() => {
+    const normalizedStrategies = (Array.isArray(chartStrategies) ? chartStrategies : [])
+      .filter(Boolean);
+    const barsByTfSource = isBacktestChartReplay ? replayBarsByTf : master?.bars;
+    if (!normalizedStrategies.length || !barsByTfSource) return {};
+    const output = {};
+    Object.entries(barsByTfSource || {}).forEach(([tfKey, barsRaw]) => {
+      const bars = Array.isArray(barsRaw) ? barsRaw : [];
+      if (bars.length < 2) return;
+      const evaluation = evaluateChartStrategies({
+        bars,
+        strategies: normalizedStrategies,
+        lookbackBars: bars.length,
+        symbol: cleanSym,
+        tf: tfKey,
+        multiTfBars: barsByTfSource,
+      });
+      const plans = Array.isArray(evaluation?.latestTradePlans)
+        ? evaluation.latestTradePlans
+        : Array.isArray(evaluation?.tradePlans)
+          ? evaluation.tradePlans
+          : [];
+      if (!plans.length) return;
+      output[String(tfKey || "").trim().toLowerCase()] = plans;
+    });
+    return output;
+  }, [chartStrategies, cleanSym, isBacktestChartReplay, master?.bars, replayBarsByTf]);
+  const effectiveBarsByTfForPlans = useMemo(
+    () => (isBacktestChartReplay ? replayBarsByTf : master?.bars || {}),
+    [isBacktestChartReplay, master?.bars, replayBarsByTf],
+  );
+  const effectiveTradePlansByTf = useMemo(() => {
+    const output = {};
+    const tfKeys = [
+      ...new Set([
+        ...Object.keys(sharedTradePlansByTf || {}),
+        ...Object.keys(clientStrategyTradePlansByTf || {}),
+        ...Object.keys(effectiveBarsByTfForPlans || {}),
+      ]),
+    ];
+    tfKeys.forEach((tfKeyRaw) => {
+      const tfKey = String(tfKeyRaw || "").trim().toLowerCase();
+      if (!tfKey) return;
+      const bars = Array.isArray(effectiveBarsByTfForPlans?.[tfKey])
+        ? effectiveBarsByTfForPlans[tfKey]
+        : [];
+      const merged = mergeHybridTradePlansForTf({
+        timeframe: tfKey,
+        bars,
+        serverPlans: Array.isArray(sharedTradePlansByTf?.[tfKey])
+          ? sharedTradePlansByTf[tfKey]
+          : [],
+        clientPlans: Array.isArray(clientStrategyTradePlansByTf?.[tfKey])
+          ? clientStrategyTradePlansByTf[tfKey]
+          : [],
+        serverCoverage:
+          master?.serverCoverageByTf?.[tfKey] &&
+          typeof master.serverCoverageByTf[tfKey] === "object"
+            ? master.serverCoverageByTf[tfKey]
+            : null,
+      });
+      if (Array.isArray(merged?.plans) && merged.plans.length) {
+        output[tfKey] = merged.plans;
+      }
+    });
+    return output;
+  }, [
+    clientStrategyTradePlansByTf,
+    effectiveBarsByTfForPlans,
+    master?.serverCoverageByTf,
+    sharedTradePlansByTf,
+  ]);
+  const flattenedEffectiveTradePlans = useMemo(
+    () =>
+      Object.values(effectiveTradePlansByTf || {})
+        .flatMap((plans) => (Array.isArray(plans) ? plans : []))
+        .sort(
+          (left, right) =>
+            Number(left?.start_bar || left?.bar_start || 0) -
+            Number(right?.start_bar || right?.bar_start || 0),
+        ),
+    [effectiveTradePlansByTf],
+  );
+  const effectiveAnalysisSnapshot = useMemo(() => {
+    const source =
+      analysisSnapshot && typeof analysisSnapshot === "object" && !Array.isArray(analysisSnapshot)
+        ? analysisSnapshot
+        : {};
+    const nextTradePlans = flattenedEffectiveTradePlans.length
+      ? flattenedEffectiveTradePlans
+      : Array.isArray(source?.trade_plan)
+        ? source.trade_plan
+        : Array.isArray(source?.trade_plans)
+          ? source.trade_plans
+          : [];
+    return {
+      ...source,
+      trade_plan: nextTradePlans,
+      trade_plans: nextTradePlans,
+      tradePlans: nextTradePlans,
+      market_analysis:
+        source?.market_analysis &&
+        typeof source.market_analysis === "object" &&
+        !Array.isArray(source.market_analysis)
+          ? source.market_analysis
+          : {},
+    };
+  }, [analysisSnapshot, flattenedEffectiveTradePlans]);
+  const effectiveHasTradePlan = Boolean(
+    (Array.isArray(effectiveAnalysisSnapshot?.trade_plan) &&
+      effectiveAnalysisSnapshot.trade_plan.length > 0) ||
+      flattenedEffectiveTradePlans.length > 0 ||
+      hasTradePlan,
+  );
+  const effectiveHasAnalysis = Boolean(
+    hasAnalysis ||
+      Object.keys(effectiveMultiTfAnalysisByTf || {}).length > 0 ||
+      Object.keys(artifactObjectsByChartId || {}).length > 0,
   );
 
   useEffect(() => {
@@ -5133,17 +6213,18 @@ export default function SymbolChart({
     }
     if (anchorToTradeTime && !isBacktestChartReplay) return;
     if (mode === "live" || pendingMode) return;
-    if (hasVisibleBars || hasVisibleSnapshots || status === "LOADING") return;
+    if (hasAllRequestedBars || hasAllRequestedSnapshots || status === "LOADING") return;
     const loadKey = [
       cleanSym,
       mode,
       chartSessionTradeSid,
       timeframes.join(","),
       localBarsCount,
+      missingRequestedTfKeys.join(","),
     ].join("|");
     if (autoLoadKeyRef.current === loadKey) return;
     autoLoadKeyRef.current = loadKey;
-    refresh({ force: true }).catch(() => {});
+    refresh().catch(() => {});
   }, [
     autoLoadOnMount,
     canFreezeReplayChartData,
@@ -5161,8 +6242,9 @@ export default function SymbolChart({
     localBarsCount,
     isCacheLikeMode,
     refresh,
-    hasVisibleBars,
-    hasVisibleSnapshots,
+    hasAllRequestedBars,
+    hasAllRequestedSnapshots,
+    missingRequestedTfKeys,
   ]);
 
   const autoHydrateCacheKeyRef = useRef("");
@@ -5187,7 +6269,7 @@ export default function SymbolChart({
     ].join("|");
     if (autoHydrateCacheKeyRef.current === cacheKey) return;
     autoHydrateCacheKeyRef.current = cacheKey;
-    refresh({ force: true }).catch(() => {});
+    refresh().catch(() => {});
   }, [
     cleanSym,
     canFreezeReplayChartData,
@@ -5229,7 +6311,7 @@ export default function SymbolChart({
     ].join("|");
     if (backgroundRefreshKeyRef.current === refreshKey) return;
     backgroundRefreshKeyRef.current = refreshKey;
-    refresh({ force: true }).catch(() => {});
+    refresh().catch(() => {});
   }, [
     cleanSym,
     canFreezeReplayChartData,
@@ -5247,6 +6329,54 @@ export default function SymbolChart({
     localBarsCount,
     refresh,
     hasVisibleBars,
+  ]);
+
+  useEffect(() => {
+    if (
+      (isReplayMode && canFreezeReplayChartData) ||
+      !autoLoadOnMount ||
+      !cleanSym ||
+      skipFetch ||
+      !isCacheLikeMode ||
+      mode === "live" ||
+      pendingMode ||
+      status === "LOADING"
+    ) {
+      return;
+    }
+    if (anchorToTradeTime && !isBacktestChartReplay) return;
+    if (!hasVisibleBars || !missingRequestedTfKeys.length) return;
+    const backfillKey = [
+      cleanSym,
+      mode,
+      chartSessionTradeSid,
+      localBarsCount,
+      missingRequestedTfKeys.join(","),
+    ].join("|");
+    if (missingTfBackfillKeyRef.current === backfillKey) return;
+    missingTfBackfillKeyRef.current = backfillKey;
+    Promise.all(
+      missingRequestedTfKeys.map((tf) =>
+        refreshTf?.(tf, { force: true }).catch(() => null),
+      ),
+    ).catch(() => {});
+  }, [
+    autoLoadOnMount,
+    cleanSym,
+    canFreezeReplayChartData,
+    isReplayMode,
+    anchorToTradeTime,
+    isBacktestChartReplay,
+    skipFetch,
+    isCacheLikeMode,
+    mode,
+    pendingMode,
+    status,
+    hasVisibleBars,
+    missingRequestedTfKeys,
+    chartSessionTradeSid,
+    localBarsCount,
+    refreshTf,
   ]);
 
   const prevStatus = useRef(status);
@@ -5430,7 +6560,7 @@ export default function SymbolChart({
   }, [selectedObject, activePlanGroup, selectedTradePlanGroup]);
 
   useEffect(() => {
-    if (!(hasTradePlan && hasAnalysis)) return;
+    if (!(effectiveHasTradePlan && effectiveHasAnalysis)) return;
     const incoming = String(selectedTradePlanGroup || "").toUpperCase();
     if (!incoming) return;
     const sameIncoming = lastIncomingPlanGroupRef.current === incoming;
@@ -5450,8 +6580,8 @@ export default function SymbolChart({
     }
   }, [
     selectedTradePlanGroup,
-    hasTradePlan,
-    hasAnalysis,
+    effectiveHasTradePlan,
+    effectiveHasAnalysis,
     annotations,
     selectedObjectId,
     activePlanGroup,
@@ -5619,24 +6749,24 @@ export default function SymbolChart({
 
   // Stable key for trade plan changes — only the fields the effect uses
   const tradePlanKey = useMemo(() => {
-    const plans = Array.isArray(analysisSnapshot?.trade_plan)
-      ? analysisSnapshot.trade_plan
-      : analysisSnapshot?.trade_plan &&
-          typeof analysisSnapshot.trade_plan === "object"
-        ? [analysisSnapshot.trade_plan]
+    const plans = Array.isArray(effectiveAnalysisSnapshot?.trade_plan)
+      ? effectiveAnalysisSnapshot.trade_plan
+      : effectiveAnalysisSnapshot?.trade_plan &&
+          typeof effectiveAnalysisSnapshot.trade_plan === "object"
+        ? [effectiveAnalysisSnapshot.trade_plan]
         : [];
     return plans
       .map((p) => [p?.entry, p?.tp, p?.sl, p?.direction].join("|"))
       .join("::");
-  }, [analysisSnapshot?.trade_plan]);
+  }, [effectiveAnalysisSnapshot?.trade_plan]);
 
   useEffect(() => {
-    if (!(hasTradePlan && hasAnalysis)) return;
-    const rawPlans = Array.isArray(analysisSnapshot?.trade_plan)
-      ? analysisSnapshot.trade_plan
-      : analysisSnapshot?.trade_plan &&
-          typeof analysisSnapshot.trade_plan === "object"
-        ? [analysisSnapshot.trade_plan]
+    if (!(effectiveHasTradePlan && effectiveHasAnalysis)) return;
+    const rawPlans = Array.isArray(effectiveAnalysisSnapshot?.trade_plan)
+      ? effectiveAnalysisSnapshot.trade_plan
+      : effectiveAnalysisSnapshot?.trade_plan &&
+          typeof effectiveAnalysisSnapshot.trade_plan === "object"
+        ? [effectiveAnalysisSnapshot.trade_plan]
         : [];
     if (!rawPlans.length) return;
     const fallbackEntry = fallbackEntryRef.current;
@@ -5704,7 +6834,7 @@ export default function SymbolChart({
       });
       return next;
     });
-  }, [hasTradePlan, hasAnalysis, tradePlanKey]);
+  }, [effectiveAnalysisSnapshot, effectiveHasAnalysis, effectiveHasTradePlan, tradePlanKey]);
   const selectedObjectTfPropsText = useMemo(() => {
     if (!selectedObject) return "";
     const parts = [];
@@ -5828,7 +6958,7 @@ export default function SymbolChart({
   useEffect(() => {
     if (pendingMode !== "cache" && pendingMode !== REPLAY_MODE) return;
     if (status === "LOADING") return;
-    refresh({ force: true }).catch(() => {});
+    refresh().catch(() => {});
   }, [pendingMode, status, refresh]);
 
   const handleCaptureSnapshots = useCallback(async () => {
@@ -6085,7 +7215,7 @@ export default function SymbolChart({
     fillViewportForFourCharts,
   ]);
 
-  const showControls = !(hasTradePlan && hasAnalysis);
+  const showControls = !(effectiveHasTradePlan && effectiveHasAnalysis);
   const replayProgressIndex = isTradeAnchoredReplay
     ? Number.isFinite(Number(effectiveReplayConfig?.currentTradeIndex)) &&
       Number(effectiveReplayConfig?.currentTradeIndex) >= 0
@@ -6135,8 +7265,8 @@ export default function SymbolChart({
     .trim()
     .toLowerCase();
   const showAnalysisHeaderLiveStatus = Boolean(
-    hasTradePlan &&
-      hasAnalysis &&
+    effectiveHasTradePlan &&
+      effectiveHasAnalysis &&
       !replayDisablesLive &&
       mode ===
         (normalizedAnalysisHeaderStatusMode === "cache" ? "cache" : "live"),
@@ -6310,94 +7440,196 @@ export default function SymbolChart({
   const artifactRequestKeyRef = useRef({});
   const artifactRequestSeqRef = useRef({});
   const replayArtifactLoadKeyRef = useRef("");
+  const artifactEngineStateRef = useRef(createClientReplayArtifactEngineState());
+  const applySharedArtifactEngine = useCallback(
+    (
+      barsByTf = {},
+      {
+        requestedTimeframes = null,
+        forceFull = false,
+      } = {},
+    ) => {
+      if (!cleanSym) return { envelopesByTf: {}, analysisByTf: {} };
+      const requestedTfs = Array.isArray(requestedTimeframes)
+        ? requestedTimeframes
+            .map((tf) => String(tf || "").trim().toLowerCase())
+            .filter(Boolean)
+        : Object.keys(
+            barsByTf && typeof barsByTf === "object" && !Array.isArray(barsByTf)
+              ? barsByTf
+              : {},
+          );
+      if (!requestedTfs.length) return { envelopesByTf: {}, analysisByTf: {} };
+      const fallbackAnalysis =
+        master?.analysis && typeof master.analysis === "object" && !Array.isArray(master.analysis)
+          ? master.analysis
+          : null;
+      const previousState = forceFull
+        ? createClientReplayArtifactEngineState()
+        : artifactEngineStateRef.current;
+      const { state: nextState, envelopesByTf, analysisByTf } =
+        updateClientReplayArtifactEngineState(previousState, barsByTf, {
+          requestedTimeframes: requestedTfs,
+          fallbackAnalysis,
+          fallbackWhenNull: true,
+          allowIncremental: !forceFull,
+        });
+      artifactEngineStateRef.current = nextState;
+      const nextObjectsByChartId = {};
+      const nextRawObjectsByChartId = {};
+      const nextLoadStateByTf = {};
+      const nextArtifactItemsByTf = {};
+      const nextTradePlansByTf = {};
+      requestedTfs.forEach((tfKey) => {
+        const bars = Array.isArray(barsByTf?.[tfKey]) ? barsByTf[tfKey] : [];
+        if (!bars.length) return;
+        const envelope = envelopesByTf?.[tfKey];
+        const serverArtifacts = Array.isArray(master?.serverArtifactsByTf?.[tfKey])
+          ? master.serverArtifactsByTf[tfKey]
+          : [];
+        const serverTradePlans = Array.isArray(master?.serverTradePlansByTf?.[tfKey])
+          ? master.serverTradePlansByTf[tfKey]
+          : [];
+        const serverCoverage =
+          master?.serverCoverageByTf?.[tfKey] &&
+          typeof master.serverCoverageByTf[tfKey] === "object"
+            ? master.serverCoverageByTf[tfKey]
+            : null;
+        const hybridArtifacts = mergeHybridArtifactItemsForTf({
+          timeframe: tfKey,
+          bars,
+          serverItems: serverArtifacts,
+          clientItems: Array.isArray(envelope?.items) ? envelope.items : [],
+          serverCoverage,
+        });
+        const mergedEnvelope = {
+          ...(envelope || {}),
+          items: Array.isArray(hybridArtifacts?.items) ? hybridArtifacts.items : [],
+          coverage: hybridArtifacts?.coverage || serverCoverage || null,
+          meta: {
+            ...(envelope?.meta || {}),
+            ...(hybridArtifacts?.meta || {}),
+            hybrid_source: serverArtifacts.length ? "server+client" : "client",
+          },
+        };
+        const chartId = `${cleanSym}-${tfKey}`;
+        const rawObjects = artifactEnvelopeToChartObjects(mergedEnvelope, tfKey);
+        const nextObjects = limitArtifactObjectsNearLastBar(
+          rawObjects,
+          bars,
+        ).map((item) => {
+          const groupKey = artifactGroupKeyForItem(item);
+          const storedVisible = artifactGroupVisibility?.[groupKey];
+          if (typeof storedVisible === "boolean") {
+            return { ...item, visible: storedVisible };
+          }
+          return item;
+        });
+        const nextRawObjects = rawObjects.map((item) => {
+          const groupKey = artifactGroupKeyForItem(item);
+          const storedVisible = artifactGroupVisibility?.[groupKey];
+          if (typeof storedVisible === "boolean") {
+            return { ...item, visible: storedVisible };
+          }
+          return item;
+        });
+        nextArtifactItemsByTf[tfKey] = Array.isArray(mergedEnvelope.items)
+          ? mergedEnvelope.items
+          : [];
+        nextTradePlansByTf[tfKey] = normalizeHybridTradePlans(
+          serverTradePlans,
+          tfKey,
+          serverCoverage,
+        );
+        nextObjectsByChartId[chartId] = nextObjects;
+        nextRawObjectsByChartId[chartId] = nextRawObjects;
+        nextLoadStateByTf[tfKey] = {
+          requestKey: [
+            cleanSym,
+            tfKey,
+            Number(bars.length) || 0,
+            Number(bars?.[0]?.time) || 0,
+            Number(bars?.[bars.length - 1]?.time) || 0,
+            forceFull ? "full" : "incremental",
+          ].join("|"),
+          itemCount: nextObjects.length,
+          loadedAt: Date.now(),
+          updateStrategy: String(nextState?.byTf?.[tfKey]?.strategy || (forceFull ? "full" : "incremental")),
+        };
+      });
+      setSharedEngineAnalysisByTf(
+        analysisByTf &&
+          typeof analysisByTf === "object" &&
+          !Array.isArray(analysisByTf)
+          ? analysisByTf
+          : {},
+      );
+      setSharedArtifactItemsByTf((prev) => ({
+        ...(prev || {}),
+        ...nextArtifactItemsByTf,
+      }));
+      setSharedTradePlansByTf((prev) => ({
+        ...(prev || {}),
+        ...nextTradePlansByTf,
+      }));
+      setArtifactObjectsByChartId((prev) => {
+        const next = { ...(prev || {}) };
+        for (const [chartId, items] of Object.entries(nextObjectsByChartId)) {
+          next[chartId] = items;
+        }
+        return next;
+      });
+      setRawArtifactObjectsByChartId((prev) => {
+        const next = { ...(prev || {}) };
+        for (const [chartId, items] of Object.entries(nextRawObjectsByChartId)) {
+          next[chartId] = items;
+        }
+        return next;
+      });
+      setArtifactLoadStateByTf((prev) => ({
+        ...(prev || {}),
+        ...nextLoadStateByTf,
+      }));
+      return { envelopesByTf, analysisByTf };
+    },
+    [
+      artifactGroupVisibility,
+      cleanSym,
+      master?.analysis,
+      master?.serverArtifactsByTf,
+      master?.serverCoverageByTf,
+      master?.serverTradePlansByTf,
+    ],
+  );
   const loadArtifactsForTf = useCallback(
     async (tf, { force = false, scope = "visible", replaceExisting = false } = {}) => {
       const tfKey = String(tf || "").trim().toLowerCase();
       if (!tfKey || !cleanSym) return null;
-      const chartId = `${cleanSym}-${tfKey}`;
-      const chartScopeKey = `${chartId}:${scope}`;
       const bars = Array.isArray(master?.bars?.[tfKey]) ? master.bars[tfKey] : [];
       if (!bars.length) return null;
-      const viewport = viewportsRef.current?.[chartId] || null;
-      const windowRange = resolveArtifactWindow(bars, viewport, tfKey, { scope });
-      if (!windowRange) return null;
-      const requestKey = [
-        cleanSym,
-        tfKey,
-        windowRange.startTime,
-        windowRange.endTime,
-        scope,
-        "client",
-        force ? "force" : "auto",
-      ].join("|");
-      if (!force && artifactRequestKeyRef.current[chartScopeKey] === requestKey) {
-        return null;
-      }
-      artifactRequestKeyRef.current[chartScopeKey] = requestKey;
-      const nextSeq = (artifactRequestSeqRef.current[chartScopeKey] || 0) + 1;
-      artifactRequestSeqRef.current[chartScopeKey] = nextSeq;
-      const scopedBars = bars.filter((bar) => {
-        const time = Number(bar?.time);
-        if (!Number.isFinite(time)) return false;
-        return time >= Number(windowRange.startTime) && time <= Number(windowRange.endTime);
-      });
-      const response = {
+      const response = applySharedArtifactEngine(
+        {
+          [tfKey]: bars,
+        },
+        {
+          requestedTimeframes: [tfKey],
+          forceFull: force || replaceExisting || scope === "loaded",
+        },
+      );
+      return {
         ok: true,
         symbol: cleanSym,
         timeframe: tfKey,
-        start_time: Number(windowRange.startTime) || null,
-        end_time: Number(windowRange.endTime) || null,
-        artifacts: buildClientChartArtifactEnvelope(scopedBars, tfKey, {
-          replaceExisting,
-        }),
+        start_time: Number(bars?.[0]?.time) || null,
+        end_time: Number(bars?.[bars.length - 1]?.time) || null,
+        artifacts:
+          response?.envelopesByTf?.[tfKey] ||
+          buildClientChartArtifactEnvelope(bars, tfKey, {
+            replaceExisting,
+          }),
       };
-      if (artifactRequestSeqRef.current[chartScopeKey] !== nextSeq) return null;
-      const artifacts = response?.artifacts;
-      const nextObjects = limitArtifactObjectsNearLastBar(
-        artifactEnvelopeToChartObjects(artifacts, tfKey),
-        bars,
-      ).map((item) => {
-        const groupKey = artifactGroupKeyForItem(item);
-        const storedVisible = artifactGroupVisibility?.[groupKey];
-        if (typeof storedVisible === "boolean") {
-          return { ...item, visible: storedVisible };
-        }
-        return item;
-      });
-      setArtifactObjectsByChartId((prev) => {
-        const current = prev?.[chartId] || [];
-        const resolvedObjects =
-          scope === "visible"
-            ? mergeViewportArtifactObjects(current, nextObjects)
-            : nextObjects;
-        const currentSig = JSON.stringify(current);
-        const nextSig = JSON.stringify(resolvedObjects);
-        if (currentSig === nextSig) return prev;
-        return { ...prev, [chartId]: resolvedObjects };
-      });
-      if (scope === "loaded") {
-        setArtifactLoadStateByTf((prev) => {
-          const nextLoadedAt = Date.now();
-          const previous = prev?.[tfKey];
-          if (
-            previous?.requestKey === requestKey &&
-            Number(previous?.itemCount) === nextObjects.length
-          ) {
-            return prev;
-          }
-          return {
-            ...(prev || {}),
-            [tfKey]: {
-              requestKey,
-              itemCount: nextObjects.length,
-              loadedAt: nextLoadedAt,
-            },
-          };
-        });
-      }
-      return response;
     },
-    [artifactGroupVisibility, cleanSym, master?.bars],
+    [applySharedArtifactEngine, cleanSym, master?.bars],
   );
 
   const handleRefreshTf = useCallback(
@@ -6732,6 +7964,35 @@ export default function SymbolChart({
       // Ignore fullscreen failures caused by browser permissions or unsupported contexts.
     }
   }, []);
+
+  const handleViewportActionAllTimeframes = useCallback(
+    (action) => {
+      const targetTfs = (expectedLoadedTfKeys.length ? expectedLoadedTfKeys : sortedTfs || [])
+        .map((tf) => String(tf || "").trim().toLowerCase())
+        .filter(Boolean);
+      if (!cleanSym || !targetTfs.length) return;
+      setViewportCommandByChartId((prev) => {
+        const next = { ...(prev || {}) };
+        const nonceBase = Date.now();
+        targetTfs.forEach((tfKey, index) => {
+          next[`${cleanSym}-${tfKey}`] = {
+            action: String(action || "").trim(),
+            nonce: nonceBase + index,
+          };
+        });
+        return next;
+      });
+    },
+    [cleanSym, expectedLoadedTfKeys, sortedTfs],
+  );
+
+  const handleCompactAllTimeframes = useCallback(() => {
+    handleViewportActionAllTimeframes("show_compact");
+  }, [handleViewportActionAllTimeframes]);
+
+  const handleEnlargeAllTimeframes = useCallback(() => {
+    handleViewportActionAllTimeframes("show_all_loaded");
+  }, [handleViewportActionAllTimeframes]);
 
   const handleRepairTf = useCallback(
     async (tf, opts = {}) => {
@@ -7136,53 +8397,44 @@ export default function SymbolChart({
   );
 
   useEffect(() => {
-    if (!isCacheLikeMode || !cleanSym || status === "LOADING" || !liveBarsEnabled) return undefined;
+    if (!isCacheLikeMode || !cleanSym || status === "LOADING") return undefined;
     if (isBacktestChartReplay || isReplayMode) return undefined;
     const timer = window.setTimeout(() => {
-      (sortedTfs || []).forEach((tf) => {
-        loadArtifactsForTf(tf, { force: false, scope: "visible" }).catch(() => {});
+      const barsByTf = {};
+      (requestedSortedTfs || []).forEach((tf) => {
+        const tfKey = String(tf || "").trim().toLowerCase();
+        const loadedBars = getTimeframeValue(master?.bars, tfKey);
+        if (Array.isArray(loadedBars) && loadedBars.length > 0) {
+          barsByTf[tfKey] = loadedBars;
+        }
+      });
+      if (!Object.keys(barsByTf).length) return;
+      applySharedArtifactEngine(barsByTf, {
+        requestedTimeframes: Object.keys(barsByTf),
+        forceFull: false,
       });
     }, ARTIFACT_AUTO_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [
+    applySharedArtifactEngine,
     cleanSym,
     isBacktestChartReplay,
     isReplayMode,
     isCacheLikeMode,
-    loadArtifactsForTf,
-    sortedTfs,
-    status,
-    master?.bars,
-    liveBarsEnabled,
-  ]);
-
-  useEffect(() => {
-    if (!isCacheLikeMode || !cleanSym || !liveBarsEnabled) return;
-    if (!(status === "READY" || status === "STALE")) return;
-    if (isBacktestChartReplay || isReplayMode) return;
-    (requestedSortedTfs || []).forEach((tf) => {
-      const tfKey = String(tf || "").trim().toLowerCase();
-      if (!tfKey) return;
-      if (!(Array.isArray(master?.bars?.[tfKey]) && master.bars[tfKey].length > 0)) return;
-      loadArtifactsForTf(tfKey, { force: false, scope: "loaded" }).catch(() => {});
-    });
-  }, [
-    cleanSym,
-    isCacheLikeMode,
-    isBacktestChartReplay,
-    isReplayMode,
-    loadArtifactsForTf,
     master?.bars,
     requestedSortedTfs,
     status,
-    liveBarsEnabled,
   ]);
 
   const handleRefreshChartsAndArtifacts = useCallback(async (opts = {}) => {
     const silent = opts?.silent === true;
     const summaryToast = opts?.summaryToast !== false;
+    const forceRefresh = opts?.force !== false;
     const targetTfs = Array.isArray(requestedSortedTfs) ? requestedSortedTfs : [];
     if (!targetTfs.length) return;
+    if (!liveBarsEnabled && !hasVisibleBars) {
+      setForceChartBootstrapLoad(true);
+    }
     await Promise.allSettled(
       targetTfs.map((tf) => {
         const tfKey = String(tf || "").trim().toLowerCase();
@@ -7197,7 +8449,7 @@ export default function SymbolChart({
                 ? Number(effectiveBarsCountByTf[tfKey])
                 : undefined;
         return handleRefreshTf(tfKey, {
-          force: true,
+          force: forceRefresh,
           silent,
           ...(Number.isFinite(requestedBars) && requestedBars > 0
             ? { bars: requestedBars }
@@ -7234,11 +8486,13 @@ export default function SymbolChart({
     effectiveBarsCountByTf,
     handleRefreshTf,
     loadArtifactsForTf,
+    liveBarsEnabled,
     manualTfVisibleBars,
     applyPostLoadRecenter,
     savedTfVisibleBars,
     requestedSortedTfs,
     showToast,
+    hasVisibleBars,
   ]);
 
   useEffect(() => {
@@ -7252,7 +8506,7 @@ export default function SymbolChart({
     ) {
       return;
     }
-    if (hasVisibleBars || hasVisibleSnapshots || status === "LOADING") return;
+    if (hasAllRequestedBars || hasAllRequestedSnapshots || status === "LOADING") return;
     const loadKey = [
       "fallback",
       cleanSym,
@@ -7260,10 +8514,12 @@ export default function SymbolChart({
       chartSessionTradeSid,
       timeframes.join(","),
       localBarsCount,
+      missingRequestedTfKeys.join(","),
     ].join("|");
     if (autoLoadKeyRef.current === loadKey) return;
     autoLoadKeyRef.current = loadKey;
     handleRefreshChartsAndArtifacts({
+      force: false,
       silent: true,
       summaryToast: false,
     }).catch(() => {});
@@ -7281,18 +8537,25 @@ export default function SymbolChart({
     status,
     timeframes,
     chartSessionTradeSid,
-    hasVisibleBars,
-    hasVisibleSnapshots,
+    hasAllRequestedBars,
+    hasAllRequestedSnapshots,
+    missingRequestedTfKeys,
   ]);
 
   const handleRecalcArtifacts = useCallback(async () => {
     const targetTfs = (Array.isArray(requestedSortedTfs) ? requestedSortedTfs : []).filter((tf) => {
       const tfKey = String(tf || "").trim().toLowerCase();
-      return Array.isArray(master?.bars?.[tfKey]) && master.bars[tfKey].length > 0;
+      const loadedBars = getTimeframeValue(master?.bars, tfKey);
+      return Array.isArray(loadedBars) && loadedBars.length > 0;
     });
     artifactRequestKeyRef.current = {};
     artifactRequestSeqRef.current = {};
+    artifactEngineStateRef.current = createClientReplayArtifactEngineState();
     setArtifactObjectsByChartId({});
+    setRawArtifactObjectsByChartId({});
+    setSharedEngineAnalysisByTf({});
+    setSharedArtifactItemsByTf({});
+    setSharedTradePlansByTf({});
     const results = await Promise.allSettled(
       targetTfs.map((tf) =>
         loadArtifactsForTf(tf, {
@@ -7330,14 +8593,22 @@ export default function SymbolChart({
     artifactRequestKeyRef.current = {};
     artifactRequestSeqRef.current = {};
     replayArtifactLoadKeyRef.current = "";
+    artifactEngineStateRef.current = createClientReplayArtifactEngineState();
     setArtifactObjectsByChartId({});
+    setSharedEngineAnalysisByTf({});
+    setSharedArtifactItemsByTf({});
+    setSharedTradePlansByTf({});
+    setArtifactEventVisibility({});
   }, [cleanSym]);
 
   const artifactPanelGroups = useMemo(() => {
     const groups = new Map();
     for (const [chartId, items] of Object.entries(artifactObjectsByChartId || {})) {
       for (const item of Array.isArray(items) ? items : []) {
-        if (!shouldShowArtifactSourceTf(item?.source_tf || item?.tf, "5m")) continue;
+        if (isSignalArtifactPanelItem(item)) continue;
+        if (!shouldShowArtifactOnChart(item, item?.source_tf || item?.tf, "5m")) {
+          continue;
+        }
         const groupKey = artifactGroupKeyForItem(item);
         const mapKey = String(groupKey || "other");
         if (!groups.has(mapKey)) {
@@ -7391,13 +8662,56 @@ export default function SymbolChart({
         Number(timeframeToSeconds(b.tfKey)) - Number(timeframeToSeconds(a.tfKey)),
     );
   }, [artifactObjectsByChartId, artifactTfVisibility]);
+  const artifactPanelEvents = useMemo(() => {
+    const groups = new Map();
+    for (const items of Object.values(artifactObjectsByChartId || {})) {
+      for (const item of Array.isArray(items) ? items : []) {
+        if (!item?.is_event) continue;
+        const eventKey = artifactMarkerText(item);
+        if (!eventKey) continue;
+        if (!groups.has(eventKey)) {
+          groups.set(eventKey, {
+            eventKey,
+            label: eventKey,
+            color: signalEventColorFromDirection(resolveArtifactEventDirection(item)),
+            direction: resolveArtifactEventDirection(item),
+            count: 0,
+            visible: false,
+            defaultVisible: defaultArtifactEventVisible(item),
+          });
+        }
+        const group = groups.get(eventKey);
+        const itemDirection = resolveArtifactEventDirection(item);
+        group.count += 1;
+        if (itemDirection === "sell") {
+          group.direction = "sell";
+          group.color = signalEventColorFromDirection("sell");
+        } else if (itemDirection === "buy" && group.direction !== "sell") {
+          group.direction = "buy";
+          group.color = signalEventColorFromDirection("buy");
+        }
+        const storedVisible = artifactEventVisibility?.[eventKey];
+        const nextVisible =
+          typeof storedVisible === "boolean"
+            ? storedVisible
+            : group.defaultVisible;
+        if (item?.visible !== false && nextVisible !== false) {
+          group.visible = true;
+        }
+      }
+    }
+    return Array.from(groups.values()).sort((a, b) =>
+      String(a.label || "").localeCompare(String(b.label || "")),
+    );
+  }, [artifactEventVisibility, artifactObjectsByChartId]);
 
   const strategyMarkerObjectsByTf = useMemo(() => {
     const normalizedStrategies = (Array.isArray(chartStrategies) ? chartStrategies : [])
       .filter(Boolean);
-    if (!normalizedStrategies.length || !master?.bars) return {};
+    const barsByTfSource = isBacktestChartReplay ? replayBarsByTf : master?.bars;
+    if (!normalizedStrategies.length || !barsByTfSource) return {};
     const output = {};
-    Object.entries(master.bars || {}).forEach(([tfKey, barsRaw]) => {
+    Object.entries(barsByTfSource || {}).forEach(([tfKey, barsRaw]) => {
       const bars = Array.isArray(barsRaw) ? barsRaw : [];
       if (bars.length < 2) return;
       const evaluation = evaluateChartStrategies({
@@ -7406,7 +8720,7 @@ export default function SymbolChart({
         lookbackBars: bars.length,
         symbol: cleanSym,
         tf: tfKey,
-        multiTfBars: master?.bars,
+        multiTfBars: barsByTfSource,
       });
       const hits = Array.isArray(evaluation?.matches) ? evaluation.matches : [];
       if (!hits.length) return;
@@ -7418,73 +8732,20 @@ export default function SymbolChart({
         .filter(Boolean);
     });
     return output;
-  }, [chartStrategies, cleanSym, master?.bars]);
-  const replayBarsByTf = useMemo(() => {
-    if (!isBacktestChartReplay || !master?.bars) return {};
-    if (!Number.isFinite(effectiveReplayBarsClockTimeSec)) return {};
-    const output = {};
-    (sortedTfs || []).forEach((tfRaw) => {
-      const tf = String(tfRaw || "").trim().toLowerCase();
-      const barsForTf = Array.isArray(master?.bars?.[tf]) ? master.bars[tf] : [];
-      if (!barsForTf.length || !Number.isFinite(effectiveReplayBarsClockTimeSec)) return;
-      const replayBars = buildReplayBarsForTf({
-        bars: barsForTf,
-        baseBars: primaryReplayBars,
-        tf,
-        replayClockTimeSec: effectiveReplayBarsClockTimeSec,
-        replayStartTimeSec: effectiveReplayStartTimeSec,
-        maxBars: BACKTEST_REPLAY_MAX_BARS,
-      });
-      if (!Array.isArray(replayBars) || replayBars.length < 1) return;
-      output[tf] = replayBars;
-    });
-    return output;
-  }, [
-    effectiveReplayBarsClockTimeSec,
-    effectiveReplayStartTimeSec,
-    isBacktestChartReplay,
-    master?.bars,
-    primaryReplayBars,
-    sortedTfs,
-  ]);
-  const replayArtifactLoadKey = useMemo(() => {
-    if (!isBacktestChartReplay) return "";
-    return (sortedTfs || [])
-      .map((tfRaw) => {
-        const tf = String(tfRaw || "").trim().toLowerCase();
-        const bars = Array.isArray(master?.bars?.[tf]) ? master.bars[tf] : [];
-        if (!tf || !bars.length) return "";
-        const firstTime = Number(bars[0]?.time) || 0;
-        const lastTime = Number(bars[bars.length - 1]?.time) || 0;
-        return `${tf}:${bars.length}:${firstTime}:${lastTime}`;
-      })
-      .filter(Boolean)
-      .join("|");
-  }, [isBacktestChartReplay, master?.bars, sortedTfs]);
-
+  }, [chartStrategies, cleanSym, isBacktestChartReplay, master?.bars, replayBarsByTf]);
   useEffect(() => {
-    if (!isBacktestChartReplay || !cleanSym || !replayArtifactLoadKey) return;
-    if (replayArtifactLoadKeyRef.current === replayArtifactLoadKey) return;
-    replayArtifactLoadKeyRef.current = replayArtifactLoadKey;
-    const targetTfs = (sortedTfs || [])
-      .map((tfRaw) => String(tfRaw || "").trim().toLowerCase())
-      .filter((tf) => Array.isArray(master?.bars?.[tf]) && master.bars[tf].length > 0);
+    if (!isBacktestChartReplay || !cleanSym) return;
+    const targetTfs = Object.keys(replayBarsByTf || {});
     if (!targetTfs.length) return;
-    Promise.allSettled(
-      targetTfs.map((tf) =>
-        loadArtifactsForTf(tf, {
-          force: true,
-          scope: "loaded",
-        }),
-      ),
-    ).catch(() => {});
+    applySharedArtifactEngine(replayBarsByTf, {
+      requestedTimeframes: targetTfs,
+      forceFull: false,
+    });
   }, [
+    applySharedArtifactEngine,
     cleanSym,
     isBacktestChartReplay,
-    loadArtifactsForTf,
-    master?.bars,
-    replayArtifactLoadKey,
-    sortedTfs,
+    replayBarsByTf,
   ]);
 
   const toggleArtifactGroupVisibility = useCallback((groupKey) => {
@@ -7529,6 +8790,28 @@ export default function SymbolChart({
       return { ...(prev || {}), [tfKey]: nextVisible };
     });
   }, [artifactPanelTimeframes]);
+  const toggleArtifactEventVisibility = useCallback((eventKey) => {
+    setArtifactEventVisibility((prev) => {
+      const current = prev?.[eventKey];
+      const fallbackVisible = artifactPanelEvents.find((group) => group.eventKey === eventKey)?.visible;
+      const nextVisible =
+        typeof current === "boolean"
+          ? !current
+          : !(typeof fallbackVisible === "boolean" ? fallbackVisible : true);
+      return { ...(prev || {}), [eventKey]: nextVisible };
+    });
+  }, [artifactPanelEvents]);
+  const isArtifactEventVisible = useCallback(
+    (item) => {
+      if (!item?.is_event) return true;
+      const eventKey = artifactMarkerText(item);
+      if (!eventKey) return true;
+      const storedVisible = artifactEventVisibility?.[eventKey];
+      if (typeof storedVisible === "boolean") return storedVisible;
+      return defaultArtifactEventVisible(item);
+    },
+    [artifactEventVisibility],
+  );
 
   const momentumLayerItems = useMemo(
     () =>
@@ -7650,6 +8933,7 @@ export default function SymbolChart({
     if (!canUseMarketUiConfig) return;
     setConfigSaveState("saving");
     const timeframeConfig = {};
+    const nextArtifactEventVisibility = {};
     const nextSavedTfVisibleBars = {};
     const nextSavedTfViewportPrefs = {};
     for (const tf of sortedTfs || []) {
@@ -7665,9 +8949,19 @@ export default function SymbolChart({
         nextSavedTfVisibleBars[chartId] = normalizedVisibleBars;
       }
     }
+    for (const group of artifactPanelEvents || []) {
+      const eventKey = String(group?.eventKey || "").trim();
+      if (!eventKey) continue;
+      const storedVisible = artifactEventVisibility?.[eventKey];
+      nextArtifactEventVisibility[eventKey] =
+        typeof storedVisible === "boolean"
+          ? storedVisible
+          : group?.defaultVisible !== false;
+    }
     const symbolConfig = {
       updatedAt: Date.now(),
       timeframes: timeframeConfig,
+      artifactEventVisibility: nextArtifactEventVisibility,
     };
     const nextMasterChartConfig = writeLocalMasterChartConfig({
       ...masterChartConfig,
@@ -7694,6 +8988,8 @@ export default function SymbolChart({
         window.setTimeout(() => setConfigSaveState(""), 1800);
       });
   }, [
+    artifactEventVisibility,
+    artifactPanelEvents,
     canUseMarketUiConfig,
     cleanSym,
     gridCols,
@@ -8238,175 +9534,16 @@ export default function SymbolChart({
           {typeof onTimeframesChange === "function" &&
           Array.isArray(timeframeOptions) &&
           timeframeOptions.length > 0 ? (
-            <div ref={timeframeMenuRef} style={{ position: "relative" }}>
-              <button
-                type="button"
-                className="secondary-button"
-                style={{
-                  minWidth: 120,
-                  height: "30px",
-                  padding: "0 10px",
-                  fontSize: "12px",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 8,
-                  borderColor: timeframeMenuOpen
-                    ? "rgba(34,211,238,0.45)"
-                    : "var(--border)",
-                  color: timeframeMenuOpen ? "#22d3ee" : "inherit",
-                  background: timeframeMenuOpen
-                    ? "rgba(34,211,238,0.10)"
-                    : undefined,
-                }}
-                onClick={() => setTimeframeMenuOpen((open) => !open)}
-                title="Chart timeframes"
-              >
-                <span>{timeframeSummaryLabel}</span>
-                <span style={{ fontSize: 10, opacity: 0.8 }}>▼</span>
-              </button>
-              {timeframeMenuOpen ? (
-                <div
-                  style={{
-                    position: "absolute",
-                    top: "calc(100% + 8px)",
-                    right: 0,
-                    width: 260,
-                    maxHeight: 420,
-                    overflowY: "auto",
-                    zIndex: 40,
-                    borderRadius: 14,
-                    border: "1px solid rgba(255,255,255,0.08)",
-                    background: "rgba(9,15,28,0.96)",
-                    boxShadow: "0 18px 48px rgba(0,0,0,0.28)",
-                    padding: 12,
-                  }}
-                >
-                  {Array.isArray(timeframePresets) && timeframePresets.length > 0 ? (
-                    <>
-                      <div
-                        style={{
-                          fontSize: 10,
-                          textTransform: "uppercase",
-                          letterSpacing: 0.08,
-                          color: "var(--muted)",
-                          marginBottom: 8,
-                        }}
-                      >
-                        Templates
-                      </div>
-                      <div style={{ display: "grid", gap: 6 }}>
-                        {timeframePresets.map((preset) => {
-                          const active = activeTimeframePreset?.value === preset.value;
-                          return (
-                            <button
-                              key={preset.value}
-                              type="button"
-                              className="secondary-button"
-                              style={{
-                                width: "100%",
-                                justifyContent: "flex-start",
-                                borderColor: active
-                                  ? "rgba(34,211,238,0.45)"
-                                  : "rgba(255,255,255,0.08)",
-                                color: active ? "#22d3ee" : "inherit",
-                                background: active
-                                  ? "rgba(34,211,238,0.10)"
-                                  : undefined,
-                              }}
-                              onClick={() => {
-                                const next = sortTimeframes(
-                                  (Array.isArray(preset?.tfs) ? preset.tfs : [])
-                                    .map((tf) =>
-                                      String(tf || "")
-                                        .trim()
-                                        .toLowerCase(),
-                                    )
-                                    .filter(Boolean),
-                                  "desc",
-                                );
-                                if (next.length) onTimeframesChange(next);
-                              }}
-                            >
-                              {preset.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                      <div
-                        style={{
-                          height: 1,
-                          background: "rgba(255,255,255,0.08)",
-                          margin: "12px 0",
-                        }}
-                      />
-                    </>
-                  ) : null}
-                  <div
-                    style={{
-                      fontSize: 10,
-                      textTransform: "uppercase",
-                      letterSpacing: 0.08,
-                      color: "var(--muted)",
-                      marginBottom: 8,
-                    }}
-                  >
-                    Individual TFs
-                  </div>
-                  <div
-                    style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 6,
-                    }}
-                  >
-                    {timeframeOptions.map((option) => {
-                      const optionValue = String(option?.value || "")
-                        .trim()
-                        .toLowerCase();
-                      const active = normalizedSelectedTfs.includes(optionValue);
-                      return (
-                        <button
-                          key={optionValue}
-                          type="button"
-                          className="secondary-button"
-                          style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            minWidth: 44,
-                            height: 28,
-                            padding: "0 10px",
-                            borderRadius: 999,
-                            borderColor: active
-                              ? "rgba(34,211,238,0.55)"
-                              : "rgba(255,255,255,0.12)",
-                            background: active
-                              ? "rgba(34,211,238,0.10)"
-                              : "rgba(15,23,42,0.55)",
-                            color: active ? "#22d3ee" : "inherit",
-                            fontSize: 11,
-                            fontWeight: 700,
-                          }}
-                          onClick={() => {
-                            const nextSet = new Set(normalizedSelectedTfs);
-                            if (nextSet.has(optionValue)) {
-                              if (nextSet.size === 1) return;
-                              nextSet.delete(optionValue);
-                            } else {
-                              nextSet.add(optionValue);
-                            }
-                            onTimeframesChange(sortTimeframes([...nextSet], "desc"));
-                          }}
-                        >
-                          {option?.label || optionValue}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : null}
-            </div>
+            <TimeframePresetPicker
+              selectedTfs={timeframes}
+              presetOptions={timeframePresets}
+              timeframeOptions={timeframeOptions}
+              align="right"
+              buttonMinWidth={120}
+              buttonHeight={30}
+              title="Chart timeframes"
+              onChange={(nextTfs) => onTimeframesChange(sortTimeframes(nextTfs, "desc"))}
+            />
           ) : null}
           {isCacheLikeMode && (
             <div style={{ position: "relative" }}>
@@ -8415,6 +9552,10 @@ export default function SymbolChart({
                 style={{
                   lineHeight: 1,
                   fontWeight: 700,
+                  minWidth: 38,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                   borderColor: showIndicatorsMenu
                     ? "rgba(34,211,238,0.45)"
                     : "var(--border)",
@@ -8425,8 +9566,9 @@ export default function SymbolChart({
                 }}
                 onClick={() => setShowIndicatorsMenu((open) => !open)}
                 title="Toggle layers, artifacts, and calculated indicators for all TF charts"
+                aria-label="Toggle layers, artifacts, and calculated indicators for all TF charts"
               >
-                Layers
+                <LayersIcon />
               </button>
               {showIndicatorsMenu && (
                 <div
@@ -8809,6 +9951,105 @@ export default function SymbolChart({
                           </div>
                         </>
                       ) : null}
+                      {activeLayersTab === "events" ? (
+                        <>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              gap: 8,
+                            }}
+                          >
+                            <div
+                              style={{
+                                fontSize: 11,
+                                fontWeight: 800,
+                                letterSpacing: "0.08em",
+                                color: "#94a3b8",
+                                textTransform: "uppercase",
+                              }}
+                            >
+                              Events
+                            </div>
+                            <div style={{ fontSize: 10, color: "#64748b" }}>
+                              {artifactPanelEvents.length
+                                ? `${artifactPanelEvents.length} types`
+                                : "No events loaded"}
+                            </div>
+                          </div>
+                          <div style={{ display: "grid", gap: 6 }}>
+                            {artifactPanelEvents.length ? (
+                              artifactPanelEvents.map(({ eventKey, label, color, count, visible }) => {
+                                const itemTitle = label;
+                                const itemDetails = `${count} item${count === 1 ? "" : "s"}`;
+                                return (
+                                  <label
+                                    key={eventKey}
+                                    style={{
+                                      display: "grid",
+                                      gridTemplateColumns: "18px 12px minmax(0, 1fr)",
+                                      gap: 12,
+                                      alignItems: "start",
+                                      padding: "6px 0",
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={visible}
+                                      onChange={() => toggleArtifactEventVisibility(eventKey)}
+                                      style={{ marginTop: 1 }}
+                                    />
+                                    <span
+                                      style={{
+                                        width: 8,
+                                        height: 8,
+                                        borderRadius: 999,
+                                        background: color,
+                                        border: `1px solid ${color}`,
+                                        display: "inline-block",
+                                        justifySelf: "center",
+                                        boxShadow: visible ? `0 0 0 3px ${color}22` : "none",
+                                      }}
+                                    />
+                                    <span style={{ minWidth: 0 }}>
+                                      <div
+                                        style={{
+                                          fontSize: 12,
+                                          color: visible ? "#e2e8f0" : "#64748b",
+                                          whiteSpace: "nowrap",
+                                          overflow: "hidden",
+                                          textOverflow: "ellipsis",
+                                        }}
+                                        title={itemTitle}
+                                      >
+                                        {itemTitle}
+                                      </div>
+                                      <div
+                                        style={{
+                                          display: "grid",
+                                          gap: 2,
+                                          fontSize: 9,
+                                          color: visible ? "#94a3b8" : "#475569",
+                                          lineHeight: 1.3,
+                                        }}
+                                      >
+                                        <div>{itemDetails}</div>
+                                      </div>
+                                    </span>
+                                  </label>
+                                );
+                              })
+                            ) : (
+                              <div style={{ fontSize: 11, color: "#64748b", padding: "2px 0 8px" }}>
+                                Event markers appear here after artifacts are loaded for the visible chart
+                                windows.
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      ) : null}
                       {activeLayersTab === "momentum" ? (
                         <>
                           <div
@@ -8933,6 +10174,101 @@ export default function SymbolChart({
                           })}
                         </>
                       ) : null}
+                      {activeLayersTab === "debug" ? (
+                        <>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              gap: 8,
+                            }}
+                          >
+                            <div
+                              style={{
+                                fontSize: 11,
+                                fontWeight: 800,
+                                letterSpacing: "0.08em",
+                                color: "#94a3b8",
+                                textTransform: "uppercase",
+                              }}
+                            >
+                              Live Debug
+                            </div>
+                            <div style={{ fontSize: 10, color: "#64748b" }}>
+                              {String(cleanSym || symbol || "").toUpperCase()} · {displayTfLabel(primaryDebugTf || "1m")}
+                            </div>
+                          </div>
+                          <div style={{ display: "grid", gap: 8 }}>
+                            {liveDebugRows.map((row) => {
+                              const tone = debugTone(row.active, row.warning);
+                              return (
+                                <div
+                                  key={row.key}
+                                  style={{
+                                    display: "grid",
+                                    gridTemplateColumns: "10px minmax(0, 1fr)",
+                                    gap: 10,
+                                    padding: "8px 10px",
+                                    borderRadius: 10,
+                                    border: "1px solid rgba(255,255,255,0.06)",
+                                    background: "rgba(255,255,255,0.02)",
+                                  }}
+                                >
+                                  <span
+                                    style={{
+                                      width: 8,
+                                      height: 8,
+                                      marginTop: 4,
+                                      borderRadius: 999,
+                                      background: tone,
+                                      boxShadow: `0 0 0 3px ${tone}22`,
+                                    }}
+                                  />
+                                  <div style={{ minWidth: 0 }}>
+                                    <div
+                                      style={{
+                                        fontSize: 11,
+                                        fontWeight: 800,
+                                        color: "#e2e8f0",
+                                      }}
+                                    >
+                                      {row.label}
+                                    </div>
+                                    <div
+                                      style={{
+                                        marginTop: 2,
+                                        fontSize: 11,
+                                        lineHeight: 1.4,
+                                        color: "#94a3b8",
+                                        wordBreak: "break-word",
+                                      }}
+                                    >
+                                      {row.detail}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                            {liveDebugHealthError ? (
+                              <div
+                                style={{
+                                  padding: "8px 10px",
+                                  borderRadius: 10,
+                                  border: "1px solid rgba(239,68,68,0.18)",
+                                  background: "rgba(127,29,29,0.2)",
+                                  color: "#fca5a5",
+                                  fontSize: 11,
+                                  lineHeight: 1.45,
+                                  wordBreak: "break-word",
+                                }}
+                              >
+                                Health check error: {liveDebugHealthError}
+                              </div>
+                            ) : null}
+                          </div>
+                        </>
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -8941,159 +10277,30 @@ export default function SymbolChart({
           )}
           {isCacheLikeMode && (
             <>
-              <div ref={liveDebugMenuRef} style={{ position: "relative" }}>
-                <button
-                  className="secondary-button"
-                  type="button"
-                  onClick={() => setShowLiveDebugMenu((open) => !open)}
-                  title="Inspect live/socket/cron auto-update pipeline for this symbol"
-                  style={{
-                    fontWeight: 700,
-                    minWidth: 32,
-                    color: showLiveDebugMenu ? "#22d3ee" : "#94a3b8",
-                    borderColor: showLiveDebugMenu
-                      ? "rgba(34,211,238,0.45)"
-                      : "rgba(148,163,184,0.28)",
-                    background: showLiveDebugMenu
-                      ? "rgba(34,211,238,0.12)"
-                      : "rgba(15,23,42,0.58)",
-                  }}
-                >
-                  Debug
-                </button>
-                {showLiveDebugMenu ? (
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: "calc(100% + 8px)",
-                      right: 0,
-                      width: 360,
-                      maxWidth: "min(360px, calc(100vw - 24px))",
-                      zIndex: 55,
-                      borderRadius: 14,
-                      border: "1px solid rgba(255,255,255,0.08)",
-                      background: "rgba(9,15,28,0.97)",
-                      boxShadow: "0 18px 48px rgba(0,0,0,0.32)",
-                      padding: 12,
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: 10,
-                        marginBottom: 10,
-                      }}
-                    >
-                      <div style={{ minWidth: 0 }}>
-                        <div
-                          style={{
-                            fontSize: 12,
-                            fontWeight: 800,
-                            letterSpacing: "0.1em",
-                            color: "#e2e8f0",
-                          }}
-                        >
-                          LIVE DEBUG
-                        </div>
-                        <div
-                          style={{
-                            marginTop: 2,
-                            fontSize: 11,
-                            color: "#94a3b8",
-                          }}
-                        >
-                          {String(cleanSym || symbol || "").toUpperCase()} · {displayTfLabel(primaryDebugTf || "1m")}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setShowLiveDebugMenu(false)}
-                        title="Close live debug"
-                        style={{
-                          border: "none",
-                          background: "transparent",
-                          color: "#94a3b8",
-                          cursor: "pointer",
-                          lineHeight: 1,
-                          padding: 0,
-                        }}
-                      >
-                        x
-                      </button>
-                    </div>
-                    <div style={{ display: "grid", gap: 8 }}>
-                      {liveDebugRows.map((row) => {
-                        const tone = debugTone(row.active, row.warning);
-                        return (
-                          <div
-                            key={row.key}
-                            style={{
-                              display: "grid",
-                              gridTemplateColumns: "10px minmax(0, 1fr)",
-                              gap: 10,
-                              padding: "8px 10px",
-                              borderRadius: 10,
-                              border: "1px solid rgba(255,255,255,0.06)",
-                              background: "rgba(255,255,255,0.02)",
-                            }}
-                          >
-                            <span
-                              style={{
-                                width: 8,
-                                height: 8,
-                                marginTop: 4,
-                                borderRadius: 999,
-                                background: tone,
-                                boxShadow: `0 0 0 3px ${tone}22`,
-                              }}
-                            />
-                            <div style={{ minWidth: 0 }}>
-                              <div
-                                style={{
-                                  fontSize: 11,
-                                  fontWeight: 800,
-                                  color: "#e2e8f0",
-                                }}
-                              >
-                                {row.label}
-                              </div>
-                              <div
-                                style={{
-                                  marginTop: 2,
-                                  fontSize: 11,
-                                  lineHeight: 1.4,
-                                  color: "#94a3b8",
-                                  wordBreak: "break-word",
-                                }}
-                              >
-                                {row.detail}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                      {liveDebugHealthError ? (
-                        <div
-                          style={{
-                            padding: "8px 10px",
-                            borderRadius: 10,
-                            border: "1px solid rgba(239,68,68,0.18)",
-                            background: "rgba(127,29,29,0.2)",
-                            color: "#fca5a5",
-                            fontSize: 11,
-                            lineHeight: 1.45,
-                            wordBreak: "break-word",
-                          }}
-                        >
-                          Health check error: {liveDebugHealthError}
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={handleCompactAllTimeframes}
+                title="Make all loaded timeframe charts smaller"
+                style={{
+                  fontWeight: 700,
+                  minWidth: 38,
+                }}
+              >
+                .
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={handleEnlargeAllTimeframes}
+                title="Enlarge all loaded timeframe charts"
+                style={{
+                  fontWeight: 700,
+                  minWidth: 38,
+                }}
+              >
+                <ViewportNavIcon action="show_all_loaded" />
+              </button>
               <button
                 className="secondary-button"
                 type="button"
@@ -9107,24 +10314,20 @@ export default function SymbolChart({
                   background: "#60a5fa22",
                 }}
               >
-                Refresh
-              </button>
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={handleManualChartFix}
-                title="If you panned left beyond the first loaded bar, load older history for those charts; otherwise just re-draw and re-apply viewport/lines"
-                style={{
-                fontWeight: 700,
-                minWidth: 38,
-              }}
-              >
-                <ViewportNavIcon action="fit_trade" />
+                <RefreshIcon />
               </button>
             </>
           )}
           {(mode === "cache" || mode === REPLAY_MODE) && effectiveReplayConfig?.enabled ? (
             <>
+              {replayCompletedBarsText ? (
+                <span
+                  className="minor-text"
+                  title="Completed bars / total bars in this replay window"
+                >
+                  {replayCompletedBarsText}
+                </span>
+              ) : null}
               {replayClockLabel ? (
                 <span
                   className="minor-text"
@@ -9174,8 +10377,39 @@ export default function SymbolChart({
                     ? "Pause replay for this chart set"
                     : "Start replay for this chart set"
                 }
+                aria-label={
+                  effectiveReplayConfig?.playing
+                    ? "Pause replay for this chart set"
+                    : "Start replay for this chart set"
+                }
+                style={{
+                  minWidth: 38,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
               >
-                {effectiveReplayConfig?.playing ? "Pause" : "Replay"}
+                {effectiveReplayConfig?.playing ? (
+                  <ReplayPauseIcon />
+                ) : (
+                  <ReplayPlayIcon />
+                )}
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={handleStopReplay}
+                disabled={!hasReplayCursor && !effectiveReplayConfig?.playing}
+                title="Stop replay and reset to the first bar"
+                aria-label="Stop replay and reset to the first bar"
+                style={{
+                  minWidth: 38,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <ReplayStopIcon />
               </button>
             </>
           ) : null}
@@ -9273,7 +10507,9 @@ export default function SymbolChart({
                     : barsForTf
                   : tradeChartBarsForTf;
               const fallbackRenderableBars =
-                !isLive && !isBacktestChartReplay
+                !isLive &&
+                !isBacktestChartReplay &&
+                status === "LOADING"
                   ? lastRenderableBarsByChartIdRef.current[chartId] || []
                   : [];
               const barsToRender =
@@ -9420,8 +10656,10 @@ export default function SymbolChart({
                   ...a,
                   label: formatObjectLabel(a.type, a.label || ""),
                 }));
+              const currentArtifactObjectsByChartId =
+                mode === "svg" ? rawArtifactObjectsByChartId : artifactObjectsByChartId;
               const artifactObjects = Object.entries(
-                artifactObjectsByChartId || {},
+                currentArtifactObjectsByChartId || {},
               ).flatMap(([sourceChartId, itemsRaw]) => {
                 const items = Array.isArray(itemsRaw) ? itemsRaw : [];
                 if (!items.length) return [];
@@ -9435,19 +10673,64 @@ export default function SymbolChart({
                     .join("-")
                     .trim()
                     .toLowerCase();
-                if (!shouldShowArtifactSourceTf(sourceTf, tf)) return [];
-                return items.map((item) => ({
-                  ...item,
-                  color: artifactTimeframeColor(
-                    item?.source_tf || item?.tf || sourceTf,
-                  ),
-                })).filter((item) => {
+                return items
+                  .filter((item) =>
+                    shouldShowArtifactOnChart(
+                      item,
+                      item?.source_tf || item?.tf || sourceTf,
+                      tf,
+                    ),
+                  )
+                  .map((item) => ({
+                    ...item,
+                    visible:
+                      mode === "svg" && isActiveSwingArtifactObject(item)
+                        ? true
+                        : item?.visible,
+                    color: artifactTimeframeColor(
+                      item?.source_tf || item?.tf || sourceTf,
+                    ),
+                  }))
+                  .filter((item) => {
+                    if (mode === "svg" && isActiveSwingArtifactObject(item)) return true;
                   const itemTfKey = artifactSourceTfLabel(
                     item?.source_tf || item?.tf || sourceTf,
                   );
                   if (!itemTfKey) return true;
-                  return artifactTfVisibility?.[itemTfKey] !== false;
-                });
+                  return (
+                    artifactTfVisibility?.[itemTfKey] !== false &&
+                    isArtifactEventVisible(item)
+                  );
+                  });
+              });
+              const svgSummaryObjects =
+                mode === "svg"
+                  ? buildSvgSummaryObjectsFromAnalysisEntry(
+                      effectiveMultiTfAnalysisByTf?.[String(tf).toLowerCase()] || {},
+                      tf,
+                    ).filter((item) => {
+                      const itemTfKey = artifactSourceTfLabel(
+                        item?.source_tf || item?.tf || tf,
+                      );
+                      if (!itemTfKey) return true;
+                      return (
+                        artifactTfVisibility?.[itemTfKey] !== false &&
+                        isArtifactEventVisible(item)
+                      );
+                    })
+                  : [];
+              const phaseTargetBoundaryObjects = buildPhaseTargetBoundaryObjects(
+                effectiveMultiTfAnalysisByTf?.[String(tf).toLowerCase()] || {},
+                tf,
+              ).filter((item) => {
+                const itemTfKey = artifactSourceTfLabel(
+                  item?.source_tf || item?.tf || tf,
+                );
+                if (!itemTfKey) return true;
+                return (
+                  artifactTfVisibility?.[itemTfKey] !== false &&
+                  isArtifactEventVisible(item)
+                );
               });
               const strategyMarkerObjects =
                 showStrategyMarkers &&
@@ -9458,6 +10741,8 @@ export default function SymbolChart({
                 ? [
                     ...strategyMarkerObjects,
                     ...artifactObjects,
+                    ...phaseTargetBoundaryObjects,
+                    ...svgSummaryObjects,
                     ...annotationObjects,
                   ]
                     .map((item) => projectArtifactObjectForReplay(item, replayCurrentBarTimeSec))
@@ -9468,6 +10753,8 @@ export default function SymbolChart({
                 : [
                     ...strategyMarkerObjects,
                     ...artifactObjects,
+                    ...phaseTargetBoundaryObjects,
+                    ...svgSummaryObjects,
                     ...annotationObjects,
                   ];
               const isActiveTf = activeChartId === chartId;
@@ -9506,7 +10793,7 @@ export default function SymbolChart({
                     renderedBars={barsToRender}
                     viewport={tfViewport}
                         mode={mode}
-                    analysisSnapshot={analysisSnapshot}
+                    analysisSnapshot={effectiveAnalysisSnapshot}
                     barsStatus={barsStatus}
                     snapshotStatus={snapshotStatus}
                     onRefreshTf={isCacheLikeMode ? handleRefreshTf : null}
@@ -9521,11 +10808,12 @@ export default function SymbolChart({
                     showLiveStatus={!showAnalysisHeaderLiveStatus && !replayDisablesLive}
                     liveStatusMode={analysisHeaderStatusMode}
                   />
-                  {!replayDisablesLive ? (
+                  {Object.keys(effectiveMultiTfAnalysisByTf || {}).length > 0 ? (
                     <RealtimeTfAnalysisOverlay
-                      analysisByTf={multiTfAnalysisByTf}
+                      analysisByTf={effectiveMultiTfAnalysisByTf}
                       orderedTfs={analysisOrderedTfs}
                       activeTf={tf}
+                      recentEventsByTf={recentArtifactEventsByTf}
                     />
                   ) : null}
                   {isLive ? (
@@ -9698,7 +10986,7 @@ export default function SymbolChart({
                         exitPrice={showEventMarkers ? effectiveExitPrice : null}
                         pnlRealized={showEventMarkers ? effectivePnlRealized : null}
                         trades={
-                          showEventMarkers ? normalizedTrades : []
+                          showEventMarkers ? replayTrades : []
                         }
                         selectedTradeSid={effectiveTradeSid}
                         barsCount={initialVisibleBars}
@@ -9706,6 +10994,7 @@ export default function SymbolChart({
                         showLegend={false}
                         showIndicators={true}
                         indicatorVisibilityConfig={indicatorVisibility}
+                        sharedObjects={sharedChartObjects}
                       />
                     </div>
                   ) : hasBars ? (
@@ -9719,7 +11008,7 @@ export default function SymbolChart({
                         historicalData={barsToRender}
                         visibleBarsCount={initialVisibleBars}
                         height={chartHeight}
-                        analysisSnapshot={analysisSnapshot || null}
+                        analysisSnapshot={effectiveAnalysisSnapshot || null}
                         entryPrice={
                           overlays.plan1 && tradeObjectsVisible ? effectiveEntryPrice : null
                         }
@@ -9763,15 +11052,15 @@ export default function SymbolChart({
                             : null
                         }
                         closeStatus={
-                          showEventMarkers && closedMarkerVisible ? effectiveCloseStatus : ""
+                          showEventMarkers ? effectiveCloseStatus : ""
                         }
                         exitPrice={
-                          showEventMarkers && closedMarkerVisible ? effectiveExitPrice : null
+                          showEventMarkers ? effectiveExitPrice : null
                         }
                         pnlRealized={showEventMarkers ? effectivePnlRealized : null}
                         tradeLabel={effectiveTradeLabel}
                         trades={
-                          showEventMarkers ? normalizedTrades : []
+                          showEventMarkers ? replayTrades : []
                         }
                         selectedTradeSid={effectiveTradeSid}
                         animateTradeViewport={
@@ -9782,12 +11071,6 @@ export default function SymbolChart({
                         preferTradeAnchoredViewport={preferTradeAnchoredViewport}
                         showPrimaryPlan={overlays.plan1}
                         showExtraPlans={overlays.plan2}
-                        showPdArrays={
-                          isBacktestChartReplay ? false : overlays.pdArrays
-                        }
-                        showKeyLevels={
-                          isBacktestChartReplay ? false : overlays.keyLevels
-                        }
                         onPlanLevelChange={onPlanLevelChange}
                         syncedCrosshair={
                           isCacheLikeMode ? syncedCrosshair : null
