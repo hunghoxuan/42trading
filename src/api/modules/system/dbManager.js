@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const { URL } = require("url");
 const pg = require("pg");
+const { DatabaseSync } = require("node:sqlite");
 
 const { Pool } = pg;
 const pools = new Map();
@@ -154,6 +155,11 @@ function readConnections(projectRoot, options = {}) {
   const envPath =
     options.envPath || path.join(projectRoot, "src", "api", ".env");
   const env = loadEnvFile(envPath);
+  const configuredStorageBackend = String(
+    options.activeStorageBackend || env.MT5_STORAGE || "",
+  )
+    .trim()
+    .toLowerCase();
   const connections = [];
   const seenIds = new Set();
   const addConnection = (conn) => {
@@ -189,22 +195,31 @@ function readConnections(projectRoot, options = {}) {
     note: "From src/api/.env MT5_POSTGRES_URL_REMOTE",
   });
 
-  const configuredActivePostgresUrl = String(
-    options.activePostgresUrl || env.MT5_POSTGRES_URL || "",
-  ).trim();
-  if (configuredActivePostgresUrl) {
-    addConnection({
-      id: "active",
-      name: "Active DB",
-      connectionString: configuredActivePostgresUrl,
-      note: "Webhook default DB",
-    });
-  }
-
   const activeSqlitePath = resolvePath(
     projectRoot,
     options.activeSqlitePath || env.MT5_SQLITE_PATH,
   );
+  const configuredActivePostgresUrl = String(
+    options.activePostgresUrl || env.MT5_POSTGRES_URL || "",
+  ).trim();
+  const activeConnectionString =
+    configuredStorageBackend === "sqlite"
+      ? activeSqlitePath
+        ? `sqlite:${activeSqlitePath}`
+        : ""
+      : configuredActivePostgresUrl;
+  if (activeConnectionString) {
+    addConnection({
+      id: "active",
+      name: "Active DB",
+      connectionString: activeConnectionString,
+      note:
+        configuredStorageBackend === "sqlite"
+          ? "Webhook active SQLite DB"
+          : "Webhook default DB",
+    });
+  }
+
   if (activeSqlitePath && fs.existsSync(activeSqlitePath)) {
     addConnection({
       id: "sqlite-active",
@@ -214,22 +229,21 @@ function readConnections(projectRoot, options = {}) {
     });
   }
 
+  const universalSqlitePath = resolvePath(
+    projectRoot,
+    options.universalSqlitePath || options.activeSqlitePath || env.MT5_SQLITE_PATH,
+  );
+  if (universalSqlitePath && fs.existsSync(universalSqlitePath)) {
+    addConnection({
+      id: "sqlite-universal",
+      name: "Universal Store",
+      connectionString: `sqlite:${universalSqlitePath}`,
+      note: "Universal-store SQLite",
+    });
+  }
+
   const parsedConfig = readConnectionsConfig(projectRoot);
   for (const conn of parsedConfig?.connections || []) addConnection(conn);
-
-  const usersDir = path.join(projectRoot, "data", "users");
-  if (fs.existsSync(usersDir)) {
-    for (const uid of fs.readdirSync(usersDir)) {
-      const dbPath = path.join(usersDir, uid, "data.db");
-      if (!fs.existsSync(dbPath)) continue;
-      addConnection({
-        id: `sqlite-${uid}`,
-        name: `User ${uid}`,
-        connectionString: `sqlite:${dbPath}`,
-        note: `SQLite data/users/${uid}/data.db`,
-      });
-    }
-  }
 
   return connections;
 }
@@ -248,8 +262,9 @@ function getPool(projectRoot, connId, options = {}) {
   const cs = conn.connectionString;
   if (cs.startsWith("sqlite:")) {
     const dbPath = cs.slice("sqlite:".length);
-    const Database = require("better-sqlite3");
-    const sqlite = new Database(dbPath, { readonly: false });
+    const sqlite = new DatabaseSync(dbPath);
+    sqlite.exec("PRAGMA journal_mode = WAL;");
+    sqlite.exec("PRAGMA foreign_keys = ON;");
     const pool = {
       _sqlite: true,
       query: (sql, params) => {
@@ -261,7 +276,11 @@ function getPool(projectRoot, connId, options = {}) {
             sqlUpper.startsWith("EXPLAIN")
           ) {
             const stmt = sqlite.prepare(sql);
-            const rows = Array.isArray(params) ? stmt.all(...params) : stmt.all();
+            const rows = Array.isArray(params)
+              ? stmt.all(...params)
+              : params && typeof params === "object"
+                ? stmt.all(params)
+                : stmt.all();
             return {
               rows,
               rowCount: rows.length,
@@ -269,7 +288,11 @@ function getPool(projectRoot, connId, options = {}) {
             };
           }
           const stmt = sqlite.prepare(sql);
-          const result = Array.isArray(params) ? stmt.run(...params) : stmt.run();
+          const result = Array.isArray(params)
+            ? stmt.run(...params)
+            : params && typeof params === "object"
+              ? stmt.run(params)
+              : stmt.run();
           return { rows: [], rowCount: result.changes, fields: [] };
         } catch (error) {
           throw new Error(error.message);
@@ -338,6 +361,59 @@ async function getTableSchema(pool, schema, table) {
   `;
   const result = await pool.query(sql, [schema, table]);
   return result.rows;
+}
+
+async function getTableIndexes(pool, schema, table) {
+  if (pool._sqlite) {
+    const list = pool.query(`PRAGMA index_list(${quoteIdent(table)})`).rows || [];
+    return list.map((row) => {
+      const infoRows = pool.query(`PRAGMA index_info(${quoteIdent(row.name)})`).rows || [];
+      return {
+        index_name: row.name,
+        is_unique: Number(row.unique || 0) > 0,
+        is_primary: false,
+        columns: infoRows
+          .map((item) => String(item.name || "").trim())
+          .filter(Boolean),
+        definition: "",
+        table_schema: schema,
+        table_name: table,
+      };
+    });
+  }
+
+  const sql = `
+    SELECT
+      i.relname AS index_name,
+      ix.indisunique AS is_unique,
+      ix.indisprimary AS is_primary,
+      ARRAY(
+        SELECT a.attname
+        FROM unnest(ix.indkey) WITH ORDINALITY AS keys(attnum, ord)
+        JOIN pg_attribute a
+          ON a.attrelid = t.oid
+         AND a.attnum = keys.attnum
+        ORDER BY keys.ord
+      ) AS columns,
+      pg_get_indexdef(ix.indexrelid) AS definition,
+      ns.nspname AS table_schema,
+      t.relname AS table_name
+    FROM pg_class t
+    JOIN pg_namespace ns
+      ON ns.oid = t.relnamespace
+    JOIN pg_index ix
+      ON ix.indrelid = t.oid
+    JOIN pg_class i
+      ON i.oid = ix.indexrelid
+    WHERE ns.nspname = $1
+      AND t.relname = $2
+    ORDER BY i.relname
+  `;
+  const result = await pool.query(sql, [schema, table]);
+  return result.rows.map((row) => ({
+    ...row,
+    columns: Array.isArray(row.columns) ? row.columns : [],
+  }));
 }
 
 function pickSyncKey(schemaRows = []) {
@@ -588,6 +664,38 @@ async function applyTableAction(pool, schemaName, tableName, body = {}) {
   throw new Error(`Unsupported table action: ${action || "unknown"}`);
 }
 
+async function applyIndexAction(pool, schemaName, tableName, body = {}) {
+  assertWritableConnection(pool);
+  const action = String(body.action || "").trim().toLowerCase();
+  const schema = quoteIdent(schemaName);
+  const table = quoteIdent(tableName);
+
+  if (action === "create_index") {
+    const indexName = String(body.indexName || "").trim();
+    const columns = Array.isArray(body.columns)
+      ? body.columns.map((value) => String(value || "").trim()).filter(Boolean)
+      : [];
+    if (!indexName) throw new Error("indexName is required");
+    if (!columns.length) throw new Error("columns is required");
+    const uniqueClause = body.unique === true ? "UNIQUE " : "";
+    const sql =
+      `CREATE ${uniqueClause}INDEX ${quoteIdent(indexName)} ON ${schema}.${table} ` +
+      `(${columns.map(quoteIdent).join(", ")})`;
+    await pool.query(sql);
+    return { command: "CREATE INDEX", action: "create_index", index_name: indexName };
+  }
+
+  if (action === "delete_index") {
+    const indexName = String(body.indexName || "").trim();
+    if (!indexName) throw new Error("indexName is required");
+    const sql = `DROP INDEX ${quoteIdent(schemaName)}.${quoteIdent(indexName)}`;
+    await pool.query(sql);
+    return { command: "DROP INDEX", action: "delete_index", index_name: indexName };
+  }
+
+  throw new Error(`Unsupported index action: ${action || "unknown"}`);
+}
+
 async function listTables(projectRoot, connId, params = {}, options = {}) {
   const pool = getPool(projectRoot, connId, options);
   if (pool._sqlite) {
@@ -810,6 +918,7 @@ module.exports = {
   getConfigPath,
   getConnection,
   getPool,
+  getTableIndexes,
   getTableSchema,
   listConnections(projectRoot, options = {}) {
     return readConnections(projectRoot, options).map(({ id, name, note, connectionString }) => ({
@@ -823,6 +932,7 @@ module.exports = {
   readConnectionsConfig,
   runQuery,
   syncTableRows,
+  applyIndexAction,
   applyTableAction,
   writeRow,
 };

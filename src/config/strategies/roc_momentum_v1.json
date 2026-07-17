@@ -4,6 +4,7 @@
   "kind": "preset",
   "description": "Trades rate-of-change momentum acceleration and reversal through zero.",
   "engine_version": "42trade.strategy.v2",
+  "status": "active",
   "params": {
     "period": 12,
     "rr_target": 2,
@@ -68,5 +69,9 @@
     "fallback_stop_pct": 0.001,
     "fallback_tp_pct": 0.002
   },
-  "min_bars": 40
+  "min_bars": 40,
+  "conditions": {
+    "skip_news": true,
+    "news_window_minutes": 120
+  }
 }

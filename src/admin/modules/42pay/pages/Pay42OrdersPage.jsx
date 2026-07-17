@@ -2,17 +2,25 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../../app/api";
 import { showDateTime } from "../../../shared/utils/format";
-import DataTable from "../../../shared/components/DataTable";
+import ComboButtonMenu from "../../../shared/components/ComboButtonMenu";
+import CrudContainer from "../../../shared/components/CrudContainer";
 import PageHeader from "../../../shared/components/PageHeader";
 import ResponsivePanel from "../../../shared/components/ResponsivePanel";
-import AdminPageToolbar from "../../../shared/components/AdminPageToolbar";
 import InputComboSelect from "../../../shared/components/InputComboSelect";
 import Pay42MediaThumb from "./Pay42MediaThumb";
+import Pay42PageShell from "./Pay42PageShell";
 import {
   formatMoney,
   roleLabel,
   statusTone,
 } from "./pay42Ui";
+
+const TABLE_MODE_ITEMS = [
+  { value: "table", label: "Table" },
+  { value: "grid", label: "Grid" },
+  { value: "cards", label: "Cards" },
+  { value: "carousel", label: "Carousel" },
+];
 
 export default function Pay42OrdersPage({ authUser }) {
   const [searchParams] = useSearchParams();
@@ -23,6 +31,8 @@ export default function Pay42OrdersPage({ authUser }) {
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [tableMode, setTableMode] = useState("table");
+  const [selectedOrderSid, setSelectedOrderSid] = useState("");
 
   const currentRole = roleLabel(authUser);
   const title = currentRole === "seller" ? "Transactions" : "My Purchases";
@@ -66,10 +76,23 @@ export default function Pay42OrdersPage({ authUser }) {
   }, [filter, items]);
 
   const selectedOrder = useMemo(() => {
-    if (focusedSid) {
-      return filteredItems.find((row) => String(row.sid || "") === focusedSid) || filteredItems[0] || null;
+    const preferredSid = String(selectedOrderSid || focusedSid || "").trim();
+    if (preferredSid) {
+      return (
+        filteredItems.find((row) => String(row.sid || "") === preferredSid) ||
+        filteredItems[0] ||
+        null
+      );
     }
     return filteredItems[0] || null;
+  }, [filteredItems, focusedSid, selectedOrderSid]);
+
+  useEffect(() => {
+    if (focusedSid) {
+      setSelectedOrderSid(focusedSid);
+      return;
+    }
+    setSelectedOrderSid((current) => current || String(filteredItems[0]?.sid || ""));
   }, [filteredItems, focusedSid]);
 
   const columns = useMemo(
@@ -78,9 +101,9 @@ export default function Pay42OrdersPage({ authUser }) {
         accessorKey: "sid",
         header: "ORDER",
         cell: ({ row }) => (
-          <div className="cell-wrap">
-            <strong>{row.original.sid}</strong>
-            <span className="minor-text">
+          <div className="cell-wrap ui-data-stack">
+            <strong className="ui-data-title">{row.original.sid}</strong>
+            <span className="ui-data-meta">
               {row.original.offer_name || row.original.product_offer_id || "-"}
             </span>
           </div>
@@ -97,9 +120,9 @@ export default function Pay42OrdersPage({ authUser }) {
               label={row.original.product_name || row.original.sid}
               className="pay42-thumb"
             />
-            <div className="cell-wrap">
-              <strong>{row.original.product_name || "-"}</strong>
-              <span className="minor-text">{row.original.seller_id || "-"}</span>
+            <div className="cell-wrap ui-data-stack">
+              <strong className="ui-data-title">{row.original.product_name || "-"}</strong>
+              <span className="ui-data-meta">{row.original.seller_id || "-"}</span>
             </div>
           </div>
         ),
@@ -114,12 +137,13 @@ export default function Pay42OrdersPage({ authUser }) {
         header: "STATUS",
         cell: ({ row }) => (
           <span
-            className="minor-text"
-            style={{
-              color: statusTone(row.original.status),
-              fontWeight: 700,
-              letterSpacing: "0.08em",
-            }}
+            className={[
+              "badge",
+              "badge-mini",
+              String(row.original.status || "-").toUpperCase(),
+            ]
+              .filter(Boolean)
+              .join(" ")}
           >
             {String(row.original.status || "-").toUpperCase()}
           </span>
@@ -169,39 +193,41 @@ export default function Pay42OrdersPage({ authUser }) {
   );
 
   return (
-    <section className="logs-page-container trades-page-container pay42-page-container stack-layout fadeIn">
-      <PageHeader
-        className="trades-page-header"
-        title={title}
-        actions={
-          <div className="pay42-inline-actions">
-            {isBuyer ? (
-              <>
-                <Link className="secondary-button" to="/admin/42pay/topup">
-                  Top Up
-                </Link>
-                <Link className="secondary-button" to="/admin/42pay/scan">
-                  Pay
-                </Link>
-              </>
-            ) : null}
-            <button type="button" className="secondary-button" onClick={load}>
-              Refresh
-            </button>
-          </div>
-        }
-      />
+    <Pay42PageShell>
+      <PageHeader className="trades-page-header" title={title} />
 
-      <AdminPageToolbar
-        className="trades-toolbar-panel"
-        filters={
-          <ResponsivePanel
-            title="Filters"
-            className="trades-filters-panel"
-            headerMode="mobile"
-            border="mobile"
-            showToggle={false}
-          >
+      {error ? <div className="error">{error}</div> : null}
+
+      {isBuyer ? (
+        <ResponsivePanel
+          title="Buyer Wallet"
+          subtitle="Fast actions for scan, wallet funding, and purchase history"
+          showToggle={false}
+        >
+          <div className="stack-layout">
+            <p className="minor-text">
+              Use Pay to scan a seller QR code, or complete card and gift card flows before reviewing confirmations here.
+            </p>
+            <div className="pay42-inline-actions">
+              <Link className="primary-button" to="/admin/42pay/scan">
+                Open Pay
+              </Link>
+              <Link className="secondary-button" to="/admin/42pay/topup">
+                Top Up Wallet
+              </Link>
+              <Link className="secondary-button" to="/admin/42pay/dashboard">
+                Points
+              </Link>
+            </div>
+          </div>
+        </ResponsivePanel>
+      ) : null}
+
+      <CrudContainer
+        className={isBuyer ? "pay42-crud-layout" : ""}
+        toolbar={{
+          displayMode: "top",
+          filters: (
             <div className="trades-toolbar-row">
               <div className="trades-toolbar-filters">
                 <input
@@ -224,101 +250,113 @@ export default function Pay42OrdersPage({ authUser }) {
                 </InputComboSelect>
               </div>
             </div>
-          </ResponsivePanel>
-        }
-      />
-
-      {error ? <div className="error">{error}</div> : null}
-
-      <div className={isBuyer ? "pay42-split-layout" : undefined}>
-        {isBuyer ? (
-          <ResponsivePanel
-            title="Buyer Wallet"
-            subtitle="Fast actions for scan, wallet funding, and purchase history"
-            showToggle={false}
-          >
-            <div className="stack-layout">
-              <p className="minor-text">
-                Use Pay to scan a seller QR code, or complete card and gift card flows before reviewing confirmations here.
-              </p>
+          ),
+          actions: (
+            <div className="pay42-inline-actions">
+              {isBuyer ? (
+                <>
+                  <Link className="primary-button" to="/admin/42pay/topup">
+                    Top Up
+                  </Link>
+                  <Link className="primary-button" to="/admin/42pay/scan">
+                    Pay
+                  </Link>
+                </>
+              ) : null}
+            </div>
+          ),
+          actionItems: [
+            {
+              key: "refresh-orders",
+              label: "Refresh orders",
+              onClick: load,
+              className: "secondary-button",
+              ariaLabel: "Refresh orders",
+              title: "Refresh orders",
+              children: "↻",
+            },
+          ],
+        }}
+        detailVisible={isBuyer}
+        detailOpen={isBuyer && Boolean(selectedOrder)}
+        onDetailOpenChange={(open) => {
+          if (open) return;
+          setSelectedOrderSid("");
+        }}
+        detailCloseButton
+        list={{
+          title: `${filteredItems.length} ${isBuyer ? "Purchases" : "Transactions"}`,
+          subtitle: isBuyer ? "Buyer payment history and booking records" : "Seller order flow",
+          panelClassName: "component-frozen-wrap",
+          headerActions: (
+            <ComboButtonMenu
+              selectId="pay42-orders-mode"
+              value={tableMode}
+              buttonText={`Mode: ${TABLE_MODE_ITEMS.find((item) => item.value === tableMode)?.label || "Table"}`}
+              onChange={setTableMode}
+              items={TABLE_MODE_ITEMS}
+              ariaLabel="Select orders view mode"
+              align="end"
+              sideOffset={6}
+              triggerClassName="data-table-mode-switcher"
+            />
+          ),
+          tableProps: {
+            columns,
+            data: filteredItems,
+            loading,
+            emptyText: "No orders yet.",
+            className: "events-table events-table--compact",
+            onRowClick: isBuyer ? (row) => setSelectedOrderSid(String(row.sid || "")) : undefined,
+            mode: tableMode,
+            onModeChange: setTableMode,
+            getRowId: (row) => row.sid,
+            selectedRowId: selectedOrder?.sid || null,
+            mobileCard,
+          },
+        }}
+        detail={{
+          title: selectedOrder ? "Purchase Detail" : "No Purchase Selected",
+          subtitle:
+            selectedOrder
+              ? focusedSid && selectedOrder.sid === focusedSid
+                ? "Latest confirmed purchase"
+                : "Selected purchase summary"
+              : "Your next paid booking will appear here",
+          children: selectedOrder ? (
+            <div className="stack-layout" style={{ gap: 12 }}>
+              <div className="cell-wrap ui-data-stack">
+                <strong className="ui-data-title">{selectedOrder.product_name || "-"}</strong>
+                <span className="ui-data-meta">{selectedOrder.offer_name || selectedOrder.sid}</span>
+              </div>
+              <div className="pay42-stat-card">
+                <span className="ui-field-label">TOTAL PAID</span>
+                <strong>{formatMoney(selectedOrder.total_amount || 0)}</strong>
+              </div>
+              <div className="pay42-stat-card">
+                <span className="ui-field-label">STATUS</span>
+                <strong style={{ color: statusTone(selectedOrder.status) }}>
+                  {String(selectedOrder.status || "").toUpperCase()}
+                </strong>
+              </div>
+              <div className="pay42-stat-card">
+                <span className="ui-field-label">CONFIRMED AT</span>
+                <strong>{showDateTime(selectedOrder.create_at)}</strong>
+              </div>
               <div className="pay42-inline-actions">
-                <Link className="primary-button" to="/admin/42pay/scan">
-                  Open Pay
-                </Link>
-                <Link className="secondary-button" to="/admin/42pay/topup">
-                  Top Up Wallet
-                </Link>
-                <Link className="secondary-button" to="/admin/42pay/dashboard">
-                  Points
+                <Link
+                  className="primary-button"
+                  to={`/admin/42pay/orders/${encodeURIComponent(selectedOrder.sid)}/confirmation`}
+                >
+                  Open Confirmation
                 </Link>
               </div>
             </div>
-          </ResponsivePanel>
-        ) : null}
-
-        <ResponsivePanel
-          title={`${filteredItems.length} ${isBuyer ? "Purchases" : "Transactions"}`}
-          subtitle={isBuyer ? "Buyer payment history and booking records" : "Seller order flow"}
-          className="component-frozen-wrap"
-          showToggle={false}
-        >
-        <DataTable
-          columns={columns}
-          data={filteredItems}
-          loading={loading}
-          emptyText="No orders yet."
-          className="events-table"
-          mobileCard={mobileCard}
-        />
-        </ResponsivePanel>
-
-        {isBuyer ? (
-          <ResponsivePanel
-            title={selectedOrder ? "Purchase Detail" : "No Purchase Selected"}
-            subtitle={
-              selectedOrder
-                ? focusedSid && selectedOrder.sid === focusedSid
-                  ? "Latest confirmed purchase"
-                  : "Selected purchase summary"
-                : "Your next paid booking will appear here"
-            }
-            showToggle={false}
-          >
-            {selectedOrder ? (
-              <div className="stack-layout" style={{ gap: 12 }}>
-                <div className="cell-wrap">
-                  <strong>{selectedOrder.product_name || "-"}</strong>
-                  <span className="minor-text">{selectedOrder.offer_name || selectedOrder.sid}</span>
-                </div>
-                <div className="pay42-stat-card">
-                  <span className="minor-text">TOTAL PAID</span>
-                  <strong>{formatMoney(selectedOrder.total_amount || 0)}</strong>
-                </div>
-                <div className="pay42-stat-card">
-                  <span className="minor-text">STATUS</span>
-                  <strong style={{ color: statusTone(selectedOrder.status) }}>
-                    {String(selectedOrder.status || "").toUpperCase()}
-                  </strong>
-                </div>
-                <div className="pay42-stat-card">
-                  <span className="minor-text">CONFIRMED AT</span>
-                  <strong>{showDateTime(selectedOrder.create_at)}</strong>
-                </div>
-                <div className="pay42-inline-actions">
-                  <Link
-                    className="primary-button"
-                    to={`/admin/42pay/orders/${encodeURIComponent(selectedOrder.sid)}/confirmation`}
-                  >
-                    Open Confirmation
-                  </Link>
-                </div>
-              </div>
-            ) : (
-              <div className="minor-text">No purchases yet.</div>
-            )}
-          </ResponsivePanel>
-        ) : null}
-      </div>
-    </section>
+          ) : (
+            <div className="minor-text">No purchases yet.</div>
+          ),
+        }}
+      />
+    </Pay42PageShell>
   );
 }

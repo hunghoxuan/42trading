@@ -1,4 +1,4 @@
-function normalizeRunLimit(value, fallback = "300") {
+function normalizeRunLimit(value, fallback = "3000") {
   if (value === 0) return "all";
   const num = Number(value);
   if (Number.isFinite(num) && num > 0) return String(Math.round(num));
@@ -37,14 +37,18 @@ export function deriveBacktestFormFromRun(run = {}, currentForm = {}) {
 
   if (run?.symbol) nextForm.symbol = String(run.symbol).trim().toUpperCase();
   if (run?.tf) nextForm.tf = String(run.tf).trim();
-  nextForm.limit = normalizeRunLimit(run?.limit, currentForm?.limit || "300");
+  nextForm.limit = normalizeRunLimit(run?.limit, currentForm?.limit || "3000");
   nextForm.limit_mode = "bars";
   nextForm.limit_bars_value = nextForm.limit;
+  nextForm.tfs = nextForm.tf ? [nextForm.tf] : currentForm?.tfs || [];
 
   const nextStrategyKey = String(
     run?.strategy_key || run?.strategy_id || currentForm?.strategy_key || "",
   ).trim();
-  if (nextStrategyKey) nextForm.strategy_key = nextStrategyKey;
+  if (nextStrategyKey) {
+    nextForm.strategy_key = nextStrategyKey;
+    nextForm.strategy_keys = [nextStrategyKey];
+  }
   nextForm.direction = normalizeDirection(
     run?.direction ?? run?.execution_options?.direction,
     currentForm?.direction || "all",

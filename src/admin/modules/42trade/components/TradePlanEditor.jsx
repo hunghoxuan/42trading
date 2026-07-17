@@ -125,16 +125,21 @@ const sideSelectRowStyle = {
   gap: 8,
   minWidth: 0,
 };
+const ENTRY_PLAN_COLOR = "#38bdf8";
+const TP_PLAN_COLOR = "#26a69a";
+const SL_PLAN_COLOR = "#ef5350";
 const labelColorByKey = (k) => {
   const key = String(k || "").toLowerCase();
-  if (key === "sl") return "#ef5350";
-  if (["tp1", "tp2", "tp3"].includes(key)) return "#26a69a";
+  if (key === "entry") return ENTRY_PLAN_COLOR;
+  if (key === "sl") return SL_PLAN_COLOR;
+  if (["tp1", "tp2", "tp3"].includes(key)) return TP_PLAN_COLOR;
   return "var(--muted-bright)";
 };
 const sliderAccentByKey = (k) => {
   const key = String(k || "").toLowerCase();
-  if (key === "sl") return "#ef5350";
-  if (["tp1", "tp2", "tp3"].includes(key)) return "#26a69a";
+  if (key === "entry") return ENTRY_PLAN_COLOR;
+  if (key === "sl") return SL_PLAN_COLOR;
+  if (["tp1", "tp2", "tp3"].includes(key)) return TP_PLAN_COLOR;
   return "var(--muted)";
 };
 
@@ -437,7 +442,7 @@ const NumericInput = memo(function NumericInput({
         Number(sliderMeta.min),
         Math.min(Number(sliderMeta.max), nextRaw),
       );
-      onUpdate(k, formatNum3(next));
+      onUpdate(k, String(next));
     },
     [isDisabled, isReadOnly, k, onUpdate, sliderMeta, valueRaw],
   );
@@ -466,11 +471,8 @@ const NumericInput = memo(function NumericInput({
           id={fieldId}
           name={k}
           className="trade-plan-numeric-input"
-          type="number"
-          step={step}
+          type="text"
           inputMode="decimal"
-          min={min}
-          max={max}
           value={cleanFieldValue(valueRaw)}
           onChange={(e) => onUpdate(k, e.target.value)}
           readOnly={isReadOnly}
@@ -499,7 +501,7 @@ const NumericInput = memo(function NumericInput({
             value={sliderOverride ? Number(valueRaw) || 2 : sliderMeta.value}
             style={{ ...sliderStyle, accentColor: sliderAccentByKey(k) }}
             disabled={sliderDisabled || isReadOnly}
-            onChange={(e) => onUpdate(k, formatNum3(Number(e.target.value)))}
+            onChange={(e) => onUpdate(k, String(Number(e.target.value)))}
           />
         </div>
       }
@@ -549,10 +551,7 @@ const NumericNoSlider = memo(function NumericNoSlider({
           type="button"
           className="secondary-button trade-plan-step-button"
           onClick={() =>
-            onUpdate(
-              k,
-              formatNum3((parseNum(valueRaw) ?? 0) - Number(step || 0.01)),
-            )
+            onUpdate(k, String((parseNum(valueRaw) ?? 0) - Number(step || 0.01)))
           }
           disabled={isDisabled}
           style={stepButtonStyle}
@@ -565,11 +564,8 @@ const NumericNoSlider = memo(function NumericNoSlider({
           name={k}
           className="trade-plan-numeric-input"
           style={{ ...numericInputStyle, opacity: readOnly ? 0.85 : 1 }}
-          type="number"
-          step={step}
+          type="text"
           inputMode="decimal"
-          min={min}
-          max={max}
           value={cleanFieldValue(
             valueOverride == null ? valueRaw : valueOverride,
           )}
@@ -581,10 +577,7 @@ const NumericNoSlider = memo(function NumericNoSlider({
           type="button"
           className="secondary-button trade-plan-step-button"
           onClick={() =>
-            onUpdate(
-              k,
-              formatNum3((parseNum(valueRaw) ?? 0) + Number(step || 0.01)),
-            )
+            onUpdate(k, String((parseNum(valueRaw) ?? 0) + Number(step || 0.01)))
           }
           disabled={isDisabled}
           style={stepButtonStyle}
@@ -600,6 +593,7 @@ const NumericNoSlider = memo(function NumericNoSlider({
 export function TradePlanEditor({
   tradeContextId = null,
   tradeId = null,
+  apiScope = "",
   accountId: propAccountId = "",
   onAccountChange = null,
   value = {},
@@ -776,9 +770,9 @@ export function TradePlanEditor({
       const tp = calcTpFromRr(value.entry, value.sl, rrVal, value.direction);
       if (tp != null && Number.isFinite(tp)) {
         update(key, rrVal);
-        update(tpKey, formatNum3(tp));
+        update(tpKey, String(tp));
         // Also sync tp to tp1 for backward compatibility
-        if (key === "rr") update("tp", formatNum3(tp));
+        if (key === "rr") update("tp", String(tp));
       } else {
         update(key, rrVal);
       }
@@ -808,7 +802,7 @@ export function TradePlanEditor({
       style={{
         display: "grid",
         gridTemplateColumns: isEditMode
-          ? "minmax(320px, 1.2fr) minmax(260px, 1fr)"
+          ? "minmax(320px, 2fr) minmax(260px, 1fr)"
           : "1fr",
         gap: "12px",
         marginTop: "10px",
@@ -870,6 +864,7 @@ export function TradePlanEditor({
 
           <TradeDraftUpload
             tradeId={tradeId}
+            apiScope={apiScope}
             disabled={lockedView}
             showList={false}
             showLabel={false}
@@ -884,9 +879,9 @@ export function TradePlanEditor({
                 if (newId && tradeId) {
                   try {
                     await fetch(
-                      `/api/trades/${encodeURIComponent(tradeId)}/update`,
+                      `/api/trades/${encodeURIComponent(tradeId)}`,
                       {
-                        method: "POST",
+                        method: "PUT",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ account_id: newId }),
                       },
@@ -1429,7 +1424,7 @@ export function TradePlanEditor({
                   marginLeft: "auto",
                 }}
               >
-                {showResetButton ? (
+              {showResetButton ? (
                   <button
                     className="secondary-button"
                     type="button"
@@ -1576,7 +1571,7 @@ export function TradePlanEditor({
             {error ? (
               <span
                 className="minor-text msg-error"
-                style={{ fontSize: "10px", textAlign: "right" }}
+                style={{ fontSize: "10px", textAlign: "right", color: "#ef4444" }}
               >
                 {error}
               </span>

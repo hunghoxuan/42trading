@@ -118,6 +118,16 @@ const PLAN_COLORS = {
   },
 };
 
+function shouldLogArtifactZoneDebug() {
+  try {
+    if (typeof window === "undefined") return false;
+    if (window.__DEBUG_ARTIFACT_ZONES__ === true) return true;
+    return window.localStorage?.getItem("debug_artifact_zones") === "1";
+  } catch {
+    return false;
+  }
+}
+
 const parsePosNum = (v) => {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : null;
@@ -391,6 +401,9 @@ function ensureValidBars(bars, minBars) {
       continue;
     }
     if (!Number.isFinite(o) || !Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(c)) continue;
+    const maxBody = Math.max(o, c);
+    const minBody = Math.min(o, c);
+    if (h < maxBody || l > minBody || h < l) continue;
     numericBarsByTime.set(t, {
       time: t,
       open: o,
@@ -406,6 +419,44 @@ function ensureValidBars(bars, minBars) {
   ];
   const min = Number.isFinite(minBars) && minBars > 1 ? minBars : 2;
   return clean.length >= min ? clean : [];
+}
+
+function isAlignedIntervalStep(deltaSec, intervalSec) {
+  const delta = Number(deltaSec);
+  const base = Math.max(1, Number(intervalSec) || 0);
+  if (!Number.isFinite(delta) || delta <= 0 || !Number.isFinite(base) || base <= 0) {
+    return false;
+  }
+  const multiple = delta / base;
+  return Math.abs(multiple - Math.round(multiple)) < 1e-9;
+}
+
+function barsPassIntervalSanity(bars = [], interval = "") {
+  const tfSeconds = intervalToSeconds(interval);
+  const list = Array.isArray(bars) ? bars : [];
+  if (tfSeconds < 60 || list.length < 3) return true;
+  let checked = 0;
+  let invalid = 0;
+  for (let idx = 1; idx < list.length; idx += 1) {
+    const prevTime = Number(list[idx - 1]?.time);
+    const nextTime = Number(list[idx]?.time);
+    if (!Number.isFinite(prevTime) || !Number.isFinite(nextTime)) continue;
+    checked += 1;
+    if (!isAlignedIntervalStep(nextTime - prevTime, tfSeconds)) {
+      invalid += 1;
+      if (invalid >= 3) return false;
+    }
+  }
+  if (!checked) return true;
+  return invalid / checked <= 0.02;
+}
+
+function chooseSafeChartBars(candidateBars = [], previousBars = [], interval = "") {
+  const candidate = Array.isArray(candidateBars) ? candidateBars : [];
+  const previous = Array.isArray(previousBars) ? previousBars : [];
+  if (!candidate.length) return candidate;
+  if (barsPassIntervalSanity(candidate, interval)) return candidate;
+  return previous.length ? previous : candidate;
 }
 
 function normalizeChartSymbol(raw = "") {
@@ -846,7 +897,7 @@ function applyTradeAnchoredViewport(
   if (!chart || !Array.isArray(candles) || !candles.length) return false;
   const range = resolveTradeWindowIndices(candles, visibleBarsCount, anchors);
   if (!range) return false;
-  const rightPaddingBars = Math.max(2, Math.round(range.requestedVisibleBars * 0.05));
+  const rightPaddingBars = Math.max(6, Math.round(range.requestedVisibleBars * 0.05));
   const from = range.from;
   const to = Math.min(candles.length - 1 + rightPaddingBars, range.to);
 
@@ -888,7 +939,7 @@ function resolveTradeAnchoredLogicalRange(
   if (!Array.isArray(candles) || !candles.length) return null;
   const range = resolveTradeWindowIndices(candles, visibleBarsCount, anchors);
   if (!range) return null;
-  const rightPaddingBars = Math.max(2, Math.round(range.requestedVisibleBars * 0.05));
+  const rightPaddingBars = Math.max(6, Math.round(range.requestedVisibleBars * 0.05));
   const from = range.from;
   const to = Math.min(candles.length - 1 + rightPaddingBars, range.to);
   return {
@@ -1019,7 +1070,7 @@ function applyLatestBarsViewport(
     // Reserve space to the right so the latest bar lands at the requested
     // anchor position. Replay mode passes 0.5 to keep the active bar centered.
     const rightPaddingBars = Math.max(
-      2,
+      6,
       Math.round(requestedVisibleBars * Math.max(0.02, 1 - anchorRatio)),
     );
     const totalLogicalBars = requestedVisibleBars + rightPaddingBars;
@@ -1069,7 +1120,7 @@ function ensureLatestReplayBarVisible(
     return applyLatestBarsViewport(chart, candles, visibleBarsCount, options);
   }
   const span = Math.max(20, Math.round(to - from));
-  const desiredRightPadding = Math.max(2, Math.round(span * 0.12));
+  const desiredRightPadding = Math.max(6, Math.round(span * 0.12));
   const requiredTo = lastIndex + desiredRightPadding;
   if (to >= requiredTo && lastIndex >= from) {
     return false;
@@ -1099,7 +1150,7 @@ function applyFirstBarsViewport(chart, candles = [], visibleBarsCount = 0) {
     20,
     Math.min(candles.length, Math.round(Number(visibleBarsCount) || 100)),
   );
-  const rightPaddingBars = Math.max(2, Math.round(requestedVisibleBars * 0.2));
+  const rightPaddingBars = Math.max(6, Math.round(requestedVisibleBars * 0.2));
   const nextRange = {
     from: 0,
     to: Math.min(
@@ -1221,7 +1272,7 @@ function applyPresetTradeViewport(
     chartElement?.clientWidth || chartElement?.getBoundingClientRect?.().width || 0,
   );
   const minBarSpacing = 0.5;
-  const rightPaddingBars = Math.max(2, Math.round(requestedWindowBars * 0.05));
+  const rightPaddingBars = Math.max(6, Math.round(requestedWindowBars * 0.05));
   const totalLogicalBars = Math.max(1, toIndex - fromIndex + 1 + rightPaddingBars);
   try {
     if (chartWidth > 0) {
@@ -1490,6 +1541,8 @@ function inferPricePrecision(values = []) {
 }
 
 function coercePrecisionValue(value) {
+  if (value == null) return null;
+  if (typeof value === "string" && !value.trim()) return null;
   const n = Number(value);
   if (!Number.isFinite(n)) return null;
   return Math.min(Math.max(Math.round(n), 0), 8);
@@ -1566,10 +1619,41 @@ function resolveChartPricePrecision(symbol, values = [], snapshot = null, cached
   if (explicit != null) return explicit;
   const inferred = inferPricePrecision(values);
   const sym = String(symbol || "").trim().toUpperCase();
+  const base = sym.slice(0, 3);
+  const quote = sym.endsWith("USDT") ? "USDT" : sym.slice(-3);
+  const forexCurrencies = new Set([
+    "USD",
+    "EUR",
+    "GBP",
+    "JPY",
+    "AUD",
+    "CAD",
+    "CHF",
+    "NZD",
+    "SGD",
+    "HKD",
+    "CNH",
+    "NOK",
+    "SEK",
+    "DKK",
+    "ZAR",
+    "TRY",
+    "MXN",
+    "PLN",
+    "CZK",
+    "HUF",
+  ]);
   if (sym.startsWith("XAU") || sym.startsWith("XAG")) {
     return Math.min(Math.max(inferred, 2), 2);
   }
-  if (sym.endsWith("USD") || sym.endsWith("USDT")) {
+  if (
+    /^[A-Z]{6}$/.test(sym) &&
+    forexCurrencies.has(base) &&
+    forexCurrencies.has(quote)
+  ) {
+    return sym.endsWith("JPY") ? 3 : 5;
+  }
+  if ((quote === "USD" || quote === "USDT") && !forexCurrencies.has(base)) {
     return Math.min(Math.max(inferred, 2), 2);
   }
   return inferred;
@@ -1661,23 +1745,25 @@ function formatArtifactTypeBadgeLabel(value) {
   return raw.replaceAll("_", " ").toUpperCase();
 }
 
+function stripArtifactTitleTfSuffix(titleRaw = "", tfRaw = "") {
+  const title = String(titleRaw || "").trim();
+  const tfLabel = displayIntervalLabel(tfRaw);
+  if (!title || !tfLabel) return title;
+  const escapedTf = tfLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return title.replace(new RegExp(`\\s+${escapedTf}$`, "i"), "").trim() || title;
+}
+
 function renderArtifactTooltipMetaHtml(tfRaw = "", typeRaw = "") {
   const tfLabel = displayIntervalLabel(tfRaw);
   const tfColor = artifactPaletteColorForTf(tfRaw);
   const typeLabel = formatArtifactTypeBadgeLabel(typeRaw);
-  const pills = [];
-  if (tfLabel) {
-    pills.push(
-      `<span style="display:inline-flex;align-items:center;padding:2px 6px;border-radius:999px;border:1px solid ${withAlpha(tfColor, "55", "rgba(148,163,184,0.35)")};background:${withAlpha(tfColor, "18", "rgba(148,163,184,0.12)")};color:${tfColor};font-size:10px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;">${escapeTooltipHtml(tfLabel)}</span>`,
-    );
-  }
-  if (typeLabel) {
-    pills.push(
-      `<span style="display:inline-flex;align-items:center;padding:2px 6px;border-radius:999px;border:1px solid ${withAlpha(tfColor, "40", "rgba(148,163,184,0.28)")};background:rgba(15,23,42,0.65);color:${tfColor};font-size:10px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;">${escapeTooltipHtml(typeLabel)}</span>`,
-    );
-  }
-  if (!pills.length) return "";
-  return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">${pills.join("")}</div>`;
+  const mergedLabel = [typeLabel, tfLabel].filter(Boolean).join(" ");
+  if (!mergedLabel) return "";
+  return (
+    `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;">` +
+    `<span style="display:inline-flex;align-items:center;padding:2px 6px;border-radius:999px;border:1px solid ${withAlpha(tfColor, "55", "rgba(148,163,184,0.35)")};background:${withAlpha(tfColor, "18", "rgba(148,163,184,0.12)")};color:${tfColor};font-size:10px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;">${escapeTooltipHtml(mergedLabel)}</span>` +
+    `</div>`
+  );
 }
 
 function renderCompactArtifactTooltipHtml({
@@ -1697,12 +1783,12 @@ function renderCompactArtifactTooltipHtml({
   const titleColor = biasVisual?.fg || "#f8fafc";
   const priceColor = biasVisual?.fg || "#e2e8f0";
   return (
-    `<div style="min-width:150px;max-width:260px;">` +
-    `<div style="display:flex;align-items:center;gap:6px;justify-content:space-between;flex-wrap:wrap;">` +
+    `<div style="min-width:0;max-width:240px;">` +
+    `<div style="display:flex;align-items:center;justify-content:flex-start;align-content:flex-start;gap:4px;flex-wrap:wrap;">` +
     `<div style="font-size:11px;font-weight:700;line-height:1.1;color:${titleColor};">${safeTitle}</div>` +
     metaHtml +
     `</div>` +
-    `<div style="margin-top:4px;display:flex;align-items:baseline;gap:6px;">` +
+    `<div style="margin-top:3px;display:flex;align-items:baseline;gap:5px;">` +
     `<div style="font-size:9px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:#64748b;">Price</div>` +
     `<div style="font-size:11px;line-height:1.2;color:${priceColor};">${safePrice}</div>` +
     `</div>` +
@@ -1763,6 +1849,36 @@ function renderTooltipCardHtml({ title = "", subtitle = "", subtitleHtml = "", s
     safeSubtitle +
     safeSubtitleHtml +
     safeSections +
+    `</div>`
+  );
+}
+
+function renderCompactTradeTooltipCardHtml({
+  title = "",
+  subtitleHtml = "",
+  rows = [],
+} = {}) {
+  const safeTitle = escapeTooltipHtml(title || "Trade");
+  const safeSubtitleHtml = String(subtitleHtml || "").trim();
+  const safeRows = (Array.isArray(rows) ? rows : [])
+    .map((row) => {
+      const valueHtml = String(row?.valueHtml || "").trim();
+      const value = String(row?.value || "").trim();
+      const renderedValue = valueHtml ? valueHtml : value ? escapeTooltipHtml(value) : "";
+      if (!renderedValue) return "";
+      return (
+        `<div style="margin-top:3px;font-size:11px;line-height:1.2;color:#e2e8f0;white-space:pre-wrap;word-break:break-word;">` +
+        `${renderedValue}` +
+        `</div>`
+      );
+    })
+    .filter(Boolean)
+    .join("");
+  return (
+    `<div style="min-width:180px;max-width:300px;">` +
+    `<div style="font-size:12px;font-weight:700;line-height:1.15;color:#f8fafc;">${safeTitle}</div>` +
+    safeSubtitleHtml +
+    safeRows +
     `</div>`
   );
 }
@@ -1883,8 +1999,8 @@ function compactTooltipStatChip({
   if (!text) return "";
   const glyph = String(icon || "").trim();
   return (
-    `<span style="display:inline-flex;align-items:center;gap:5px;padding:2px 6px;border-radius:999px;` +
-    `font-size:10px;font-weight:700;color:${fg};background:${bg};border:1px solid ${border};">` +
+    `<span style="display:inline-flex;align-items:center;gap:3px;padding:0 4px;border-radius:999px;` +
+    `font-size:8px;font-weight:700;line-height:1.2;color:${fg};background:${bg};border:none;">` +
     `${glyph ? `<span style="opacity:0.9;">${escapeTooltipHtml(glyph)}</span>` : ""}` +
     `<span>${escapeTooltipHtml(text)}</span>` +
     `</span>`
@@ -2678,7 +2794,42 @@ function getLastSeriesValue(series) {
 }
 
 function formatSharedObjectLabel(type, rawLabel) {
+  const typeText = String(type || "").trim().toLowerCase();
   const labelText = String(rawLabel || "").trim();
+  const combined = `${typeText} ${labelText}`.toLowerCase();
+  if (combined.includes("liquidity high") || combined.includes("liquidity_high")) {
+    return "BSL";
+  }
+  if (combined.includes("liquidity low") || combined.includes("liquidity_low")) {
+    return "SSL";
+  }
+  if (
+    combined.includes("swing high event") ||
+    combined.includes("swing high level") ||
+    combined.includes("swing_high_event") ||
+    combined.includes("swing_high")
+  ) {
+    return "SH";
+  }
+  if (
+    combined.includes("swing low event") ||
+    combined.includes("swing low level") ||
+    combined.includes("swing_low_event") ||
+    combined.includes("swing_low")
+  ) {
+    return "SL";
+  }
+  if (combined.includes("sweep high") || combined.includes("sweep low") || combined.includes("sweep")) {
+    return "SW";
+  }
+  if (combined.includes("choch")) return "CH";
+  if (combined.includes("demand")) return "DEM";
+  if (combined.includes("supply")) return "SPLY";
+  if (combined.includes("support")) return "SUP";
+  if (combined.includes("resistance")) return "RES";
+  if (combined.includes("liquidity")) return "LIQ";
+  if (combined.includes("divergence")) return "DIV";
+  if (combined.includes("trendline")) return "TL";
   if (!labelText) return "";
   const normalized = labelText.replace(/^All\s+/i, "").trim();
   return normalized;
@@ -3093,6 +3244,8 @@ class TimeRangeBoxPrimitive {
   constructor({
     startTimeSec,
     endTimeSec = null,
+    fallbackEndTimeSec = null,
+    suppressWhenEndCoordinateMissing = false,
     priceLow,
     priceHigh,
     lineColor = "#60a5fa",
@@ -3103,9 +3256,14 @@ class TimeRangeBoxPrimitive {
     shadowBlur = 0,
     shadowColor = "",
     label = "",
+    labelFontSize = null,
   }) {
     this._startTime = startTimeSec;
     this._endTime = endTimeSec;
+    this._fallbackEndTime =
+      Number.isFinite(Number(fallbackEndTimeSec)) ? Number(fallbackEndTimeSec) : null;
+    this._suppressWhenEndCoordinateMissing =
+      suppressWhenEndCoordinateMissing === true;
     this._priceLow = priceLow;
     this._priceHigh = priceHigh;
     this._lineColor = lineColor;
@@ -3118,6 +3276,9 @@ class TimeRangeBoxPrimitive {
     this._shadowBlur = Number.isFinite(Number(shadowBlur)) ? Number(shadowBlur) : 0;
     this._shadowColor = String(shadowColor || "").trim();
     this._label = String(label || "").trim();
+    this._labelFontSize = Number.isFinite(Number(labelFontSize))
+      ? Math.max(6, Number(labelFontSize))
+      : null;
     this._series = null;
     this._chart = null;
   }
@@ -3182,6 +3343,16 @@ class TimeRangeBoxPrimitive {
                 const xEnd = self._endTime
                   ? ts.timeToCoordinate(self._endTime)
                   : null;
+                const fallbackXEnd = self._fallbackEndTime
+                  ? ts.timeToCoordinate(self._fallbackEndTime)
+                  : null;
+                if (
+                  self._suppressWhenEndCoordinateMissing &&
+                  xEnd == null &&
+                  !Number.isFinite(fallbackXEnd)
+                ) {
+                  return;
+                }
                 const pixelRatioX = scope.horizontalPixelRatio || 1;
                 const pixelRatioY = scope.verticalPixelRatio || 1;
                 const x0 =
@@ -3194,11 +3365,13 @@ class TimeRangeBoxPrimitive {
                     : Math.max(0, Math.round(rawXStart * pixelRatioX));
                 const x1 =
                   self._extendRight || xEnd == null
-                    ? Number.isFinite(visibleEndTime) &&
-                      Number.isFinite(self._endTime) &&
-                      self._endTime < visibleStartTime
-                      ? null
-                      : r.width
+                    ? xEnd == null && Number.isFinite(fallbackXEnd)
+                      ? Math.min(r.width, Math.round(fallbackXEnd * pixelRatioX))
+                      : Number.isFinite(visibleEndTime) &&
+                        Number.isFinite(self._endTime) &&
+                        self._endTime < visibleStartTime
+                        ? null
+                        : r.width
                     : Math.min(r.width, Math.round(xEnd * pixelRatioX));
                 if (!Number.isFinite(x0) || !Number.isFinite(x1)) return;
                 const y0 = Math.round(Math.min(yHigh, yLow) * pixelRatioY);
@@ -3220,9 +3393,12 @@ class TimeRangeBoxPrimitive {
                 if (self._label && x1 - x0 >= 20) {
                   ctx.setLineDash([]);
                   ctx.shadowBlur = 0;
+                  const baseFontSize = Number.isFinite(self._labelFontSize)
+                    ? self._labelFontSize
+                    : ARTIFACT_LABEL_FONT_SIZE;
                   const fontPx = Math.max(
-                    ARTIFACT_LABEL_FONT_SIZE,
-                    Math.round(ARTIFACT_LABEL_FONT_SIZE * pixelRatioY),
+                    baseFontSize,
+                    Math.round(baseFontSize * pixelRatioY),
                   );
                   ctx.font = `${fontPx}px sans-serif`;
                   ctx.textBaseline = "top";
@@ -3347,7 +3523,7 @@ class EventTimeMarkerPrimitive {
                       : self._placement === "belowBar"
                         ? 1
                         : -1;
-                const markerOffset = Math.round(26 * ratioY);
+                const markerOffset = Math.max(7, Math.round(8 * ratioY));
                 const chartPaddingY = Math.max(14, Math.round(14 * ratioY));
                 let effectiveDirection = direction;
                 if (Number.isFinite(bitmapHeight)) {
@@ -3361,20 +3537,14 @@ class EventTimeMarkerPrimitive {
                       Math.min(bitmapHeight - chartPaddingY, baseY + effectiveDirection * markerOffset),
                     )
                   : baseY + effectiveDirection * markerOffset;
-                const arrowTipGap = Math.max(2, Math.round(2 * ratioY));
-                const arrowHeight = Math.max(8, Math.round(9 * ratioY));
-                const arrowHalfWidth = Math.max(4, Math.round(5 * ratioX));
-                const arrowTipY = baseY + effectiveDirection * arrowTipGap;
-                const arrowBaseY = arrowTipY + effectiveDirection * arrowHeight;
+                const arrowHeight = Math.max(4, Math.round(5 * ratioY));
+                const arrowHalfWidth = Math.max(3, Math.round(3 * ratioX));
+                const arrowCenterY = markerY;
+                const arrowTipY = arrowCenterY + effectiveDirection * Math.round(arrowHeight * 0.6);
+                const arrowBaseY = arrowCenterY - effectiveDirection * Math.round(arrowHeight * 0.55);
                 const textOffsetX = Math.round(3 * ratioX);
-                const textOffsetY = effectiveDirection < 0 ? -6 : 12;
+                const textOffsetY = effectiveDirection < 0 ? -5 : 7;
                 ctx.save();
-                ctx.strokeStyle = `${self._color}99`;
-                ctx.lineWidth = Math.max(1, Math.round(ratioX));
-                ctx.beginPath();
-                ctx.moveTo(x, baseY);
-                ctx.lineTo(x, markerY);
-                ctx.stroke();
 
                 const artifactFontSize = Math.max(
                   ARTIFACT_LABEL_FONT_SIZE,
@@ -3902,6 +4072,10 @@ export default function TradeSignalChart({
   const chartRef = useRef(null);
   const seriesRef = useRef(null);
   const currentBarsRef = useRef([]);
+  const lastCrosshairContextRef = useRef({
+    time: null,
+    price: null,
+  });
   const preserveViewportOnBarsChangeRef = useRef(
     Boolean(preserveViewportOnBarsChange),
   );
@@ -3917,6 +4091,11 @@ export default function TradeSignalChart({
   const pricePrecisionRef = useRef(5);
   const hoverPriceLinesRef = useRef({ lines: [] });
   const planPriceLinesRef = useRef([]);
+  const draggablePlanLineRefs = useRef({
+    entry: null,
+    tp1: null,
+    sl: null,
+  });
   const tradeOverlayPriceLinesRef = useRef([]);
   const tradeOverlayPrimitivesRef = useRef([]);
   const dayDividerPrimitivesRef = useRef([]);
@@ -3934,13 +4113,14 @@ export default function TradeSignalChart({
     tp1: null,
     sl: null,
   });
+  const planHandleDragRef = useRef(null);
   const compactViewportBarsRef = useRef(COMPACT_VIEWPORT_DEFAULT_BARS);
   const explicitVisibleBarsTarget = Math.max(
     0,
     Math.round(Number(visibleBarsCount) || 0),
   );
   const [loading, setLoading] = useState(false);
-  const debugChartLog = useCallback(() => {}, []);
+  const [planDragHandles, setPlanDragHandles] = useState([]);
   const [dataSource, setDataSource] = useState("");
   const [isIndicatorPanelOpen, setIsIndicatorPanelOpen] = useState(false);
   const [indicatorVisibility, setIndicatorVisibility] = useState(
@@ -4260,41 +4440,35 @@ export default function TradeSignalChart({
           ? `Mark ${formatMarkerTimeLabel(eventTimeSec)}`
           : "",
       ].filter(Boolean);
-      const sections = [
+      const rows = [
         {
-          label: "Levels",
           valueHtml: renderTooltipInlineStatsHtml([
-            { label: "Entry", value: entryText, tone: "#e2e8f0" },
+            { label: "E", value: entryText, tone: "#e2e8f0" },
             { label: "SL", value: slText, tone: "#f87171" },
             { label: "TP", value: tpText, tone: "#22c55e" },
-            { label: "Exit", value: exitText, tone: "#cbd5e1" },
+            { label: "X", value: exitText, tone: "#cbd5e1" },
           ]),
         },
         {
-          label: "Result",
           valueHtml: renderTooltipInlineStatsHtml([
-            { label: "PnL", value: pnlText, tone: pnlTone },
+            { label: "$", value: pnlText, tone: pnlTone },
             { label: "R", value: rText, tone: pnlTone },
           ]),
         },
         {
-          label: "Time",
           value: timingItems.join(" · "),
         },
         {
-          label: "Notes",
-          value: decisionNotes.slice(0, 2).join(" · "),
+          value: decisionNotes.slice(0, 1).join(" · "),
         },
-      ].filter((section) =>
-        String(section?.valueHtml || section?.value || "").trim(),
-      );
-      return renderTooltipCardHtml({
+      ].filter((row) => String(row?.valueHtml || row?.value || "").trim());
+      return renderCompactTradeTooltipCardHtml({
         title:
           strategyName && strategyName !== "Trade"
             ? `${markerText} · ${strategyName}`
             : markerText,
         subtitleHtml: metaSubtitleHtml,
-        sections,
+        rows,
       });
     },
     [formatMarkerTimeLabel],
@@ -4377,10 +4551,14 @@ export default function TradeSignalChart({
           ? obj.artifact_payload
           : obj || {};
       const title = compactTooltipText(
-        obj?.label || payload?.label || obj?.marker_text || obj?.type || payload?.type || "Artifact",
+        formatSharedObjectLabel(
+          obj?.artifact_type || obj?.type || payload?.type || "",
+          obj?.label || payload?.label || obj?.marker_text || obj?.type || payload?.type || "Artifact",
+        ),
         "Artifact",
       );
       const tf = obj?.source_tf || obj?.tf || payload?.timeframe || payload?.tf || "";
+      const displayTitle = stripArtifactTitleTfSuffix(title, tf);
       const type = obj?.artifact_type || obj?.type || obj?.artifact_group || payload?.type || "";
       const lifecycleState = String(
         payload?.payload?.lifecycle_state || payload?.lifecycle_state || obj?.status_reason || "",
@@ -4430,10 +4608,10 @@ export default function TradeSignalChart({
             })}</div>`
           : "";
       return (
-        `<div style="min-width:180px;max-width:290px;">` +
-        `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">` +
-        `<div style="font-size:11px;font-weight:700;line-height:1.1;color:#f8fafc;">${escapeTooltipHtml(title)}</div>` +
-        `<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">${metaRow}</div>` +
+        `<div style="min-width:0;max-width:250px;">` +
+        `<div style="display:flex;align-items:center;justify-content:space-between;gap:4px;flex-wrap:wrap;">` +
+        `<div style="font-size:8px;font-weight:700;line-height:1;color:#f8fafc;">${escapeTooltipHtml(displayTitle)}</div>` +
+        `<div style="display:flex;align-items:center;gap:2px;flex-wrap:wrap;">${metaRow}</div>` +
         `</div>` +
         biasRow +
         `</div>`
@@ -4589,6 +4767,130 @@ export default function TradeSignalChart({
   const isLightUi = uiTheme.mode === "light";
   const wrapperHeight =
     typeof height === "number" ? `${height}px` : height || "320px";
+  const refreshPlanDragHandles = useCallback(() => {
+    const candleSeries = seriesRef.current;
+    const container = chartContainerRef.current;
+    if (!candleSeries || !container || typeof onPlanLevelChange !== "function") {
+      setPlanDragHandles([]);
+      return;
+    }
+    const containerHeight = Number(container.clientHeight || 0);
+    const levelMap = levelPriceMapRef.current || {};
+    const handleDefs = [
+      {
+        key: "entry",
+        label: "Entry",
+        shortLabel: "E",
+        price: levelMap.entry,
+        color: TRADE_ENTRY_VIBRANT,
+      },
+      {
+        key: "tp1",
+        label: "TP",
+        shortLabel: "",
+        price: levelMap.tp1 ?? levelMap.tp,
+        color: TRADE_TP_DARK,
+      },
+      {
+        key: "sl",
+        label: "SL",
+        shortLabel: "",
+        price: levelMap.sl,
+        color: TRADE_SL_DARK,
+      },
+    ];
+    const nextHandles = handleDefs
+      .map((handle) => {
+        const price = Number(handle.price);
+        if (!Number.isFinite(price)) return null;
+        const y = candleSeries.priceToCoordinate(price);
+        if (!Number.isFinite(y)) return null;
+        if (containerHeight > 0 && (y < -24 || y > containerHeight + 24)) {
+          return null;
+        }
+        return {
+          ...handle,
+          price,
+          y,
+        };
+      })
+      .filter(Boolean);
+    setPlanDragHandles((current) => {
+      const currentSignature = JSON.stringify(current);
+      const nextSignature = JSON.stringify(nextHandles);
+      return currentSignature === nextSignature ? current : nextHandles;
+    });
+  }, [onPlanLevelChange]);
+  const applyPlanLevelDragPreview = useCallback((handleKey, nextPrice) => {
+    const price = Number(nextPrice);
+    if (!Number.isFinite(price)) return;
+    const normalizedKey = handleKey === "tp" ? "tp1" : String(handleKey || "");
+    const targetLine = draggablePlanLineRefs.current?.[normalizedKey] || null;
+    if (targetLine && typeof targetLine.applyOptions === "function") {
+      try {
+        targetLine.applyOptions({ price });
+      } catch {}
+    }
+    if (normalizedKey === "entry") {
+      levelPriceMapRef.current.entry = price;
+    } else if (normalizedKey === "sl") {
+      levelPriceMapRef.current.sl = price;
+    } else if (normalizedKey === "tp1") {
+      levelPriceMapRef.current.tp1 = price;
+      levelPriceMapRef.current.tp = price;
+    }
+    hoverPriceLinesRef.current.lines = hoverPriceLinesRef.current.lines.map((line) => {
+      if (line?.overlayType !== "plan") return line;
+      const label = String(line?.label || "").trim().toUpperCase();
+      const isEntry = normalizedKey === "entry" && label === "ENTRY";
+      const isSl = normalizedKey === "sl" && label === "SL";
+      const isTp =
+        normalizedKey === "tp1" &&
+        (label === "TP" || label === "TP1");
+      if (!isEntry && !isSl && !isTp) return line;
+      return {
+        ...line,
+        price,
+        priceText: formatPriceWithPrecision(price, pricePrecisionRef.current),
+      };
+    });
+    window.requestAnimationFrame(refreshPlanDragHandles);
+  }, [refreshPlanDragHandles]);
+  const handlePlanHandleMouseDown = useCallback((handleKey, event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const candleSeries = seriesRef.current;
+    const container = chartContainerRef.current;
+    if (!candleSeries || !container || typeof onPlanLevelChange !== "function") {
+      return;
+    }
+    const priceMap = levelPriceMapRef.current || {};
+    const price =
+      handleKey === "tp1"
+        ? Number(priceMap.tp1 ?? priceMap.tp)
+        : Number(priceMap[handleKey]);
+    if (!Number.isFinite(price)) return;
+    const chartRect = container.getBoundingClientRect();
+    const updateFromClientY = (clientY) => {
+      const nextPrice = candleSeries.coordinateToPrice(clientY - chartRect.top);
+      if (!Number.isFinite(nextPrice)) return;
+      applyPlanLevelDragPreview(handleKey, nextPrice);
+      onPlanLevelChange(handleKey, Number(nextPrice));
+    };
+    const onMove = (moveEvent) => {
+      if (!planHandleDragRef.current) return;
+      updateFromClientY(moveEvent.clientY);
+    };
+    const onUp = () => {
+      planHandleDragRef.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    planHandleDragRef.current = { key: handleKey };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    updateFromClientY(event.clientY);
+  }, [applyPlanLevelDragPreview, onPlanLevelChange]);
   const effectiveIndicatorVisibility =
     indicatorVisibilityConfig || indicatorVisibility;
   const showRsiPanel = effectiveIndicatorVisibility.rsiPanel !== false;
@@ -4637,6 +4939,11 @@ export default function TradeSignalChart({
       } catch {}
     }
     planPriceLinesRef.current = [];
+    draggablePlanLineRefs.current = {
+      entry: null,
+      tp1: null,
+      sl: null,
+    };
     hoverPriceLinesRef.current.lines = hoverPriceLinesRef.current.lines.filter(
       (line) => line?.overlayType !== "plan",
     );
@@ -4646,6 +4953,7 @@ export default function TradeSignalChart({
       tp1: null,
       sl: null,
     };
+    setPlanDragHandles([]);
   }, []);
 
   const clearTradeOverlayArtifacts = useCallback(() => {
@@ -5166,15 +5474,6 @@ export default function TradeSignalChart({
           const endTimeSec = toEpochSec(obj.anchorTimeMs2);
           const lineScope = String(obj.line_scope || "full").trim().toLowerCase();
           const extendToPriceScale = lineScope === "segment_to_scale";
-          const showScaleLabel = shouldShowSharedPriceScaleLabel(
-            {
-              sourceTf: obj?.source_tf || obj?.tf || "",
-              artifactType: obj?.artifact_type || obj?.type || "",
-              artifactGroup: obj?.artifact_group || "",
-              label,
-            },
-            interval,
-          );
           const resolvedLineWidth =
             lineScope === "segment" || extendToPriceScale
               ? rawLineWidth
@@ -5185,7 +5484,7 @@ export default function TradeSignalChart({
                 startTimeSec,
                 endTimeSec: extendToPriceScale ? null : endTimeSec,
                 label,
-                labelAlign: extendToPriceScale ? "right" : "left",
+                labelAlign: "left",
                 color: lineColor,
                 lineDash: ARTIFACT_LINE_DASH,
                 lineWidth: resolvedLineWidth,
@@ -5206,8 +5505,8 @@ export default function TradeSignalChart({
               lineWidth: 1,
               lineStyle,
               lineVisible: false,
-              axisLabelVisible: extendToPriceScale && showScaleLabel,
-              title: extendToPriceScale && showScaleLabel ? label : "",
+              axisLabelVisible: false,
+              title: "",
             });
             sharedOverlayPriceLinesRef.current.push(sharedLine);
           }
@@ -5306,21 +5605,37 @@ export default function TradeSignalChart({
           const startTimeSec =
             toEpochSec(obj.anchorTimeMs ?? obj.time) || firstCandleTime;
           const endTimeSec =
-            toEpochSec(obj.anchorTimeMs2) || lastCandleTime || null;
+            toEpochSec(obj.anchorTimeMs2 ?? obj.time2) || null;
           if (!Number.isFinite(startTimeSec)) return;
           const isFvg = obj.artifact_group === "fvg";
           const isOb = obj.artifact_group === "ob";
-          const lifecycleState = String(obj?.artifact_payload?.payload?.lifecycle_state || "")
-            .trim()
-            .toLowerCase();
-          const itemStatus = String(obj?.artifact_payload?.status || obj?.status || "")
-            .trim()
-            .toLowerCase();
-          const extendUnvisited =
-            (isFvg || isOb) &&
-            itemStatus === "active" &&
-            lifecycleState === "awaiting_touch" &&
-            !Number.isFinite(toEpochSec(obj.anchorTimeMs2));
+          const zoneFallbackEndTimeSec =
+            Number.isFinite(lastCandleTime)
+              ? lastCandleTime +
+                Math.max(60, Number(intervalToSeconds(interval)) || 60) * 5
+              : null;
+          if ((isFvg || isOb) && shouldLogArtifactZoneDebug()) {
+            const debugInfo = {
+              id: obj?.id || null,
+              label,
+              tf: obj?.source_tf || obj?.tf || "",
+              group: obj?.artifact_group || "",
+              startTimeSec,
+              endTimeSec: Number.isFinite(endTimeSec) ? endTimeSec : null,
+              fallbackEndTimeSec:
+                Number.isFinite(zoneFallbackEndTimeSec) ? zoneFallbackEndTimeSec : null,
+              lastCandleTime: Number.isFinite(lastCandleTime) ? lastCandleTime : null,
+              extendsPastLastBar:
+                Number.isFinite(endTimeSec) &&
+                Number.isFinite(lastCandleTime) &&
+                endTimeSec > lastCandleTime,
+              debug: obj?.artifact_debug || null,
+              payload: obj?.artifact_payload || null,
+            };
+            try {
+              console.info("[artifact-zone-debug]", debugInfo);
+            } catch {}
+          }
           const zoneFillColor = String(obj.bg_color || "").trim()
             || (isFvg
               ? withAlpha(lineColor, "08")
@@ -5330,11 +5645,13 @@ export default function TradeSignalChart({
           const zonePrimitive = new TimeRangeBoxPrimitive({
             startTimeSec,
             endTimeSec,
+            fallbackEndTimeSec: zoneFallbackEndTimeSec,
+            suppressWhenEndCoordinateMissing: isFvg || isOb,
             priceLow: Math.min(top, bottom),
             priceHigh: Math.max(top, bottom),
             lineColor,
             fillColor: zoneFillColor,
-            extendRight: extendUnvisited,
+            extendRight: false,
             lineDash: isFvg ? [] : ARTIFACT_LINE_DASH,
             lineWidth: isFvg ? 0 : isOb ? ARTIFACT_ZONE_LINE_WIDTH : 0.25,
             shadowBlur: isFvg ? 8 : isOb ? 10 : 0,
@@ -5344,6 +5661,7 @@ export default function TradeSignalChart({
                 ? withAlpha(lineColor, "18")
                 : "",
             label,
+            labelFontSize: obj?.label_font_size,
           });
           candleSeries.attachPrimitive(zonePrimitive);
           sharedOverlayPrimitivesRef.current.push(zonePrimitive);
@@ -5651,6 +5969,7 @@ export default function TradeSignalChart({
           axisLabelTextColor: isPrimary ? "#ffffff" : undefined,
         });
         planPriceLinesRef.current.push(entryLine);
+        if (isPrimary) draggablePlanLineRefs.current.entry = entryLine;
         nextHoverLines.push({
           overlayType: "plan",
           price: ep,
@@ -5690,6 +6009,7 @@ export default function TradeSignalChart({
             axisLabelTextColor: isPrimary ? "#ffffff" : undefined,
           });
           planPriceLinesRef.current.push(slLine);
+          if (isPrimary) draggablePlanLineRefs.current.sl = slLine;
           nextHoverLines.push({
             overlayType: "plan",
             price: sp,
@@ -5742,6 +6062,9 @@ export default function TradeSignalChart({
             axisLabelTextColor: isPrimary ? "#ffffff" : undefined,
           });
           planPriceLinesRef.current.push(tpLine);
+          if (isPrimary && level.key === "TP1") {
+            draggablePlanLineRefs.current.tp1 = tpLine;
+          }
           nextHoverLines.push({
             overlayType: "plan",
             price,
@@ -5766,6 +6089,7 @@ export default function TradeSignalChart({
         ),
         ...nextHoverLines,
       ];
+      window.requestAnimationFrame(refreshPlanDragHandles);
     },
     [
       clearPlanPriceLines,
@@ -5783,6 +6107,7 @@ export default function TradeSignalChart({
       tp2Price,
       tp3Price,
       tpPrice,
+      refreshPlanDragHandles,
     ],
   );
 
@@ -6189,7 +6514,6 @@ export default function TradeSignalChart({
 
     let isMounted = true;
     let chart;
-
     try {
       // 1. Initialize Chart
       chart = createChart(container, {
@@ -6273,6 +6597,7 @@ export default function TradeSignalChart({
           chartContainerRef.current.clientWidth,
           chartContainerRef.current.clientHeight || height,
         );
+        window.requestAnimationFrame(refreshPlanDragHandles);
       };
       let emitViewport = () => {};
       let viewportEmitTimer = null;
@@ -6644,7 +6969,6 @@ export default function TradeSignalChart({
             ? Number(pBottom)
             : null,
         };
-        debugChartLog("viewport-emitted", runtimeViewportRef.current);
       };
 
       const handleCrosshairMove = (param) => {
@@ -6656,6 +6980,10 @@ export default function TradeSignalChart({
         if (!param?.point || !param?.time) {
           clearCandleHoverPriceLine();
           clearIndicatorHoverPriceLines();
+          lastCrosshairContextRef.current = {
+            ...lastCrosshairContextRef.current,
+            time: null,
+          };
           onCrosshairSync({ sourceId: chartId, active: false });
           return;
         }
@@ -6672,6 +7000,10 @@ export default function TradeSignalChart({
         );
         if (!Number.isFinite(price)) return;
         setCandleHoverGuide(price);
+        lastCrosshairContextRef.current = {
+          time: Number(param.time) || null,
+          price,
+        };
 
         const indicatorHoverValues = {};
         for (const key of ["rsi", "rsiEma9", "rsiWma45", "stochK", "stochD"]) {
@@ -6703,19 +7035,19 @@ export default function TradeSignalChart({
         passive: true,
       });
 
-      // --- Price line tooltip ---
+      // --- Fixed artifact note (top-right) ---
       const tooltipEl = document.createElement("div");
       tooltipEl.style.cssText =
-        `display:none;position:absolute;z-index:100;background:${theme.panel};color:${theme.text};padding:8px 10px;border-radius:8px;font-size:11px;pointer-events:none;white-space:normal;border:1px solid ${theme.border};box-shadow:0 14px 32px rgba(2,6,23,0.45);max-width:360px;`;
+        `display:none;position:absolute;z-index:100;top:6px;right:10px;left:auto;background:transparent;color:${theme.text};padding:0;border-radius:0;font-size:8px;pointer-events:none;white-space:normal;border:none;box-shadow:none;max-width:250px;`;
       chartElement.appendChild(tooltipEl);
-
-      const placeTooltip = (leftPx, topPx) => {
-        const bounds = chartElement.getBoundingClientRect();
-        const maxLeft = Math.max(8, bounds.width - tooltipEl.offsetWidth - 8);
-        const maxTop = Math.max(8, bounds.height - tooltipEl.offsetHeight - 8);
-        tooltipEl.style.left = `${Math.min(Math.max(leftPx, 8), maxLeft)}px`;
-        tooltipEl.style.top = `${Math.min(Math.max(topPx, 8), maxTop)}px`;
+      const handleVisibleRangeChange = () => {
+        window.requestAnimationFrame(refreshPlanDragHandles);
       };
+      try {
+        chart.timeScale().subscribeVisibleLogicalRangeChange(
+          handleVisibleRangeChange,
+        );
+      } catch {}
 
       const handleMarkerHover = (param) => {
         if (!param?.point || !candleSeries) return false;
@@ -6744,7 +7076,6 @@ export default function TradeSignalChart({
           renderTooltipCardHtml({
             title: closest.tooltipText || "Marker",
           });
-        placeTooltip(Number(param.point.x) + 14, Number(closest.y) - 18);
         return true;
       };
 
@@ -6774,7 +7105,6 @@ export default function TradeSignalChart({
             direction: closest.direction || "",
             priceText: compactTooltipText(closest.priceText, "-"),
           });
-          placeTooltip(Number(param.point.x) + 10, Number(closest.y) - 20);
         } else {
           tooltipEl.style.display = "none";
         }
@@ -6896,7 +7226,11 @@ export default function TradeSignalChart({
 
           // Validate bar data before passing to lightweight-charts.
           // Malformed time values (undefined/null/non-finite) crash the chart.
-          candles = filterRenderableBarsForSymbol(candles, symbol, interval);
+          candles = chooseSafeChartBars(
+            filterRenderableBarsForSymbol(candles, symbol, interval),
+            currentBarsRef.current,
+            interval,
+          );
           currentBarsRef.current = candles;
 
           if (!candles.length) {
@@ -6921,9 +7255,6 @@ export default function TradeSignalChart({
           const barsChanged =
             nextBarsSignature !== lastRenderedBarsSignatureRef.current;
           lastRenderedBarsSignatureRef.current = nextBarsSignature;
-          if (barsChanged && !preserveViewportOnBarsChangeRef.current) {
-            runtimeViewportRef.current = null;
-          }
           const candleBarBounds = computePriceBoundsFromBars(candles);
           const canRenderTradeOverlay =
             candleBarBounds &&
@@ -7293,70 +7624,8 @@ export default function TradeSignalChart({
 
             applyTimelineTradeMarkers(candles);
 
-            const enableLevelDrag =
-              typeof onPlanLevelChange === "function" &&
-              Number.isFinite(levelPriceMapRef.current.entry) &&
-              (Number.isFinite(levelPriceMapRef.current.tp) ||
-               Number.isFinite(levelPriceMapRef.current.tp1)) &&
-              Number.isFinite(levelPriceMapRef.current.sl);
-
-            const pickNearestLevel = (mouseY) => {
-              const candidates = [
-                { key: "entry", price: levelPriceMapRef.current.entry },
-                {
-                  key: "tp1",
-                  price:
-                    levelPriceMapRef.current.tp1 ?? levelPriceMapRef.current.tp,
-                },
-                { key: "sl", price: levelPriceMapRef.current.sl },
-              ]
-                .map((x) => ({
-                  ...x,
-                  y: candleSeries.priceToCoordinate(x.price),
-                }))
-                .filter((x) => Number.isFinite(x.y))
-                .map((x) => ({ ...x, dist: Math.abs(x.y - mouseY) }))
-                .sort((a, b) => a.dist - b.dist);
-              if (!candidates.length || candidates[0].dist > 12) return null;
-              return candidates[0].key;
-            };
-
-            const emitLevelAtMouse = (evt) => {
-              if (!dragState.activeKey) return;
-              const rect = chartElement.getBoundingClientRect();
-              const y = evt.clientY - rect.top;
-              const nextPrice = candleSeries.coordinateToPrice(y);
-              if (!Number.isFinite(nextPrice)) return;
-              onPlanLevelChange(dragState.activeKey, Number(nextPrice));
-            };
-
-            const onMouseMove = (evt) => {
-              if (!dragState.activeKey || !enableLevelDrag) return;
-              emitLevelAtMouse(evt);
-            };
-
-            const onMouseUp = () => {
-              dragState.activeKey = null;
-              window.removeEventListener("mousemove", onMouseMove);
-              window.removeEventListener("mouseup", onMouseUp);
-            };
-
-            const onMouseDown = (evt) => {
-              if (!enableLevelDrag) return;
-              const rect = chartElement.getBoundingClientRect();
-              const y = evt.clientY - rect.top;
-              const nearest = pickNearestLevel(y);
-              if (!nearest) return;
-              dragState.activeKey = nearest;
-              window.addEventListener("mousemove", onMouseMove);
-              window.addEventListener("mouseup", onMouseUp);
-              evt.preventDefault();
-            };
-
-            chartElement.addEventListener("mousedown", onMouseDown);
             removeDragListeners = () => {
-              onMouseUp();
-              chartElement.removeEventListener("mousedown", onMouseDown);
+              dragState.activeKey = null;
             };
 
             const onContextMenu = (evt) => {
@@ -7372,8 +7641,70 @@ export default function TradeSignalChart({
                 0,
                 Math.min(1, y / Math.max(rect.height, 1)),
               );
-              const price = candleSeries.coordinateToPrice(y);
-              const time = chart.timeScale().coordinateToTime(x);
+              const primaryPaneHeight = Number(
+                chart.panes?.()?.[0]?.getHeight?.() || rect.height,
+              );
+              const clickedInsidePricePane =
+                Number.isFinite(primaryPaneHeight) &&
+                primaryPaneHeight > 0 &&
+                y >= 0 &&
+                y <= primaryPaneHeight;
+              const clampedPaneY = Math.max(
+                0,
+                Math.min(y, Math.max(primaryPaneHeight - 1, 0)),
+              );
+              const bars = Array.isArray(currentBarsRef.current)
+                ? currentBarsRef.current
+                : [];
+              const fallbackPrice = Number(bars[bars.length - 1]?.close);
+              const rawPrice = clickedInsidePricePane
+                ? candleSeries.coordinateToPrice(clampedPaneY)
+                : null;
+              const candleBarBounds = computePriceBoundsFromBars(bars);
+              const crosshairFallbackPrice = Number(
+                lastCrosshairContextRef.current?.price,
+              );
+              const price = Number(
+                Number.isFinite(Number(rawPrice)) &&
+                  (!candleBarBounds ||
+                    isPriceCompatibleWithBarBounds(Number(rawPrice), candleBarBounds))
+                  ? rawPrice
+                  : Number.isFinite(crosshairFallbackPrice) &&
+                      (!candleBarBounds ||
+                        isPriceCompatibleWithBarBounds(
+                          crosshairFallbackPrice,
+                          candleBarBounds,
+                        ))
+                    ? crosshairFallbackPrice
+                    : Number.isFinite(fallbackPrice)
+                      ? fallbackPrice
+                      : candleSeries.coordinateToPrice(clampedPaneY),
+              );
+              const rawTime = chart.timeScale().coordinateToTime(x);
+              const logicalIndex =
+                typeof chart.timeScale().coordinateToLogical === "function"
+                  ? Number(chart.timeScale().coordinateToLogical(x))
+                  : null;
+              const nearestBarTime =
+                Number.isFinite(logicalIndex) && bars.length
+                  ? Number(
+                      bars[
+                        Math.max(
+                          0,
+                          Math.min(bars.length - 1, Math.round(logicalIndex)),
+                        )
+                      ]?.time,
+                    ) || null
+                  : null;
+              const crosshairFallbackTime = Number(
+                lastCrosshairContextRef.current?.time,
+              );
+              const time =
+                rawTime ||
+                (Number.isFinite(nearestBarTime) ? nearestBarTime : null) ||
+                (Number.isFinite(crosshairFallbackTime)
+                  ? crosshairFallbackTime
+                  : null);
               if (!Number.isFinite(Number(price))) return;
               evt.preventDefault();
               onContextRequest({
@@ -7381,6 +7712,11 @@ export default function TradeSignalChart({
                 symbol,
                 interval,
                 price: Number(price),
+                currentPrice: Number.isFinite(fallbackPrice)
+                  ? fallbackPrice
+                  : Number.isFinite(crosshairFallbackPrice)
+                    ? crosshairFallbackPrice
+                    : Number(price),
                 time: time || null,
                 xRatio,
                 yRatio,
@@ -7408,24 +7744,12 @@ export default function TradeSignalChart({
               Number(autoFitNonce) !== Number(lastHandledAutoFitNonceRef.current);
             const shouldAutoFitOnLoad =
               shouldForceAutoFitFromNonce ||
-              !viewportToRestore ||
-              (barsChanged && !preserveViewportOnBarsChangeRef.current);
+              !viewportToRestore;
             const restoredViewport = applyStoredViewport(
               chart,
               candleSeries,
               viewportToRestore,
             );
-            debugChartLog("viewport-pre-apply", {
-              barsChanged,
-              restoredViewport,
-              shouldAutoFitOnLoad,
-              viewportToRestore,
-              preferTradeAnchoredViewport,
-              tradeViewportAnchors,
-              loadedBars: candles.length,
-              loadedFirst: candles[0]?.time || null,
-              loadedLast: candles[candles.length - 1]?.time || null,
-            });
             if (!restoredViewport || shouldAutoFitOnLoad) {
               const anchoredLastBarTimeSec =
                 Number.isFinite(Number(tradeViewportAnchors.lastAnchorTimeSec)) &&
@@ -7460,15 +7784,6 @@ export default function TradeSignalChart({
                         },
                       )
                     : false;
-              debugChartLog("viewport-apply-primary", {
-                mode: usedTradeViewport
-                  ? explicitVisibleBarsTarget > 0
-                    ? "explicit-visible-bars"
-                    : "trade-anchor"
-                  : "compact-default",
-                anchoredLastBarTimeSec,
-                preferTradeAnchoredViewport,
-              });
               if (!usedTradeViewport) {
                 applyCompactBarsViewport(
                   chart,
@@ -7512,15 +7827,6 @@ export default function TradeSignalChart({
                           },
                         )
                       : false;
-                debugChartLog("viewport-apply-raf", {
-                  mode: reappliedTradeViewport
-                    ? explicitVisibleBarsTarget > 0
-                      ? "explicit-visible-bars"
-                      : "trade-anchor"
-                    : "compact-default",
-                  anchoredLastBarTimeSec,
-                  preferTradeAnchoredViewport,
-                });
                 if (!reappliedTradeViewport) {
                   applyCompactBarsViewport(
                     chart,
@@ -7578,6 +7884,11 @@ export default function TradeSignalChart({
         }
         try {
           chart.unsubscribeCrosshairMove(handleCrosshairMove);
+        } catch {}
+        try {
+          chart.timeScale().unsubscribeVisibleLogicalRangeChange(
+            handleVisibleRangeChange,
+          );
         } catch {}
         try {
           chartElement.removeEventListener("wheel", scheduleEmitViewport);
@@ -7703,7 +8014,11 @@ export default function TradeSignalChart({
     const candleSeries = seriesRef.current;
     if (!chart || !candleSeries) return;
 
-    const candles = filterRenderableBarsForSymbol(historicalData, symbol, interval);
+    const candles = chooseSafeChartBars(
+      filterRenderableBarsForSymbol(historicalData, symbol, interval),
+      currentBarsRef.current,
+      interval,
+    );
     if (!candles.length) return;
 
     const nextBarsSignature = buildBarsSignature(candles);
@@ -7721,10 +8036,6 @@ export default function TradeSignalChart({
       logicalRange = chart.timeScale().getVisibleLogicalRange();
     } catch {
       logicalRange = null;
-    }
-
-    if (!preserveViewport) {
-      runtimeViewportRef.current = null;
     }
 
     const precisionCandidates = [];
@@ -7915,6 +8226,7 @@ export default function TradeSignalChart({
       requestAnimationFrame(restoreViewport);
     }
   }, [
+    applyPlanLevelDragPreview,
     clearDayDividerArtifacts,
     clearSessionOverlayArtifacts,
     clearIndicatorSeriesData,
@@ -7997,14 +8309,6 @@ export default function TradeSignalChart({
           ],
         },
       );
-    debugChartLog("viewport-effect-reapply", {
-      appliedTradeViewport,
-      preferTradeAnchoredViewport,
-      targetAnchors,
-      bars: currentBarsRef.current.length,
-      first: currentBarsRef.current[0]?.time || null,
-      last: currentBarsRef.current[currentBarsRef.current.length - 1]?.time || null,
-    });
     if (!appliedTradeViewport) {
       applyLatestBarsViewport(
         chartRef.current,
@@ -8022,7 +8326,6 @@ export default function TradeSignalChart({
     animateTradeViewport,
     preferTradeAnchoredViewport,
     autoFitNonce,
-    debugChartLog,
     isReplayActive,
   ]);
 
@@ -8404,6 +8707,62 @@ export default function TradeSignalChart({
             background: isLightUi ? uiTheme.surface : "#0d1117",
           }}
         />
+        {planDragHandles.length > 0 ? (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              pointerEvents: "none",
+              zIndex: 16,
+            }}
+          >
+            {planDragHandles.map((handle) => (
+              <button
+                key={handle.key}
+                type="button"
+                onMouseDown={(event) =>
+                  handlePlanHandleMouseDown(handle.key, event)
+                }
+                title={`Drag ${handle.label}`}
+                aria-label={`Drag ${handle.label}`}
+                style={{
+                  position: "absolute",
+                  top: `${Math.round(handle.y)}px`,
+                  right: 62,
+                  transform: "translateY(-50%)",
+                  pointerEvents: "auto",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 3,
+                  padding: 0,
+                  border: "none",
+                  background: "transparent",
+                  color: handle.color,
+                  fontSize: 9,
+                  fontWeight: 700,
+                  lineHeight: 1,
+                  cursor: "ns-resize",
+                  boxShadow: "none",
+                }}
+              >
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 8,
+                    color: handle.color,
+                    fontSize: 9,
+                    letterSpacing: "-0.08em",
+                  }}
+                >
+                  ::
+                </span>
+                {handle.shortLabel ? <span>{handle.shortLabel}</span> : null}
+              </button>
+            ))}
+          </div>
+        ) : null}
         {showIndicators && showRsiPanel && visibleOscillatorIndicators.length > 0 && (
           <div
             style={{

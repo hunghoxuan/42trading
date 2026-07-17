@@ -4,6 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const backtestService = require("./backtestService");
+const chartStrategyChecks = require("../../../../admin/shared/utils/chartStrategyChecks.cjs");
 const sharedArtifactDetection = require("../../../../admin/modules/42trade/chartArtifacts/detectArtifacts.cjs");
 const realtimeAnalysis = require("../../../../admin/modules/42trade/chartArtifacts/realtimeAnalysis.cjs");
 
@@ -96,6 +97,53 @@ test("simulateStrategy preserves detector-style events with draw actions in the 
   assert.equal(result.event_log.length > 0, true);
   assert.equal(result.event_log.some((entry) => entry?.action_type === "draw"), true);
   assert.equal(result.event_log.some((entry) => entry?.event_id === "bos_event"), true);
+});
+
+test("simulateStrategy uses the same trade plan core as chart strategy scan", () => {
+  const bars = makeStructureBars();
+  const strategy = {
+    id: "bos_trade_strategy",
+    name: "BOS Trade Strategy",
+    engine_version: "42trade.strategy.v2",
+    indicators: [],
+    events: [
+      {
+        id: "bos_trade",
+        name: "BOS Trade",
+        when: { fn: "bos", args: ["bullish"] },
+        actions: [{ id: "bos_trade_action", action: "trade", trade_plan: { direction: "buy" } }],
+      },
+    ],
+  };
+
+  const chartEvaluation = chartStrategyChecks.evaluateChartStrategies({
+    bars,
+    strategies: [strategy],
+    lookbackBars: bars.length,
+    symbol: "EURUSD",
+    tf: "1h",
+    multiTfBars: { "1h": bars },
+    scanMode: "backtest",
+  });
+  const chartPlan = Array.isArray(chartEvaluation?.tradePlans)
+    ? chartEvaluation.tradePlans[0]
+    : null;
+  assert.ok(chartPlan, "chart evaluation should emit a trade plan");
+
+  const result = backtestService.__test.simulateStrategy(bars, strategy, {
+    tf: "1h",
+    symbol: "EURUSD",
+    returnDetails: true,
+  });
+  const backtestPlan = Array.isArray(result?.event_log)
+    ? result.event_log.find((entry) => entry?.action_type === "trade")?.trade_plan || null
+    : null;
+
+  assert.ok(backtestPlan, "backtest simulation should emit a trade plan");
+  assert.equal(String(backtestPlan.direction || "").toLowerCase(), String(chartPlan.direction || "").toLowerCase());
+  assert.equal(Number(backtestPlan.entry), Number(chartPlan.entry));
+  assert.equal(Number(backtestPlan.sl), Number(chartPlan.sl));
+  assert.equal(Number(backtestPlan.tp), Number(chartPlan.tp));
 });
 
 test("realtime analysis derives phase and artifact buckets from timeframe bars", () => {

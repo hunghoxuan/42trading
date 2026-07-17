@@ -4,7 +4,9 @@ import PageHeader from "../../../shared/components/PageHeader";
 import AdminPageToolbar, {
   AdminToolbarGroup,
 } from "../../../shared/components/AdminPageToolbar";
-import ResponsivePanel from "../../../shared/components/ResponsivePanel";
+import CrudContainer from "../../../shared/components/CrudContainer";
+import SmartContent from "../../../shared/components/SmartContent.jsx";
+import { StatusDisplay } from "../../../shared/components/StatusBadge";
 import "./SystemToolsPages.css";
 
 function toneForSource(source = "") {
@@ -15,10 +17,19 @@ function toneForSource(source = "") {
   return "neutral";
 }
 
+function formatTtl(value) {
+  const ttl = Number(value || 0);
+  if (!Number.isFinite(ttl) || ttl <= 0) return "-";
+  return `${ttl} ms`;
+}
+
 export default function SystemCachePage() {
   const [items, setItems] = useState([]);
   const [selectedItem, setSelectedItem] = useState(null);
   const [detail, setDetail] = useState(null);
+  const [detailOpen, setDetailOpen] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth >= 768 : true,
+  );
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -35,11 +46,67 @@ export default function SystemCachePage() {
     );
   }, [items, query]);
 
+  const cacheColumns = useMemo(
+    () => [
+      {
+        accessorKey: "key",
+        header: "Key",
+        cell: ({ row }) => (
+          <div className="system-tool-table__primary">
+            <div className="system-tool-table__title">
+              {row.original?.key || "-"}
+            </div>
+          </div>
+        ),
+      },
+      {
+        accessorKey: "source",
+        header: "Source",
+        cell: ({ row }) => (
+          <span
+            className={[
+              "system-tool-pill",
+              `system-tool-pill--${toneForSource(row.original?.source)}`,
+            ].join(" ")}
+          >
+            {row.original?.source || "unknown"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "expired",
+        header: "State",
+        cell: ({ row }) => (
+          <StatusDisplay
+            status={row.original?.expired ? "expired" : "active"}
+            label={row.original?.expired ? "Expired" : "Active"}
+          />
+        ),
+      },
+      {
+        accessorKey: "ttl_ms",
+        header: "TTL",
+        cell: ({ row }) => formatTtl(row.original?.ttl_ms),
+      },
+    ],
+    [],
+  );
+
   async function loadItems() {
     try {
       setLoading(true);
       const out = await api.listCache();
-      setItems(Array.isArray(out?.items) ? out.items : []);
+      const nextItems = Array.isArray(out?.items) ? out.items : [];
+      setItems(nextItems);
+      if (selectedItem?.key) {
+        const nextSelected =
+          nextItems.find(
+            (item) =>
+              item.key === selectedItem.key &&
+              item.source === selectedItem.source,
+          ) || null;
+        setSelectedItem(nextSelected);
+      }
       setError("");
     } catch (err) {
       setError(err?.message || "Failed to load cache items.");
@@ -56,7 +123,7 @@ export default function SystemCachePage() {
     try {
       setLoadingDetail(true);
       const out = await api.getCacheDetail(item.key, item.source || "memory");
-      setDetail(out?.detail || out?.item || out);
+      setDetail(out?.detail || out?.item || out?.data || out);
       setError("");
     } catch (err) {
       setError(err?.message || "Failed to load cache detail.");
@@ -72,6 +139,10 @@ export default function SystemCachePage() {
   useEffect(() => {
     loadDetail(selectedItem);
   }, [selectedItem?.key, selectedItem?.source]);
+
+  useEffect(() => {
+    if (selectedItem?.key) setDetailOpen(true);
+  }, [selectedItem?.key]);
 
   async function handleDeleteSelected() {
     if (!selectedItem?.key) return;
@@ -104,9 +175,9 @@ export default function SystemCachePage() {
     <section className="system-tool-page">
       <PageHeader title="System Cache" />
       <AdminPageToolbar
-        className="system-tool-toolbar"
+        className="db-manager-toolbar"
         filters={
-          <AdminToolbarGroup className="system-tool-toolbar__group">
+          <AdminToolbarGroup className="db-manager-toolbar__group db-manager-toolbar__group--compact">
             <input
               className="text-input"
               value={query}
@@ -116,11 +187,19 @@ export default function SystemCachePage() {
           </AdminToolbarGroup>
         }
         actions={
-          <AdminToolbarGroup className="system-tool-toolbar__group">
-            <button type="button" className="secondary-button" onClick={loadItems}>
+          <AdminToolbarGroup className="db-manager-toolbar__group">
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={loadItems}
+            >
               Refresh
             </button>
-            <button type="button" className="danger-button" onClick={handleDeleteAll}>
+            <button
+              type="button"
+              className="danger-button"
+              onClick={handleDeleteAll}
+            >
               Clear All
             </button>
           </AdminToolbarGroup>
@@ -133,80 +212,71 @@ export default function SystemCachePage() {
         </div>
       ) : null}
 
-      <div className="system-tool-layout system-tool-layout--compact-detail">
-        <ResponsivePanel title="Cache Items" showToggle={false}>
-          <div className="system-tool-panel__body system-tool-panel__body--scroll">
-            <div className="system-tool-list">
-              {loading ? (
-                <div className="minor-text">Loading cache...</div>
-              ) : filteredItems.length ? (
-                filteredItems.map((item) => (
-                  <button
-                    key={`${item.source}:${item.key}`}
-                    type="button"
-                    className={[
-                      "system-tool-list__item",
-                      selectedItem?.key === item.key &&
-                      selectedItem?.source === item.source
-                        ? "is-active"
-                        : "",
-                    ].join(" ")}
-                    onClick={() => setSelectedItem(item)}
-                  >
-                    <div className="system-tool-list__title">{item.key}</div>
-                    <div className="system-tool-list__meta">
-                      <span
-                        className={[
-                          "system-tool-pill",
-                          `system-tool-pill--${toneForSource(item.source)}`,
-                        ].join(" ")}
-                      >
-                        {item.source || "unknown"}
-                      </span>
-                      <span>{item.expired ? "expired" : "active"}</span>
-                    </div>
-                  </button>
-                ))
-              ) : (
-                <div className="empty-state">No cache entries found.</div>
-              )}
-            </div>
-          </div>
-        </ResponsivePanel>
-
-        <ResponsivePanel title="Detail" showToggle={false}>
-          <div className="system-tool-panel__body system-tool-panel__body--scroll">
-            {selectedItem ? (
+      <CrudContainer
+        className="db-manager-crud system-tool-browser-crud"
+        sameHeight={false}
+        detailVisible={Boolean(selectedItem)}
+        detailOpen={detailOpen}
+        onDetailOpenChange={setDetailOpen}
+        detailCloseButton
+        list={{
+          title: "Cache Items",
+          panelClassName: "db-manager-rows-panel system-tool-main",
+          tableProps: {
+            columns: cacheColumns,
+            data: filteredItems,
+            loading,
+            emptyText: "No cache entries found.",
+            className: "events-table events-table--compact system-tool-browser-table",
+            onRowClick: (item) => setSelectedItem(item),
+            getRowId: (item) => `${item?.source || "memory"}:${item?.key || ""}`,
+            selectedRowId: selectedItem
+              ? `${selectedItem.source || "memory"}:${selectedItem.key || ""}`
+              : null,
+          },
+        }}
+        detail={{
+          title: selectedItem?.key || "Detail",
+          subtitle: selectedItem?.source
+            ? `${selectedItem.source} cache entry`
+            : "",
+          headerActions: selectedItem ? (
+            <button
+              type="button"
+              className="danger-button"
+              onClick={handleDeleteSelected}
+            >
+              Delete Selected
+            </button>
+          ) : null,
+          panelClassName: "system-tool-detail",
+          children: selectedItem ? (
+            <div className="system-tool-panel__body system-tool-panel__body--scroll">
               <div className="system-tool-detail__content">
-                <div className="system-tool-toolbar__group">
-                  <button
-                    type="button"
-                    className="danger-button"
-                    onClick={handleDeleteSelected}
-                  >
-                    Delete Selected
-                  </button>
-                </div>
                 <dl className="system-tool-kv">
                   <dt>Key</dt>
                   <dd className="system-tool-code">{selectedItem.key}</dd>
                   <dt>Source</dt>
                   <dd>{selectedItem.source || "-"}</dd>
+                  <dt>State</dt>
+                  <dd>{selectedItem.expired ? "Expired" : "Active"}</dd>
                   <dt>TTL</dt>
-                  <dd>{selectedItem.ttl_ms ? `${selectedItem.ttl_ms} ms` : "-"}</dd>
+                  <dd>{formatTtl(selectedItem.ttl_ms)}</dd>
                 </dl>
                 {loadingDetail ? (
                   <div className="minor-text">Loading detail...</div>
                 ) : (
-                  <pre>{JSON.stringify(detail || selectedItem.data || {}, null, 2)}</pre>
+                  <SmartContent
+                    content={detail || selectedItem.data || {}}
+                    mode="readonly"
+                    showCopy
+                  />
                 )}
               </div>
-            ) : (
-              <div className="empty-state">Select a cache key to inspect it.</div>
-            )}
-          </div>
-        </ResponsivePanel>
-      </div>
+            </div>
+          ) : null,
+        }}
+      />
     </section>
   );
 }

@@ -4,6 +4,7 @@
   "kind": "preset",
   "description": "Simple fast/slow EMA crossover with fixed 1:2 risk-reward and one open trade at a time.",
   "engine_version": "42trade.strategy.v2",
+  "status": "active",
   "params": {
     "fast_period": 9,
     "slow_period": 21,
@@ -79,5 +80,9 @@
     "fallback_stop_pct": 0.001,
     "fallback_tp_pct": 0.002
   },
-  "min_bars": 40
+  "min_bars": 40,
+  "conditions": {
+    "skip_news": true,
+    "news_window_minutes": 120
+  }
 }

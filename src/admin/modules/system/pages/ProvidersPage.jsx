@@ -5,7 +5,6 @@ import MasterDetailLayout from "../../../shared/components/MasterDetailLayout";
 import SidebarListItem from "../components/SidebarListItem";
 import { useConfirmDialog } from "../../../shared/components/ConfirmDialog";
 import LogsViewer from "../components/LogsViewer";
-import SecretInput from "../../../shared/components/SecretInput";
 import ToggleButton from "../../../shared/components/ToggleButton";
 import TabBar from "../../../shared/components/TabBar";
 import PageHeader from "../../../shared/components/PageHeader";
@@ -86,6 +85,71 @@ function normalizeProviderName(raw) {
   return s.replace(/_API_KEY$/i, "");
 }
 
+function createEmptyKeyRow() {
+  return {
+    id: `draft_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+    api_key: "",
+    status: "active",
+    invalid: false,
+    invalid_reason: null,
+    last_checked_at: null,
+    last_success_at: null,
+    last_error: null,
+  };
+}
+
+function isMaskedKeyLike(value = "") {
+  return String(value || "").includes("****");
+}
+
+async function copyText(text) {
+  if (navigator?.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const tmp = document.createElement("textarea");
+  tmp.value = text;
+  tmp.style.position = "fixed";
+  tmp.style.opacity = "0";
+  document.body.appendChild(tmp);
+  tmp.focus();
+  tmp.select();
+  document.execCommand("copy");
+  document.body.removeChild(tmp);
+}
+
+function normalizeProviderKeyRows(data = {}) {
+  const keyEntries = Array.isArray(data?.key_entries) ? data.key_entries : [];
+  if (keyEntries.length) {
+    return keyEntries.map((entry, index) => ({
+      id: String(entry?.id || `row_${index + 1}`),
+      api_key: String(entry?.api_key || ""),
+      status: String(entry?.status || (entry?.invalid ? "invalid" : "active")).toLowerCase(),
+      invalid: entry?.invalid === true,
+      invalid_reason: entry?.invalid_reason || null,
+      last_checked_at: entry?.last_checked_at || null,
+      last_success_at: entry?.last_success_at || null,
+      last_error: entry?.last_error || null,
+    }));
+  }
+  const apiKeys = Array.isArray(data?.api_keys)
+    ? data.api_keys
+    : String(data?.api_key || data?.value || "")
+        .split(/[\n,]/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+  return apiKeys.map((apiKey, index) => ({
+    id: `row_${index + 1}`,
+    api_key: String(apiKey || ""),
+    status: "active",
+    invalid: false,
+    invalid_reason: null,
+    last_checked_at: null,
+    last_success_at: null,
+    last_error: null,
+  }));
+}
+
 // ── Component ───────────────────────────────────────────────────────────────
 
 export default function ProvidersPage() {
@@ -121,6 +185,10 @@ export default function ProvidersPage() {
         data: {
           models: Array.isArray(data.models) ? data.models : [],
           api_key: String(data.api_key || data.value || ""),
+          api_keys: normalizeProviderKeyRows(data).map((entry) =>
+            String(entry?.api_key || ""),
+          ),
+          key_entries: normalizeProviderKeyRows(data),
           remain_credits: Number.isFinite(Number(data.remain_credits))
             ? Number(data.remain_credits)
             : 0,
@@ -145,7 +213,7 @@ export default function ProvidersPage() {
 
   const [form, setForm] = useState({
     models: [],
-    api_key: "",
+    key_entries: [],
     remain_credits: 0,
   });
 
@@ -155,11 +223,19 @@ export default function ProvidersPage() {
       const defaultModels = currentProvDef?.models || [];
       setForm({
         models: dbModels.length > 0 ? [...dbModels] : [...defaultModels],
-        api_key: currentProvider.data.api_key,
+        key_entries:
+          currentProvider.data.key_entries.length > 0
+            ? currentProvider.data.key_entries.map((entry) => ({ ...entry }))
+            : [createEmptyKeyRow()],
         remain_credits: currentProvider.data.remain_credits,
       });
     }
-  }, [selectedProvider, currentProvider?.data?.api_key]);
+  }, [
+    selectedProvider,
+    currentProvider?.data?.api_key,
+    currentProvider?.data?.api_keys,
+    currentProvider?.data?.key_entries,
+  ]);
 
   useEffect(() => {
     const normalizedRouteProvider = routeProviderName
@@ -184,12 +260,12 @@ export default function ProvidersPage() {
 
   // ── Reveal helpers ──────────────────────────────────────────────────────
 
-  const revealApiKey = async () => {
+  const revealApiKeys = async () => {
     try {
       const out = await api.getSettingSecret(
         "api_key",
         selectedProvider,
-        "api_key",
+        "api_keys",
       );
       const plain = String(out?.value || "");
       return plain;
@@ -197,6 +273,49 @@ export default function ProvidersPage() {
       setMsg(err?.message || "Failed to reveal secret.");
       return "";
     }
+  };
+
+  const revealKeyAtIndex = async (index) => {
+    const plain = await revealApiKeys();
+    const keys = plain
+      .split(/[\n,]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const resolved = String(keys[index] || "");
+    if (!resolved) return "";
+    setForm((prev) => ({
+      ...prev,
+      key_entries: (prev.key_entries || []).map((entry, rowIndex) =>
+        rowIndex === index ? { ...entry, api_key: resolved } : entry,
+      ),
+    }));
+    return resolved;
+  };
+
+  const updateKeyRow = (rowId, patch = {}) => {
+    setForm((prev) => ({
+      ...prev,
+      key_entries: (prev.key_entries || []).map((entry) =>
+        entry.id === rowId ? { ...entry, ...patch } : entry,
+      ),
+    }));
+  };
+
+  const addKeyRow = () => {
+    setForm((prev) => ({
+      ...prev,
+      key_entries: [...(prev.key_entries || []), createEmptyKeyRow()],
+    }));
+  };
+
+  const removeKeyRow = (rowId) => {
+    setForm((prev) => {
+      const nextRows = (prev.key_entries || []).filter((entry) => entry.id !== rowId);
+      return {
+        ...prev,
+        key_entries: nextRows.length ? nextRows : [createEmptyKeyRow()],
+      };
+    });
   };
 
   // ── Data loading ────────────────────────────────────────────────────────
@@ -249,7 +368,18 @@ export default function ProvidersPage() {
       name: existing?.name || selectedProvider,
       data: {
         models: form.models,
-        api_key: String(form.api_key || ""),
+        key_entries: (form.key_entries || [])
+          .map((entry) => ({
+            ...entry,
+            api_key: String(entry?.api_key || "").trim(),
+            status:
+              String(entry?.status || "active").toLowerCase() === "inactive"
+                ? "inactive"
+                : String(entry?.status || "active").toLowerCase() === "invalid"
+                  ? "invalid"
+                  : "active",
+          }))
+          .filter((entry) => entry.api_key),
         remain_credits: Number(form.remain_credits || 0),
       },
       status: currentProvider?.status || "ACTIVE",
@@ -406,20 +536,158 @@ export default function ProvidersPage() {
 
                   <div className="stack-layout" style={{ gap: 6 }}>
                     <span className="panel-label" style={{ fontSize: 10 }}>
-                      API KEY
+                      API KEYS
                     </span>
-                    <SecretInput
-                      value={form.api_key}
-                      onChange={(next) =>
-                        setForm((prev) => ({ ...prev, api_key: next }))
-                      }
-                      placeholder="Enter API key..."
-                      secretName="API Key"
-                      revealSecret={revealApiKey}
-                      onMessage={(text) => {
-                        setMsg(text);
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={async () => {
+                          const plain = await revealApiKeys();
+                          if (plain) {
+                            const rows = plain
+                              .split(/[\n,]/)
+                              .map((item) => item.trim())
+                              .filter(Boolean)
+                              .map((apiKey, index) => ({
+                                ...(form.key_entries?.[index] || createEmptyKeyRow()),
+                                api_key: apiKey,
+                              }));
+                            setForm((prev) => ({
+                              ...prev,
+                              key_entries: rows.length ? rows : [createEmptyKeyRow()],
+                            }));
+                            setMsg(`${currentProvDef.label} keys revealed.`);
+                          }
+                        }}
+                        disabled={saveBusy}
+                      >
+                        REVEAL ALL
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={addKeyRow}
+                        disabled={saveBusy}
+                      >
+                        ADD KEY
+                      </button>
+                      <span className="minor-text" style={{ fontSize: 11 }}>
+                        `active` joins rotation, `inactive` is skipped, `invalid` is auto-marked by runtime.
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        display: "grid",
+                        gap: 10,
                       }}
-                    />
+                    >
+                      {(form.key_entries || []).map((entry, index) => {
+                        const status = String(entry?.status || "active").toLowerCase();
+                        const invalid = status === "invalid" || entry?.invalid === true;
+                        return (
+                          <div
+                            key={entry?.id || `${selectedProvider}-${index}`}
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "minmax(0, 1fr) 120px 148px 90px",
+                              gap: 8,
+                              alignItems: "start",
+                              padding: 10,
+                              border: "1px solid var(--border)",
+                              borderRadius: 10,
+                            }}
+                          >
+                            <div className="stack-layout" style={{ gap: 4 }}>
+                              <input
+                                type="text"
+                                value={String(entry?.api_key || "")}
+                                placeholder={`API key ${index + 1}`}
+                                onChange={(e) =>
+                                  updateKeyRow(entry.id, { api_key: e.target.value })
+                                }
+                              />
+                              {(entry?.invalid_reason || entry?.last_error || entry?.last_success_at) && (
+                                <span
+                                  className="minor-text"
+                                  style={{
+                                    fontSize: 11,
+                                    color: invalid ? "var(--danger)" : undefined,
+                                  }}
+                                >
+                                  {invalid
+                                    ? String(entry?.invalid_reason || entry?.last_error || "Invalid key")
+                                    : `Last success: ${String(entry?.last_success_at || entry?.last_checked_at || "")}`}
+                                </span>
+                              )}
+                            </div>
+                            <select
+                              value={invalid ? "invalid" : status === "inactive" ? "inactive" : "active"}
+                              onChange={(e) =>
+                                updateKeyRow(entry.id, {
+                                  status: e.target.value,
+                                  invalid: e.target.value === "invalid",
+                                })
+                              }
+                            >
+                              <option value="active">active</option>
+                              <option value="inactive">inactive</option>
+                              <option value="invalid">invalid</option>
+                            </select>
+                            <div
+                              style={{
+                                display: "flex",
+                                gap: 8,
+                              }}
+                            >
+                              <button
+                                type="button"
+                                className="secondary-button"
+                                onClick={async () => {
+                                  const resolved = isMaskedKeyLike(entry?.api_key)
+                                    ? await revealKeyAtIndex(index)
+                                    : String(entry?.api_key || "");
+                                  if (resolved) {
+                                    setMsg(`Revealed key ${index + 1}.`);
+                                  }
+                                }}
+                                disabled={saveBusy}
+                                title="Reveal key"
+                              >
+                                EYE
+                              </button>
+                              <button
+                                type="button"
+                                className="secondary-button"
+                                onClick={async () => {
+                                  const resolved = isMaskedKeyLike(entry?.api_key)
+                                    ? await revealKeyAtIndex(index)
+                                    : String(entry?.api_key || "");
+                                  if (!resolved) {
+                                    setMsg(`Key ${index + 1} is empty.`);
+                                    return;
+                                  }
+                                  await copyText(resolved);
+                                  setMsg(`Copied key ${index + 1}.`);
+                                }}
+                                disabled={saveBusy}
+                                title="Copy key"
+                              >
+                                COPY
+                              </button>
+                            </div>
+                            <button
+                              type="button"
+                              className="danger-button"
+                              onClick={() => removeKeyRow(entry.id)}
+                              disabled={saveBusy}
+                            >
+                              REMOVE
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
 
                   <div className="stack-layout" style={{ gap: 6 }}>

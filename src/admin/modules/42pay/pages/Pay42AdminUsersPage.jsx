@@ -1,17 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../../app/api";
-import DataTable from "../../../shared/components/DataTable";
+import ComboButtonMenu from "../../../shared/components/ComboButtonMenu";
+import CrudContainer from "../../../shared/components/CrudContainer";
 import PageHeader from "../../../shared/components/PageHeader";
-import ResponsivePanel from "../../../shared/components/ResponsivePanel";
-import AdminPageToolbar from "../../../shared/components/AdminPageToolbar";
 import InputComboSelect from "../../../shared/components/InputComboSelect";
+import Pay42PageShell from "./Pay42PageShell";
+
+const TABLE_MODE_ITEMS = [
+  { value: "table", label: "Table" },
+  { value: "grid", label: "Grid" },
+  { value: "cards", label: "Cards" },
+  { value: "carousel", label: "Carousel" },
+];
 
 export default function Pay42AdminUsersPage() {
   const [items, setItems] = useState([]);
   const [filter, setFilter] = useState({ q: "", role: "" });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [tableMode, setTableMode] = useState("table");
 
   useEffect(() => {
     let cancelled = false;
@@ -68,9 +76,9 @@ export default function Pay42AdminUsersPage() {
         accessorKey: "name",
         header: "USER",
         cell: ({ row }) => (
-          <div className="cell-wrap">
-            <strong>{row.original.name || row.original.user_id}</strong>
-            <span className="minor-text">{row.original.user_id}</span>
+          <div className="cell-wrap ui-data-stack">
+            <strong className="ui-data-title">{row.original.name || row.original.user_id}</strong>
+            <span className="ui-data-meta">{row.original.user_id}</span>
           </div>
         ),
       },
@@ -128,27 +136,15 @@ export default function Pay42AdminUsersPage() {
   );
 
   return (
-    <section className="logs-page-container trades-page-container pay42-page-container stack-layout fadeIn">
-      <PageHeader
-        className="trades-page-header"
-        title="Users"
-        actions={
-          <Link className="secondary-button" to="/system/users">
-            Open System User Manager
-          </Link>
-        }
-      />
+    <Pay42PageShell>
+      <PageHeader className="trades-page-header" title="Users" />
 
-      <AdminPageToolbar
-        className="trades-toolbar-panel"
-        filters={
-          <ResponsivePanel
-            title="Filters"
-            className="trades-filters-panel"
-            headerMode="mobile"
-            border="mobile"
-            showToggle={false}
-          >
+      {error ? <div className="error">{error}</div> : null}
+
+      <CrudContainer
+        toolbar={{
+          displayMode: "top",
+          filters: (
             <div className="trades-toolbar-row">
               <div className="trades-toolbar-filters">
                 <input
@@ -171,27 +167,43 @@ export default function Pay42AdminUsersPage() {
                 </InputComboSelect>
               </div>
             </div>
-          </ResponsivePanel>
-        }
+          ),
+          actions: (
+            <Link className="primary-button" to="/system/users">
+              Open System User Manager
+            </Link>
+          ),
+        }}
+        detailVisible={false}
+        list={{
+          title: `${filteredItems.length} Users`,
+          subtitle: "Role coverage and activity",
+          panelClassName: "component-frozen-wrap",
+          headerActions: (
+            <ComboButtonMenu
+              selectId="pay42-users-mode"
+              value={tableMode}
+              buttonText={`Mode: ${TABLE_MODE_ITEMS.find((item) => item.value === tableMode)?.label || "Table"}`}
+              onChange={setTableMode}
+              items={TABLE_MODE_ITEMS}
+              ariaLabel="Select users view mode"
+              align="end"
+              sideOffset={6}
+              triggerClassName="data-table-mode-switcher"
+            />
+          ),
+          tableProps: {
+            columns,
+            data: filteredItems,
+            loading,
+            emptyText: "No 42Pay users found.",
+            className: "events-table events-table--compact",
+            mode: tableMode,
+            onModeChange: setTableMode,
+            mobileCard,
+          },
+        }}
       />
-
-      {error ? <div className="error">{error}</div> : null}
-
-      <ResponsivePanel
-        title={`${filteredItems.length} Users`}
-        subtitle="Role coverage and activity"
-        className="component-frozen-wrap"
-        showToggle={false}
-      >
-        <DataTable
-          columns={columns}
-          data={filteredItems}
-          loading={loading}
-          emptyText="No 42Pay users found."
-          className="events-table"
-          mobileCard={mobileCard}
-        />
-      </ResponsivePanel>
-    </section>
+    </Pay42PageShell>
   );
 }

@@ -10,6 +10,7 @@ const {
   create42PayRepo,
   PAY42_SCOPE,
 } = require("./repo");
+const { createUniversalStoreFacade } = require("../../shared/universal-store");
 
 function tempSqlitePath(label) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `42pay-${label}-`));
@@ -38,6 +39,15 @@ function createJsonRepoOptions(label, accounts) {
     },
     accounts,
   };
+}
+
+async function openUniversalStore(sqlitePath) {
+  const facade = createUniversalStoreFacade({
+    provider: "sqlite",
+    sqlitePath,
+  });
+  await facade.init();
+  return facade;
 }
 
 function createAccountAdapter(initialAccounts = []) {
@@ -216,11 +226,21 @@ test("createOffer generates a QR code token and buyer can create an order from i
   assert.equal(createdOrder.order.product_offer_id, createdOffer.offer.sid);
   assert.equal(Number(createdOrder.order.tax) > 0, true);
   assert.equal(createdOrder.order.status, "PAID");
-  const snapshot = accounts.snapshot();
-  const buyerWallet = snapshot.find((account) => account.user_id === "user");
-  const sellerWallet = snapshot.find((account) => account.user_id === "seller");
-  assert.equal(Number(buyerWallet.balance) < 2500, true);
-  assert.equal(Number(sellerWallet.balance) > 100, true);
+  const store = await openUniversalStore(repo.getStorageInfo().current_store_path);
+  const buyerWalletEntity = await store.getEntity(PAY42_SCOPE, "user_account", "wallet:usd:user");
+  const sellerWalletEntity = await store.getEntity(PAY42_SCOPE, "user_account", "wallet:usd:seller");
+  const buyerJournal = await store.getUserJournal(PAY42_SCOPE, "user", {
+    entityKey: "wallet:usd:user",
+    limit: 20,
+  });
+  const sellerJournal = await store.getUserJournal(PAY42_SCOPE, "seller", {
+    entityKey: "wallet:usd:seller",
+    limit: 20,
+  });
+  assert.equal(Number(buyerWalletEntity.data.balance) < 2500, true);
+  assert.equal(Number(sellerWalletEntity.data.balance) > 100, true);
+  assert.equal(buyerJournal.some((entry) => entry.entryType === "wallet.order_debit"), true);
+  assert.equal(sellerJournal.some((entry) => entry.entryType === "wallet.order_credit"), true);
 });
 
 test("previewOrderFromQrCode returns offer and wallet impact before payment", async () => {
@@ -256,7 +276,7 @@ test("previewOrderFromQrCode returns offer and wallet impact before payment", as
 
   assert.equal(preview.ok, true);
   assert.equal(preview.offer.sid, "P42O_HANOI_HERITAGE_2N");
-  assert.equal(preview.payment.total_amount, 240.75);
+  assert.equal(preview.payment.total_amount, 139.32);
   assert.equal(preview.payment.can_pay, true);
   assert.equal(preview.wallet.user_id, "user");
   assert.equal(preview.payment.balance_after < preview.payment.balance_before, true);
@@ -295,10 +315,18 @@ test("getWalletSummary returns buyer wallet information", async () => {
   const out = await repo.getWalletSummary({
     actor: { user_id: "user", roles: ["buyer"] },
   });
+  const store = await openUniversalStore(repo.getStorageInfo().current_store_path);
+  const walletEntity = await store.getEntity(PAY42_SCOPE, "user_account", "wallet:usd:user");
+  const walletLinks = await store.getUserLinks(PAY42_SCOPE, "user", {
+    linkType: "owns",
+    limit: 20,
+  });
 
   assert.equal(out.ok, true);
   assert.equal(out.wallet.user_id, "user");
   assert.equal(Number(out.wallet.balance), 0);
+  assert.equal(walletEntity.data.account_type, "wallet");
+  assert.equal(walletLinks.some((link) => link.toEntityId === walletEntity.id), true);
 });
 
 test("migrateLegacySqliteToProvider moves 42pay sqlite objects into the configured provider", async () => {
@@ -316,10 +344,10 @@ test("migrateLegacySqliteToProvider moves 42pay sqlite objects into the configur
 
   const migratedRepo = create42PayRepo({
     projectRoot,
+    sqlitePath: tempSqlitePath("migrate-target"),
     legacySqlitePath,
     objectStore: {
-      provider: "json",
-      dataRoot: path.join(projectRoot, "data", "users"),
+      provider: "sqlite",
     },
     accounts: createAccountAdapter(),
   });

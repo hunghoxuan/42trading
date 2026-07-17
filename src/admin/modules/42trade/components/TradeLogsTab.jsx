@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../../../app/api";
-import { SmartContent } from "../../../shared/components/SmartContent";
+import { SmartContent } from "../../../shared/components/SmartContent.jsx";
 import { showDateTime } from "../../../shared/utils/format";
 
 function fmtSize(bytes) {

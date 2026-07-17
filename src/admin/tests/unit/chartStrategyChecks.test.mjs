@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   buildChartStrategyHitMessage,
+  buildStrategyPlanNote,
+  collectContextualStrategyTradePlans,
   evaluateChartStrategies,
   groupArtifactsBySourceTf,
 } from "../../shared/utils/chartStrategyChecks.js";
@@ -115,6 +117,146 @@ test("evaluateChartStrategies drops matches that only occurred before the lookba
   assert.equal(result.matches.length, 0);
 });
 
+test("evaluateChartStrategies skips inactive strategies in live mode but allows them in backtest mode", () => {
+  const strategy = {
+    id: "inactive_cross",
+    name: "Inactive Cross",
+    kind: "custom",
+    status: "draft",
+    engine_version: "42trade.strategy.v2",
+    indicators: [],
+    events: [
+      {
+        id: "break_above",
+        name: "Break Above",
+        when: {
+          ">": [{ var: "bar.close" }, 10],
+        },
+        actions: [{ id: "notify", type: "notify.notification" }],
+      },
+    ],
+  };
+
+  const liveResult = evaluateChartStrategies({
+    bars: makeBars([9, 11, 12]),
+    strategies: [strategy],
+    lookbackBars: 3,
+    symbol: "EURUSD",
+    tf: "1m",
+    scanMode: "live",
+  });
+  const backtestResult = evaluateChartStrategies({
+    bars: makeBars([9, 11, 12]),
+    strategies: [strategy],
+    lookbackBars: 3,
+    symbol: "EURUSD",
+    tf: "1m",
+    scanMode: "backtest",
+  });
+
+  assert.equal(liveResult.matches.length, 0);
+  assert.equal(backtestResult.matches.length, 2);
+});
+
+test("evaluateChartStrategies respects strategy timeframe and min rr conditions", () => {
+  const strategy = {
+    id: "tf_rr_gate",
+    name: "TF RR Gate",
+    kind: "custom",
+    status: "active",
+    engine_version: "42trade.strategy.v2",
+    indicators: [],
+    conditions: {
+      timeframes: ["15m"],
+      min_rr: 3,
+    },
+    events: [
+      {
+        id: "entry_long",
+        name: "Entry Long",
+        when: {
+          ">": [{ var: "bar.close" }, 10],
+        },
+        actions: [
+          {
+            id: "open_long",
+            action: "trade",
+            trade_plan: {
+              direction: "buy",
+              type: "market",
+              entry: { var: "bar.close" },
+              sl: { "-": [{ var: "bar.close" }, 1] },
+              tp: { "+": [{ var: "bar.close" }, 2] },
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  const wrongTf = evaluateChartStrategies({
+    bars: makeBars([9, 11, 12]),
+    strategies: [strategy],
+    lookbackBars: 3,
+    symbol: "EURUSD",
+    tf: "1h",
+  });
+  const lowRr = evaluateChartStrategies({
+    bars: makeBars([9, 11, 12]),
+    strategies: [strategy],
+    lookbackBars: 3,
+    symbol: "EURUSD",
+    tf: "15m",
+  });
+
+  assert.equal(wrongTf.matches.length, 0);
+  assert.equal(lowRr.matches.length, 2);
+  assert.equal(lowRr.tradePlans.length, 0);
+});
+
+test("evaluateChartStrategies skips live strategy hits during blocked news windows", () => {
+  const strategy = {
+    id: "news_gate",
+    name: "News Gate",
+    kind: "custom",
+    status: "active",
+    engine_version: "42trade.strategy.v2",
+    indicators: [],
+    conditions: {
+      skip_news: true,
+      news_before_minutes: 60,
+      news_after_minutes: 120,
+    },
+    events: [
+      {
+        id: "entry_long",
+        name: "Entry Long",
+        when: {
+          ">": [{ var: "bar.close" }, 10],
+        },
+        actions: [{ id: "notify", type: "notify.notification" }],
+      },
+    ],
+  };
+  const bars = makeBars([9, 11, 12]);
+  const blockedAtMs = Number(bars[1].time) * 1000;
+  const result = evaluateChartStrategies({
+    bars,
+    strategies: [strategy],
+    lookbackBars: 3,
+    symbol: "EURUSD",
+    tf: "1m",
+    newsEvents: [
+      {
+        start_ts: blockedAtMs,
+        effective_symbols: ["EURUSD"],
+      },
+    ],
+  });
+
+  assert.equal(result.matches.length, 0);
+});
+
 test("buildChartStrategyHitMessage formats the chart label consistently", () => {
   assert.equal(
     buildChartStrategyHitMessage({
@@ -122,6 +264,66 @@ test("buildChartStrategyHitMessage formats the chart label consistently", () => 
       eventName: "RSI Recovery",
     }),
     "Momentum · RSI Recovery",
+  );
+});
+
+test("buildStrategyPlanNote summarizes rejection and structure in trader-friendly text", () => {
+  const note = buildStrategyPlanNote({
+    action: {
+      action: "trade",
+      trade_plan: { direction: "buy" },
+    },
+    strategy: { name: "Price Action v1" },
+    event: {
+      name: "Buy",
+      when: {
+        and: [
+          { rejected: [{ var: "bar.close" }, { var: "fvg.mid" }] },
+          { fn: "bos", args: ["bullish"] },
+        ],
+      },
+    },
+    hit: {
+      strategyName: "Price Action v1",
+      eventName: "Buy",
+      artifacts: [
+        { type: "order_block" },
+        { type: "fair_value_gap" },
+      ],
+    },
+    latestArtifact: { type: "fair_value_gap" },
+  });
+
+  assert.equal(note, "Bullish rejected from OB/FVG with BOS confirmation");
+});
+
+test("buildStrategyPlanNote summarizes liquidity sweep reversals briefly", () => {
+  const note = buildStrategyPlanNote({
+    action: {
+      action: "trade",
+      trade_plan: { direction: "sell" },
+    },
+    strategy: { name: "Liquidity Sweep" },
+    event: {
+      name: "Sell",
+      when: {
+        and: [
+          { sweeps_above: [{ var: "bar.close" }, { var: "ssl.level" }] },
+          { fn: "choch", args: ["bearish"] },
+        ],
+      },
+    },
+    hit: {
+      strategyName: "Liquidity Sweep",
+      eventName: "Sell",
+      artifacts: [{ type: "breaker_block" }],
+    },
+    latestArtifact: { type: "breaker_block" },
+  });
+
+  assert.equal(
+    note,
+    "Bearish swept liquidity into breaker and reversed with CHoCH confirmation",
   );
 });
 
@@ -215,6 +417,168 @@ test("evaluateChartStrategies derives directional marker metadata for long entri
   assert.equal(result.matches[0].markerText, "EMA Cross");
 });
 
+test("evaluateChartStrategies builds client trade plans from trade actions", () => {
+  const strategy = {
+    id: "ema_cross",
+    name: "EMA Cross",
+    engine_version: "42trade.strategy.v2",
+    indicators: [
+      { id: "ema_fast", type: "ema", length: 2, source: "close" },
+      { id: "ema_slow", type: "ema", length: 4, source: "close" },
+    ],
+    events: [
+      {
+        id: "entry_long",
+        name: "Entry Long",
+        when: {
+          crosses_above: [
+            { var: "indicators.ema_fast" },
+            { var: "indicators.ema_slow" },
+          ],
+        },
+        actions: [
+          {
+            id: "open_long",
+            type: "trade",
+            trade_plan: {
+              direction: "buy",
+              type: "market",
+              entry: { var: "bar.close" },
+              sl: { var: "bar.low" },
+              tp: { "+": [{ var: "bar.close" }, 2] },
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  const result = evaluateChartStrategies({
+    bars: makeBars([10, 9, 8, 9, 11, 13, 14]),
+    strategies: [strategy],
+    lookbackBars: 5,
+    symbol: "EURUSD",
+    tf: "1m",
+  });
+
+  assert.equal(result.tradePlans.length, 1);
+  assert.equal(result.tradePlans[0].direction, "BUY");
+  assert.equal(result.tradePlans[0].strategy, "EMA Cross");
+  assert.equal(Number(result.tradePlans[0].entry), 11);
+  assert.equal(Number(result.tradePlans[0].sl), 10.8);
+  assert.equal(Number(result.tradePlans[0].tp), 13);
+});
+
+test("evaluateChartStrategies supports price-action trade plan helper functions", () => {
+  const strategy = {
+    id: "price_action_v1",
+    name: "Price Action v1",
+    engine_version: "42trade.strategy.v2",
+    params: {
+      reward_rr: 2,
+      stop_lookback: 2,
+      stop_buffer_pct: 0,
+    },
+    indicators: [],
+    events: [
+      {
+        id: "buy",
+        name: "Buy",
+        when: {
+          ">": [{ var: "bar.close" }, 10],
+        },
+        actions: [
+          {
+            id: "buy_market_plan",
+            action: "trade",
+            trade_plan: {
+              direction: "buy",
+              type: "market",
+              entry: "bar.close",
+              sl: "price_action_sl(buy, params.stop_lookback, 0)",
+              tp: "price_action_tp(buy, params.stop_lookback, params.reward_rr, 0)",
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  const result = evaluateChartStrategies({
+    bars: makeBars([9, 11, 12]),
+    strategies: [strategy],
+    lookbackBars: 1,
+    symbol: "XAUUSD",
+    tf: "15m",
+  });
+
+  assert.equal(result.tradePlans.length, 1);
+  assert.equal(result.tradePlans[0].type, "market");
+  assert.equal(Number(result.tradePlans[0].entry), 12);
+  assert.equal(Number(result.tradePlans[0].sl), 10.8);
+  assert.equal(Number(Number(result.tradePlans[0].tp).toFixed(4)), 14.4);
+});
+
+test("collectContextualStrategyTradePlans evaluates the clicked candle context and keeps latest matching plan", () => {
+  const strategy = {
+    id: "ema_cross",
+    name: "EMA Cross",
+    engine_version: "42trade.strategy.v2",
+    indicators: [
+      { id: "ema_fast", type: "ema", length: 2, source: "close" },
+      { id: "ema_slow", type: "ema", length: 4, source: "close" },
+    ],
+    events: [
+      {
+        id: "entry_long",
+        name: "Entry Long",
+        when: {
+          crosses_above: [
+            { var: "indicators.ema_fast" },
+            { var: "indicators.ema_slow" },
+          ],
+        },
+        actions: [
+          {
+            id: "open_long",
+            type: "trade",
+            trade_plan: {
+              direction: "buy",
+              type: "market",
+              entry: { var: "bar.close" },
+              sl: { var: "bar.low" },
+              tp: { "+": [{ var: "bar.close" }, 2] },
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  const bars = makeBars([10, 9, 8, 9, 11, 13, 14]);
+  const plansBeforeSignal = collectContextualStrategyTradePlans({
+    barsByTf: { "1m": bars },
+    strategies: [strategy],
+    symbol: "EURUSD",
+    tf: "1m",
+    timeSec: bars[3].time,
+  });
+  const plansAtSignal = collectContextualStrategyTradePlans({
+    barsByTf: { "1m": bars },
+    strategies: [strategy],
+    symbol: "EURUSD",
+    tf: "1m",
+    timeSec: bars[4].time,
+  });
+
+  assert.equal(plansBeforeSignal.length, 0);
+  assert.equal(plansAtSignal.length, 1);
+  assert.equal(plansAtSignal[0].strategy_name, "EMA Cross");
+  assert.equal(Number(plansAtSignal[0].entry), 11);
+  assert.equal(Number(plansAtSignal[0].tp), 13);
+  assert.equal(Number(plansAtSignal[0].sl), 10.8);
+});
+
 test("evaluateChartStrategies supports structure artifact functions and exposes latest artifact metadata", () => {
   const strategy = {
     id: "structure_long",
@@ -255,6 +619,8 @@ test("evaluateChartStrategies supports structure artifact functions and exposes 
     true,
   );
   assert.equal(String(latest.latestArtifact?.subtype || "").toLowerCase(), "bullish");
+  assert.equal(result.latestTradePlans.length > 0, true);
+  assert.equal(result.latestTradePlans[0].direction, "BUY");
 });
 
 test("evaluateChartStrategies supports breakout and reversal event functions with default current timeframe behavior", () => {

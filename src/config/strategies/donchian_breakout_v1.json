@@ -4,6 +4,7 @@
   "kind": "preset",
   "description": "Breakout strategy using prior channel highs and lows to join expansion moves.",
   "engine_version": "42trade.strategy.v2",
+  "status": "active",
   "params": {
     "period": 20,
     "rr_target": 2.5,
@@ -76,5 +77,9 @@
     "fallback_stop_pct": 0.001,
     "fallback_tp_pct": 0.0025
   },
-  "min_bars": 50
+  "min_bars": 50,
+  "conditions": {
+    "skip_news": true,
+    "news_window_minutes": 120
+  }
 }

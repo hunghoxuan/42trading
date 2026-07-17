@@ -174,18 +174,22 @@ function parsePlanFieldInput(value) {
   if (
     value &&
     typeof value === "object" &&
-    !Array.isArray(value) &&
-    Object.keys(value).length === 1 &&
-    Object.prototype.hasOwnProperty.call(value, "var")
+    !Array.isArray(value)
   ) {
-    const variablePath = String(value.var || "").trim();
-    return variablePath ? { var: variablePath } : null;
+    if (typeof value.fn === "string") {
+      return formatPlanFunctionExpression(value);
+    }
+    if (
+      Object.keys(value).length === 1 &&
+      Object.prototype.hasOwnProperty.call(value, "var")
+    ) {
+      const variablePath = String(value.var || "").trim();
+      return variablePath || null;
+    }
   }
   const raw = String(value ?? "").trim();
   if (!raw) return null;
-  const normalized = Number(raw.replace(",", "."));
-  if (Number.isFinite(normalized)) return normalized;
-  return { var: raw };
+  return raw;
 }
 
 function formatPlanFieldInput(value) {
@@ -199,7 +203,40 @@ function formatPlanFieldInput(value) {
   ) {
     return String(value.var || "");
   }
+  if (value && typeof value === "object" && !Array.isArray(value) && typeof value.fn === "string") {
+    return formatPlanFunctionExpression(value);
+  }
   return typeof value === "object" ? prettyJson(value) : String(value);
+}
+
+function formatPlanFunctionArgument(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    if (typeof value.fn === "string") return formatPlanFunctionExpression(value);
+    if (Object.prototype.hasOwnProperty.call(value, "var")) {
+      return String(value.var || "").trim();
+    }
+  }
+  if (typeof value === "string") {
+    const raw = value.trim();
+    return /^[a-zA-Z_][a-zA-Z0-9._-]*$/.test(raw) ? raw : JSON.stringify(raw);
+  }
+  if (value === null) return "null";
+  if (value === undefined) return "";
+  return String(value);
+}
+
+function formatPlanFunctionExpression(node = {}) {
+  const fnName = String(node?.fn || "").trim();
+  const args = Array.isArray(node?.args) ? node.args : [];
+  return `${fnName}(${args.map((arg) => formatPlanFunctionArgument(arg)).join(", ")})`;
+}
+
+function isPlanFieldParamType(value) {
+  const raw = formatPlanFieldInput(value).trim();
+  if (!raw) return false;
+  if (/^-?\d+(\.\d+)?$/.test(raw)) return false;
+  if (/^[a-zA-Z_][a-zA-Z0-9._-]*\s*\(/.test(raw)) return false;
+  return true;
 }
 
 function getFunctionMeta(functionName = "") {
@@ -1088,18 +1125,7 @@ function RuleActionRow({
               key={fieldKey}
               text={formatPlanFieldInput(normalizedAction?.trade_plan?.[fieldKey])}
               items={variableOptions}
-              type={
-                normalizedAction?.trade_plan?.[fieldKey] &&
-                typeof normalizedAction.trade_plan[fieldKey] === "object" &&
-                !Array.isArray(normalizedAction.trade_plan[fieldKey]) &&
-                Object.keys(normalizedAction.trade_plan[fieldKey]).length === 1 &&
-                Object.prototype.hasOwnProperty.call(
-                  normalizedAction.trade_plan[fieldKey],
-                  "var",
-                )
-                  ? "param"
-                  : "value"
-              }
+              type={isPlanFieldParamType(normalizedAction?.trade_plan?.[fieldKey]) ? "param" : "value"}
               onChange={({ text, type }) =>
                 onChange(
                   normalizeRuleAction(
@@ -1107,10 +1133,7 @@ function RuleActionRow({
                       ...normalizedAction,
                       trade_plan: {
                         ...normalizedAction.trade_plan,
-                        [fieldKey]:
-                          type === "param"
-                            ? { var: String(text || "").trim() }
-                            : parsePlanFieldInput(text),
+                        [fieldKey]: parsePlanFieldInput(text),
                       },
                     },
                     ruleName,

@@ -5,12 +5,17 @@ const QRCode = require("qrcode");
 
 const { createObjectStoreRepo } = require("../../shared/objects/objectStoreRepo");
 const sqliteObjectStoreProvider = require("../../shared/objects/providers/sqliteObjectStoreProvider");
+const { createUniversalStoreFacade } = require("../../shared/universal-store");
 
 const PAY42_SCOPE = "__42pay__";
 const PRODUCT_TYPE = "42pay_products";
 const OFFER_TYPE = "42pay_product_offers";
 const ORDER_TYPE = "42pay_product_orders";
 const TOPUP_TYPE = "42pay_wallet_topups";
+const USER_TYPE = "42pay_users";
+const WALLET_TYPE = "user_account";
+const WALLET_LINK_TYPE = "owns";
+const PAY42_WALLET_CURRENCY = "USD";
 const PAY42_SELLER_ID = "seller";
 const PAY42_BUYER_ID = "user";
 const LEGACY_PAY42_ACTOR_ID_MAP = Object.freeze({
@@ -215,6 +220,14 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value ?? null));
 }
 
+function stableToken(value = "") {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "") || "item";
+}
+
 function migrateLegacyActorId(value) {
   const raw = String(value || "").trim();
   return LEGACY_PAY42_ACTOR_ID_MAP[raw] || raw;
@@ -276,6 +289,15 @@ function objectStore(options = {}) {
   return createObjectStoreRepo(resolve42PayObjectStoreOptions(options));
 }
 
+function universalStore(options = {}) {
+  const objectStoreOptions = resolve42PayObjectStoreOptions(options);
+  return createUniversalStoreFacade({
+    provider: objectStoreOptions.provider,
+    sqlitePath: objectStoreOptions.sqlitePath || options.sqlitePath,
+    postgresUrl: objectStoreOptions.postgresUrl || options.postgresUrl,
+  });
+}
+
 function legacySqliteStore(options = {}) {
   return createObjectStoreRepo({
     provider: "sqlite",
@@ -287,16 +309,109 @@ function legacySqliteStore(options = {}) {
 }
 
 async function listType(repo, type) {
-  const rows = await repo.listObjectsByType(PAY42_SCOPE, type);
+  const rows = await repo.listEntities({
+    tenantId: PAY42_SCOPE,
+    entityType: type,
+    limit: 10000,
+  });
   return rows
     .map((row) => (row && row.data && typeof row.data === "object" ? row.data : null))
     .filter(Boolean);
 }
 
 async function putType(repo, type, sid, data) {
-  await repo.upsertObject(PAY42_SCOPE, type, sid, data, "ACTIVE", {
-    updated_at: data.updated_at || nowIso(),
-    created_at: data.created_at || data.create_at || nowIso(),
+  const payload =
+    data && typeof data === "object" ? clone(data) : {};
+  const normalizedType = String(type || "").trim();
+  const isPublicCatalogEntity =
+    normalizedType === PRODUCT_TYPE || normalizedType === OFFER_TYPE;
+  const category = text(
+    payload.metadata?.category ||
+      payload.type ||
+      payload.method ||
+      payload.account_type,
+  ).toLowerCase();
+  const subtype = text(
+    normalizedType === PRODUCT_TYPE
+      ? payload.type
+      : normalizedType === OFFER_TYPE
+        ? "offer"
+        : normalizedType === ORDER_TYPE
+          ? "order"
+          : normalizedType === TOPUP_TYPE
+            ? "topup"
+            : "",
+  ).toLowerCase();
+  const currency = text(
+    payload.metadata?.currency || payload.currency || PAY42_WALLET_CURRENCY,
+  ).toUpperCase();
+  const price =
+    normalizedType === OFFER_TYPE
+      ? asNumber(payload.price, null)
+      : normalizedType === ORDER_TYPE
+        ? Number((asNumber(payload.profit, 0) + asNumber(payload.tax, 0)).toFixed(2))
+        : normalizedType === TOPUP_TYPE
+          ? asNumber(payload.amount, null)
+          : null;
+  await repo.upsertEntity({
+    tenantId: PAY42_SCOPE,
+    entityType: type,
+    entityKey: sid,
+    userId: payload.buyer_id || payload.seller_id || payload.create_sid || null,
+    ownerId: payload.seller_id || payload.create_sid || payload.buyer_id || null,
+    title: payload.name || payload.metadata?.offer_name || sid,
+    subtitle:
+      payload.metadata?.city ||
+      payload.metadata?.country ||
+      payload.method ||
+      payload.product_id ||
+      "",
+    status: payload.status || "ACTIVE",
+    state: text(payload.status || "ACTIVE").toLowerCase(),
+    category,
+    subtype,
+    visibility: isPublicCatalogEntity ? "PUBLIC" : "PRIVATE",
+    accessLevel: isPublicCatalogEntity ? "PUBLIC_READ" : "OWNER_ONLY",
+    scopeType: "TENANT",
+    scopeTenantId: PAY42_SCOPE,
+    scopeModule: "42pay",
+    scopeUserId: payload.buyer_id || payload.create_sid || payload.seller_id || null,
+    currency,
+    amount:
+      normalizedType === TOPUP_TYPE
+        ? asNumber(payload.amount, null)
+        : normalizedType === ORDER_TYPE
+          ? Number((asNumber(payload.profit, 0) + asNumber(payload.tax, 0)).toFixed(2))
+          : null,
+    price,
+    publishedAt:
+      isPublicCatalogEntity
+        ? payload.created_at || payload.create_at || nowIso()
+        : null,
+    effectiveFrom: payload.start_at || null,
+    effectiveTo: payload.end_at || payload.close_at || null,
+    startAt: payload.start_at || payload.create_at || null,
+    endAt: payload.end_at || payload.close_at || null,
+    sourceSystem: "42pay",
+    sourceId: sid,
+    sortOrder: Number(payload.id || 0),
+    searchText: [
+      sid,
+      payload.name,
+      payload.type,
+      payload.product_id,
+      payload.product_offer_id,
+      payload.metadata?.offer_name,
+      payload.metadata?.city,
+      payload.metadata?.category,
+    ]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase(),
+    data: payload,
+    updatedAt: payload.updated_at || nowIso(),
+    createdAt: payload.created_at || payload.create_at || nowIso(),
   });
 }
 
@@ -406,7 +521,7 @@ function accountList(adapter, userId) {
   return adapter.listUserAccounts(userId);
 }
 
-function walletAccount(accounts = [], userId = "") {
+function legacyWalletAccount(accounts = [], userId = "") {
   const targetUserId = text(userId);
   const rows = Array.isArray(accounts) ? accounts : [];
   return (
@@ -427,32 +542,235 @@ function walletAccount(accounts = [], userId = "") {
   );
 }
 
-async function ensureWalletAccount(adapter, config = {}) {
-  if (!adapter) return null;
-  if (typeof adapter.ensureWalletAccount === "function") {
-    return adapter.ensureWalletAccount(config);
-  }
-  const rows = await accountList(adapter, config.user_id);
-  return walletAccount(rows, config.user_id);
+function walletEntityId(userId = "") {
+  return `pay42_wallet_${stableToken(userId)}`;
 }
 
-async function updateWalletBalance(adapter, accountId, patch = {}) {
-  if (!adapter || typeof adapter.updateAccountBalance !== "function") {
-    throw new Error("42Pay account adapter does not support balance updates");
-  }
-  return adapter.updateAccountBalance(accountId, patch);
+function walletEntityKey(userId = "", currency = PAY42_WALLET_CURRENCY) {
+  return `wallet:${String(currency || PAY42_WALLET_CURRENCY).trim().toLowerCase()}:${text(userId)}`;
 }
 
-async function resolveWalletForActor(accountsAdapter, actor = {}) {
-  const userId = text(actor.user_id);
-  const rows = await accountList(accountsAdapter, userId);
-  const wallet = walletAccount(rows, userId);
-  if (wallet) return wallet;
-  return ensureWalletAccount(accountsAdapter, {
-    user_id: userId,
-    role: isSeller(actor) ? "seller" : "buyer",
-    default_balance: isSeller(actor) ? 1200 : 0,
+function userEntityId(userId = "") {
+  return `pay42_user_${stableToken(userId)}`;
+}
+
+function userEntityKey(userId = "") {
+  return `user:${text(userId)}`;
+}
+
+function walletLinkId(userId = "") {
+  return `pay42_wallet_link_${stableToken(userId)}`;
+}
+
+function defaultWalletBalanceForRole(role = "") {
+  return String(role || "").trim().toLowerCase() === "seller" ? 1200 : 0;
+}
+
+function walletRecordFromEntity(entity = null) {
+  if (!entity) return null;
+  const data = entity.data && typeof entity.data === "object" ? entity.data : {};
+  const balance = asNumber(data.balance, 0);
+  const lockedBalance = asNumber(data.locked_balance, 0);
+  return {
+    entity_id: entity.id,
+    entity_type: entity.entity_type || entity.entityType || WALLET_TYPE,
+    entity_key: entity.entity_key || entity.entityKey || "",
+    account_id: String(data.account_id || entity.entity_key || entity.entityKey || ""),
+    user_id: String(entity.user_id || entity.userId || data.user_id || ""),
+    owner_id: String(entity.owner_id || entity.ownerId || data.owner_id || ""),
+    name: String(data.name || ""),
+    balance,
+    available_balance:
+      data.available_balance === undefined || data.available_balance === null
+        ? balance - lockedBalance
+        : asNumber(data.available_balance, balance - lockedBalance),
+    locked_balance: lockedBalance,
+    currency: String(data.currency || PAY42_WALLET_CURRENCY),
+    status: String(entity.status || "ACTIVE"),
+    metadata:
+      data.metadata && typeof data.metadata === "object"
+        ? clone(data.metadata)
+        : {},
+    raw: entity,
+  };
+}
+
+async function ensureWalletIdentity(repo, wallet = null) {
+  if (!wallet || !wallet.user_id) return wallet;
+  const role = String(wallet.metadata?.role || "").trim().toLowerCase() || "buyer";
+  await repo.upsertEntity({
+    id: userEntityId(wallet.user_id),
+    tenantId: PAY42_SCOPE,
+    entityType: USER_TYPE,
+    entityKey: userEntityKey(wallet.user_id),
+    userId: wallet.user_id,
+    ownerId: wallet.user_id,
+    title: wallet.name || wallet.user_id,
+    category: "user",
+    subtype: role,
+    visibility: "PRIVATE",
+    accessLevel: "OWNER_ONLY",
+    scopeType: "TENANT",
+    scopeTenantId: PAY42_SCOPE,
+    scopeModule: "42pay",
+    scopeUserId: wallet.user_id,
+    status: wallet.status || "ACTIVE",
+    searchText: `${wallet.user_id} ${role} 42pay user`.toLowerCase(),
+    sourceSystem: "42pay",
+    sourceId: wallet.user_id,
+    data: {
+      user_id: wallet.user_id,
+      name: wallet.name || wallet.user_id,
+      roles: uniq([role]),
+      source: "42pay",
+    },
   });
+  await repo.upsertLink({
+    id: walletLinkId(wallet.user_id),
+    tenantId: PAY42_SCOPE,
+    fromEntityId: userEntityId(wallet.user_id),
+    toEntityId: wallet.entity_id,
+    fromType: USER_TYPE,
+    toType: WALLET_TYPE,
+    linkType: WALLET_LINK_TYPE,
+    userId: wallet.user_id,
+    status: "ACTIVE",
+    data: {
+      relationship: "primary_wallet",
+      account_id: wallet.account_id,
+      currency: wallet.currency || PAY42_WALLET_CURRENCY,
+    },
+  });
+  return wallet;
+}
+
+async function appendWalletJournal(repo, wallet = null, input = {}) {
+  if (!wallet) return null;
+  return repo.appendJournal({
+    tenantId: PAY42_SCOPE,
+    entityId: wallet.entity_id,
+    entityType: WALLET_TYPE,
+    entityKey: wallet.entity_key,
+    userId: wallet.user_id,
+    entryType: input.entryType,
+    direction: input.direction,
+    amount: asNumber(input.amount, 0),
+    currency: input.currency || wallet.currency || PAY42_WALLET_CURRENCY,
+    happenedAt: input.happenedAt || nowIso(),
+    data: input.data && typeof input.data === "object" ? clone(input.data) : {},
+  });
+}
+
+async function upsertWalletEntity(repo, wallet = null, options = {}) {
+  if (!wallet) return null;
+  const now = options.updatedAt || nowIso();
+  const balance = asNumber(wallet.balance, 0);
+  const lockedBalance = asNumber(wallet.locked_balance, 0);
+  const entity = await repo.upsertEntity({
+    id: wallet.entity_id || walletEntityId(wallet.user_id),
+    tenantId: PAY42_SCOPE,
+    entityType: WALLET_TYPE,
+    entityKey: wallet.entity_key || walletEntityKey(wallet.user_id, wallet.currency),
+    userId: wallet.user_id,
+    ownerId: wallet.owner_id || wallet.user_id,
+    title: wallet.name || wallet.user_id,
+    category: "wallet",
+    subtype: "cash",
+    visibility: "PRIVATE",
+    accessLevel: "OWNER_ONLY",
+    scopeType: "TENANT",
+    scopeTenantId: PAY42_SCOPE,
+    scopeModule: "42pay",
+    scopeUserId: wallet.user_id,
+    status: wallet.status || "ACTIVE",
+    currency: wallet.currency || PAY42_WALLET_CURRENCY,
+    balance,
+    amount: balance,
+    sourceSystem: "42pay",
+    sourceId: wallet.account_id || wallet.user_id,
+    searchText: [
+      "wallet",
+      "42pay",
+      wallet.user_id,
+      wallet.currency || PAY42_WALLET_CURRENCY,
+      wallet.metadata?.role,
+      wallet.name,
+    ]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase(),
+    updatedAt: now,
+    createdAt: wallet.created_at || options.createdAt || now,
+    data: {
+      account_id: wallet.account_id || wallet.entity_key || walletEntityKey(wallet.user_id),
+      account_type: "wallet",
+      ledger_type: "cash",
+      payment_domain: "42pay",
+      currency: wallet.currency || PAY42_WALLET_CURRENCY,
+      balance,
+      available_balance:
+        wallet.available_balance === undefined || wallet.available_balance === null
+          ? balance - lockedBalance
+          : asNumber(wallet.available_balance, balance - lockedBalance),
+      locked_balance: lockedBalance,
+      name: wallet.name || wallet.user_id,
+      metadata:
+        wallet.metadata && typeof wallet.metadata === "object"
+          ? clone(wallet.metadata)
+          : {},
+    },
+  });
+  return walletRecordFromEntity(entity);
+}
+
+async function resolveWalletForActor(repo, accountsAdapter, actor = {}) {
+  const userId = text(actor.user_id);
+  const role = isSeller(actor) ? "seller" : "buyer";
+  const entity = await repo.getEntity(PAY42_SCOPE, WALLET_TYPE, walletEntityKey(userId));
+  if (entity) {
+    const wallet = walletRecordFromEntity(entity);
+    await ensureWalletIdentity(repo, wallet);
+    return wallet;
+  }
+
+  const rows = await accountList(accountsAdapter, userId);
+  const legacyWallet = legacyWalletAccount(rows, userId);
+  const startingBalance = legacyWallet
+    ? asNumber(legacyWallet.balance, defaultWalletBalanceForRole(role))
+    : defaultWalletBalanceForRole(role);
+  const created = await upsertWalletEntity(repo, {
+    entity_id: walletEntityId(userId),
+    entity_key: walletEntityKey(userId),
+    account_id: legacyWallet?.account_id || walletEntityKey(userId),
+    user_id: userId,
+    owner_id: userId,
+    name: legacyWallet?.name || `42Pay ${role === "seller" ? "Seller" : "Buyer"} Wallet`,
+    balance: startingBalance,
+    available_balance: startingBalance,
+    locked_balance: 0,
+    currency: PAY42_WALLET_CURRENCY,
+    status: legacyWallet?.status || "ACTIVE",
+    metadata: {
+      ...(legacyWallet?.metadata && typeof legacyWallet.metadata === "object"
+        ? clone(legacyWallet.metadata)
+        : {}),
+      pay42_wallet: true,
+      role,
+    },
+  });
+  await ensureWalletIdentity(repo, created);
+  if (startingBalance > 0) {
+    await appendWalletJournal(repo, created, {
+      entryType: "wallet.opening_balance",
+      direction: "credit",
+      amount: startingBalance,
+      data: {
+        source: legacyWallet ? "legacy_account_adapter" : "default_seed",
+      },
+    });
+  }
+  return created;
 }
 
 function walletView(wallet = null, userId = "") {
@@ -462,6 +780,9 @@ function walletView(wallet = null, userId = "") {
     user_id: String(wallet.user_id || userId),
     name: String(wallet.name || ""),
     balance: asNumber(wallet.balance, 0),
+    available_balance: asNumber(wallet.available_balance, asNumber(wallet.balance, 0)),
+    locked_balance: asNumber(wallet.locked_balance, 0),
+    currency: String(wallet.currency || PAY42_WALLET_CURRENCY),
     status: String(wallet.status || "ACTIVE"),
     metadata:
       wallet.metadata && typeof wallet.metadata === "object"
@@ -531,16 +852,14 @@ async function resolveOfferFromQrCode(repo, input = {}) {
   };
 }
 
-async function settleWalletTransfer(accountsAdapter, { buyer_id, seller_id, amount, order_sid }) {
-  const buyerWallet = await ensureWalletAccount(accountsAdapter, {
+async function settleWalletTransfer(repo, accountsAdapter, { buyer_id, seller_id, amount, order_sid }) {
+  const buyerWallet = await resolveWalletForActor(repo, accountsAdapter, {
     user_id: buyer_id,
-    role: "buyer",
-    default_balance: 0,
+    roles: ["buyer"],
   });
-  const sellerWallet = await ensureWalletAccount(accountsAdapter, {
+  const sellerWallet = await resolveWalletForActor(repo, accountsAdapter, {
     user_id: seller_id,
-    role: "seller",
-    default_balance: 1200,
+    roles: ["seller"],
   });
   if (!buyerWallet) throw new Error("Buyer wallet account was not found");
   if (!sellerWallet) throw new Error("Seller wallet account was not found");
@@ -553,8 +872,10 @@ async function settleWalletTransfer(accountsAdapter, { buyer_id, seller_id, amou
   const nextBuyerBalance = Number((buyerBalance - amount).toFixed(2));
   const nextSellerBalance = Number((asNumber(sellerWallet.balance, 0) + amount).toFixed(2));
 
-  await updateWalletBalance(accountsAdapter, buyerWallet.account_id, {
+  const nextBuyerWallet = await upsertWalletEntity(repo, {
+    ...buyerWallet,
     balance: nextBuyerBalance,
+    available_balance: nextBuyerBalance,
     metadata: {
       ...(buyerWallet.metadata && typeof buyerWallet.metadata === "object"
         ? buyerWallet.metadata
@@ -563,8 +884,10 @@ async function settleWalletTransfer(accountsAdapter, { buyer_id, seller_id, amou
       last_pay42_order_sid: order_sid,
     },
   });
-  await updateWalletBalance(accountsAdapter, sellerWallet.account_id, {
+  const nextSellerWallet = await upsertWalletEntity(repo, {
+    ...sellerWallet,
     balance: nextSellerBalance,
+    available_balance: nextSellerBalance,
     metadata: {
       ...(sellerWallet.metadata && typeof sellerWallet.metadata === "object"
         ? sellerWallet.metadata
@@ -573,15 +896,32 @@ async function settleWalletTransfer(accountsAdapter, { buyer_id, seller_id, amou
       last_pay42_order_sid: order_sid,
     },
   });
-
+  await appendWalletJournal(repo, nextBuyerWallet, {
+    entryType: "wallet.order_debit",
+    direction: "debit",
+    amount,
+    data: {
+      order_sid,
+      counterparty_user_id: seller_id,
+    },
+  });
+  await appendWalletJournal(repo, nextSellerWallet, {
+    entryType: "wallet.order_credit",
+    direction: "credit",
+    amount,
+    data: {
+      order_sid,
+      counterparty_user_id: buyer_id,
+    },
+  });
   return {
     buyer_wallet: {
-      account_id: buyerWallet.account_id,
+      account_id: nextBuyerWallet.account_id,
       balance_before: buyerBalance,
       balance_after: nextBuyerBalance,
     },
     seller_wallet: {
-      account_id: sellerWallet.account_id,
+      account_id: nextSellerWallet.account_id,
       balance_before: asNumber(sellerWallet.balance, 0),
       balance_after: nextSellerBalance,
     },
@@ -589,7 +929,7 @@ async function settleWalletTransfer(accountsAdapter, { buyer_id, seller_id, amou
 }
 
 function create42PayRepo(options = {}) {
-  const repo = objectStore(options);
+  const repo = universalStore(options);
   const accountsAdapter =
     options.accounts && typeof options.accounts === "object" ? options.accounts : null;
   const legacySqlitePath = resolveLegacy42PaySqlitePath(options);
@@ -600,7 +940,35 @@ function create42PayRepo(options = {}) {
     let migrated = 0;
     for (const row of rows) {
       const key = `${row?.user_id || ""}:${row?.type || ""}:${row?.name || ""}`;
-      await repo.putObjectRow(row);
+      await putType(
+        repo,
+        type,
+        row?.name || row?.object_id || row?.data?.sid || "",
+        row && row.data && typeof row.data === "object" ? row.data : {},
+      );
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
+        migrated += 1;
+      }
+    }
+    return migrated;
+  }
+
+  async function migrateLegacyTypeFromUniversalStore(fromStore, type, seenKeys) {
+    const rows = await fromStore.listEntities({
+      tenantId: PAY42_SCOPE,
+      entityType: type,
+      limit: 10000,
+    });
+    let migrated = 0;
+    for (const row of rows) {
+      const key = `${row?.tenant_id || ""}:${row?.entity_type || ""}:${row?.entity_key || ""}`;
+      await putType(
+        repo,
+        type,
+        row?.entity_key || row?.entityKey || row?.data?.sid || "",
+        row && row.data && typeof row.data === "object" ? row.data : {},
+      );
       if (!seenKeys.has(key)) {
         seenKeys.add(key);
         migrated += 1;
@@ -611,13 +979,16 @@ function create42PayRepo(options = {}) {
 
   return {
     getStorageInfo() {
+      const info = repo.info();
       return {
-        provider: repo.getProviderName(),
+        provider: info.backend,
+        connection_target: info.connectionTarget || null,
+        current_store_path: info.connectionTarget || null,
         legacy_sqlite_path: legacySqlitePath,
       };
     },
     async migrateLegacySqliteToProvider() {
-      if (repo.getProviderName() === "sqlite") {
+      if (repo.info().backend === "sqlite") {
         const seenKeys = new Set();
         const counts = {
           products: 0,
@@ -639,6 +1010,65 @@ function create42PayRepo(options = {}) {
           counts.topups += await migrateLegacyType(fromRepo, TOPUP_TYPE, seenKeys);
         } catch {
           // Local prototype environments may not have Postgres configured.
+        }
+        if (fs.existsSync(legacySqlitePath)) {
+          try {
+            const fromUniversalSqlite = createUniversalStoreFacade({
+              provider: "sqlite",
+              sqlitePath: legacySqlitePath,
+            });
+            counts.products += await migrateLegacyTypeFromUniversalStore(
+              fromUniversalSqlite,
+              PRODUCT_TYPE,
+              seenKeys,
+            );
+            counts.offers += await migrateLegacyTypeFromUniversalStore(
+              fromUniversalSqlite,
+              OFFER_TYPE,
+              seenKeys,
+            );
+            counts.orders += await migrateLegacyTypeFromUniversalStore(
+              fromUniversalSqlite,
+              ORDER_TYPE,
+              seenKeys,
+            );
+            counts.topups += await migrateLegacyTypeFromUniversalStore(
+              fromUniversalSqlite,
+              TOPUP_TYPE,
+              seenKeys,
+            );
+          } catch {
+            const fromLegacySqlite = legacySqliteStore({
+              ...options,
+              legacySqlitePath,
+              sqlitePath: legacySqlitePath,
+            });
+            counts.products += await migrateLegacyType(
+              fromLegacySqlite,
+              PRODUCT_TYPE,
+              seenKeys,
+            );
+            counts.offers += await migrateLegacyType(
+              fromLegacySqlite,
+              OFFER_TYPE,
+              seenKeys,
+            );
+            counts.orders += await migrateLegacyType(
+              fromLegacySqlite,
+              ORDER_TYPE,
+              seenKeys,
+            );
+            counts.topups += await migrateLegacyType(
+              fromLegacySqlite,
+              TOPUP_TYPE,
+              seenKeys,
+            );
+          }
+          for (const suffix of ["", "-shm", "-wal"]) {
+            const filePath = `${legacySqlitePath}${suffix}`;
+            if (!fs.existsSync(filePath)) continue;
+            fs.rmSync(filePath, { force: true });
+          }
         }
         const migrated = Object.values(counts).some((count) => Number(count) > 0);
         return {
@@ -677,15 +1107,42 @@ function create42PayRepo(options = {}) {
         fs.rmSync(scopeDir, { recursive: true, force: true });
       }
       if (fs.existsSync(legacySqlitePath)) {
-        const fromRepo = legacySqliteStore({
-          ...options,
-          legacySqlitePath,
-          sqlitePath: legacySqlitePath,
-        });
-        counts.products += await migrateLegacyType(fromRepo, PRODUCT_TYPE, seenKeys);
-        counts.offers += await migrateLegacyType(fromRepo, OFFER_TYPE, seenKeys);
-        counts.orders += await migrateLegacyType(fromRepo, ORDER_TYPE, seenKeys);
-        counts.topups += await migrateLegacyType(fromRepo, TOPUP_TYPE, seenKeys);
+        try {
+          const fromUniversalSqlite = createUniversalStoreFacade({
+            provider: "sqlite",
+            sqlitePath: legacySqlitePath,
+          });
+          counts.products += await migrateLegacyTypeFromUniversalStore(
+            fromUniversalSqlite,
+            PRODUCT_TYPE,
+            seenKeys,
+          );
+          counts.offers += await migrateLegacyTypeFromUniversalStore(
+            fromUniversalSqlite,
+            OFFER_TYPE,
+            seenKeys,
+          );
+          counts.orders += await migrateLegacyTypeFromUniversalStore(
+            fromUniversalSqlite,
+            ORDER_TYPE,
+            seenKeys,
+          );
+          counts.topups += await migrateLegacyTypeFromUniversalStore(
+            fromUniversalSqlite,
+            TOPUP_TYPE,
+            seenKeys,
+          );
+        } catch {
+          const fromRepo = legacySqliteStore({
+            ...options,
+            legacySqlitePath,
+            sqlitePath: legacySqlitePath,
+          });
+          counts.products += await migrateLegacyType(fromRepo, PRODUCT_TYPE, seenKeys);
+          counts.offers += await migrateLegacyType(fromRepo, OFFER_TYPE, seenKeys);
+          counts.orders += await migrateLegacyType(fromRepo, ORDER_TYPE, seenKeys);
+          counts.topups += await migrateLegacyType(fromRepo, TOPUP_TYPE, seenKeys);
+        }
         for (const suffix of ["", "-shm", "-wal"]) {
           const filePath = `${legacySqlitePath}${suffix}`;
           if (!fs.existsSync(filePath)) continue;
@@ -695,7 +1152,7 @@ function create42PayRepo(options = {}) {
       const migrated = Object.values(counts).some((count) => Number(count) > 0);
       return {
         ok: true,
-        provider: repo.getProviderName(),
+        provider: repo.info().backend,
         migrated,
         legacy_sqlite_path: legacySqlitePath,
         legacy_json_data_roots: legacyJsonDataRoots,
@@ -848,17 +1305,13 @@ function create42PayRepo(options = {}) {
         }
       }
 
-      await ensureWalletAccount(accountsAdapter, {
+      await resolveWalletForActor(repo, accountsAdapter, {
         user_id: PAY42_BUYER_ID,
-        role: "buyer",
-        name: "42Pay Buyer Wallet",
-        default_balance: 0,
+        roles: ["buyer"],
       });
-      await ensureWalletAccount(accountsAdapter, {
+      await resolveWalletForActor(repo, accountsAdapter, {
         user_id: PAY42_SELLER_ID,
-        role: "seller",
-        name: "42Pay Seller Wallet",
-        default_balance: 1200,
+        roles: ["seller"],
       });
 
       return {
@@ -1039,7 +1492,7 @@ function create42PayRepo(options = {}) {
       const sellerId = text(offer.seller_id);
       const startedAt = nowIso();
       const totalAmount = Number((asNumber(offer.price) + asNumber(offer.tax)).toFixed(2));
-      const settlement = await settleWalletTransfer(accountsAdapter, {
+      const settlement = await settleWalletTransfer(repo, accountsAdapter, {
         buyer_id: text(actor.user_id),
         seller_id: sellerId,
         amount: totalAmount,
@@ -1092,25 +1545,25 @@ function create42PayRepo(options = {}) {
 
     async getWalletSummary({ actor = {} } = {}) {
       const userId = text(actor.user_id);
-      const wallet = await resolveWalletForActor(accountsAdapter, actor);
+      const wallet = await resolveWalletForActor(repo, accountsAdapter, actor);
       const topups = await this.listWalletTopups({ actor, limit: 5 });
-      const allTopupRows = await listType(repo, TOPUP_TYPE);
       const orders = await this.listOrders({ actor });
-      const totalTopup = allTopupRows
-        .filter((row) => text(row.user_id) === userId)
+      const walletJournal = await repo.listJournal({
+        tenantId: PAY42_SCOPE,
+        entityType: WALLET_TYPE,
+        entityKey: wallet?.entity_key || walletEntityKey(userId),
+        userId,
+        limit: 1000,
+      });
+      const totalTopup = walletJournal
+        .filter((row) => row.entry_type === "wallet.topup")
         .reduce((sumValue, row) => sumValue + asNumber(row.amount, 0), 0);
-      const totalEarned = orders.items.reduce((sumValue, order) => {
-        const totalAmount = Number(
-          (asNumber(order.profit, 0) + asNumber(order.tax, 0)).toFixed(2),
-        );
-        return sumValue + (isSeller(actor) ? totalAmount : 0);
-      }, 0);
-      const totalSpent = orders.items.reduce((sumValue, order) => {
-        const totalAmount = Number(
-          (asNumber(order.profit, 0) + asNumber(order.tax, 0)).toFixed(2),
-        );
-        return sumValue + (!isSeller(actor) ? totalAmount : 0);
-      }, 0);
+      const totalEarned = walletJournal
+        .filter((row) => row.entry_type === "wallet.order_credit")
+        .reduce((sumValue, row) => sumValue + asNumber(row.amount, 0), 0);
+      const totalSpent = walletJournal
+        .filter((row) => row.entry_type === "wallet.order_debit")
+        .reduce((sumValue, row) => sumValue + asNumber(row.amount, 0), 0);
       return {
         ok: true,
         wallet: walletView(wallet, userId),
@@ -1148,12 +1601,14 @@ function create42PayRepo(options = {}) {
       const amount = Number(asNumber(input.amount, 0).toFixed(2));
       if (!(amount > 0)) throw new Error("Top up amount must be greater than zero");
       const method = text(input.method || "CARD").toUpperCase();
-      const wallet = await resolveWalletForActor(accountsAdapter, actor);
+      const wallet = await resolveWalletForActor(repo, accountsAdapter, actor);
       if (!wallet) throw new Error("Wallet account was not found");
       const nextBalance = Number((asNumber(wallet.balance, 0) + amount).toFixed(2));
       const appliedAt = nowIso();
-      await updateWalletBalance(accountsAdapter, wallet.account_id, {
+      const nextWallet = await upsertWalletEntity(repo, {
+        ...wallet,
         balance: nextBalance,
+        available_balance: nextBalance,
         metadata: {
           ...(wallet.metadata && typeof wallet.metadata === "object"
             ? wallet.metadata
@@ -1163,12 +1618,22 @@ function create42PayRepo(options = {}) {
           last_topup_amount: amount,
         },
       });
+      await appendWalletJournal(repo, nextWallet, {
+        entryType: "wallet.topup",
+        direction: "credit",
+        amount,
+        happenedAt: appliedAt,
+        data: {
+          method,
+          source: "42pay.topup",
+        },
+      });
       const rows = await listType(repo, TOPUP_TYPE);
       const sid = slugId("P42T", `${method}_${actor.user_id}`);
       const topup = {
         id: rows.length + 1,
         sid,
-        account_id: String(wallet.account_id || ""),
+        account_id: String(nextWallet.account_id || ""),
         user_id: text(actor.user_id),
         amount,
         method,
@@ -1184,21 +1649,7 @@ function create42PayRepo(options = {}) {
       await putType(repo, TOPUP_TYPE, sid, topup);
       return {
         ok: true,
-        wallet: walletView(
-          {
-            ...wallet,
-            balance: nextBalance,
-            metadata: {
-              ...(wallet.metadata && typeof wallet.metadata === "object"
-                ? wallet.metadata
-                : {}),
-              pay42_wallet: true,
-              last_topup_at: appliedAt,
-              last_topup_amount: amount,
-            },
-          },
-          actor.user_id,
-        ),
+        wallet: walletView(nextWallet, actor.user_id),
         topup: topupView(topup),
       };
     },

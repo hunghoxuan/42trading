@@ -1,17 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../../app/api";
 import { showDateTime } from "../../../shared/utils/format";
-import DataTable from "../../../shared/components/DataTable";
 import PageHeader from "../../../shared/components/PageHeader";
 import ResponsivePanel from "../../../shared/components/ResponsivePanel";
-import AdminPageToolbar from "../../../shared/components/AdminPageToolbar";
+import ComboButtonMenu from "../../../shared/components/ComboButtonMenu";
+import CrudContainer from "../../../shared/components/CrudContainer";
 import InputComboSelect from "../../../shared/components/InputComboSelect";
 import { showToast } from "../../../shared/components/ToastContainer";
-import MobileFullscreenModal from "../../../shared/components/MobileFullscreenModal";
 import Pay42MediaThumb from "./Pay42MediaThumb";
+import Pay42PageShell from "./Pay42PageShell";
 
 const MOBILE_BREAKPOINT = 768;
+const TABLE_MODE_ITEMS = [
+  { value: "table", label: "Table" },
+  { value: "grid", label: "Grid" },
+  { value: "cards", label: "Cards" },
+  { value: "carousel", label: "Carousel" },
+];
 const LOCAL_PRODUCT_IMAGE_BY_SID = Object.freeze({
   P42P_MARINA_BAY_SUITES: "/pay42/grand-hyatt-singapore.jpg",
   P42P_KYOTO_GARDEN_RYOKAN: "/pay42/park-hyatt-kyoto.jpg",
@@ -39,19 +45,37 @@ function emptyForm() {
   };
 }
 
+function productToForm(row = {}) {
+  return {
+    sid: row.sid || "",
+    name: row.name || "",
+    image: row.image || "",
+    type: row.type || "hotel",
+    status: row.status || "ACTIVE",
+    city: row.metadata?.city || "",
+    country: row.metadata?.country || "",
+    nights: String(row.metadata?.nights || ""),
+    description: row.metadata?.description || "",
+  };
+}
+
 export default function Pay42ProductsPage() {
   const navigate = useNavigate();
+  const { productSid = "" } = useParams();
   const [items, setItems] = useState([]);
   const [isMobileList, setIsMobileList] = useState(() =>
     typeof window !== "undefined" ? window.innerWidth < MOBILE_BREAKPOINT : false,
   );
-  const [mobileEditorOpen, setMobileEditorOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth >= MOBILE_BREAKPOINT : true,
+  );
   const [form, setForm] = useState(emptyForm);
   const [filter, setFilter] = useState({
     q: "",
     type: "",
     status: "",
   });
+  const [tableMode, setTableMode] = useState("table");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -102,6 +126,10 @@ export default function Pay42ProductsPage() {
       return haystack.includes(query);
     });
   }, [filter, items]);
+  const selectedProduct = useMemo(
+    () => items.find((row) => String(row.sid || "") === String(productSid || "")) || null,
+    [items, productSid],
+  );
 
   const columns = useMemo(
     () => [
@@ -116,9 +144,9 @@ export default function Pay42ProductsPage() {
               label={row.original.name || row.original.sid}
               className="pay42-thumb"
             />
-            <div className="cell-wrap">
-              <strong>{row.original.name || "-"}</strong>
-              <span className="minor-text">{row.original.sid}</span>
+            <div className="cell-wrap ui-data-stack">
+              <strong className="ui-data-title">{row.original.name || "-"}</strong>
+              <span className="ui-data-meta">{row.original.sid}</span>
             </div>
           </div>
         ),
@@ -126,7 +154,11 @@ export default function Pay42ProductsPage() {
       {
         accessorKey: "type",
         header: "TYPE",
-        cell: ({ row }) => String(row.original.type || "-").toUpperCase(),
+        cell: ({ row }) => (
+          <span className="badge badge-mini">
+            {String(row.original.type || "-").toUpperCase()}
+          </span>
+        ),
       },
       {
         accessorKey: "location",
@@ -139,7 +171,19 @@ export default function Pay42ProductsPage() {
       {
         accessorKey: "status",
         header: "STATUS",
-        cell: ({ row }) => String(row.original.status || "-").toUpperCase(),
+        cell: ({ row }) => (
+          <span
+            className={[
+              "badge",
+              "badge-mini",
+              String(row.original.status || "-").toUpperCase(),
+            ]
+              .filter(Boolean)
+              .join(" ")}
+          >
+            {String(row.original.status || "-").toUpperCase()}
+          </span>
+        ),
       },
       {
         accessorKey: "offer_count",
@@ -221,169 +265,152 @@ export default function Pay42ProductsPage() {
   }
 
   function selectRow(row) {
-    setForm({
-      sid: row.sid,
-      name: row.name || "",
-      image: row.image || "",
-      type: row.type || "hotel",
-      status: row.status || "ACTIVE",
-      city: row.metadata?.city || "",
-      country: row.metadata?.country || "",
-      nights: String(row.metadata?.nights || ""),
-      description: row.metadata?.description || "",
-    });
-    if (isMobileList) setMobileEditorOpen(true);
+    setForm(productToForm(row));
+    setDetailOpen(true);
+    navigate(`/admin/42pay/products/${encodeURIComponent(row.sid || "")}`);
   }
 
   function startNewProduct() {
     setForm(emptyForm());
-    if (isMobileList) setMobileEditorOpen(true);
+    setDetailOpen(true);
+    navigate("/admin/42pay/products");
   }
 
-  function closeMobileEditor() {
-    setMobileEditorOpen(false);
+  function closeDetail() {
+    setDetailOpen(false);
+    if (productSid) navigate("/admin/42pay/products");
   }
+
+  useEffect(() => {
+    if (selectedProduct) {
+      setForm(productToForm(selectedProduct));
+      setDetailOpen(true);
+      return;
+    }
+
+    if (!productSid) {
+      setForm(emptyForm());
+      return;
+    }
+
+    if (!loading) {
+      setForm(emptyForm());
+      setDetailOpen(true);
+    }
+  }, [loading, productSid, selectedProduct]);
+
+  useEffect(() => {
+    if (isMobileList) return;
+    if (productSid) setDetailOpen(true);
+  }, [isMobileList, productSid]);
 
   const formPanel = (
-    <ResponsivePanel
-      title={isMobileList ? "" : form.sid ? "Edit Product" : "Create Product"}
-      subtitle={isMobileList ? "" : form.sid ? form.sid : "Catalog entry"}
-      showToggle={false}
-    >
-      <div className="pay42-form-grid">
-        <label className="pay42-form-field pay42-form-field--full">
-          <span className="minor-text">NAME</span>
-          <input
-            value={form.name}
-            onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-            placeholder="Marina Bay Suites Singapore"
-          />
-        </label>
-        <label className="pay42-form-field pay42-form-field--full">
-          <span className="minor-text">IMAGE URL</span>
-          <input
-            value={form.image}
-            onChange={(e) => setForm((prev) => ({ ...prev, image: e.target.value }))}
-            placeholder="https://..."
-          />
-        </label>
-        <label className="pay42-form-field">
-          <span className="minor-text">TYPE</span>
-          <InputComboSelect
-            value={form.type}
-            onChange={(e) => setForm((prev) => ({ ...prev, type: e.target.value }))}
-          >
-            <option value="hotel">HOTEL</option>
-            <option value="supermarket">SUPERMARKET</option>
-          </InputComboSelect>
-        </label>
-        <label className="pay42-form-field">
-          <span className="minor-text">STATUS</span>
-          <InputComboSelect
-            value={form.status}
-            onChange={(e) => setForm((prev) => ({ ...prev, status: e.target.value }))}
-          >
-            <option value="ACTIVE">ACTIVE</option>
-            <option value="INACTIVE">INACTIVE</option>
-          </InputComboSelect>
-        </label>
-        <label className="pay42-form-field">
-          <span className="minor-text">CITY</span>
-          <input
-            value={form.city}
-            onChange={(e) => setForm((prev) => ({ ...prev, city: e.target.value }))}
-            placeholder="Singapore"
-          />
-        </label>
-        <label className="pay42-form-field">
-          <span className="minor-text">COUNTRY</span>
-          <input
-            value={form.country}
-            onChange={(e) => setForm((prev) => ({ ...prev, country: e.target.value }))}
-            placeholder="Singapore"
-          />
-        </label>
-        <label className="pay42-form-field pay42-form-field--full">
-          <span className="minor-text">NIGHTS</span>
-          <input
-            value={form.nights}
-            onChange={(e) => setForm((prev) => ({ ...prev, nights: e.target.value }))}
-            placeholder="2"
-          />
-        </label>
-        <label className="pay42-form-field pay42-form-field--full">
-          <span className="minor-text">DESCRIPTION</span>
-          <textarea
-            rows={5}
-            value={form.description}
-            onChange={(e) =>
-              setForm((prev) => ({ ...prev, description: e.target.value }))
-            }
-            placeholder="Skyline-view suites with breakfast for two."
-          />
-        </label>
-        <div className="pay42-inline-actions pay42-form-field--full">
-          <button
-            type="button"
-            className="primary-button"
-            disabled={saving}
-            onClick={submit}
-          >
-            {saving ? "Saving..." : form.sid ? "Update Product" : "Create Product"}
-          </button>
-          {isMobileList ? (
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={closeMobileEditor}
-            >
-              Cancel
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => setForm(emptyForm())}
-            >
-              Clear
-            </button>
-          )}
-        </div>
+    <div className="pay42-form-grid">
+      <label className="pay42-form-field pay42-form-field--full">
+        <span className="ui-field-label">NAME</span>
+        <input
+          value={form.name}
+          onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+          placeholder="Marina Bay Suites Singapore"
+        />
+      </label>
+      <label className="pay42-form-field pay42-form-field--full">
+        <span className="ui-field-label">IMAGE URL</span>
+        <input
+          value={form.image}
+          onChange={(e) => setForm((prev) => ({ ...prev, image: e.target.value }))}
+          placeholder="https://..."
+        />
+      </label>
+      <label className="pay42-form-field">
+        <span className="ui-field-label">TYPE</span>
+        <InputComboSelect
+          value={form.type}
+          onChange={(e) => setForm((prev) => ({ ...prev, type: e.target.value }))}
+        >
+          <option value="hotel">HOTEL</option>
+          <option value="supermarket">SUPERMARKET</option>
+        </InputComboSelect>
+      </label>
+      <label className="pay42-form-field">
+        <span className="ui-field-label">STATUS</span>
+        <InputComboSelect
+          value={form.status}
+          onChange={(e) => setForm((prev) => ({ ...prev, status: e.target.value }))}
+        >
+          <option value="ACTIVE">ACTIVE</option>
+          <option value="INACTIVE">INACTIVE</option>
+        </InputComboSelect>
+      </label>
+      <label className="pay42-form-field">
+        <span className="ui-field-label">CITY</span>
+        <input
+          value={form.city}
+          onChange={(e) => setForm((prev) => ({ ...prev, city: e.target.value }))}
+          placeholder="Singapore"
+        />
+      </label>
+      <label className="pay42-form-field">
+        <span className="ui-field-label">COUNTRY</span>
+        <input
+          value={form.country}
+          onChange={(e) => setForm((prev) => ({ ...prev, country: e.target.value }))}
+          placeholder="Singapore"
+        />
+      </label>
+      <label className="pay42-form-field pay42-form-field--full">
+        <span className="ui-field-label">NIGHTS</span>
+        <input
+          value={form.nights}
+          onChange={(e) => setForm((prev) => ({ ...prev, nights: e.target.value }))}
+          placeholder="2"
+        />
+      </label>
+      <label className="pay42-form-field pay42-form-field--full">
+        <span className="ui-field-label">DESCRIPTION</span>
+        <textarea
+          rows={5}
+          value={form.description}
+          onChange={(e) =>
+            setForm((prev) => ({ ...prev, description: e.target.value }))
+          }
+          placeholder="Skyline-view suites with breakfast for two."
+        />
+      </label>
+      <div className="pay42-inline-actions pay42-form-field--full">
+        <button
+          type="button"
+          className="primary-button"
+          disabled={saving}
+          onClick={submit}
+        >
+          {saving ? "Saving..." : form.sid ? "Update Product" : "Create Product"}
+        </button>
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() => setForm(emptyForm())}
+        >
+          Clear
+        </button>
       </div>
-    </ResponsivePanel>
+    </div>
   );
 
   return (
-    <section className="logs-page-container trades-page-container pay42-page-container stack-layout fadeIn">
+    <Pay42PageShell>
       <PageHeader
         className="trades-page-header"
         title="Products"
-        actions={
-          <div className="pay42-inline-actions">
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={startNewProduct}
-            >
-              New Product
-            </button>
-            <button type="button" className="secondary-button" onClick={load}>
-              Refresh
-            </button>
-          </div>
-        }
       />
 
-      <AdminPageToolbar
-        className="trades-toolbar-panel"
-        filters={
-          <ResponsivePanel
-            title="Filters"
-            className="trades-filters-panel"
-            headerMode="mobile"
-            border="mobile"
-            showToggle={false}
-          >
+      {error ? <div className="error">{error}</div> : null}
+
+      <CrudContainer
+        className="pay42-crud-layout"
+        toolbar={{
+          displayMode: "top",
+          filters: (
             <div className="trades-toolbar-row">
               <div className="trades-toolbar-filters">
                 <input
@@ -415,43 +442,70 @@ export default function Pay42ProductsPage() {
                 </InputComboSelect>
               </div>
             </div>
-          </ResponsivePanel>
-        }
+          ),
+          actionItems: [
+            {
+              key: "new-product",
+              label: "New Product",
+              onClick: startNewProduct,
+              className: "primary-button",
+            },
+            {
+              key: "refresh-products",
+              label: "Refresh products",
+              onClick: load,
+              className: "secondary-button",
+              ariaLabel: "Refresh products",
+              title: "Refresh products",
+              children: "↻",
+            },
+          ],
+        }}
+        detailMode={isMobileList ? "modal" : "section"}
+        detailOpen={detailOpen}
+        onDetailOpenChange={(open) => {
+          if (open) {
+            setDetailOpen(true);
+            return;
+          }
+          closeDetail();
+        }}
+        detailCloseButton
+        list={{
+          title: `${filteredItems.length} Products`,
+          headerActions: (
+            <ComboButtonMenu
+              selectId="pay42-products-mode"
+              value={tableMode}
+              buttonText={`Mode: ${TABLE_MODE_ITEMS.find((item) => item.value === tableMode)?.label || "Table"}`}
+              onChange={setTableMode}
+              items={TABLE_MODE_ITEMS}
+              ariaLabel="Select products view mode"
+              align="end"
+              sideOffset={6}
+              triggerClassName="data-table-mode-switcher"
+            />
+          ),
+          panelClassName: "component-frozen-wrap",
+          tableProps: {
+            columns,
+            data: filteredItems,
+            loading,
+            emptyText: "No products yet.",
+            className: "events-table events-table--compact events-table--products",
+            onRowClick: selectRow,
+            mode: tableMode,
+            getRowId: (row) => row.sid,
+            selectedRowId: productSid || null,
+            mobileCard,
+          },
+        }}
+        detail={{
+          title: form.sid ? "Edit Product" : "Create Product",
+          subtitle: form.sid ? form.sid : "Catalog entry",
+          children: formPanel,
+        }}
       />
-
-      {error ? <div className="error">{error}</div> : null}
-
-      <div className="pay42-split-layout pay42-split-layout--list-first">
-        <ResponsivePanel
-          title={`${filteredItems.length} Products`}
-          subtitle={isMobileList ? "Tap a card to edit" : "Tap a row to edit"}
-          className="component-frozen-wrap"
-          showToggle={false}
-        >
-          <DataTable
-            columns={columns}
-            data={filteredItems}
-            loading={loading}
-            emptyText="No products yet."
-            className="events-table"
-            onRowClick={selectRow}
-            mobileCard={mobileCard}
-          />
-        </ResponsivePanel>
-
-        {!isMobileList ? formPanel : null}
-      </div>
-
-      {isMobileList ? (
-        <MobileFullscreenModal
-          open={mobileEditorOpen}
-          title={form.sid ? "Edit Product" : "Create Product"}
-          subtitle={form.sid ? form.sid : "Catalog entry"}
-          onClose={closeMobileEditor}
-        >
-          {formPanel}
-        </MobileFullscreenModal>
-      ) : null}
-    </section>
+    </Pay42PageShell>
   );
 }

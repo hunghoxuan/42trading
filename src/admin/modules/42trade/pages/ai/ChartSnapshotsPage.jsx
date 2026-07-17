@@ -26,6 +26,7 @@ import ResponsivePanel from "../../../../shared/components/ResponsivePanel";
 import TradeSignalChart from "../../components/TradeSignalChart";
 import AiTradeDetailCard from "../../components/AiTradeDetailCard";
 import TradeDetailCard from "../../components/TradeDetailCard";
+import TradePriceInline from "../../components/TradePriceInline";
 import { chartFetchManager } from "../../services/chartFetchManager";
 import {
   extractTradePlanFromTrade,
@@ -2844,9 +2845,12 @@ function buildDefaultPosition(seedEntry = null) {
   }
   return {
     direction: "BUY",
-    entry: "0",
-    tp: "0",
-    sl: "0",
+    entry: "",
+    tp: "",
+    sl: "",
+    tp1: "",
+    tp2: "",
+    tp3: "",
     rr: "",
     risk_money: "50",
     risk_money_planned: "50",
@@ -2856,6 +2860,180 @@ function buildDefaultPosition(seedEntry = null) {
     entry_model: "S/R",
     source_id: "manual",
     source: "manual",
+  };
+}
+
+function buildEmptyManualPosition(base = {}) {
+  const fallback = buildDefaultPosition(null);
+  const nextDirection =
+    String(base?.direction || fallback.direction || "BUY").toUpperCase() === "SELL"
+      ? "SELL"
+      : "BUY";
+  const nextTradeType = String(base?.trade_type || fallback.trade_type || "limit").trim() || "limit";
+  return {
+    ...fallback,
+    ...(base && typeof base === "object" ? base : {}),
+    direction: nextDirection,
+    entry: "",
+    tp: "",
+    tp1: "",
+    tp2: "",
+    tp3: "",
+    sl: "",
+    rr: "",
+    rr2: "",
+    rr3: "",
+    lots: "",
+    risk_money: "",
+    risk_money_planned: "",
+    note: "",
+    strategy: "",
+    entry_model: "",
+    trade_type: nextTradeType,
+    source_id: "manual",
+    source: "manual",
+  };
+}
+
+function countTradePriceDecimals(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  const normalized = n.toFixed(10).replace(/0+$/, "").replace(/\.$/, "");
+  const idx = normalized.indexOf(".");
+  return idx >= 0 ? normalized.length - idx - 1 : 0;
+}
+
+function inferTradePricePrecision(values = []) {
+  let precision = 0;
+  for (const value of Array.isArray(values) ? values : []) {
+    precision = Math.max(precision, countTradePriceDecimals(value));
+  }
+  return Math.min(Math.max(precision, 0), 8);
+}
+
+function coerceTradePricePrecision(value) {
+  if (value == null) return null;
+  if (typeof value === "string" && !value.trim()) return null;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return Math.min(Math.max(Math.round(numeric), 0), 8);
+}
+
+function extractTradePricePrecision(symbol = "", explicitPrecision = null) {
+  const direct = coerceTradePricePrecision(explicitPrecision);
+  if (direct != null) return direct;
+  const sym = String(symbol || "").trim().toUpperCase();
+  const base = sym.slice(0, 3);
+  const quote = sym.endsWith("USDT") ? "USDT" : sym.slice(-3);
+  const forexCurrencies = new Set([
+    "USD",
+    "EUR",
+    "GBP",
+    "JPY",
+    "AUD",
+    "CAD",
+    "CHF",
+    "NZD",
+    "SGD",
+    "HKD",
+    "CNH",
+    "NOK",
+    "SEK",
+    "DKK",
+    "ZAR",
+    "TRY",
+    "MXN",
+    "PLN",
+    "CZK",
+    "HUF",
+  ]);
+  if ((quote === "USD" || quote === "USDT") && !forexCurrencies.has(base)) return 2;
+  if (/^[A-Z]{6}$/.test(sym) && forexCurrencies.has(base) && forexCurrencies.has(quote)) {
+    return sym.endsWith("JPY") ? 3 : 5;
+  }
+  if (sym.startsWith("XAU") || sym.startsWith("XAG")) return 2;
+  if (
+    sym.startsWith("UK") ||
+    sym.startsWith("US") ||
+    sym.startsWith("DE") ||
+    sym.startsWith("JP") ||
+    sym.startsWith("AU")
+  ) {
+    return 3;
+  }
+  if (sym.endsWith("USD") || sym.endsWith("USDT")) return 2;
+  return null;
+}
+
+function resolveTradePricePrecision(symbol = "", values = [], explicitPrecision = null) {
+  const explicit = extractTradePricePrecision(symbol, explicitPrecision);
+  if (explicit != null) return explicit;
+  return inferTradePricePrecision(values);
+}
+
+function formatTradePriceField(value, precision = null) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "";
+  const safePrecision = coerceTradePricePrecision(precision);
+  if (safePrecision != null) return numeric.toFixed(safePrecision);
+  return formatNum3(numeric);
+}
+
+function buildPrefilledManualPositionFromSearch(searchRaw = "", fallback = null, symbol = "") {
+  const search = new URLSearchParams(searchRaw || "");
+  const parsePositiveSearchParam = (key) => {
+    const raw = search.get(key);
+    if (raw == null || raw === "") return null;
+    const numeric = Number(raw);
+    return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+  };
+  const directionRaw = String(
+    search.get("direction") || search.get("side") || "BUY",
+  )
+    .trim()
+    .toUpperCase();
+  const direction = directionRaw === "SELL" ? "SELL" : "BUY";
+  const tradeType =
+    String(search.get("trade_type") || search.get("order_type") || "limit")
+      .trim()
+      .toLowerCase() === "market"
+      ? "market"
+      : "limit";
+  const entry = parsePositiveSearchParam("entry");
+  const tp = parsePositiveSearchParam("tp");
+  const sl = parsePositiveSearchParam("sl");
+  const pricePrecision = resolveTradePricePrecision(
+    symbol,
+    [entry, tp, sl].filter((value) => Number.isFinite(value)),
+    search.get("price_precision"),
+  );
+  const base = {
+    ...(fallback && typeof fallback === "object"
+      ? fallback
+      : buildDefaultPosition(Number.isFinite(entry) ? entry : null)),
+  };
+  const rr =
+    Number.isFinite(entry) &&
+    Number.isFinite(tp) &&
+    Number.isFinite(sl) &&
+    Math.abs(entry - sl) > 0
+      ? Math.abs(tp - entry) / Math.abs(entry - sl)
+      : null;
+  return {
+    ...base,
+    direction,
+    entry: Number.isFinite(entry) ? formatTradePriceField(entry, pricePrecision) : base.entry,
+    tp: Number.isFinite(tp) ? formatTradePriceField(tp, pricePrecision) : base.tp,
+    tp1:
+      Number.isFinite(tp)
+        ? formatTradePriceField(tp, pricePrecision)
+        : base.tp1 || base.tp,
+    sl: Number.isFinite(sl) ? formatTradePriceField(sl, pricePrecision) : base.sl,
+    rr: Number.isFinite(rr) ? formatNum3(rr) : base.rr,
+    trade_type: tradeType,
+    price_precision: pricePrecision,
+    source_id: String(search.get("source_id") || "chart-analysis").trim() || "chart-analysis",
+    source: String(search.get("source_id") || "chart-analysis").trim() || "chart-analysis",
   };
 }
 
@@ -3465,7 +3643,9 @@ export default function ChartSnapshotsPage() {
       cancelled = true;
     };
   }, [tradeRouteParam]);
-  const isAnalyzeRoute = location.pathname.startsWith("/trades/analyze");
+  const tradeRouteBase = "/trades";
+  const isAnalyzeRoute =
+    location.pathname.startsWith("/trades/analyze");
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [promptDraft, setPromptDraft] = useState(() =>
     buildPrompt(DEFAULT_CONFIG, "", "{}"),
@@ -3830,7 +4010,7 @@ export default function ChartSnapshotsPage() {
   const autoSavedTrades =
     autoSaveResult?.enabled === true &&
     autoSaveResult?.saved === true &&
-    autoSaveResult?.mode === "trades";
+    String(autoSaveResult?.mode || "").toLowerCase() === "trades";
   const manuallyAddedDraft = manualAddedMode === "signal";
   const manuallyAddedTrade = manualAddedMode === "trade";
   const activeAddedTradeEntity = useMemo(() => {
@@ -4425,7 +4605,11 @@ export default function ChartSnapshotsPage() {
         force_refresh: true,
         snapshot_refresh: shouldRefreshSnapshot,
       };
-      if (autoSaveMode === "signals" || autoSaveMode === "trades") {
+      if (
+        autoSaveMode === "signals" ||
+        autoSaveMode === "trades" ||
+        autoSaveMode === "trades"
+      ) {
         payload.auto_save = autoSaveMode;
       } else {
         payload.auto_save = null;
@@ -4597,12 +4781,14 @@ export default function ChartSnapshotsPage() {
         if (autoEntity)
           setAddedEntities((prev) => ({ ...prev, main: autoEntity }));
         if (
-          autoMode === "trades" &&
+          (autoMode === "trades") &&
           autoEntity?.kind === "trade" &&
           autoEntity?.id
         ) {
           navigate(
-            withCurrentHash(`/trades/trade/${encodeURIComponent(autoEntity.id)}`),
+            withCurrentHash(
+              `${tradeRouteBase}/trade/${encodeURIComponent(autoEntity.id)}`,
+            ),
             {
               replace: true,
             },
@@ -4857,14 +5043,19 @@ export default function ChartSnapshotsPage() {
 
   const updatePositionField = (key, value) => {
     setPosition((prev) => {
+      const pricePrecision = resolveTradePricePrecision(
+        String(tvSymbol || cfg.symbol || paramSymbol || "").trim(),
+        [prev?.entry, prev?.tp, prev?.tp1, prev?.tp2, prev?.tp3, prev?.sl],
+        prev?.price_precision,
+      );
       let normalizedValue = value;
-      if (["entry", "tp", "tp2", "tp3", "sl", "rr"].includes(key)) {
+      if (["entry", "tp", "tp1", "tp2", "tp3", "sl", "rr"].includes(key)) {
         normalizedValue = String(value ?? "").replace(",", ".");
       }
       const next = { ...prev, [key]: normalizedValue };
       const e = parseNum(next.entry);
       const s = parseNum(next.sl);
-      const t = parseNum(next.tp);
+      const t = parseNum(next.tp1 ?? next.tp);
       const rrInput = parseNum(next.rr);
       if (key === "rr") {
         if (
@@ -4875,7 +5066,7 @@ export default function ChartSnapshotsPage() {
         ) {
           const risk = Math.abs(e - s);
           if (risk > 0) {
-            const currentTp = parseNum(prev.tp);
+            const currentTp = parseNum(prev.tp1 ?? prev.tp);
             const dirSign = Number.isFinite(currentTp)
               ? currentTp >= e
                 ? 1
@@ -4886,7 +5077,10 @@ export default function ChartSnapshotsPage() {
                 ? -1
                 : 1;
             const nextTp = e + dirSign * (risk * rrInput);
-            if (Number.isFinite(nextTp)) next.tp = formatNum3(nextTp);
+            if (Number.isFinite(nextTp)) {
+              next.tp = formatTradePriceField(nextTp, pricePrecision);
+              next.tp1 = formatTradePriceField(nextTp, pricePrecision);
+            }
           }
         }
       } else if (
@@ -4898,18 +5092,86 @@ export default function ChartSnapshotsPage() {
         const reward = Math.abs(t - e);
         if (risk > 0 && reward > 0) next.rr = formatNum3(reward / risk);
       }
-      if (["entry", "tp", "tp2", "tp3", "sl", "rr"].includes(key)) {
+      if ((key === "tp1" || key === "tp") && String(next.tp1 || "").trim()) {
+        next.tp = next.tp1;
+      }
+      if (["entry", "tp", "tp1", "tp2", "tp3", "sl"].includes(key)) {
+        const parsed = parseNum(next[key]);
+        next[key] = Number.isFinite(parsed)
+          ? formatTradePriceField(parsed, pricePrecision)
+          : "";
+      }
+      if (key === "rr") {
         const parsed = parseNum(next[key]);
         next[key] = Number.isFinite(parsed) ? formatNum3(parsed) : "";
       }
+      next.price_precision = pricePrecision;
       return next;
     });
   };
 
+  const applyQuickTradeIntentToPosition = useCallback((intent = {}) => {
+    const parsePositiveValue = (value) => {
+      if (value == null || value === "") return null;
+      const numeric = Number(value);
+      return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+    };
+    setPosition((prev) => {
+      const nextTradeType =
+        String(intent?.trade_type || intent?.order_type || prev?.trade_type || "limit")
+          .trim()
+          .toLowerCase() === "market"
+          ? "market"
+          : "limit";
+      const nextDirection =
+        String(intent?.side || prev?.direction || "BUY").toUpperCase() === "SELL"
+          ? "SELL"
+          : "BUY";
+      const entry = parsePositiveValue(intent?.price);
+      const tp = parsePositiveValue(intent?.tp);
+      const sl = parsePositiveValue(intent?.sl);
+      const pricePrecision = resolveTradePricePrecision(
+        String(tvSymbol || cfg.symbol || paramSymbol || "").trim(),
+        [entry, tp, sl].filter((value) => Number.isFinite(value)),
+        intent?.price_precision ?? prev?.price_precision,
+      );
+      const rr =
+        Number.isFinite(entry) &&
+        Number.isFinite(tp) &&
+        Number.isFinite(sl) &&
+        Math.abs(entry - sl) > 0
+          ? Math.abs(tp - entry) / Math.abs(entry - sl)
+          : null;
+      return {
+        ...prev,
+        direction: nextDirection,
+        entry: Number.isFinite(entry) ? formatTradePriceField(entry, pricePrecision) : "",
+        tp: Number.isFinite(tp) ? formatTradePriceField(tp, pricePrecision) : "",
+        tp1: Number.isFinite(tp) ? formatTradePriceField(tp, pricePrecision) : "",
+        tp2: "",
+        tp3: "",
+        sl: Number.isFinite(sl) ? formatTradePriceField(sl, pricePrecision) : "",
+        rr: Number.isFinite(rr) ? formatNum3(rr) : "",
+        trade_type: nextTradeType,
+        price_precision: pricePrecision,
+        source_id:
+          String(intent?.source_id || intent?.source || "auto_chart").trim() ||
+          "auto_chart",
+        source:
+          String(intent?.source || intent?.source_id || "auto_chart").trim() ||
+          "auto_chart",
+        strategy: String(intent?.strategy || prev?.strategy || "").trim(),
+        entry_model: String(
+          intent?.entry_model || intent?.entryModel || prev?.entry_model || "",
+        ).trim(),
+      };
+    });
+  }, [cfg.symbol, paramSymbol, tvSymbol]);
+
   const handlePlanLevelChange = (levelKey, price) => {
     const n = Number(price);
     if (!Number.isFinite(n) || n <= 0) return;
-    const v = formatNum3(n);
+    const v = formatTradePriceField(n, position?.price_precision);
     if (levelKey === "tp1" || levelKey === "tp") {
       updatePositionField("tp", v);
       return;
@@ -5313,7 +5575,10 @@ export default function ChartSnapshotsPage() {
                 finalPayload?.symbol || activePosition?.symbol || "",
               ),
             },
-            () => api.createTrade(finalPayload),
+            () =>
+              isTrades2Route
+                ? api.v2CreateTrade(finalPayload)
+                : api.createTrade(finalPayload),
           );
           const out = await tradePromise;
           if (out && typeof out === "object") lastCreated = out;
@@ -5357,7 +5622,9 @@ export default function ChartSnapshotsPage() {
         isResponseRoute
       ) {
         navigate(
-          withCurrentHash(`/trades/trade/${encodeURIComponent(createdEntity.id)}`),
+          withCurrentHash(
+            `${tradeRouteBase}/trade/${encodeURIComponent(createdEntity.id)}`,
+          ),
           {
             replace: true,
           },
@@ -5437,21 +5704,40 @@ export default function ChartSnapshotsPage() {
     }
   }, [tradeDetailRow, tradeDetailPlan]);
 
-  const onReEntryTradeDetail = useCallback(async () => {
+  const onReEntryTradeDetail = useCallback(async (planOverride = null) => {
     const trade = tradeDetailRow;
     if (!trade) return;
+    const plan =
+      planOverride && typeof planOverride === "object"
+        ? planOverride
+        : tradeDetailPlan;
+    const toNum = (v) => {
+      const raw = String(v ?? "").trim();
+      if (!raw) return null;
+      const normalized =
+        raw.includes(",") && raw.includes(".")
+          ? raw.replace(/,/g, "")
+          : raw.includes(",")
+            ? raw.replace(",", ".")
+            : raw;
+      const n = Number(normalized);
+      return Number.isFinite(n) ? n : null;
+    };
+    const tp1 = toNum(plan.tp1 || plan.tp);
+    const tp2 = toNum(plan.tp2);
+    const tp3 = toNum(plan.tp3);
     const payload = {
-      side: tradeDetailPlan.direction,
-      order_type: tradeDetailPlan.trade_type,
-      price: Number(tradeDetailPlan.entry),
-      tp: Number(tradeDetailPlan.tp1 || tradeDetailPlan.tp),
-      tp1: Number(tradeDetailPlan.tp1 || tradeDetailPlan.tp),
-      tp2: Number(tradeDetailPlan.tp2),
-      tp3: Number(tradeDetailPlan.tp3),
-      sl: Number(tradeDetailPlan.sl),
-      rr: Number(tradeDetailPlan.rr),
+      side: plan.direction,
+      order_type: plan.trade_type,
+      price: toNum(plan.entry),
+      tp: tp1,
+      tp1,
+      tp2,
+      tp3,
       symbol: trade.symbol,
-      volume: Number(trade.volume),
+      sl: toNum(plan.sl),
+      rr: toNum(plan.rr),
+      volume: toNum(trade.volume),
     };
     await api.createTradeDirect(payload);
     loadTradeSymbols("PENDING");
@@ -5858,7 +6144,31 @@ export default function ChartSnapshotsPage() {
       : [];
     const next = symbols.length ? buildAiAnalyzeRoute(symbols) : "/trades/analyze";
     const nextWithHash = withCurrentHash(next);
-    if (`${location.pathname}${location.search}${location.hash || ""}` !== nextWithHash) {
+    const canonicalPath = String(location.pathname || "").startsWith("/trades/analyze")
+      ? String(location.pathname || "")
+      : String(location.pathname || "");
+    const search = new URLSearchParams(location.search || "");
+    const routeSymbolsFromSearch = String(search.get("symbols") || "")
+      .trim()
+      .split(",")
+      .map((x) => normalizeWatchSymbol(x))
+      .filter(Boolean);
+    const routeSymbolsFromSlug =
+      canonicalPath.startsWith("/trades/analyze") && paramSymbol
+        ? String(decodeURIComponent(paramSymbol) || "")
+            .split("-")
+            .map((x) => normalizeWatchSymbol(x))
+            .filter(Boolean)
+        : [];
+    const currentRouteSymbols =
+      routeSymbolsFromSearch.length > 0
+        ? routeSymbolsFromSearch
+        : routeSymbolsFromSlug;
+    const sameSymbolState =
+      currentRouteSymbols.length === symbols.length &&
+      currentRouteSymbols.every((value, index) => value === symbols[index]);
+    const currentWithHash = `${canonicalPath}${location.hash || ""}`;
+    if (!sameSymbolState || currentWithHash !== nextWithHash) {
       navigate(nextWithHash, { replace: true });
     }
   }, [
@@ -5868,6 +6178,7 @@ export default function ChartSnapshotsPage() {
     location.pathname,
     location.search,
     navigate,
+    paramSymbol,
     withCurrentHash,
   ]);
 
@@ -5894,7 +6205,12 @@ export default function ChartSnapshotsPage() {
       paramSymbol &&
       /^[A-Z]{3,12}$/.test(String(paramSymbol || "").trim())
     ) {
-      setPosition(buildDefaultPosition(null));
+      const prefills = buildPrefilledManualPositionFromSearch(
+        location.search,
+        buildEmptyManualPosition(),
+        String(paramSymbol || "").trim(),
+      );
+      setPosition(prefills);
       setAnalysisRaw("");
       setAnalysisJson("");
       setAnalysisParsed(null);
@@ -5902,7 +6218,7 @@ export default function ChartSnapshotsPage() {
       setUsedFiles([]);
       setAnalysisFilesDisplay([]);
     }
-  }, [isManualRoute, paramSymbol]);
+  }, [isManualRoute, location.search, paramSymbol]);
 
   useEffect(() => {
     loadWatchlist();
@@ -5988,14 +6304,45 @@ export default function ChartSnapshotsPage() {
   useEffect(() => {
     if (!effectiveParsed || typeof effectiveParsed !== "object") return;
     const pos = extractPositionFromAnalysis(effectiveParsed);
+    const explicitPlanCandidates = [];
+    if (Array.isArray(effectiveParsed?.trade_plan)) {
+      explicitPlanCandidates.push(...effectiveParsed.trade_plan);
+    }
+    if (
+      effectiveParsed?.trade_plan &&
+      typeof effectiveParsed.trade_plan === "object" &&
+      !Array.isArray(effectiveParsed.trade_plan)
+    ) {
+      explicitPlanCandidates.push(effectiveParsed.trade_plan);
+    }
+    if (
+      effectiveParsed?.trade_setup &&
+      typeof effectiveParsed.trade_setup === "object"
+    ) {
+      explicitPlanCandidates.push(effectiveParsed.trade_setup);
+    }
+    if (!explicitPlanCandidates.length) explicitPlanCandidates.push(effectiveParsed);
+    const hasExplicitDirection = explicitPlanCandidates.some((item) => {
+      const raw = String(
+        item?.direction ||
+          item?.dir ||
+          item?.execution_plan?.direction ||
+          "",
+      )
+        .trim()
+        .toUpperCase();
+      return Boolean(raw);
+    });
     // Only update position if effectiveParsed has real trade data (entry/sl/direction).
     // Skip when effectiveParsed is from bars metadata (no AI analysis) to avoid
     // overwriting a valid SELL direction with BUY fallback.
     const hasEntry =
       Number.isFinite(parseNum(pos?.entry)) && parseNum(pos?.entry) > 0;
     const hasSl = Number.isFinite(parseNum(pos?.sl)) && parseNum(pos?.sl) > 0;
-    const hasDirection = pos?.direction === "SELL" || pos?.direction === "BUY";
-    if (hasEntry || hasSl || hasDirection) {
+    const hasTp =
+      Number.isFinite(parseNum(pos?.tp1 ?? pos?.tp)) &&
+      parseNum(pos?.tp1 ?? pos?.tp) > 0;
+    if (hasEntry || hasSl || hasTp || hasExplicitDirection) {
       setPosition((prev) => {
         // Preserve existing direction if new position has no direction
         const nextDir = pos.direction || prev.direction || "BUY";
@@ -6014,16 +6361,15 @@ export default function ChartSnapshotsPage() {
     (async () => {
       try {
         setSymbolActivity((prev) => ({ ...prev, loading: true }));
-        const [tradesOut, signalsOut] = await Promise.all([
-          api.v2Trades({ symbol: symbol || undefined, page: 1, pageSize: 30 }),
-          api.trades({ symbol: symbol || undefined, page: 1, pageSize: 30 }),
-        ]);
+        const tradesOut = await api.v2Trades({
+          symbol: symbol || undefined,
+          page: 1,
+          pageSize: 30,
+        });
         const tradeItems = Array.isArray(tradesOut?.items)
           ? tradesOut.items
           : [];
-        const signalItems = Array.isArray(signalsOut?.trades)
-          ? signalsOut.trades
-          : [];
+        const signalItems = [];
         const allowed = new Set(["PENDING", "FILLED", "OPEN", "NEW"]);
         const normalizedTrades = tradeItems
           .filter((x) =>
@@ -7524,14 +7870,16 @@ export default function ChartSnapshotsPage() {
                                   className="snapshot-tabs-v2"
                                   style={{ flexWrap: "wrap" }}
                                 >
-                                  {symbols.map((s) => (
+                                  {symbols.map((s) => {
+                                    const isSymbolActive =
+                                      isManualRoute || isTradeRoute
+                                        ? normalizeWatchSymbol(s) ===
+                                          normalizeWatchSymbol(selectedSymbol)
+                                        : selectedSymbols.includes(s);
+                                    return (
                                     <span
                                       key={s}
-                                      style={{
-                                        display: "inline-flex",
-                                        alignItems: "center",
-                                        gap: 2,
-                                      }}
+                                      className={`snapshot-symbol-chip-v2 ${isSymbolActive ? "active" : ""}`}
                                       draggable={
                                         symbolFilterTab === "WATCHLIST"
                                       }
@@ -7554,7 +7902,7 @@ export default function ChartSnapshotsPage() {
                                     >
                                       <button
                                         type="button"
-                                        className={`secondary-button snapshot-tag-v2 ${isManualRoute || isTradeRoute ? (normalizeWatchSymbol(s) === normalizeWatchSymbol(selectedSymbol) ? "active" : "") : selectedSymbols.includes(s) ? "active" : ""}`}
+                                        className={`secondary-button snapshot-tag-v2 ${isSymbolActive ? "active" : ""}`}
                                         onClick={() => {
                                           if (isManualRoute || isTradeRoute) {
                                             // Manual/Trade route: single symbol only, no toggle
@@ -7610,20 +7958,7 @@ export default function ChartSnapshotsPage() {
                                           <>
                                             <button
                                               type="button"
-                                              className="secondary-button"
-                                              style={{
-                                                width: 18,
-
-
-                                                lineHeight: 1,
-                                                minWidth: 18,
-                                                color: inWatchlist
-                                                  ? "rgba(239,68,68,0.7)"
-                                                  : "var(--muted)",
-                                                borderColor: inWatchlist
-                                                  ? "rgba(239,68,68,0.35)"
-                                                  : "rgba(255,255,255,0.08)",
-                                              }}
+                                              className={`secondary-button snapshot-symbol-chip-v2__remove ${inWatchlist ? "is-in-watchlist" : "is-add-action"}`}
                                               onClick={(e) => {
                                                 e.stopPropagation();
                                                 if (inWatchlist) {
@@ -7654,7 +7989,7 @@ export default function ChartSnapshotsPage() {
                                         );
                                       })()}
                                     </span>
-                                  ))}
+                                  )})}
                                 </div>
                               </div>
                             ))}
@@ -7704,18 +8039,6 @@ export default function ChartSnapshotsPage() {
                           : isSell
                             ? "#ff5a5a"
                             : "#c8d5e8";
-                        const entryNum = Number(t?.entry);
-                        const tpNum = Number(t?.tp);
-                        const entryTxt = Number.isFinite(entryNum)
-                          ? entryNum.toFixed(
-                              entryNum >= 100 ? 1 : entryNum >= 10 ? 2 : 4,
-                            )
-                          : "-";
-                        const tpTxt = Number.isFinite(tpNum)
-                          ? tpNum.toFixed(
-                              tpNum >= 100 ? 1 : tpNum >= 10 ? 2 : 4,
-                            )
-                          : "-";
                         const ref = t?.sid || t?.id || "";
                         const pnlNum = Number(
                           t?.broker_pnl ?? t?.pnl_realized ?? t?.pnl,
@@ -7832,7 +8155,14 @@ export default function ChartSnapshotsPage() {
                               <span
                                 style={{ color: "var(--muted)", fontSize: 9 }}
                               >
-                                {entryTxt} → {tpTxt}
+                                <TradePriceInline
+                                  entry={t?.entry}
+                                  tp={t?.tp1 ?? t?.tp}
+                                  sl={t?.sl}
+                                  symbol={normalizeSignalSymbol(
+                                    String(t?.symbol || ""),
+                                  )}
+                                />
                               </span>
                               <span
                                 style={{ color: "var(--muted)", fontSize: 9 }}
@@ -7873,18 +8203,6 @@ export default function ChartSnapshotsPage() {
                           : isSell
                             ? "#ff5a5a"
                             : "#c8d5e8";
-                        const entryNum = Number(t?.entry);
-                        const tpNum = Number(t?.tp);
-                        const entryTxt = Number.isFinite(entryNum)
-                          ? entryNum.toFixed(
-                              entryNum >= 100 ? 1 : entryNum >= 10 ? 2 : 4,
-                            )
-                          : "-";
-                        const tpTxt = Number.isFinite(tpNum)
-                          ? tpNum.toFixed(
-                              tpNum >= 100 ? 1 : tpNum >= 10 ? 2 : 4,
-                            )
-                          : "-";
                         const ref = t?.sid || t?.id || "";
                         return (
                           <article
@@ -7946,7 +8264,14 @@ export default function ChartSnapshotsPage() {
                               <span
                                 style={{ color: "var(--muted)", fontSize: 9 }}
                               >
-                                {entryTxt} → {tpTxt}
+                                <TradePriceInline
+                                  entry={t?.entry}
+                                  tp={t?.tp1 ?? t?.tp}
+                                  sl={t?.sl}
+                                  symbol={normalizeSignalSymbol(
+                                    String(t?.symbol || ""),
+                                  )}
+                                />
                               </span>
                               <span
                                 style={{ color: "var(--muted)", fontSize: 9 }}
@@ -8263,6 +8588,7 @@ export default function ChartSnapshotsPage() {
                     </option>
                     <option value="signals">Auto Save: Trade (Draft)</option>
                     <option value="trades">Auto Save: Trade (Pending)</option>
+                    <option value="trades">Auto Save: Trades (Pending)</option>
                   </InputComboSelect>
                   <div
                     style={{
@@ -8385,7 +8711,7 @@ export default function ChartSnapshotsPage() {
                                     symbol={sym}
                                     provider={resolvedTradingViewProvider}
                                     timeframes={browserTfs}
-                                    defaultMode="cache"
+                                    defaultMode="live"
                                     syncModeWithLocationHash={false}
                                     persistMarketUiConfig={false}
                                     analysisHeaderStatusMode="cache"
@@ -8442,7 +8768,7 @@ export default function ChartSnapshotsPage() {
                             symbol={sym}
                             provider={resolvedTradingViewProvider}
                             timeframes={browserTfs}
-                            defaultMode="cache"
+                            defaultMode="live"
                             syncModeWithLocationHash={false}
                             persistMarketUiConfig={false}
                             analysisHeaderStatusMode="cache"
@@ -8543,7 +8869,7 @@ export default function ChartSnapshotsPage() {
                     symbol={sym}
                     provider={resolvedTradingViewProvider}
                     timeframes={widgetTfs}
-                    defaultMode="cache"
+                    defaultMode="live"
                     syncModeWithLocationHash={false}
                     persistMarketUiConfig={false}
                     analysisHeaderStatusMode="cache"
@@ -8691,6 +9017,8 @@ export default function ChartSnapshotsPage() {
                       "",
                   ),
                   interval: timeframe,
+                  side: position.direction || "BUY",
+                  action: position.direction || "BUY",
                   entryPrice: position.entry,
                   slPrice: position.sl,
                   tpPrice: position.tp,
@@ -8963,6 +9291,7 @@ export default function ChartSnapshotsPage() {
                   tradeId: activeAddedTradeEntity?.id || null,
                   value: position,
                   onChange: updatePositionField,
+                  onApplyQuickTradeIntent: applyQuickTradeIntentToPosition,
                   showSaveButton: false,
                   showAddSignalButton:
                     !autoSavedDraft &&
@@ -8973,13 +9302,24 @@ export default function ChartSnapshotsPage() {
                   showSaveDraftButton: isTradeRoute || isManualRoute,
                   showResetButton: true,
                   onReset:
-                    isTradeRoute || isManualRoute
+                    isManualRoute
+                      ? () => {
+                          setPosition((prev) => buildEmptyManualPosition(prev));
+                          setAddedEntities({});
+                          setManualAddedMode("");
+                          setPlanEdits({});
+                          navigate(
+                            `${buildAiManualRoute([selectedSymbol])}${location.hash || ""}`,
+                            { replace: true },
+                          );
+                        }
+                      : isTradeRoute
                       ? () =>
                           navigate(buildAiAnalyzeRoute([selectedSymbol]), {
                             replace: false,
                           })
                       : resetToDefaultBrowser,
-                  resetLabel: "Back",
+                  resetLabel: isManualRoute ? "Reset" : "Back",
                   addSignalLabel: "+ Draft",
                   saveDraftLabel: "Save Draft",
                   addTradeLabel: "+ Trade",

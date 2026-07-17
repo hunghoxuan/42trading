@@ -272,6 +272,8 @@ function toItemSummary(item = {}, lastClose = null) {
     timeframe: normalizeTfKey(item?.timeframe || item?.tf || ""),
     bias: artifactBias(item),
     anchor_time: artifactTime(item),
+    bar_start: finiteNumber(item?.bar_start) ?? artifactTime(item),
+    bar_end: finiteNumber(item?.bar_end),
     price: Number.isFinite(anchorPrice) ? anchorPrice : null,
     price_low: Number.isFinite(low) ? low : null,
     price_high: Number.isFinite(high) ? high : null,
@@ -297,6 +299,350 @@ function latestByTypes(artifacts = [], types = []) {
     .filter((item) => wanted.has(String(item?.type || "").trim().toLowerCase()))
     .sort((left, right) => artifactTime(left) - artifactTime(right))
     .pop() || null;
+}
+
+function summaryPrice(item = {}) {
+  const directPrice = finiteNumber(item?.price);
+  if (Number.isFinite(directPrice)) return directPrice;
+  const low = finiteNumber(item?.price_low);
+  const high = finiteNumber(item?.price_high);
+  if (Number.isFinite(low) && Number.isFinite(high)) return (low + high) / 2;
+  if (Number.isFinite(low)) return low;
+  if (Number.isFinite(high)) return high;
+  return null;
+}
+
+function summaryBounds(item = {}) {
+  const low = finiteNumber(item?.price_low);
+  const high = finiteNumber(item?.price_high);
+  if (Number.isFinite(low) && Number.isFinite(high)) {
+    return {
+      low: Math.min(low, high),
+      high: Math.max(low, high),
+    };
+  }
+  const price = summaryPrice(item);
+  if (Number.isFinite(price)) {
+    return {
+      low: price,
+      high: price,
+    };
+  }
+  return {
+    low: null,
+    high: null,
+  };
+}
+
+function artifactRangeGroupKey(item = {}) {
+  const type = String(item?.type || "").trim().toLowerCase();
+  const label = String(item?.label || "").trim().toLowerCase();
+  const family = String(item?.family || "").trim().toLowerCase();
+  const subtype = String(item?.subtype || "").trim().toLowerCase();
+  const text = [family, type, label, subtype].filter(Boolean).join(" ");
+  if (type.includes("support") || label.includes("support")) return "support";
+  if (type.includes("demand") || label.includes("demand")) return "demand";
+  if (type.includes("supply") || label.includes("supply")) return "supply";
+  if (type.includes("resistance") || label.includes("resistance")) return "resistance";
+  if (
+    /\bifvg\b/.test(text) ||
+    /\bi_fvg\b/.test(text) ||
+    /inverse\s*fvg/.test(text) ||
+    /inversion\s*fvg/.test(text)
+  ) {
+    return "ifvg";
+  }
+  if (
+    /\bbb\b/.test(text) ||
+    /\bbreaker\b/.test(text) ||
+    /\bbreaker block\b/.test(text) ||
+    /\bbreaker_block\b/.test(text)
+  ) {
+    return "bb";
+  }
+  if (type.includes("fvg") || label.includes("fvg")) return "fvg";
+  if (type.includes("ob") || /\border block\b/.test(text)) return "ob";
+  if (type === "bos" || label.includes("bos")) return "bos";
+  if (type === "choch" || label.includes("choch")) return "choch";
+  if (type.includes("sweep") || label.includes("sweep")) return "sweep";
+  if (
+    type.includes("swing_high") ||
+    type.includes("swing_low") ||
+    label.includes("swing")
+  ) {
+    return "swings";
+  }
+  if (type === "pdh" || label.includes("pdh")) return "pdh";
+  if (type === "pdl" || label.includes("pdl")) return "pdl";
+  if (type.includes("liquidity") || label.includes("liquidity")) return "liquidity";
+  return type || family || "";
+}
+
+function artifactStructureTag(item = {}) {
+  return String(
+    item?.payload?.structure_tag ||
+      item?.payload?.structure_label ||
+      item?.structure_tag ||
+      item?.structure_label ||
+      item?.subtype ||
+      "",
+  )
+    .trim()
+    .toLowerCase();
+}
+
+function isMajorSwingRangeCandidate(item = {}) {
+  const groupKey = artifactRangeGroupKey(item);
+  if (groupKey !== "swings" && groupKey !== "liquidity") return false;
+  const structureTag = artifactStructureTag(item);
+  if (structureTag === "hh" || structureTag === "ll") return true;
+  const label = String(item?.label || "").trim().toUpperCase();
+  return label === "HH" || label === "LL";
+}
+
+function isArtifactRangeCandidate(item = {}) {
+  const groupKey = artifactRangeGroupKey(item);
+  if (
+    [
+      "support",
+      "demand",
+      "supply",
+      "resistance",
+      "fvg",
+      "ifvg",
+      "ob",
+      "bb",
+      "pdh",
+      "pdl",
+    ].includes(groupKey)
+  ) {
+    return true;
+  }
+  return isMajorSwingRangeCandidate(item);
+}
+
+function artifactRangeWeight(item = {}) {
+  const groupKey = artifactRangeGroupKey(item);
+  if (groupKey === "support" || groupKey === "resistance") return 7;
+  if (groupKey === "demand" || groupKey === "supply") return 8;
+  if (groupKey === "ob" || groupKey === "bb") return 9;
+  if (groupKey === "fvg" || groupKey === "ifvg") return 8;
+  if (groupKey === "swings" || groupKey === "liquidity") return 10;
+  if (groupKey === "pdh" || groupKey === "pdl") return 7;
+  return 1;
+}
+
+function buildRangeCandidate(item = {}, side = "", lastClose = null) {
+  const bounds = summaryBounds(item);
+  const low = Number(bounds.low);
+  const high = Number(bounds.high);
+  const groupKey = artifactRangeGroupKey(item);
+  const label = String(item?.label || item?.type || groupKey || "Range").trim();
+  const structureTag = artifactStructureTag(item);
+  const startTime = Number(item?.bar_start ?? item?.anchor_time ?? 0) || 0;
+  const endTime = Number(item?.bar_end ?? 0) || 0;
+  const span = Number.isFinite(low) && Number.isFinite(high) ? Math.max(0, high - low) : 0;
+  const price =
+    side === "lower"
+      ? low
+      : side === "upper"
+        ? high
+        : null;
+  if (!Number.isFinite(price) || !Number.isFinite(lastClose)) return null;
+  const distance = Math.abs(price - Number(lastClose));
+  return {
+    price,
+    distance,
+    groupKey,
+    label,
+    structureTag,
+    anchorTime: Number(item?.anchor_time || 0) || 0,
+    startTime,
+    endTime,
+    span,
+    weight: artifactRangeWeight(item),
+  };
+}
+
+function chooseBracketCandidate(candidates = [], lastClose = null) {
+  if (!Array.isArray(candidates) || !candidates.length || !Number.isFinite(lastClose)) return null;
+  const distances = candidates
+    .map((item) => Number(item?.distance))
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .sort((left, right) => left - right);
+  const medianDistance = distances.length ? median(distances) : 0;
+  const baseDistance = Math.abs(Number(lastClose)) * 0.0015;
+  const minDistance = Math.max(baseDistance, medianDistance * 0.7);
+  return [...candidates].sort((left, right) => {
+    const leftQualified = Number(left?.distance || 0) >= minDistance ? 1 : 0;
+    const rightQualified = Number(right?.distance || 0) >= minDistance ? 1 : 0;
+    if (leftQualified !== rightQualified) return rightQualified - leftQualified;
+    if (Number(left?.weight || 0) !== Number(right?.weight || 0)) {
+      return Number(right?.weight || 0) - Number(left?.weight || 0);
+    }
+    if (Math.abs(Number(left?.span || 0) - Number(right?.span || 0)) > 0.000001) {
+      return Number(right?.span || 0) - Number(left?.span || 0);
+    }
+    if (Math.abs(Number(left?.distance || 0) - Number(right?.distance || 0)) > 0.000001) {
+      return Number(left?.distance || 0) - Number(right?.distance || 0);
+    }
+    return Number(right?.anchorTime || 0) - Number(left?.anchorTime || 0);
+  })[0] || null;
+}
+
+function buildArtifactBracketRange(artifacts = [], lastClose = null) {
+  if (!Number.isFinite(lastClose)) return null;
+  const lowerCandidates = [];
+  const upperCandidates = [];
+  (Array.isArray(artifacts) ? artifacts : []).forEach((item) => {
+    if (!isArtifactRangeCandidate(item)) return;
+    const lowerCandidate = buildRangeCandidate(item, "lower", lastClose);
+    const upperCandidate = buildRangeCandidate(item, "upper", lastClose);
+    if (lowerCandidate && lowerCandidate.price < lastClose) lowerCandidates.push(lowerCandidate);
+    if (upperCandidate && upperCandidate.price > lastClose) upperCandidates.push(upperCandidate);
+  });
+  const lower = chooseBracketCandidate(lowerCandidates, lastClose);
+  const upper = chooseBracketCandidate(upperCandidates, lastClose);
+  if (!lower || !upper) return null;
+  return {
+    kind: "range",
+    direction: "range",
+    range_mode: "surrounding_bounds",
+    price: (Number(lower.price) + Number(upper.price)) / 2,
+    low: Number(lower.price),
+    high: Number(upper.price),
+    source: "artifact_bracket",
+    label: `${String(lower.groupKey || "low").toUpperCase()} / ${String(
+      upper.groupKey || "high",
+    ).toUpperCase()}`,
+    lower_bound: clone(lower),
+    upper_bound: clone(upper),
+  };
+}
+
+function nearestDirectionalTarget(items = [], lastClose = null, direction = "") {
+  if (!Number.isFinite(lastClose)) return null;
+  const normalizedDirection = String(direction || "").trim().toLowerCase();
+  const candidates = (Array.isArray(items) ? items : [])
+    .map((item) => {
+      const price = summaryPrice(item);
+      if (!Number.isFinite(price)) return null;
+      const distance = price - Number(lastClose);
+      if (normalizedDirection === "up" && distance <= 0) return null;
+      if (normalizedDirection === "down" && distance >= 0) return null;
+      return {
+        item,
+        price,
+        distance: Math.abs(distance),
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.distance - right.distance);
+  return candidates[0] || null;
+}
+
+function buildPhaseTarget({
+  phaseInfo = {},
+  bias = "neutral",
+  trend = "range",
+  lastClose = null,
+  indicators = {},
+  zones = {},
+  artifactSummary = {},
+  latestStructural = null,
+} = {}) {
+  const phase = String(phaseInfo?.phase || "").trim().toLowerCase();
+  const source = String(phaseInfo?.source || "").trim().toLowerCase();
+  const lastStructuralPrice = summaryPrice(toItemSummary(latestStructural, lastClose));
+  const continuationDirection =
+    bias === "bullish" || trend === "up"
+      ? "up"
+      : bias === "bearish" || trend === "down"
+        ? "down"
+        : "";
+
+  if (phase === "pullback") {
+    if (bias === "bullish" && trend === "up") {
+      const zonePrice = summaryPrice(zones?.nearest_bullish_zone);
+      const ema20 = finiteNumber(indicators?.ema_20);
+      const targetPrice =
+        source === "bullish_zone"
+          ? zonePrice
+          : source === "ema20_retest"
+            ? ema20
+            : zonePrice ?? ema20 ?? lastStructuralPrice;
+      if (Number.isFinite(targetPrice)) {
+        const bounds = summaryBounds(zones?.nearest_bullish_zone);
+        return {
+          kind: "pullback",
+          direction: "up",
+          price: targetPrice,
+          low: Number.isFinite(bounds.low) ? bounds.low : targetPrice,
+          high: Number.isFinite(bounds.high) ? bounds.high : targetPrice,
+          source: source || "bullish_pullback",
+          label: source === "ema20_retest" ? "EMA20" : "Bullish zone",
+        };
+      }
+    }
+    if (bias === "bearish" && trend === "down") {
+      const zonePrice = summaryPrice(zones?.nearest_bearish_zone);
+      const ema20 = finiteNumber(indicators?.ema_20);
+      const targetPrice =
+        source === "bearish_zone"
+          ? zonePrice
+          : source === "ema20_retest"
+            ? ema20
+            : zonePrice ?? ema20 ?? lastStructuralPrice;
+      if (Number.isFinite(targetPrice)) {
+        const bounds = summaryBounds(zones?.nearest_bearish_zone);
+        return {
+          kind: "pullback",
+          direction: "down",
+          price: targetPrice,
+          low: Number.isFinite(bounds.low) ? bounds.low : targetPrice,
+          high: Number.isFinite(bounds.high) ? bounds.high : targetPrice,
+          source: source || "bearish_pullback",
+          label: source === "ema20_retest" ? "EMA20" : "Bearish zone",
+        };
+      }
+    }
+    return null;
+  }
+
+  if (phase === "continuation" || phase === "impulse" || phase === "reversal") {
+    if (!continuationDirection) return null;
+    const directionalCandidates =
+      continuationDirection === "up"
+        ? [
+            ...(artifactSummary?.resistances || []),
+            ...(artifactSummary?.supplies || []),
+            ...(artifactSummary?.liquidity || []),
+          ]
+        : [
+            ...(artifactSummary?.supports || []),
+            ...(artifactSummary?.demands || []),
+            ...(artifactSummary?.liquidity || []),
+          ];
+    const target = nearestDirectionalTarget(
+      directionalCandidates,
+      lastClose,
+      continuationDirection,
+    );
+    if (target) {
+      const bounds = summaryBounds(target?.item);
+      return {
+        kind: phase,
+        direction: continuationDirection,
+        price: target.price,
+        low: Number.isFinite(bounds.low) ? bounds.low : target.price,
+        high: Number.isFinite(bounds.high) ? bounds.high : target.price,
+        source: String(target?.item?.type || source || "level").trim().toLowerCase(),
+        label: String(target?.item?.label || target?.item?.type || "Target").trim(),
+      };
+    }
+  }
+
+  return null;
 }
 
 function computeBias(bars = [], artifacts = []) {
@@ -670,6 +1016,21 @@ function buildTfAnalysis({
   });
   const latestStructural = latestByTypes(artifacts, ["bos", "choch", "sweep_high", "sweep_low"]);
   const artifactSummary = summarizeArtifacts(artifacts, lastClose);
+  const bracketRangeTarget = buildArtifactBracketRange(
+    artifacts.map((item) => toItemSummary(item, lastClose)),
+    lastClose,
+  );
+  const phaseTarget = buildPhaseTarget({
+    phaseInfo,
+    bias: biasInfo.bias,
+    trend: trendInfo.trend,
+    lastClose,
+    indicators: biasInfo?.indicators || trendInfo?.indicators || {},
+    zones: biasInfo?.zones || zoneContext(artifacts, lastClose),
+    artifactSummary,
+    latestStructural,
+  });
+  const resolvedPhaseTarget = bracketRangeTarget || phaseTarget;
   return {
     timeframe: normalizedTf,
     bias: biasInfo.bias,
@@ -683,6 +1044,10 @@ function buildTfAnalysis({
     phase: phaseInfo.phase,
     phase_source: phaseInfo.source,
     phase_detail: String(phaseInfo?.detail || phaseInfo?.phase || "").trim().toLowerCase(),
+    phase_target: resolvedPhaseTarget ? clone(resolvedPhaseTarget) : null,
+    phase_target_price: Number(resolvedPhaseTarget?.price) || null,
+    phase_target_source: String(resolvedPhaseTarget?.source || "").trim().toLowerCase(),
+    phase_target_label: String(resolvedPhaseTarget?.label || "").trim(),
     structure_state: String(latestStructural?.type || "").trim().toLowerCase() || "",
     last_bar_time: Number(currentBar?.time || 0) || null,
     last_close: lastClose,

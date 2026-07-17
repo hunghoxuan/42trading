@@ -13,6 +13,8 @@ function resolveObjectStoreSqlitePath(userId, options = {}) {
   if (explicit) return explicit;
   const envPath = String(process.env.OBJECT_STORE_SQLITE_PATH || "").trim();
   if (envPath) return envPath;
+  const mt5SqlitePath = String(process.env.MT5_SQLITE_PATH || "").trim();
+  if (mt5SqlitePath) return mt5SqlitePath;
   return path.join(jsonProvider.userRootDir(userId, options), "object_store.db");
 }
 

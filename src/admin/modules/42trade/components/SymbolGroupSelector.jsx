@@ -10,7 +10,7 @@ import {
   normalizeCronSymbolGroupValue,
   encodeCustomSymbolGroupValue,
   decodeCustomSymbolGroupValue,
-} from "../../../shared/utils/symbolGroups";
+} from "../../../../config/symbolGroups.js";
 
 function groupLabel(value, customGroups) {
   const normalized = normalizeCronSymbolGroupValue(value);

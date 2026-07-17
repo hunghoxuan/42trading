@@ -1,4 +1,4 @@
-import { normalizeSymbolGroupsData } from "./symbolGroups.js";
+import { normalizeSymbolGroupsData } from "../../../config/symbolGroups.js";
 
 function normalizeWatchSymbol(value = "") {
   return String(value || "")

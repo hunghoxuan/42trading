@@ -13,8 +13,12 @@ function isImage(name) {
   return /\.(png|jpg|jpeg|gif|webp|svg|bmp|ico)$/i.test(String(name || ""));
 }
 
-function fileUrl(tradeId, name) {
-  return `${getRuntimeApiBase()}/api/trades/${encodeURIComponent(tradeId)}/files/${encodeURIComponent(name)}/content`;
+function fileUrl(tradeId, name, apiScope = "") {
+  const base =
+    String(apiScope || "").trim().toLowerCase() === "trades0"
+      ? "/api/trades0"
+      : "/api/trades";
+  return `${getRuntimeApiBase()}${base}/${encodeURIComponent(tradeId)}/files/${encodeURIComponent(name)}/content`;
 }
 
 export function TradeDraftUpload({
@@ -22,6 +26,7 @@ export function TradeDraftUpload({
   disabled = false,
   showList = true,
   showLabel = true,
+  apiScope = "",
 }) {
   const [files, setFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
@@ -33,12 +38,12 @@ export function TradeDraftUpload({
   const loadFiles = useCallback(async () => {
     if (!tradeId) return;
     try {
-      const data = await api.listTradeDraftFiles(tradeId);
+      const data = await api.listTradeDraftFiles(tradeId, { scope: apiScope });
       setFiles(Array.isArray(data?.files) ? data.files : []);
     } catch {
       // silent — folder may not exist yet
     }
-  }, [tradeId]);
+  }, [tradeId, apiScope]);
 
   useEffect(() => {
     loadFiles();
@@ -50,7 +55,7 @@ export function TradeDraftUpload({
     setError("");
     for (const f of fileList) {
       try {
-        await api.uploadTradeDraftFile(tradeId, f);
+        await api.uploadTradeDraftFile(tradeId, f, { scope: apiScope });
       } catch (e) {
         setError(e?.message || "Upload failed");
       }
@@ -75,7 +80,7 @@ export function TradeDraftUpload({
   const handleDelete = async (fileName) => {
     if (!tradeId) return;
     try {
-      await api.deleteTradeDraftFile(tradeId, fileName);
+      await api.deleteTradeDraftFile(tradeId, fileName, { scope: apiScope });
       if (previewFile === fileName) setPreviewFile(null);
       await loadFiles();
     } catch (e) {
@@ -146,7 +151,7 @@ export function TradeDraftUpload({
                   ) : null}
                 </span>
                 <a
-                  href={fileUrl(tradeId, f.name)}
+                  href={fileUrl(tradeId, f.name, apiScope)}
                   download={f.name}
                   className="secondary-button"
                   style={{
@@ -194,7 +199,7 @@ export function TradeDraftUpload({
                   }}
                 >
                   <img
-                    src={fileUrl(tradeId, f.name)}
+                    src={fileUrl(tradeId, f.name, apiScope)}
                     alt={f.name}
                     style={{
                       maxWidth: "100%",
@@ -203,7 +208,7 @@ export function TradeDraftUpload({
                       cursor: "pointer",
                     }}
                     onClick={() =>
-                      window.open(fileUrl(tradeId, f.name), "_blank")
+                      window.open(fileUrl(tradeId, f.name, apiScope), "_blank")
                     }
                     title="Click to open full size"
                   />
@@ -223,7 +228,7 @@ export function TradeDraftUpload({
                   }}
                 >
                   <a
-                    href={fileUrl(tradeId, f.name)}
+                    href={fileUrl(tradeId, f.name, apiScope)}
                     target="_blank"
                     rel="noreferrer"
                     style={{ color: "var(--accent)" }}

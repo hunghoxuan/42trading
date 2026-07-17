@@ -27,11 +27,12 @@ import TimezoneComboSelect, {
 import PageHeader from "../../../shared/components/PageHeader";
 import { MasterDetailContentPanel } from "../../../shared/components/MasterDetailPanel";
 import DateTimePicker from "../../../shared/components/DateTimePicker";
+import { normalizeStrategyCatalog } from "../../../shared/utils/strategyCatalog";
 import {
   getSymbolGroupsDataFromSettings,
   getSymbolGroupSymbols,
   normalizeSymbolList,
-} from "../../../shared/utils/symbolGroups";
+} from "../../../../config/symbolGroups.js";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -83,6 +84,7 @@ const CRON_TYPE_LABELS = {
   MARKET_DATA_CRON: "Market Data",
   DOWNLOAD_BARS_CRON: "Download Bars",
   ANALYSIS_CRON: "AI Analysis",
+  STRATEGY_SCAN_CRON: "Strategy Scan",
   TRADES_BULK_ACTION: "Trades Bulk Action",
 };
 
@@ -101,6 +103,11 @@ const CRON_TYPES = [
     value: "ANALYSIS_CRON",
     label: "AI Analysis",
     description: "Run AI analysis on a schedule",
+  },
+  {
+    value: "STRATEGY_SCAN_CRON",
+    label: "Strategy Scan",
+    description: "Run the live strategy scan engine and create trades from matches",
   },
   {
     value: "SNAPSHOT_CRON",
@@ -143,6 +150,7 @@ const cronPageCache = {
   settings: null,
   accounts: null,
   sources: null,
+  strategies: null,
 };
 
 const SNAPSHOT_THEME_OPTIONS = ["dark", "light"];
@@ -344,6 +352,14 @@ function defaultForm(type) {
         prompt: "",
         auto_save: "trades",
       };
+    case "STRATEGY_SCAN_CRON":
+      return {
+        ...base,
+        pickup_mode: "all",
+        strategy_ids: [],
+        bars_count: 300,
+        auto_save: "trades",
+      };
     case "SNAPSHOT_CRON":
       return {
         ...base,
@@ -392,6 +408,7 @@ function formFromCronData(data) {
       : parseLegacyScheduleRows(data?.schedule, data?.cadence_seconds || 60),
     avoid_news: data?.avoid_news === true,
   };
+  const autoSaveForForm = normalizeCronAutoSaveForForm(data?.auto_save);
   switch (cronType) {
     case "MARKET_DATA_CRON":
       return {
@@ -427,7 +444,19 @@ function formFromCronData(data) {
           ? data.entry_models.join("\n")
           : "",
         prompt: String(data?.prompt || ""),
-        auto_save: String(data?.auto_save || "trades"),
+        auto_save: autoSaveForForm,
+      };
+    case "STRATEGY_SCAN_CRON":
+      return {
+        ...base,
+        pickup_mode: String(data?.pickup_mode || "all"),
+        strategy_ids: Array.isArray(data?.strategy_ids)
+          ? data.strategy_ids
+          : Array.isArray(data?.strategies)
+            ? data.strategies
+            : [],
+        bars_count: Number(data?.bars_count || 300),
+        auto_save: autoSaveForForm,
       };
     case "SNAPSHOT_CRON":
       return {
@@ -507,7 +536,15 @@ function formToDataPayload(form) {
         profile: form.profile,
         entry_models: parseTextList(form.entry_models),
         prompt: form.prompt,
-        auto_save: form.auto_save || "trades",
+        auto_save: normalizeCronAutoSaveForPayload(form.auto_save),
+      };
+    case "STRATEGY_SCAN_CRON":
+      return {
+        ...data,
+        pickup_mode: form.pickup_mode || "all",
+        strategy_ids: Array.isArray(form.strategy_ids) ? form.strategy_ids : [],
+        bars_count: Math.max(50, Number(form.bars_count || 300) || 300),
+        auto_save: normalizeCronAutoSaveForPayload(form.auto_save),
       };
     case "SNAPSHOT_CRON":
       return {
@@ -545,6 +582,22 @@ function formToDataPayload(form) {
     default:
       return data;
   }
+}
+
+function normalizeCronAutoSaveForForm(value) {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (normalized === "signals" || normalized === "trades") return normalized;
+  return "none";
+}
+
+function normalizeCronAutoSaveForPayload(value) {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (normalized === "signals" || normalized === "trades") return normalized;
+  return null;
 }
 
 // ── Component ───────────────────────────────────────────────────────────────
@@ -643,6 +696,9 @@ export default function CronPage() {
   const [sources, setSources] = useState(() =>
     Array.isArray(cronPageCache.sources) ? cronPageCache.sources : [],
   );
+  const [strategies, setStrategies] = useState(() =>
+    Array.isArray(cronPageCache.strategies) ? cronPageCache.strategies : [],
+  );
 
   // ── Derived ───────────────────────────────────────────────────────────────
 
@@ -696,6 +752,7 @@ export default function CronPage() {
         if (!preserveSelection) return list;
         setSelectedCronName((prev) => {
           if (prev && crons.some((s) => s.name === prev)) return prev;
+          if (prev) return prev;
           return crons.length > 0 ? crons[0].name : null;
         });
         return list;
@@ -716,10 +773,8 @@ export default function CronPage() {
   }, [reloadSettings]);
 
   useEffect(() => {
-    if (routeCronName && cronSettings.some((s) => s.name === routeCronName)) {
-      setSelectedCronName((prev) =>
-        prev === routeCronName ? prev : routeCronName,
-      );
+    if (routeCronName) {
+      setSelectedCronName((prev) => (prev === routeCronName ? prev : routeCronName));
       return;
     }
     setSelectedCronName((prev) => {
@@ -732,9 +787,10 @@ export default function CronPage() {
     let cancelled = false;
     async function loadTradeMeta() {
       try {
-        const [accountsRes, sourcesRes] = await Promise.all([
+        const [accountsRes, sourcesRes, strategiesRes] = await Promise.all([
           api.v2Accounts(),
           api.v2Sources(),
+          api.listStrategies(),
         ]);
         if (cancelled) return;
         const nextAccounts = Array.isArray(accountsRes?.items)
@@ -743,16 +799,25 @@ export default function CronPage() {
         const nextSources = Array.isArray(sourcesRes?.items)
           ? sourcesRes.items
           : [];
+        const nextStrategies = normalizeStrategyCatalog(strategiesRes?.items)
+          .filter((item) => {
+            const status = String(item?.status || "").trim().toLowerCase();
+            return status !== "archived";
+          });
         cronPageCache.accounts = nextAccounts;
         cronPageCache.sources = nextSources;
+        cronPageCache.strategies = nextStrategies;
         setAccounts(nextAccounts);
         setSources(nextSources);
+        setStrategies(nextStrategies);
       } catch {
         if (cancelled) return;
         cronPageCache.accounts = [];
         cronPageCache.sources = [];
+        cronPageCache.strategies = [];
         setAccounts([]);
         setSources([]);
+        setStrategies([]);
       }
     }
     loadTradeMeta();
@@ -1805,6 +1870,7 @@ export default function CronPage() {
                               <option value="none">None (files)</option>
                               <option value="signals">Trade (Draft)</option>
                               <option value="trades">Trade (Pending)</option>
+                              <option value="trades">Trades (Object Store)</option>
                             </InputComboSelect>
                           </div>
                         </div>
@@ -1876,6 +1942,139 @@ export default function CronPage() {
                             placeholder="Instructions for AI setup detection..."
                           />
                         </div>
+                      </>
+                    )}
+
+                    {form.cron_type === "STRATEGY_SCAN_CRON" && (
+                      <>
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "1fr 1fr",
+                            gap: 12,
+                          }}
+                        >
+                          <div className="stack-layout" style={{ gap: 6 }}>
+                            <span
+                              className="panel-label"
+                              style={{ fontSize: 10, marginBottom: 0 }}
+                            >
+                              PICKUP MODE
+                            </span>
+                            <InputComboSelect
+                              value={form.pickup_mode || "all"}
+                              onChange={(e) =>
+                                updateForm({ pickup_mode: e.target.value })
+                              }
+                            >
+                              <option value="all">
+                                All — run on every selected symbol
+                              </option>
+                              <option value="random">
+                                Random — pick 1 random symbol
+                              </option>
+                            </InputComboSelect>
+                          </div>
+
+                          <div className="stack-layout" style={{ gap: 6 }}>
+                            <span
+                              className="panel-label"
+                              style={{ fontSize: 10, marginBottom: 0 }}
+                            >
+                              AUTO SAVE
+                            </span>
+                            <InputComboSelect
+                              value={form.auto_save || "trades"}
+                              onChange={(e) =>
+                                updateForm({ auto_save: e.target.value })
+                              }
+                            >
+                              <option value="none">None</option>
+                              <option value="signals">Trade (Draft)</option>
+                              <option value="trades">Trade (Pending)</option>
+                              <option value="trades">Trades (Object Store)</option>
+                            </InputComboSelect>
+                          </div>
+                        </div>
+
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "1fr 1fr",
+                            gap: 12,
+                          }}
+                        >
+                          <label className="stack-layout" style={{ gap: 6 }}>
+                            <span className="minor-text">Latest Bars Window</span>
+                            <input
+                              type="number"
+                              min="50"
+                              max="5000"
+                              value={form.bars_count}
+                              onChange={(e) =>
+                                updateForm({
+                                  bars_count: Number(e.target.value),
+                                })
+                              }
+                            />
+                          </label>
+
+                          <div className="stack-layout" style={{ gap: 6 }}>
+                            <span className="minor-text">Engine</span>
+                            <div className="minor-text" style={{ fontSize: 11 }}>
+                              Runs the shared live strategy scan on the most
+                              recent bar only, while still respecting active
+                              status, timeframe filters, symbol filters, and
+                              news/session conditions.
+                            </div>
+                          </div>
+                        </div>
+
+                        <label className="stack-layout" style={{ gap: 6 }}>
+                          <span className="minor-text">Strategies</span>
+                          <InputComboSelect
+                            multiple
+                            searchable
+                            value={
+                              Array.isArray(form.strategy_ids)
+                                ? form.strategy_ids
+                                : []
+                            }
+                            onChange={(e) =>
+                              updateForm({
+                                strategy_ids: getSelectValues(e),
+                              })
+                            }
+                            style={{ minHeight: 180 }}
+                          >
+                            {strategies.map((strategy) => {
+                              const strategyId = String(
+                                strategy?.id || strategy?.key || "",
+                              ).trim();
+                              if (!strategyId) return null;
+                              const name = String(
+                                strategy?.name || strategyId,
+                              ).trim();
+                              const kind = String(
+                                strategy?.kind || "",
+                              ).trim();
+                              const status = String(
+                                strategy?.status || "",
+                              ).trim();
+                              const marketTf = String(
+                                strategy?.market?.tf || "",
+                              ).trim();
+                              const meta = [kind, status, marketTf]
+                                .filter(Boolean)
+                                .join(" · ");
+                              return (
+                                <option key={strategyId} value={strategyId}>
+                                  {meta ? `${name} (${meta})` : name}
+                                </option>
+                              );
+                            })}
+                          </InputComboSelect>
+                        </label>
                       </>
                     )}
 
@@ -2062,6 +2261,7 @@ export default function CronPage() {
                   logFormat={null}
                   limit={200}
                   emptyText="No log files found for this cron yet."
+                  useCrudContainer
                 />
               )}
 

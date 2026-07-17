@@ -4,6 +4,7 @@
   "kind": "preset",
   "description": "Looks for closes outside Bollinger Bands and re-entry toward the mean.",
   "engine_version": "42trade.strategy.v2",
+  "status": "active",
   "params": {
     "period": 20,
     "stddev": 2,
@@ -119,5 +120,9 @@
     "fallback_stop_pct": 0.001,
     "fallback_tp_pct": 0.0015
   },
-  "min_bars": 40
+  "min_bars": 40,
+  "conditions": {
+    "skip_news": true,
+    "news_window_minutes": 120
+  }
 }

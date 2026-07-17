@@ -299,6 +299,544 @@ function latestByTypes(artifacts = [], types = []) {
     .pop() || null;
 }
 
+function summaryPrice(item = {}) {
+  const directPrice = finiteNumber(item?.price);
+  if (Number.isFinite(directPrice)) return directPrice;
+  const low = finiteNumber(item?.price_low);
+  const high = finiteNumber(item?.price_high);
+  if (Number.isFinite(low) && Number.isFinite(high)) return (low + high) / 2;
+  if (Number.isFinite(low)) return low;
+  if (Number.isFinite(high)) return high;
+  return null;
+}
+
+function summaryBounds(item = {}) {
+  const low = finiteNumber(item?.price_low);
+  const high = finiteNumber(item?.price_high);
+  if (Number.isFinite(low) && Number.isFinite(high)) {
+    return {
+      low: Math.min(low, high),
+      high: Math.max(low, high),
+    };
+  }
+  const price = summaryPrice(item);
+  if (Number.isFinite(price)) {
+    return {
+      low: price,
+      high: price,
+    };
+  }
+  return {
+    low: null,
+    high: null,
+  };
+}
+
+function nearestDirectionalTarget(items = [], lastClose = null, direction = "") {
+  if (!Number.isFinite(lastClose)) return null;
+  const normalizedDirection = String(direction || "").trim().toLowerCase();
+  const candidates = (Array.isArray(items) ? items : [])
+    .map((item) => {
+      const price = summaryPrice(item);
+      if (!Number.isFinite(price)) return null;
+      const distance = price - Number(lastClose);
+      if (normalizedDirection === "up" && distance <= 0) return null;
+      if (normalizedDirection === "down" && distance >= 0) return null;
+      return {
+        item,
+        price,
+        distance: Math.abs(distance),
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.distance - right.distance);
+  return candidates[0] || null;
+}
+
+const PHASE_TARGET_MODEL = "phase_specific";
+const LEGACY_PHASE_TARGET_RANGE_MODE = "swings";
+
+function buildSwingBasedRange(artifactSummary = {}, lastClose = null) {
+  if (!Number.isFinite(lastClose)) return null;
+  const swingHigh = nearestDirectionalTarget(
+    artifactSummary?.by_type?.swing_high || [],
+    lastClose,
+    "up",
+  );
+  const swingLow = nearestDirectionalTarget(
+    artifactSummary?.by_type?.swing_low || [],
+    lastClose,
+    "down",
+  );
+  const low = Number(swingLow?.price);
+  const high = Number(swingHigh?.price);
+  if (!Number.isFinite(low) && !Number.isFinite(high)) return null;
+  return {
+    low: Number.isFinite(low) ? low : null,
+    high: Number.isFinite(high) ? high : null,
+    source:
+      Number.isFinite(low) && Number.isFinite(high)
+        ? "swings_range"
+        : Number.isFinite(low)
+          ? "swing_low"
+          : "swing_high",
+    label:
+      Number.isFinite(low) && Number.isFinite(high)
+        ? "Swings"
+        : Number.isFinite(low)
+          ? "Swing low"
+          : "Swing high",
+  };
+}
+
+function directionalCandidatesForDirection(artifactSummary = {}, direction = "") {
+  const normalizedDirection = String(direction || "").trim().toLowerCase();
+  if (normalizedDirection === "up") {
+    return [
+      ...(artifactSummary?.resistances || []),
+      ...(artifactSummary?.supplies || []),
+      ...(artifactSummary?.liquidity || []),
+    ];
+  }
+  if (normalizedDirection === "down") {
+    return [
+      ...(artifactSummary?.supports || []),
+      ...(artifactSummary?.demands || []),
+      ...(artifactSummary?.liquidity || []),
+    ];
+  }
+  return [];
+}
+
+function normalizeDirectionalDirection({ bias = "neutral", trend = "range" } = {}) {
+  if (bias === "bullish" || trend === "up") return "up";
+  if (bias === "bearish" || trend === "down") return "down";
+  return "";
+}
+
+function directionalTargetReferencePrice(anchorPrice = null, lastClose = null, direction = "") {
+  const anchor = finiteNumber(anchorPrice);
+  const close = finiteNumber(lastClose);
+  const normalizedDirection = String(direction || "").trim().toLowerCase();
+  if (normalizedDirection === "up") {
+    return Math.max(
+      Number.isFinite(anchor) ? anchor : -Infinity,
+      Number.isFinite(close) ? close : -Infinity,
+    );
+  }
+  if (normalizedDirection === "down") {
+    return Math.min(
+      Number.isFinite(anchor) ? anchor : Infinity,
+      Number.isFinite(close) ? close : Infinity,
+    );
+  }
+  return Number.isFinite(close) ? close : anchor;
+}
+
+function buildAnchorTargetPayload({
+  kind = "",
+  direction = "",
+  anchorPrice = null,
+  target = null,
+  artifactSummary = {},
+  lastClose = null,
+  source = "",
+  label = "",
+  anchorLabel = "",
+  targetLabel = "",
+} = {}) {
+  const normalizedDirection = String(direction || "").trim().toLowerCase();
+  const swingRange = buildSwingBasedRange(artifactSummary, lastClose);
+  let anchor = finiteNumber(anchorPrice);
+  let targetPrice = finiteNumber(target?.price);
+  if (!Number.isFinite(anchor)) {
+    if (normalizedDirection === "up") {
+      anchor = finiteNumber(swingRange?.low) ?? finiteNumber(lastClose);
+    } else if (normalizedDirection === "down") {
+      anchor = finiteNumber(swingRange?.high) ?? finiteNumber(lastClose);
+    }
+  }
+  if (!Number.isFinite(targetPrice)) {
+    if (normalizedDirection === "up") {
+      targetPrice = finiteNumber(swingRange?.high);
+    } else if (normalizedDirection === "down") {
+      targetPrice = finiteNumber(swingRange?.low);
+    }
+  }
+  if (
+    Number.isFinite(anchor) &&
+    Number.isFinite(targetPrice) &&
+    Math.abs(anchor - targetPrice) <= Math.max(Math.abs(anchor) * 0.0000001, 0.0000001)
+  ) {
+    if (normalizedDirection === "up" && Number.isFinite(finiteNumber(swingRange?.high))) {
+      targetPrice = finiteNumber(swingRange?.high);
+    } else if (normalizedDirection === "down" && Number.isFinite(finiteNumber(swingRange?.low))) {
+      targetPrice = finiteNumber(swingRange?.low);
+    }
+  }
+  const fallbackPrice = targetPrice ?? anchor;
+  if (!Number.isFinite(fallbackPrice)) return null;
+  const low =
+    Number.isFinite(anchor) && Number.isFinite(targetPrice)
+      ? Math.min(anchor, targetPrice)
+      : fallbackPrice;
+  const high =
+    Number.isFinite(anchor) && Number.isFinite(targetPrice)
+      ? Math.max(anchor, targetPrice)
+      : fallbackPrice;
+  return {
+    kind: String(kind || "").trim().toLowerCase(),
+    direction: String(direction || "").trim().toLowerCase(),
+    price: targetPrice ?? anchor ?? fallbackPrice,
+    anchor_price: anchor,
+    target_price: targetPrice ?? anchor ?? fallbackPrice,
+    low,
+    high,
+    source: String(source || target?.item?.type || "level").trim().toLowerCase(),
+    label: String(label || target?.item?.label || target?.item?.type || "Target").trim(),
+    anchor_label: String(anchorLabel || "").trim(),
+    target_label: String(targetLabel || target?.item?.label || target?.item?.type || "").trim(),
+    range_mode: "anchor_to_target",
+  };
+}
+
+function buildLegacyPhaseTarget({
+  phaseInfo = {},
+  bias = "neutral",
+  trend = "range",
+  lastClose = null,
+  indicators = {},
+  zones = {},
+  artifactSummary = {},
+  latestStructural = null,
+} = {}) {
+  const phase = String(phaseInfo?.phase || "").trim().toLowerCase();
+  const source = String(phaseInfo?.source || "").trim().toLowerCase();
+  const lastStructuralPrice = summaryPrice(toItemSummary(latestStructural, lastClose));
+  const continuationDirection = normalizeDirectionalDirection({ bias, trend });
+
+  if (phase === "pullback") {
+    if (bias === "bullish" && trend === "up") {
+      const zonePrice = summaryPrice(zones?.nearest_bullish_zone);
+      const ema20 = finiteNumber(indicators?.ema_20);
+      const targetPrice =
+        source === "bullish_zone"
+          ? zonePrice
+          : source === "ema20_retest"
+            ? ema20
+            : zonePrice ?? ema20 ?? lastStructuralPrice;
+      if (Number.isFinite(targetPrice)) {
+        const bounds = summaryBounds(zones?.nearest_bullish_zone);
+        return {
+          kind: "pullback",
+          direction: "up",
+          price: targetPrice,
+          low: Number.isFinite(bounds.low) ? bounds.low : targetPrice,
+          high: Number.isFinite(bounds.high) ? bounds.high : targetPrice,
+          source: source || "bullish_pullback",
+          label: source === "ema20_retest" ? "EMA20" : "Bullish zone",
+        };
+      }
+    }
+    if (bias === "bearish" && trend === "down") {
+      const zonePrice = summaryPrice(zones?.nearest_bearish_zone);
+      const ema20 = finiteNumber(indicators?.ema_20);
+      const targetPrice =
+        source === "bearish_zone"
+          ? zonePrice
+          : source === "ema20_retest"
+            ? ema20
+            : zonePrice ?? ema20 ?? lastStructuralPrice;
+      if (Number.isFinite(targetPrice)) {
+        const bounds = summaryBounds(zones?.nearest_bearish_zone);
+        return {
+          kind: "pullback",
+          direction: "down",
+          price: targetPrice,
+          low: Number.isFinite(bounds.low) ? bounds.low : targetPrice,
+          high: Number.isFinite(bounds.high) ? bounds.high : targetPrice,
+          source: source || "bearish_pullback",
+          label: source === "ema20_retest" ? "EMA20" : "Bearish zone",
+        };
+      }
+    }
+    return null;
+  }
+
+  if (phase === "continuation" || phase === "impulse" || phase === "reversal") {
+    if (!continuationDirection) return null;
+    const target = nearestDirectionalTarget(
+      directionalCandidatesForDirection(artifactSummary, continuationDirection),
+      lastClose,
+      continuationDirection,
+    );
+    if (target) {
+      const bounds = summaryBounds(target?.item);
+      const swingRange =
+        LEGACY_PHASE_TARGET_RANGE_MODE === "swings"
+          ? buildSwingBasedRange(artifactSummary, lastClose)
+          : null;
+      const resolvedLow = Number.isFinite(Number(swingRange?.low))
+        ? Number(swingRange.low)
+        : Number.isFinite(bounds.low)
+          ? bounds.low
+          : target.price;
+      const resolvedHigh = Number.isFinite(Number(swingRange?.high))
+        ? Number(swingRange.high)
+        : Number.isFinite(bounds.high)
+          ? bounds.high
+          : target.price;
+      return {
+        kind: phase,
+        direction: continuationDirection,
+        price: target.price,
+        low: resolvedLow,
+        high: resolvedHigh,
+        source: String(
+          swingRange?.source || target?.item?.type || source || "level",
+        )
+          .trim()
+          .toLowerCase(),
+        label: String(
+          swingRange?.label || target?.item?.label || target?.item?.type || "Target",
+        ).trim(),
+      };
+    }
+  }
+
+  return null;
+}
+
+function buildPhaseSpecificTarget({
+  phaseInfo = {},
+  bias = "neutral",
+  trend = "range",
+  lastClose = null,
+  indicators = {},
+  zones = {},
+  artifactSummary = {},
+  latestStructural = null,
+  latestPattern = null,
+} = {}) {
+  const phase = String(phaseInfo?.phase || "").trim().toLowerCase();
+  const source = String(phaseInfo?.source || "").trim().toLowerCase();
+  const direction = normalizeDirectionalDirection({ bias, trend });
+  const latestStructuralSummary = latestStructural
+    ? toItemSummary(latestStructural, lastClose)
+    : null;
+  const latestPatternSummary = latestPattern
+    ? toItemSummary(latestPattern, lastClose)
+    : null;
+
+  if (phase === "impulse") {
+    const breakoutPrice = summaryPrice(latestStructuralSummary);
+    const referencePrice = directionalTargetReferencePrice(
+      breakoutPrice,
+      lastClose,
+      direction,
+    );
+    const target = direction
+      ? nearestDirectionalTarget(
+          directionalCandidatesForDirection(artifactSummary, direction),
+          referencePrice,
+          direction,
+        )
+      : null;
+    return buildAnchorTargetPayload({
+      kind: phase,
+      direction,
+      anchorPrice: breakoutPrice,
+      target,
+      artifactSummary,
+      lastClose,
+      source: source || "bos",
+      label: "Breakout -> target",
+      anchorLabel: "Breakout",
+      targetLabel: "Target",
+    });
+  }
+
+  if (phase === "continuation") {
+    const continuationAnchor =
+      source === "vwap_ema_reclaim"
+        ? finiteNumber(indicators?.ema_20) ??
+          finiteNumber(indicators?.vwap) ??
+          summaryPrice(latestStructuralSummary)
+        : summaryPrice(latestPatternSummary) ?? summaryPrice(latestStructuralSummary);
+    const referencePrice = directionalTargetReferencePrice(
+      continuationAnchor,
+      lastClose,
+      direction,
+    );
+    const target = direction
+      ? nearestDirectionalTarget(
+          directionalCandidatesForDirection(artifactSummary, direction),
+          referencePrice,
+          direction,
+        )
+      : null;
+    return buildAnchorTargetPayload({
+      kind: phase,
+      direction,
+      anchorPrice: continuationAnchor,
+      target,
+      artifactSummary,
+      lastClose,
+      source: source || "continuation",
+      label: "Continuation -> target",
+      anchorLabel: source === "vwap_ema_reclaim" ? "Reclaim" : "Continuation",
+      targetLabel: "Target",
+    });
+  }
+
+  if (phase === "consolidation") {
+    const lowerTarget = nearestDirectionalTarget(
+      [
+        ...(artifactSummary?.supports || []),
+        ...(artifactSummary?.demands || []),
+        ...(artifactSummary?.by_type?.swing_low || []),
+      ],
+      lastClose,
+      "down",
+    );
+    const upperTarget = nearestDirectionalTarget(
+      [
+        ...(artifactSummary?.resistances || []),
+        ...(artifactSummary?.supplies || []),
+        ...(artifactSummary?.by_type?.swing_high || []),
+      ],
+      lastClose,
+      "up",
+    );
+    const low = finiteNumber(lowerTarget?.price);
+    const high = finiteNumber(upperTarget?.price);
+    if (!Number.isFinite(low) && !Number.isFinite(high)) return null;
+    return {
+      kind: phase,
+      direction: "range",
+      price:
+        Number.isFinite(low) && Number.isFinite(high)
+          ? (low + high) / 2
+          : high ?? low,
+      anchor_price: low,
+      target_price: high,
+      low: Number.isFinite(low) ? low : high,
+      high: Number.isFinite(high) ? high : low,
+      source: "range_box",
+      label: "Base range",
+      anchor_label: "Range low",
+      target_label: "Range high",
+      range_mode: "box_low_high",
+    };
+  }
+
+  if (phase === "reversal") {
+    const reversalPrice =
+      summaryPrice(latestStructuralSummary) ??
+      summaryPrice(
+        direction === "up" ? zones?.nearest_bullish_zone : zones?.nearest_bearish_zone,
+      );
+    const referencePrice = directionalTargetReferencePrice(
+      reversalPrice,
+      lastClose,
+      direction,
+    );
+    const target = direction
+      ? nearestDirectionalTarget(
+          directionalCandidatesForDirection(artifactSummary, direction),
+          referencePrice,
+          direction,
+        )
+      : null;
+    return buildAnchorTargetPayload({
+      kind: phase,
+      direction,
+      anchorPrice: reversalPrice,
+      target,
+      artifactSummary,
+      lastClose,
+      source: source || "choch",
+      label: "Reversal -> target",
+      anchorLabel: "Reversal",
+      targetLabel: "Target",
+    });
+  }
+
+  if (phase === "pullback") {
+    const rejectionZone =
+      direction === "up" ? zones?.nearest_bullish_zone : zones?.nearest_bearish_zone;
+    const rejectionBounds = summaryBounds(rejectionZone);
+    const rejectionPrice =
+      source === "ema20_retest"
+        ? finiteNumber(indicators?.ema_20)
+        : direction === "up"
+          ? finiteNumber(rejectionBounds.high) ?? summaryPrice(rejectionZone)
+          : finiteNumber(rejectionBounds.low) ?? summaryPrice(rejectionZone);
+    const referencePrice = directionalTargetReferencePrice(
+      rejectionPrice,
+      lastClose,
+      direction,
+    );
+    const target = direction
+      ? nearestDirectionalTarget(
+          directionalCandidatesForDirection(artifactSummary, direction),
+          referencePrice,
+          direction,
+        )
+      : null;
+    return buildAnchorTargetPayload({
+      kind: phase,
+      direction,
+      anchorPrice: rejectionPrice,
+      target,
+      artifactSummary,
+      lastClose,
+      source: source || "rejection",
+      label: source === "ema20_retest" ? "EMA20 rejection -> target" : "Rejected level -> target",
+      anchorLabel: source === "ema20_retest" ? "EMA20" : "Rejected",
+      targetLabel: "Target",
+    });
+  }
+
+  return null;
+}
+
+function buildPhaseTarget({
+  phaseInfo = {},
+  bias = "neutral",
+  trend = "range",
+  lastClose = null,
+  indicators = {},
+  zones = {},
+  artifactSummary = {},
+  latestStructural = null,
+  latestPattern = null,
+} = {}) {
+  if (PHASE_TARGET_MODEL === "phase_specific") {
+    return buildPhaseSpecificTarget({
+      phaseInfo,
+      bias,
+      trend,
+      lastClose,
+      indicators,
+      zones,
+      artifactSummary,
+      latestStructural,
+      latestPattern,
+    });
+  }
+  return buildLegacyPhaseTarget({
+    phaseInfo,
+    bias,
+    trend,
+    lastClose,
+    indicators,
+    zones,
+    artifactSummary,
+    latestStructural,
+  });
+}
+
 function computeBias(bars = [], artifacts = []) {
   const indicators = computeIndicatorSnapshot(bars);
   const zoneInfo = zoneContext(artifacts, indicators.close);
@@ -669,7 +1207,19 @@ function buildTfAnalysis({
     trend: trendInfo.trend,
   });
   const latestStructural = latestByTypes(artifacts, ["bos", "choch", "sweep_high", "sweep_low"]);
+  const latestPattern = latestByTypes(artifacts, ["bullish_engulfing", "bearish_engulfing", "bullish_pin_bar", "bearish_pin_bar"]);
   const artifactSummary = summarizeArtifacts(artifacts, lastClose);
+  const phaseTarget = buildPhaseTarget({
+    phaseInfo,
+    bias: biasInfo.bias,
+    trend: trendInfo.trend,
+    lastClose,
+    indicators: biasInfo?.indicators || trendInfo?.indicators || {},
+    zones: biasInfo?.zones || zoneContext(artifacts, lastClose),
+    artifactSummary,
+    latestStructural,
+    latestPattern,
+  });
   return {
     timeframe: normalizedTf,
     bias: biasInfo.bias,
@@ -683,6 +1233,10 @@ function buildTfAnalysis({
     phase: phaseInfo.phase,
     phase_source: phaseInfo.source,
     phase_detail: String(phaseInfo?.detail || phaseInfo?.phase || "").trim().toLowerCase(),
+    phase_target: phaseTarget ? clone(phaseTarget) : null,
+    phase_target_price: Number(phaseTarget?.price) || null,
+    phase_target_source: String(phaseTarget?.source || "").trim().toLowerCase(),
+    phase_target_label: String(phaseTarget?.label || "").trim(),
     structure_state: String(latestStructural?.type || "").trim().toLowerCase() || "",
     last_bar_time: Number(currentBar?.time || 0) || null,
     last_close: lastClose,

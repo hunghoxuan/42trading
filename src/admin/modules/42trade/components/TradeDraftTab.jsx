@@ -40,6 +40,7 @@ export default function TradeDraftTab({
   tradeSid,
   symbol,
   snapshotFiles = [],
+  apiScope = "",
 }) {
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -56,7 +57,9 @@ export default function TradeDraftTab({
     setLoading(true);
     setError("");
     try {
-      const snapRes = await api.tradeSnapshots(tradeSid).catch(() => ({
+      const snapRes = await api.tradeSnapshots(tradeSid, {
+        scope: apiScope,
+      }).catch(() => ({
         files: [],
       }));
       const sidFiles = snapRes.files || snapRes.items || [];
@@ -110,7 +113,7 @@ export default function TradeDraftTab({
     } finally {
       setLoading(false);
     }
-  }, [tradeSid]);
+  }, [tradeSid, apiScope]);
 
   useEffect(() => {
     if (tradeSid) loadFiles();

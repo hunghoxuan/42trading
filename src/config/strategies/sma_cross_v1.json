@@ -4,6 +4,7 @@
   "kind": "preset",
   "description": "Classic short/long simple moving average crossover for medium-term trend following.",
   "engine_version": "42trade.strategy.v2",
+  "status": "active",
   "params": {
     "fast_period": 20,
     "slow_period": 50,
@@ -79,5 +80,9 @@
     "fallback_stop_pct": 0.001,
     "fallback_tp_pct": 0.002
   },
-  "min_bars": 70
+  "min_bars": 70,
+  "conditions": {
+    "skip_news": true,
+    "news_window_minutes": 120
+  }
 }

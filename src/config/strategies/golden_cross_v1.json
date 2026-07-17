@@ -4,6 +4,7 @@
   "kind": "preset",
   "description": "Longer-term 50/200 moving average crossover often used for macro trend direction.",
   "engine_version": "42trade.strategy.v2",
+  "status": "active",
   "params": {
     "fast_period": 50,
     "slow_period": 200,
@@ -79,5 +80,9 @@
     "fallback_stop_pct": 0.001,
     "fallback_tp_pct": 0.0025
   },
-  "min_bars": 240
+  "min_bars": 240,
+  "conditions": {
+    "skip_news": true,
+    "news_window_minutes": 120
+  }
 }

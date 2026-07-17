@@ -17,7 +17,11 @@ function normalizeApiBase(value) {
   const withScheme = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
   try {
     const u = new URL(withScheme);
-    return u.origin;
+    const normalizedPath =
+      String(u.pathname || "").trim() && u.pathname !== "/"
+        ? u.pathname.replace(/\/+$/, "")
+        : "";
+    return `${u.origin}${normalizedPath}`;
   } catch {
     return "";
   }
@@ -91,7 +95,11 @@ function runtimeDirectDevApiBase() {
         targetUrl.hostname === "localhost" ||
         targetUrl.hostname === "127.0.0.1";
       if (loopbackTarget) {
-        return `${protocol}//${hostname}:${targetUrl.port || "3001"}`;
+        const normalizedPath =
+          String(targetUrl.pathname || "").trim() && targetUrl.pathname !== "/"
+            ? targetUrl.pathname.replace(/\/+$/, "")
+            : "";
+        return `${protocol}//${hostname}:${targetUrl.port || "3001"}${normalizedPath}`;
       }
       return configuredTarget;
     } catch {}
@@ -904,6 +912,47 @@ async function del(path, body = undefined) {
   });
 }
 
+function buildQueryString(params = {}) {
+  const q = new URLSearchParams();
+  Object.entries(params || {}).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && String(v) !== "") {
+      q.set(k, String(v));
+    }
+  });
+  return q.toString();
+}
+
+function buildV2TradePath(tradeId = "", suffix = "", options = {}) {
+  const id = encodeURIComponent(String(tradeId || "").trim());
+  const tail = String(suffix || "");
+  const scope = String(options?.scope || options?.module || "")
+    .trim()
+    .toLowerCase();
+  const base =
+    scope === "trades0"
+      ? "/api/trades0"
+      : "/api/trades";
+  return `${base}/${id}${tail}`;
+}
+
+function normalizeV2TradeSnapshotResponse(tradeSid, response = {}, options = {}) {
+  const basePath = buildV2TradePath(tradeSid, "/snapshots", options);
+  const items = (Array.isArray(response?.items) ? response.items : Array.isArray(response?.files) ? response.files : [])
+    .map((item) => {
+      const fileName = String(item?.file_name || item?.name || "").trim();
+      if (!fileName) return item;
+      return {
+        ...item,
+        url: `${basePath}/${encodeURIComponent(fileName)}/content`,
+      };
+    });
+  return {
+    ...(response || {}),
+    items,
+    files: items,
+  };
+}
+
 async function downloadCsv(path, params = {}) {
   const base = runtimeApiBase();
   const q = new URLSearchParams();
@@ -971,6 +1020,77 @@ async function downloadCsv(path, params = {}) {
 }
 
 export const api = {
+  universalEntities: (params = {}) => {
+    const q = new URLSearchParams();
+    Object.entries(params || {}).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && String(v) !== "") q.set(k, String(v));
+    });
+    return get(`/api/v2/universal-store/entities${q.size ? `?${q.toString()}` : ""}`);
+  },
+  universalEntity: (tenantId, entityType, entityKey, params = {}) => {
+    const q = new URLSearchParams();
+    Object.entries(params || {}).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && String(v) !== "") q.set(k, String(v));
+    });
+    return get(
+      `/api/v2/universal-store/entities/${encodeURIComponent(tenantId)}/${encodeURIComponent(entityType)}/${encodeURIComponent(entityKey)}${q.size ? `?${q.toString()}` : ""}`,
+    );
+  },
+  universalUpsertEntity: (payload = {}) => post("/api/v2/universal-store/entities", payload),
+  universalUpdateEntity: (tenantId, entityType, entityKey, payload = {}) =>
+    put(
+      `/api/v2/universal-store/entities/${encodeURIComponent(tenantId)}/${encodeURIComponent(entityType)}/${encodeURIComponent(entityKey)}`,
+      payload,
+    ),
+  universalDeleteEntity: (tenantId, entityType, entityKey, params = {}) => {
+    const q = new URLSearchParams();
+    Object.entries(params || {}).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && String(v) !== "") q.set(k, String(v));
+    });
+    return del(
+      `/api/v2/universal-store/entities/${encodeURIComponent(tenantId)}/${encodeURIComponent(entityType)}/${encodeURIComponent(entityKey)}${q.size ? `?${q.toString()}` : ""}`,
+    );
+  },
+  universalLinks: (params = {}) => {
+    const q = new URLSearchParams();
+    Object.entries(params || {}).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && String(v) !== "") q.set(k, String(v));
+    });
+    return get(`/api/v2/universal-store/links${q.size ? `?${q.toString()}` : ""}`);
+  },
+  universalUpsertLink: (payload = {}) => post("/api/v2/universal-store/links", payload),
+  universalDeleteLink: (id) =>
+    del(`/api/v2/universal-store/links/${encodeURIComponent(id)}`),
+  universalUserLinks: (userId, params = {}) => {
+    const q = new URLSearchParams();
+    Object.entries(params || {}).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && String(v) !== "") q.set(k, String(v));
+    });
+    return get(`/api/v2/universal-store/users/${encodeURIComponent(userId)}/links${q.size ? `?${q.toString()}` : ""}`);
+  },
+  universalJournal: (params = {}) => {
+    const q = new URLSearchParams();
+    Object.entries(params || {}).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && String(v) !== "") q.set(k, String(v));
+    });
+    return get(`/api/v2/universal-store/journal${q.size ? `?${q.toString()}` : ""}`);
+  },
+  universalAppendJournal: (payload = {}) => post("/api/v2/universal-store/journal", payload),
+  universalUserJournal: (userId, params = {}) => {
+    const q = new URLSearchParams();
+    Object.entries(params || {}).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && String(v) !== "") q.set(k, String(v));
+    });
+    return get(`/api/v2/universal-store/users/${encodeURIComponent(userId)}/journal${q.size ? `?${q.toString()}` : ""}`);
+  },
+  universalProcesses: (params = {}) => {
+    const q = new URLSearchParams();
+    Object.entries(params || {}).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && String(v) !== "") q.set(k, String(v));
+    });
+    return get(`/api/v2/universal-store/processes${q.size ? `?${q.toString()}` : ""}`);
+  },
+  universalUpsertProcess: (payload = {}) => post("/api/v2/universal-store/processes", payload),
   pay42Dashboard: () => get("/api/42pay/dashboard"),
   pay42Products: (params = {}) => {
     const q = new URLSearchParams();
@@ -1047,26 +1167,32 @@ export const api = {
   v2AccountBridgeReadiness: (accountId) =>
     post(`/api/accounts/${encodeURIComponent(accountId)}/bridge-readiness`, {}),
   v2Sources: (options = {}) => get("/api/sources", options),
-  v2Trades: (params = {}) => {
-    const q = new URLSearchParams();
-    Object.entries(params || {}).forEach(([k, v]) => {
-      if (v !== undefined && v !== null && String(v) !== "")
-        q.set(k, String(v));
-    });
-    return get(`/api/trades?${q.toString()}`);
-  },
+  v2Trades: (params = {}) => get(`/api/trades?${buildQueryString(params)}`),
+  v2Trades2Counts: () => get("/api/trades/counts"),
+  v2Trades2: (params = {}) =>
+    get(`/api/trades?${buildQueryString(params)}`),
+  v2TradesGet: (tradeId, params = {}) =>
+    get(`/api/trades/${encodeURIComponent(tradeId)}?${buildQueryString(params)}`),
+  v2CreateTrade: (payload = {}) => post("/api/trades", payload),
   v2UpdateTrade: (tradeId, payload = {}) =>
-    post(`/api/trades/${encodeURIComponent(tradeId)}/update`, payload),
+    put(`/api/trades/${encodeURIComponent(tradeId)}`, payload),
   v2TradesBulkAction: (action, filters = {}) =>
-    post("/api/trades/bulk-action", { action, ...filters }),
+    post("/v2/trades/bulk-action", { action, ...filters }),
   v2TradeCounts: () => get("/api/trades/counts"),
-  v2TradeEvents: (tradeId, limit = 200) =>
-    get(
-      `/api/trades/${encodeURIComponent(tradeId)}/events?limit=${encodeURIComponent(limit)}`,
-    ),
-  listTempTrades: () => get("/api/trades/temp"),
+  v2TradesCounts: () => get("/api/trades/counts"),
+  v2TradeEvents: async (tradeId, limit = 200, options = {}) => {
+    try {
+      return await get(
+        `${buildV2TradePath(tradeId, `/events?limit=${encodeURIComponent(limit)}`, options)}`,
+      );
+    } catch {
+      return { ok: true, items: [] };
+    }
+  },
+  listTempTrades: () => get("/api/trades0/temp"),
   listBacktests: () => get("/api/backtests"),
   runBacktest: (payload = {}) => post("/api/backtests/run", payload),
+  runBacktestBatch: (payload = {}) => post("/api/backtests/run-batch", payload),
   saveBacktest: (payload = {}) => post("/api/backtests/save", payload),
   getBacktest: (runId) => get(`/api/backtests/${encodeURIComponent(runId)}`),
   deleteBacktest: (runId) => del(`/api/backtests/${encodeURIComponent(runId)}`),
@@ -1149,6 +1275,15 @@ export const api = {
     });
     return get(`/mt5/dashboard/advanced?${q.toString()}`);
   },
+  tradesDashboard: (params = {}) => {
+    const q = new URLSearchParams();
+    Object.entries(params || {}).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && String(v) !== "") {
+        q.set(k, String(v));
+      }
+    });
+    return get(`/api/trades/dashboard?${q.toString()}`);
+  },
   dashboardSummary: (userId = "") =>
     get(
       `/mt5/dashboard/summary${userId ? `?user_id=${encodeURIComponent(userId)}` : ""}`,
@@ -1174,59 +1309,59 @@ export const api = {
     return get(`/api/trades?${q.toString()}`);
   },
   trade: (tradeId) => get(`/mt5/trades/${encodeURIComponent(tradeId)}`),
-  createTrade: (payload = {}) => post("/api/trades/create", payload),
+  createTrade: (payload = {}) => post("/api/trades0/create", payload),
   createDraftTrade: (payload = {}) =>
-    post("/api/trades/create", { ...payload, execution_status: "Draft" }),
+    post("/api/trades0/create", { ...payload, execution_status: "Draft" }),
   promoteDraftTrade: (tradeId) =>
-    post(`/api/trades/${encodeURIComponent(tradeId)}/promote`),
-  createTradeDirect: (payload = {}) => post("/api/trades/create", payload),
+    post(buildV2TradePath(tradeId, "/promote")),
+  createTradeDirect: (payload = {}) => post("/api/trades0/create", payload),
   saveTradePlan: (tradeId, payload = {}) =>
-    post(`/api/trades/${encodeURIComponent(tradeId)}/trade-plan/save`, payload),
-  uploadTradeDraftFile: async (tradeId, file) => {
+    post(buildV2TradePath(tradeId, "/trade-plan/save"), payload),
+  uploadTradeDraftFile: async (tradeId, file, options = {}) => {
     const form = new FormData();
     form.append("file", file);
     return requestFormJson(
-      `/api/trades/${encodeURIComponent(tradeId)}/files/upload`,
+      buildV2TradePath(tradeId, "/files/upload", options),
       form,
       {
         method: "POST",
       },
     );
   },
-  uploadTradeFile: async (tradeId, file) => {
+  uploadTradeFile: async (tradeId, file, options = {}) => {
     const form = new FormData();
     form.append("file", file);
     return requestFormJson(
-      `/api/trades/${encodeURIComponent(tradeId)}/files/upload`,
+      buildV2TradePath(tradeId, "/files/upload", options),
       form,
       {
         method: "POST",
       },
     );
   },
-  listTradeDraftFiles: (tradeId) =>
-    get(`/api/trades/${encodeURIComponent(tradeId)}/files`),
-  deleteTradeDraftFile: (tradeId, fileName) =>
+  listTradeDraftFiles: (tradeId, options = {}) =>
+    get(buildV2TradePath(tradeId, "/files", options)),
+  deleteTradeDraftFile: (tradeId, fileName, options = {}) =>
     del(
-      `/api/trades/${encodeURIComponent(tradeId)}/files/${encodeURIComponent(fileName)}`,
+      buildV2TradePath(tradeId, `/files/${encodeURIComponent(fileName)}`, options),
     ),
-  listTradeFiles: (tradeId) =>
-    get(`/api/trades/${encodeURIComponent(tradeId)}/files`),
-  deleteTradeFile: (tradeId, fileName) =>
+  listTradeFiles: (tradeId, options = {}) =>
+    get(buildV2TradePath(tradeId, "/files", options)),
+  deleteTradeFile: (tradeId, fileName, options = {}) =>
     del(
-      `/api/trades/${encodeURIComponent(tradeId)}/files/${encodeURIComponent(fileName)}`,
+      buildV2TradePath(tradeId, `/files/${encodeURIComponent(fileName)}`, options),
     ),
-  saveChartObjects: (tradeId, objects = []) =>
-    post(`/api/trades/${encodeURIComponent(tradeId)}/chart-objects`, {
+  saveChartObjects: (tradeId, objects = [], options = {}) =>
+    post(buildV2TradePath(tradeId, "/chart-objects", options), {
       objects,
     }),
-  loadChartObjects: (tradeId) =>
-    get(`/api/trades/${encodeURIComponent(tradeId)}/chart-objects`),
+  loadChartObjects: (tradeId, options = {}) =>
+    get(buildV2TradePath(tradeId, "/chart-objects", options)),
   saveChartArtifacts: (tradeId, payload = {}) =>
-    post(`/api/trades/${encodeURIComponent(tradeId)}/chart-artifacts`, payload),
+    post(buildV2TradePath(tradeId, "/chart-artifacts"), payload),
   loadChartArtifacts: (tradeId, tf = "") =>
     get(
-      `/api/trades/${encodeURIComponent(tradeId)}/chart-artifacts${String(tf || "").trim() ? `?tf=${encodeURIComponent(tf)}` : ""}`,
+      `${buildV2TradePath(tradeId, "/chart-artifacts")}${String(tf || "").trim() ? `?tf=${encodeURIComponent(tf)}` : ""}`,
     ),
   loadMarketChartArtifacts: (
     symbol,
@@ -1303,6 +1438,9 @@ export const api = {
     get(
       `/api/system/logs/file?source=${encodeURIComponent(source)}&id=${encodeURIComponent(id)}&file=${encodeURIComponent(file)}&limit=${limit}`,
     ),
+  systemHealthNodes: () => get("/api/system/health/nodes"),
+  saveSystemHealthNodes: (nodes = []) =>
+    put("/api/system/health/nodes", { nodes }),
   storageStats: () => get("/api/system/storage/stats"),
   storageCleanup: (target, userId = "") =>
     post("/api/system/storage/cleanup", { target, userId }),
@@ -1323,6 +1461,10 @@ export const api = {
   dbManagerSchema: (connectionId, schema, table) =>
     get(
       `/api/system/db-manager/${encodeURIComponent(connectionId)}/schema/${encodeURIComponent(schema)}/${encodeURIComponent(table)}`,
+    ),
+  dbManagerIndexes: (connectionId, schema, table) =>
+    get(
+      `/api/system/db-manager/${encodeURIComponent(connectionId)}/indexes/${encodeURIComponent(schema)}/${encodeURIComponent(table)}`,
     ),
   dbManagerRows: (connectionId, params = {}) => {
     const q = new URLSearchParams();
@@ -1347,6 +1489,11 @@ export const api = {
   dbManagerTableAction: (connectionId, schema, table, payload = {}) =>
     post(
       `/api/system/db-manager/${encodeURIComponent(connectionId)}/table-action/${encodeURIComponent(schema)}/${encodeURIComponent(table)}`,
+      payload,
+    ),
+  dbManagerIndexAction: (connectionId, schema, table, payload = {}) =>
+    post(
+      `/api/system/db-manager/${encodeURIComponent(connectionId)}/index-action/${encodeURIComponent(schema)}/${encodeURIComponent(table)}`,
       payload,
     ),
   dbManagerInsertRow: (connectionId, schema, table, values = {}) =>
@@ -1442,13 +1589,17 @@ export const api = {
     ),
   chartSnapshots: (limit = 30) =>
     get(`/api/chart/snapshots?limit=${encodeURIComponent(limit)}`),
-  tradeSnapshots: (tradeSid) =>
-    get(`/api/trades/${encodeURIComponent(tradeSid)}/snapshots`),
+  tradeSnapshots: async (tradeSid, options = {}) =>
+    normalizeV2TradeSnapshotResponse(
+      tradeSid,
+      await get(buildV2TradePath(tradeSid, "/snapshots", options)),
+      options,
+    ),
   tradeLogs: (tradeId) =>
-    get(`/api/trades/${encodeURIComponent(tradeId)}/logs`),
+    get(buildV2TradePath(tradeId, "/logs")),
   tradeLogContent: (tradeId, fileName) =>
     get(
-      `/api/trades/${encodeURIComponent(tradeId)}/logs/${encodeURIComponent(fileName)}/content`,
+      buildV2TradePath(tradeId, `/logs/${encodeURIComponent(fileName)}/content`),
     ),
   chartSnapshotsDelete: (payload = {}) =>
     post("/api/chart/snapshots/delete", payload),

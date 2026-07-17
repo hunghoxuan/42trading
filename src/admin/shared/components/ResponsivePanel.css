@@ -3,7 +3,7 @@
   width: 100%;
   min-width: 0;
   border-radius: 12px;
-  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
   padding: 12px;
   overflow: visible;
 }
@@ -140,7 +140,7 @@
   .responsive-panel--border-mobile,
   .responsive-panel--border-always {
     border: 1px solid var(--border);
-    background: var(--surface);
+    background: color-mix(in srgb, var(--surface) 70%, transparent);
     padding: 14px;
   }
 

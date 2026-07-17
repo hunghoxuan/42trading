@@ -27,6 +27,8 @@ function safeUserId(userId) {
 }
 
 function resolveUserTradeDbPath(userId, options = {}) {
+  const explicitPath = String(options.sqlitePath || "").trim();
+  if (explicitPath) return explicitPath;
   const projectRoot =
     options.projectRoot || path.resolve(__dirname, "..", "..", "..");
   return path.join(projectRoot, "data", "users", safeUserId(userId), "data.db");
@@ -221,6 +223,10 @@ function normalizeTradeRow(row) {
   if (!row) return null;
   const metadata = parseJsonField(row.metadata) || {};
   const rawJson = parseJsonField(row.raw_json);
+  const brokerData =
+    metadata?.broker_data && typeof metadata.broker_data === "object"
+      ? metadata.broker_data
+      : {};
   const tradeId = row.trade_id ?? row.signal_id ?? row.sid ?? null;
   const tradeTf = row.trade_tf ?? row.signal_tf ?? null;
   return {
@@ -232,6 +238,26 @@ function normalizeTradeRow(row) {
     tradeId,
     signalId: tradeId,
     sourceId: row.source_id ?? null,
+    channel:
+      metadata.channel ??
+      metadata.ctrader_channel ??
+      brokerData.channel ??
+      brokerData.source_id ??
+      rawJson?.channel ??
+      rawJson?.source_id ??
+      null,
+    label:
+      metadata.label ??
+      metadata.ctrader_label ??
+      brokerData.label ??
+      rawJson?.label ??
+      null,
+    comment:
+      metadata.comment ??
+      metadata.ctrader_comment ??
+      brokerData.comment ??
+      rawJson?.comment ??
+      null,
     entryModel: row.entry_model ?? null,
     tradeTf,
     signalTf: tradeTf,
@@ -327,6 +353,23 @@ function mergeBrokerSyncMetadata(existingMetadata = {}, syncMeta = {}) {
       : {}),
     ...(syncMeta && typeof syncMeta === "object" ? syncMeta : {}),
   };
+}
+
+function brokerSyncSourceId(item = {}, options = {}) {
+  return (
+    String(
+      item.source_id ||
+        item.source ||
+        item.channel ||
+        item.channel_name ||
+        options.sourceId ||
+        "BROKER",
+    ).trim() || "BROKER"
+  );
+}
+
+function brokerSyncStrategy(item = {}) {
+  return String(item.strategy || "").trim() || "manual";
 }
 
 function normalizeBrokerSnapshotExecutionStatus(snapshot = {}) {
@@ -980,9 +1023,10 @@ function tradeInsertValues(row = {}, userId, now) {
 function createSqliteRepository(options = {}) {
   const projectRoot =
     options.projectRoot || path.resolve(__dirname, "..", "..", "..");
+  const sqlitePath = String(options.sqlitePath || "").trim();
 
   function dbForUser(userId) {
-    return getSqliteDb(resolveUserTradeDbPath(userId, { projectRoot }));
+    return getSqliteDb(resolveUserTradeDbPath(userId, { projectRoot, sqlitePath }));
   }
 
   return {
@@ -1811,6 +1855,12 @@ function createSqliteRepository(options = {}) {
 
         const syncMeta = {
           order_type: it.order_type || null,
+          channel: it.channel || null,
+          label: it.label || null,
+          comment: it.comment || null,
+          ctrader_channel: it.channel || null,
+          ctrader_label: it.label || null,
+          ctrader_comment: it.comment || null,
           broker_name: options.brokerName || "",
           provider_code: options.providerCode || "",
           last_change_origin: "broker",
@@ -1831,6 +1881,8 @@ function createSqliteRepository(options = {}) {
           const nextExecutionStatus = String(it.execution_status || "")
             .trim()
             .toUpperCase();
+          const nextSourceId = brokerSyncSourceId(it, options);
+          const nextStrategy = brokerSyncStrategy(it);
           const consumeLease =
             clearRejectedDispatch ||
             String(existing.dispatchStatus || "").toUpperCase() === "LEASED";
@@ -1856,6 +1908,8 @@ function createSqliteRepository(options = {}) {
                  broker_sl_pnl = ?,
                  entry_exec = COALESCE(?, entry_exec),
                  order_type = COALESCE(?, order_type),
+                 source_id = COALESCE(NULLIF(source_id, ''), ?),
+                 strategy = COALESCE(NULLIF(strategy, ''), ?),
                  close_reason = ?,
                  rejection_reason = ?,
                  note = COALESCE(NULLIF(note, ''), ?),
@@ -1890,6 +1944,8 @@ function createSqliteRepository(options = {}) {
             it.sl_pnl ?? existing.brokerSlPnl ?? null,
             it.entry ?? null,
             it.order_type || null,
+            nextSourceId,
+            nextStrategy,
             isTerminalExecutionStatus(nextExecutionStatus)
               ? it.close_reason || existing.closeReason || null
               : null,
@@ -1973,16 +2029,18 @@ function createSqliteRepository(options = {}) {
               : (options.generateSid && options.generateSid()) ||
                 `M_${Date.now()}`),
         ).trim();
+        const nextSourceId = brokerSyncSourceId(it, options);
+        const nextStrategy = brokerSyncStrategy(it);
         const nextMetadata = mergeBrokerSyncMetadata({}, syncMeta);
         db.prepare(
           `INSERT OR REPLACE INTO trades (
              sid, account_id, user_id, symbol, action, order_type, volume,
              entry, sl, tp, tp1, tp2, tp3, note, execution_status,
-             dispatch_status, source_id, metadata, broker_trade_id,
+             dispatch_status, source_id, strategy, metadata, broker_trade_id,
              broker_pips, broker_lots, broker_commission, broker_swap,
              broker_volume, broker_pnl, broker_margin, planned_tp_pnl,
              planned_sl_pnl, broker_tp_pnl, broker_sl_pnl, opened_at, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           discoverySid,
           aid,
@@ -2000,7 +2058,8 @@ function createSqliteRepository(options = {}) {
           it.note || "",
           String(it.execution_status || "PENDING").toUpperCase(),
           "CONSUMED",
-          options.sourceId || "BROKER",
+          nextSourceId,
+          nextStrategy,
           jsonText(nextMetadata),
           ticketCandidates[0] || "",
           Number(it.pips ?? 0),
@@ -2990,6 +3049,12 @@ function createPostgresRepository(options = {}) {
 
         const syncMeta = {
           order_type: it.order_type || null,
+          channel: it.channel || null,
+          label: it.label || null,
+          comment: it.comment || null,
+          ctrader_channel: it.channel || null,
+          ctrader_label: it.label || null,
+          ctrader_comment: it.comment || null,
           broker_name: options.brokerName || "",
           provider_code: options.providerCode || "",
           last_change_origin: "broker",
@@ -3010,6 +3075,8 @@ function createPostgresRepository(options = {}) {
           const nextExecutionStatus = String(it.execution_status || "")
             .trim()
             .toUpperCase();
+          const nextSourceId = brokerSyncSourceId(it, options);
+          const nextStrategy = brokerSyncStrategy(it);
           const consumeLease =
             clearRejectedDispatch ||
             String(existing.dispatchStatus || "").toUpperCase() === "LEASED";
@@ -3035,21 +3102,23 @@ function createPostgresRepository(options = {}) {
                  broker_sl_pnl = $14,
                  entry_exec = COALESCE($15, entry_exec),
                  order_type = COALESCE($16, order_type),
-                 close_reason = $17,
-                 rejection_reason = $18,
-                 note = COALESCE(NULLIF(note, ''), $19),
-                 metadata = $20,
-                 opened_at = $21,
-                 closed_at = $22,
-                 lease_token = $23,
-                 lease_expires_at = $24,
-                 sl = COALESCE($25, sl),
-                 tp = COALESCE($26, tp),
-                 tp1 = COALESCE($27, tp1),
-                 tp2 = COALESCE($28, tp2),
-                 tp3 = COALESCE($29, tp3),
-                 updated_at = $30
-             WHERE sid = $31
+                 source_id = COALESCE(NULLIF(source_id, ''), $17),
+                 strategy = COALESCE(NULLIF(strategy, ''), $18),
+                 close_reason = $19,
+                 rejection_reason = $20,
+                 note = COALESCE(NULLIF(note, ''), $21),
+                 metadata = $22,
+                 opened_at = $23,
+                 closed_at = $24,
+                 lease_token = $25,
+                 lease_expires_at = $26,
+                 sl = COALESCE($27, sl),
+                 tp = COALESCE($28, tp),
+                 tp1 = COALESCE($29, tp1),
+                 tp2 = COALESCE($30, tp2),
+                 tp3 = COALESCE($31, tp3),
+                 updated_at = $32
+             WHERE sid = $33
              RETURNING *`,
             [
               nextExecutionStatus,
@@ -3070,6 +3139,8 @@ function createPostgresRepository(options = {}) {
               it.sl_pnl ?? existing.brokerSlPnl ?? null,
               it.entry ?? null,
               it.order_type || null,
+              nextSourceId,
+              nextStrategy,
               isTerminalExecutionStatus(nextExecutionStatus)
                 ? it.close_reason || existing.closeReason || null
                 : null,
@@ -3152,22 +3223,24 @@ function createPostgresRepository(options = {}) {
               : (options.generateSid && options.generateSid()) ||
                 `M_${Date.now()}`),
         ).trim();
+        const nextSourceId = brokerSyncSourceId(it, options);
+        const nextStrategy = brokerSyncStrategy(it);
         const nextMetadata = mergeBrokerSyncMetadata({}, syncMeta);
         const insertRes = await pool.query(
           `INSERT INTO trades (
              sid, account_id, user_id, symbol, action, order_type, volume,
              entry, sl, tp, tp1, tp2, tp3, note, execution_status,
-             dispatch_status, source_id, metadata, broker_trade_id,
+             dispatch_status, source_id, strategy, metadata, broker_trade_id,
              broker_pips, broker_lots, broker_commission, broker_swap,
              broker_volume, broker_pnl, broker_margin, planned_tp_pnl,
              planned_sl_pnl, broker_tp_pnl, broker_sl_pnl, opened_at, created_at, updated_at
            ) VALUES (
              $1, $2, $3, $4, $5, $6, $7,
              $8, $9, $10, $11, $12, $13, $14, $15,
-             $16, $17, $18, $19,
-             $20, $21, $22, $23,
-             $24, $25, $26, $27,
-             $28, $29, $30, $31, $32, $33
+             $16, $17, $18, $19, $20,
+             $21, $22, $23, $24,
+             $25, $26, $27, $28,
+             $29, $30, $31, $32, $33, $34
            )
            ON CONFLICT (sid) DO UPDATE SET
              account_id = EXCLUDED.account_id,
@@ -3186,6 +3259,7 @@ function createPostgresRepository(options = {}) {
              execution_status = EXCLUDED.execution_status,
              dispatch_status = EXCLUDED.dispatch_status,
              source_id = EXCLUDED.source_id,
+             strategy = EXCLUDED.strategy,
              metadata = EXCLUDED.metadata,
              broker_trade_id = EXCLUDED.broker_trade_id,
              broker_pips = EXCLUDED.broker_pips,
@@ -3218,7 +3292,8 @@ function createPostgresRepository(options = {}) {
             it.note || "",
             String(it.execution_status || "PENDING").toUpperCase(),
             "CONSUMED",
-            options.sourceId || "BROKER",
+            nextSourceId,
+            nextStrategy,
             jsonText(nextMetadata),
             ticketCandidates[0] || "",
             Number(it.pips ?? 0),

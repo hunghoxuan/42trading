@@ -1,7 +1,23 @@
 "use strict";
 
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
+const { spawnSync } = require("child_process");
+
+const PROJECT_ROOT = path.resolve(__dirname, "..", "..", "..", "..");
+const DUCKDB_WORKER_PATH = path.join(
+  PROJECT_ROOT,
+  "src",
+  "api",
+  "modules",
+  "42trade",
+  "marketData",
+  "providers",
+  "marketDataDuckdbWorker.js",
+);
+const TABLE_PREVIEW_LIMIT = 100;
+const TEXT_PREVIEW_LIMIT = 250000;
 
 function safeUserId(raw = "") {
   return String(raw || "").trim().replace(/[^A-Za-z0-9_.-]/g, "");
@@ -128,7 +144,158 @@ function detectContentKind(fileName = "") {
   if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"].includes(ext)) {
     return "image";
   }
+  if (ext === ".csv") return "csv";
+  if (ext === ".parquet") return "parquet";
+  if (
+    [
+      ".txt",
+      ".json",
+      ".log",
+      ".md",
+      ".markdown",
+      ".yaml",
+      ".yml",
+      ".xml",
+      ".js",
+      ".jsx",
+      ".ts",
+      ".tsx",
+      ".css",
+      ".scss",
+      ".html",
+      ".htm",
+    ].includes(ext)
+  ) {
+    return "text";
+  }
+  if (
+    [
+      ".zip",
+      ".gz",
+      ".tgz",
+      ".7z",
+      ".rar",
+      ".pdf",
+      ".exe",
+      ".dll",
+      ".bin",
+      ".db",
+      ".sqlite",
+      ".mp4",
+      ".mov",
+      ".avi",
+      ".mp3",
+      ".wav",
+    ].includes(ext)
+  ) {
+    return "binary";
+  }
   return "text";
+}
+
+function runDuckDbWorker(command, payload = {}) {
+  const payloadFile = path.join(
+    os.tmpdir(),
+    `system-browser-duckdb-${process.pid}-${Date.now()}-${Math.random()
+      .toString(16)
+      .slice(2)}.json`,
+  );
+  fs.writeFileSync(payloadFile, JSON.stringify(payload), "utf8");
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [DUCKDB_WORKER_PATH, command, `@file:${payloadFile}`],
+      {
+        cwd: PROJECT_ROOT,
+        encoding: "utf8",
+        maxBuffer: 20 * 1024 * 1024,
+      },
+    );
+    if (result.status !== 0) {
+      let message =
+        result.stderr || result.stdout || `DuckDB worker failed: ${command}`;
+      try {
+        const parsed = JSON.parse(result.stderr || "{}");
+        message = parsed.error || message;
+      } catch {}
+      throw new Error(String(message).trim());
+    }
+    const parsed = JSON.parse(result.stdout || "{}");
+    return parsed.result;
+  } finally {
+    fs.rmSync(payloadFile, { force: true });
+  }
+}
+
+function looksLikeTextBuffer(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) return true;
+  let suspicious = 0;
+  const sampleLength = Math.min(buffer.length, 4096);
+  for (let index = 0; index < sampleLength; index += 1) {
+    const value = buffer[index];
+    if (value === 0) return false;
+    const isControl =
+      value < 7 || (value > 14 && value < 32 && value !== 9 && value !== 10 && value !== 13);
+    if (isControl) suspicious += 1;
+  }
+  return suspicious / sampleLength < 0.02;
+}
+
+function parseDelimitedLine(line = "", delimiter = ",") {
+  const cells = [];
+  let current = "";
+  let inQuotes = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const next = line[index + 1];
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        current += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (char === delimiter && !inQuotes) {
+      cells.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  cells.push(current);
+  return cells.map((cell) => String(cell || "").trim());
+}
+
+function readCsvPreview(target, limit = TABLE_PREVIEW_LIMIT) {
+  const raw = fs.readFileSync(target, "utf8");
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\uFEFF/g, ""))
+    .filter((line) => line.trim());
+  if (!lines.length) return [];
+  const delimiter = lines[0].includes("\t") && !lines[0].includes(",") ? "\t" : ",";
+  const headers = parseDelimitedLine(lines[0], delimiter);
+  return lines.slice(1, limit + 1).map((line, rowIndex) => {
+    const values = parseDelimitedLine(line, delimiter);
+    const row = {};
+    headers.forEach((header, columnIndex) => {
+      const key = header || `column_${columnIndex + 1}`;
+      row[key] = values[columnIndex] ?? "";
+    });
+    if (!headers.length) row.value = line;
+    row.__row = rowIndex + 1;
+    return row;
+  });
+}
+
+function readParquetPreview(target, limit = TABLE_PREVIEW_LIMIT) {
+  const rows = runDuckDbWorker("readPreviewTable", {
+    parquetPath: target,
+    limit,
+  });
+  return Array.isArray(rows) ? rows : [];
 }
 
 function readFileContent(rootDir, relativeFile = "") {
@@ -145,7 +312,41 @@ function readFileContent(rootDir, relativeFile = "") {
       content: "",
     };
   }
+  if (kind === "csv") {
+    const rows = readCsvPreview(target, TABLE_PREVIEW_LIMIT);
+    return {
+      kind: "text",
+      path: safeRelative,
+      name: path.basename(safeRelative),
+      size: stat.size,
+      updated_at: stat.mtime.toISOString(),
+      mime_type: "application/json",
+      content: rows,
+    };
+  }
+  if (kind === "parquet") {
+    const rows = readParquetPreview(target, TABLE_PREVIEW_LIMIT);
+    return {
+      kind: "text",
+      path: safeRelative,
+      name: path.basename(safeRelative),
+      size: stat.size,
+      updated_at: stat.mtime.toISOString(),
+      mime_type: "application/json",
+      content: rows,
+    };
+  }
   const buffer = fs.readFileSync(target);
+  if (!looksLikeTextBuffer(buffer)) {
+    return {
+      kind: "binary",
+      path: safeRelative,
+      name: path.basename(safeRelative),
+      size: stat.size,
+      updated_at: stat.mtime.toISOString(),
+      content: "",
+    };
+  }
   const content = buffer.toString("utf8");
   return {
     kind,
@@ -154,8 +355,8 @@ function readFileContent(rootDir, relativeFile = "") {
     size: stat.size,
     updated_at: stat.mtime.toISOString(),
     content:
-      content.length > 250000
-        ? `${content.slice(0, 250000)}\n\n...truncated...`
+      content.length > TEXT_PREVIEW_LIMIT
+        ? `${content.slice(0, TEXT_PREVIEW_LIMIT)}\n\n...truncated...`
         : content,
   };
 }

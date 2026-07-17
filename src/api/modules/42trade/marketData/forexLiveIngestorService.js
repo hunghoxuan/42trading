@@ -172,6 +172,20 @@ function isForexOrCfdSymbol(symbol = "") {
   return /^[A-Z]{6}$/.test(sym);
 }
 
+function isForexCfdMarketOpenAt(unixSec = Date.now() / 1000) {
+  const sec = Number(unixSec);
+  if (!Number.isFinite(sec) || sec <= 0) return true;
+  const date = new Date(sec * 1000);
+  const day = date.getUTCDay(); // 0=Sun ... 5=Fri 6=Sat
+  const minutes = date.getUTCHours() * 60 + date.getUTCMinutes();
+  const fridayCloseMinutes = 21 * 60; // 21:00 UTC ~= New York 17:00 during DST
+  const sundayOpenMinutes = 21 * 60;
+  if (day === 6) return false;
+  if (day === 0) return minutes >= sundayOpenMinutes;
+  if (day === 5) return minutes < fridayCloseMinutes;
+  return true;
+}
+
 function parseTimeToUnixSec(raw) {
   const text = String(raw || "").trim();
   if (!text) return null;
@@ -253,6 +267,19 @@ function loadTwelveApiKey({ dataRoot } = {}) {
   try {
     const parsed = JSON.parse(fs.readFileSync(providerFile, "utf8") || "{}");
     const data = parsed?.data && typeof parsed.data === "object" ? parsed.data : {};
+    const keyEntries = Array.isArray(data.key_entries) ? data.key_entries : [];
+    for (const entry of keyEntries) {
+      if (String(entry?.status || "").trim().toLowerCase() === "invalid") continue;
+      const decrypted = String(
+        decryptData(entry?.api_key || entry?.value || entry?.key || ""),
+      ).trim();
+      if (decrypted) return decrypted;
+    }
+    const keyList = Array.isArray(data.api_keys) ? data.api_keys : [];
+    for (const value of keyList) {
+      const decrypted = String(decryptData(value || "")).trim();
+      if (decrypted) return decrypted;
+    }
     return String(
       decryptData(
         data.api_key ||
@@ -421,6 +448,49 @@ function readLatestBar(symbol, tf, options = {}) {
   return Array.isArray(rows) && rows.length ? rows[rows.length - 1] : null;
 }
 
+function filterEligibleLiveBarsForMerge(
+  symbol,
+  bars = [],
+  {
+    lastStoredBar = null,
+    nowSec = Date.now() / 1000,
+  } = {},
+) {
+  const sortedBars = Array.isArray(bars) ? [...bars] : [];
+  if (!sortedBars.length) {
+    return { eligibleBars: [], reason: "no_bars" };
+  }
+  sortedBars.sort((left, right) => Number(left?.time || 0) - Number(right?.time || 0));
+  const latestFetchedBar = sortedBars[sortedBars.length - 1] || null;
+  const latestFetchedTime = Number(latestFetchedBar?.time || 0);
+  const latestStoredTime = Number(lastStoredBar?.time || 0);
+  if (!isForexCfdMarketOpenAt(nowSec) && isForexOrCfdSymbol(symbol)) {
+    return { eligibleBars: [], reason: "market_closed" };
+  }
+  if (latestStoredTime > 0 && latestFetchedTime > 0 && latestFetchedTime <= latestStoredTime) {
+    return { eligibleBars: [], reason: "not_newer_than_stored" };
+  }
+  const liveStaleThresholdSec = Math.max(180, DEFAULT_INTERVAL_MS / 1000 + 120);
+  if (
+    isForexOrCfdSymbol(symbol) &&
+    latestFetchedTime > 0 &&
+    nowSec - latestFetchedTime > liveStaleThresholdSec
+  ) {
+    return { eligibleBars: [], reason: "stale_provider_payload" };
+  }
+  const eligibleBars = sortedBars.filter((bar) => {
+    const time = Number(bar?.time || 0);
+    if (!Number.isFinite(time) || time <= 0) return false;
+    if (latestStoredTime > 0 && time <= latestStoredTime) return false;
+    if (time > nowSec + 90) return false;
+    return true;
+  });
+  return {
+    eligibleBars,
+    reason: eligibleBars.length ? "ok" : "no_new_rows_after_filter",
+  };
+}
+
 function captureLatestBarsByTf(symbol, options = {}) {
   const out = {};
   for (const tf of TF_CHAIN) {
@@ -568,6 +638,7 @@ class ForexLiveIngestorService {
       symbols: 0,
       updatedSymbols: 0,
       batches: 0,
+      skippedSymbols: 0,
       errors: [],
     };
     try {
@@ -608,11 +679,22 @@ class ForexLiveIngestorService {
             publishRealtimeTopic: this.publishRealtimeTopic,
           };
           const beforeBars = captureLatestBarsByTf(symbol, ioOptions);
-          marketDataRepo.mergeBrokerBarsIntoFile(symbol, "1", hit.bars, ioOptions);
+          const { eligibleBars } = filterEligibleLiveBarsForMerge(symbol, hit.bars, {
+            lastStoredBar: beforeBars?.["1"] || null,
+            nowSec: Date.now() / 1000,
+          });
+          if (!eligibleBars.length) {
+            summary.skippedSymbols += 1;
+            continue;
+          }
+          marketDataRepo.mergeBrokerBarsIntoFile(symbol, "1", eligibleBars, ioOptions);
           marketDataRepo.rebuildTimeframeChain(symbol, "1", ioOptions);
           const afterBars = captureLatestBarsByTf(symbol, ioOptions);
           const changed = TF_CHAIN.some((tf) => !barsEqual(beforeBars[tf], afterBars[tf]));
-          if (!changed) continue;
+          if (!changed) {
+            summary.skippedSymbols += 1;
+            continue;
+          }
           summary.updatedSymbols += 1;
           publishChangedChartBars(symbol, beforeBars, afterBars, ioOptions);
         }

@@ -9,13 +9,21 @@ const { createConfigStore } = require("../../../shared/config/configStore");
 const barsStorage = require("../marketData/marketDataRepo");
 const strategyConfigService = require("../strategies/strategyConfigService");
 const objectStore = require("../../../shared/objects/objectStoreRepo");
+const {
+  createStrategyScanEngine,
+} = require("../../../../shared/utils/strategyScanEngine.cjs");
+const { normalizeSymbolList } = require("../../../../config/symbolGroups.cjs");
 const sharedArtifactDetection = require("../../../../admin/modules/42trade/chartArtifacts/detectArtifacts.cjs");
 const strategyEventFunctions = require("../../../../admin/modules/42trade/chartArtifacts/strategyEventFunctions.cjs");
+const {
+  evaluateChartStrategies,
+} = require("../../../../admin/shared/utils/chartStrategyChecks.cjs");
 const { safePathPart, userRootDir } = objectStore;
 
 const BACKTESTS_DIRNAME = "backtests";
 const DEFAULT_LIMIT = 500;
 const MAX_LIMIT = 5000;
+const DEFAULT_BATCH_TIMEFRAMES = Object.freeze(["1440", "240", "15", "5"]);
 const configStore = createConfigStore();
 const CTRADER_DOWNSTREAM_URL = String(
   process.env.CTRADER_DOWNSTREAM_URL ||
@@ -321,6 +329,36 @@ function roundMoney(value) {
   return round(value, 2);
 }
 
+function tradeSortTimeMs(trade = {}) {
+  return (
+    toTimestampMs(trade?.created_at) ||
+    toTimestampMs(trade?.signal_bar_time) ||
+    toTimestampMs(trade?.opened_at) ||
+    toTimestampMs(trade?.closed_at) ||
+    0
+  );
+}
+
+function compareBatchTradeAsc(left, right) {
+  const leftTime = tradeSortTimeMs(left);
+  const rightTime = tradeSortTimeMs(right);
+  if (leftTime !== rightTime) return leftTime - rightTime;
+  return String(left?.sid || "").localeCompare(String(right?.sid || ""));
+}
+
+function eventSortTimeMs(event = {}) {
+  const unixMs = Number(event?.bar_time_unix) * 1000;
+  if (Number.isFinite(unixMs) && unixMs > 0) return unixMs;
+  return toTimestampMs(event?.bar_time) || 0;
+}
+
+function compareBatchEventAsc(left, right) {
+  const leftTime = eventSortTimeMs(left);
+  const rightTime = eventSortTimeMs(right);
+  if (leftTime !== rightTime) return leftTime - rightTime;
+  return String(left?.event_id || "").localeCompare(String(right?.event_id || ""));
+}
+
 function normalizeBacktestDirection(value, fallback = "all") {
   const normalized = String(value || fallback || "all").trim().toLowerCase();
   if (["all", "buy", "sell"].includes(normalized)) return normalized;
@@ -344,6 +382,30 @@ function normalizeBacktestSession(value, fallback = "Any") {
     "london + ny": "London+NY",
   };
   return aliases[normalized.toLowerCase()] || normalized;
+}
+
+function normalizeBatchTimeframes(values = []) {
+  const source = Array.isArray(values) ? values : [values];
+  const mapping = {
+    "1": "1",
+    "1m": "1",
+    "5": "5",
+    "5m": "5",
+    "15": "15",
+    "15m": "15",
+    "60": "60",
+    "1h": "60",
+    "240": "240",
+    "4h": "240",
+    "1440": "1440",
+    "1d": "1440",
+    d: "1440",
+  };
+  return [...new Set(
+    source
+      .map((value) => mapping[String(value || "").trim().toLowerCase()] || "")
+      .filter(Boolean),
+  )];
 }
 
 function getUtcHourFraction(unixSeconds) {
@@ -1083,6 +1145,7 @@ function simulateSignalStrategy(bars, strategy, signalResolver, options = {}) {
           entry: openTrade.entry,
           entry_fill: round(openTrade.entryFill),
           sl: round(openTrade.initialSl),
+          tp1: round(openTrade.tp),
           tp: round(openTrade.tp),
           created_at: toIsoFromUnixSeconds(openTrade.signalTime),
           opened_at: toIsoFromUnixSeconds(openTrade.openTime),
@@ -1173,13 +1236,14 @@ function simulateSignalStrategy(bars, strategy, signalResolver, options = {}) {
               (sum, item) => sum + Number(item.fraction || 0),
               0,
             );
-          pushTrade({
-            sid: "",
-            action: openTrade.action,
-            entry: openTrade.entry,
-            entry_fill: round(openTrade.entryFill),
-            sl: round(openTrade.initialSl),
-            tp: round(openTrade.tp),
+        pushTrade({
+          sid: "",
+          action: openTrade.action,
+          entry: openTrade.entry,
+          entry_fill: round(openTrade.entryFill),
+          sl: round(openTrade.initialSl),
+          tp1: round(openTrade.tp),
+          tp: round(openTrade.tp),
             created_at: toIsoFromUnixSeconds(openTrade.signalTime),
             opened_at: toIsoFromUnixSeconds(openTrade.openTime),
             closed_at: toIsoFromUnixSeconds(bar.time),
@@ -1242,6 +1306,7 @@ function simulateSignalStrategy(bars, strategy, signalResolver, options = {}) {
             entry: openTrade.entry,
             entry_fill: round(openTrade.entryFill),
             sl: round(openTrade.initialSl),
+            tp1: round(openTrade.tp),
             tp: round(openTrade.tp),
             created_at: toIsoFromUnixSeconds(openTrade.signalTime),
             opened_at: toIsoFromUnixSeconds(openTrade.openTime),
@@ -1921,6 +1986,10 @@ const RULE_FUNCTION_EVALUATORS = {
     strategyEventFunctions.evaluateNamedFunction("bias", args, ctx, evaluate),
   phase: (args, ctx, evaluate) =>
     strategyEventFunctions.evaluateNamedFunction("phase", args, ctx, evaluate),
+  price_action_sl: (args, ctx, evaluate) =>
+    strategyEventFunctions.evaluateNamedFunction("price_action_sl", args, ctx, evaluate),
+  price_action_tp: (args, ctx, evaluate) =>
+    strategyEventFunctions.evaluateNamedFunction("price_action_tp", args, ctx, evaluate),
   get_artifacts: (args, ctx, evaluate) =>
     strategyEventFunctions.evaluateNamedFunction("get_artifacts", args, ctx, evaluate),
   is_true: (args, ctx, evaluate) =>
@@ -2197,6 +2266,7 @@ function normalizeStrategyTradePlan(plan = {}, fallbackDirection = "buy") {
     type: String(base?.type || base?.order_type || "market").trim().toLowerCase() || "market",
     entry: normalizeStrategyTradePlanField(base?.entry ?? base?.entry_price),
     sl: normalizeStrategyTradePlanField(base?.sl ?? base?.stop_loss),
+    tp1: normalizeStrategyTradePlanField(base?.tp1 ?? base?.tp ?? base?.tp2 ?? base?.tp3),
     tp: normalizeStrategyTradePlanField(base?.tp ?? base?.tp1 ?? base?.tp2 ?? base?.tp3),
     rr: Number.isFinite(rrValue) ? rrValue : null,
   };
@@ -2396,15 +2466,45 @@ function resolveRuleIndicatorDefinition(indicator = {}, strategy = {}) {
 
 function simulateRuleBasedStrategy(bars, strategy, options = {}) {
   const indicators = {};
-  const strategyEvents = normalizeStrategyEventsForSimulation(strategy);
   const contextIndex = buildBacktestContextIndex(options, strategy);
   const normalizedTf = strategyEventFunctions.normalizeTfKey(
     options?.tf || strategy?.market?.tf || "",
   );
+  const strategyScanEngine = createStrategyScanEngine({
+    strategy,
+    scanMode: options?.scanMode || "backtest",
+    skipConditions: options?.skipConditions !== false,
+    tf: options?.tf || strategy?.market?.tf || "",
+    symbol: options?.symbol || strategy?.market?.symbol || "",
+    newsEvents: options?.newsEvents || options?.news_events || [],
+  });
+  if (!strategyScanEngine.isStrategyAllowed().allowed) {
+    return {
+      trades: [],
+      equity_curve: [],
+      summary: {
+        bars_analyzed: Array.isArray(bars) ? bars.length : 0,
+        total_trades: 0,
+        generated_signals: 0,
+        triggered_events: 0,
+        triggered_actions: 0,
+      },
+      event_log: [],
+    };
+  }
   const multiTfData =
     options?.multiTfData && typeof options.multiTfData === "object"
       ? options.multiTfData
       : {};
+  const barsByTfForEvaluation = {
+    [normalizedTf]: Array.isArray(bars) ? bars : [],
+  };
+  Object.entries(multiTfData || {}).forEach(([tfKey, item]) => {
+    const normalizedKey = strategyEventFunctions.normalizeTfKey(tfKey);
+    const tfBars = Array.isArray(item?.bars) ? item.bars : [];
+    if (!normalizedKey || !tfBars.length || normalizedKey === normalizedTf) return;
+    barsByTfForEvaluation[normalizedKey] = tfBars;
+  });
   const derivedArtifacts =
     Array.isArray(multiTfData?.[normalizedTf]?.derivedArtifacts)
       ? multiTfData[normalizedTf].derivedArtifacts
@@ -2412,6 +2512,24 @@ function simulateRuleBasedStrategy(bars, strategy, options = {}) {
           Array.isArray(bars) ? bars : [],
           normalizedTf,
         );
+  const evaluation = evaluateChartStrategies({
+    bars: Array.isArray(bars) ? bars : [],
+    strategies: [strategy],
+    lookbackBars: Array.isArray(bars) ? bars.length : 0,
+    symbol: String(options?.symbol || strategy?.market?.symbol || "").trim().toUpperCase(),
+    tf: options?.tf || strategy?.market?.tf || "",
+    multiTfBars: barsByTfForEvaluation,
+    scanMode: options?.scanMode || "backtest",
+    skipConditions: options?.skipConditions !== false,
+    newsEvents: options?.newsEvents || options?.news_events || [],
+  });
+  const hitsByBarIndex = new Map();
+  for (const hit of Array.isArray(evaluation?.matches) ? evaluation.matches : []) {
+    const barIndex = Number(hit?.barIndex);
+    if (!Number.isFinite(barIndex) || barIndex < 0) continue;
+    if (!hitsByBarIndex.has(barIndex)) hitsByBarIndex.set(barIndex, []);
+    hitsByBarIndex.get(barIndex).push(hit);
+  }
   const eventLog = [];
   for (const indicator of Array.isArray(strategy.indicators) ? strategy.indicators : []) {
     if (!indicator?.id) continue;
@@ -2453,22 +2571,52 @@ function simulateRuleBasedStrategy(bars, strategy, options = {}) {
       take_profit_short: strategy.rules?.take_profit_short,
       ctx,
     };
-    for (const event of strategyEvents) {
-      if (!event?.when) continue;
-      const ruleResult = evaluateRule(event.when, ctx);
-      if (!strategyEventFunctions.ruleResultTruthy(ruleResult)) continue;
-      for (const action of Array.isArray(event.actions) ? event.actions : []) {
-        applyEventActionToSignalState(signalState, action);
+    const hits = hitsByBarIndex.get(i) || [];
+    for (const hit of hits) {
+      const tradePlans = Array.isArray(hit?.tradePlans) ? hit.tradePlans : [];
+      let tradePlanCursor = 0;
+      for (const action of Array.isArray(hit?.actions) ? hit.actions : []) {
+        const actionKind = resolveStrategyActionKind(action);
+        const sharedTradePlan =
+          actionKind === "trade" ? tradePlans[tradePlanCursor++] || null : null;
+        if (sharedTradePlan) {
+          const normalizedTradePlan = normalizeStrategyTradePlan(
+            {
+              direction: sharedTradePlan.direction,
+              type: sharedTradePlan.type,
+              entry: sharedTradePlan.entry,
+              sl: sharedTradePlan.sl,
+              tp: sharedTradePlan.tp,
+            },
+            String(sharedTradePlan.direction || "").trim().toLowerCase() === "sell"
+              ? "sell"
+              : "buy",
+          );
+          applyEventActionToSignalState(signalState, {
+            ...action,
+            trade_plan: normalizedTradePlan,
+          });
+        }
         eventLog.push({
-          event_id: event.id,
-          event_name: event.name,
+          event_id: hit?.eventId || "",
+          event_name: hit?.eventName || "",
           action_id: action?.id || "",
-          action_type: resolveStrategyActionKind(action),
-          action: resolveStrategyActionKind(action),
-          trade_plan:
-            resolveStrategyActionKind(action) === "trade"
-              ? normalizeStrategyTradePlan(action?.trade_plan, "buy")
-              : null,
+          action_type: actionKind,
+          action: actionKind,
+          trade_plan: sharedTradePlan
+            ? normalizeStrategyTradePlan(
+                {
+                  direction: sharedTradePlan.direction,
+                  type: sharedTradePlan.type,
+                  entry: sharedTradePlan.entry,
+                  sl: sharedTradePlan.sl,
+                  tp: sharedTradePlan.tp,
+                },
+                String(sharedTradePlan.direction || "").trim().toLowerCase() === "sell"
+                  ? "sell"
+                  : "buy",
+              )
+            : null,
           message: action?.message || "",
           url: action?.url || "",
           method: action?.method || "",
@@ -2478,9 +2626,7 @@ function simulateRuleBasedStrategy(bars, strategy, options = {}) {
           bar_time_unix: Number(bars[i]?.time || 0),
           bar_time: toIsoFromUnixSeconds(bars[i]?.time),
           bar_close: round(Number(bars[i]?.close), 5),
-          artifacts: strategyEventFunctions.isArtifactResult(ruleResult)
-            ? ruleResult.matches
-            : [],
+          artifacts: Array.isArray(hit?.artifacts) ? hit.artifacts : [],
         });
       }
     }
@@ -2819,6 +2965,11 @@ async function runBacktest(userId, payload = {}) {
 
   const executionResult = simulateStrategy(bars, strategy, {
     ...payload,
+    scanMode: payload?.scan_mode || payload?.scanMode || "backtest",
+    skipConditions:
+      payload?.skip_conditions === undefined && payload?.skipConditions === undefined
+        ? true
+        : payload?.skip_conditions !== false && payload?.skipConditions !== false,
     direction: normalizedDirection,
     session: normalizedSession,
     brokerCalibration,
@@ -2859,6 +3010,294 @@ async function runBacktest(userId, payload = {}) {
     return result;
   }
   return persistBacktestResult(userId, result);
+}
+
+async function runBacktestBatch(userId, payload = {}) {
+  const requestedSymbols = normalizeSymbolList(
+    payload.symbols || payload.effective_symbols || [],
+  );
+  const requestedTimeframes = normalizeBatchTimeframes(
+    payload.timeframes || payload.tfs || payload.tf || DEFAULT_BATCH_TIMEFRAMES,
+  );
+  if (!requestedSymbols.length) {
+    throw new Error("At least one symbol is required");
+  }
+  if (!requestedTimeframes.length) {
+    throw new Error("At least one timeframe is required");
+  }
+
+  const requestedStrategyIds = [...new Set(
+    (Array.isArray(payload.strategy_ids) ? payload.strategy_ids : [])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
+  )];
+  const availableStrategies = await listAvailableStrategies(userId);
+  const strategies = requestedStrategyIds.length
+    ? availableStrategies.filter((item) =>
+        requestedStrategyIds.includes(String(item?.key || item?.id || "").trim()),
+      )
+    : availableStrategies;
+  if (!strategies.length) {
+    throw new Error("No strategies available for batch run");
+  }
+
+  const rows = [];
+  let completed = 0;
+  let failed = 0;
+  let totalTrades = 0;
+  let totalPnl = 0;
+  let totalR = 0;
+  let weightedWins = 0;
+  const combinedTrades = [];
+  const combinedEvents = [];
+  const firstBarTimes = [];
+  const lastBarTimes = [];
+  const barsAnalyzedValues = [];
+  const matrix = new Map();
+  const startedAt = new Date().toISOString();
+
+  for (const strategy of strategies) {
+    const strategyKey = String(strategy?.key || strategy?.id || "").trim();
+    for (const symbol of requestedSymbols) {
+      for (const tf of requestedTimeframes) {
+        try {
+          const result = await runBacktest(userId, {
+            ...payload,
+            persist: false,
+            symbol,
+            tf,
+            strategy_key: strategyKey,
+            strategy_id: strategyKey,
+            scan_mode: payload?.scan_mode || payload?.scanMode || "backtest",
+          });
+          const summary = result?.summary || {};
+          const rowTrades = Math.max(0, Number(summary?.total_trades || 0));
+          const rowWinRate = Number(summary?.win_rate_pct || 0);
+          const rowPnl = Number(summary?.total_pnl || 0);
+          const rowR = Number(summary?.total_r || 0);
+          const firstBarAt = String(summary?.first_bar_at || "").trim();
+          const lastBarAt = String(summary?.last_bar_at || "").trim();
+          const barsAnalyzed = Number(summary?.bars_analyzed || 0);
+          completed += 1;
+          totalTrades += rowTrades;
+          totalPnl += Number.isFinite(rowPnl) ? rowPnl : 0;
+          totalR += Number.isFinite(rowR) ? rowR : 0;
+          weightedWins += Number.isFinite(rowWinRate) ? (rowWinRate / 100) * rowTrades : 0;
+          if (firstBarAt) firstBarTimes.push(firstBarAt);
+          if (lastBarAt) lastBarTimes.push(lastBarAt);
+          if (Number.isFinite(barsAnalyzed) && barsAnalyzed > 0) {
+            barsAnalyzedValues.push(barsAnalyzed);
+          }
+          const comboKey = `${strategyKey}:${tf}`;
+          if (!matrix.has(comboKey)) {
+            matrix.set(comboKey, {
+              strategy_id: strategyKey,
+              strategy_name: String(strategy?.name || strategyKey || "Strategy").trim(),
+              tf,
+              total_trades: 0,
+              total_pnl: 0,
+              total_r: 0,
+              weighted_wins: 0,
+              completed: 0,
+              failed: 0,
+              symbols: new Set(),
+            });
+          }
+          const matrixCell = matrix.get(comboKey);
+          matrixCell.total_trades += rowTrades;
+          matrixCell.total_pnl += Number.isFinite(rowPnl) ? rowPnl : 0;
+          matrixCell.total_r += Number.isFinite(rowR) ? rowR : 0;
+          matrixCell.weighted_wins += Number.isFinite(rowWinRate) ? (rowWinRate / 100) * rowTrades : 0;
+          matrixCell.completed += 1;
+          matrixCell.symbols.add(symbol);
+          combinedTrades.push(
+            ...((Array.isArray(result?.trades) ? result.trades : []).map((trade) => ({
+              ...trade,
+              symbol,
+              tf,
+              timeframe: tf,
+              strategy_id: strategyKey,
+              strategy_key: strategyKey,
+              strategy_name: String(strategy?.name || strategyKey || "Strategy").trim(),
+              batch_combo_key: comboKey,
+            }))),
+          );
+          combinedEvents.push(
+            ...((Array.isArray(result?.events) ? result.events : []).map((event) => ({
+              ...event,
+              symbol,
+              tf,
+              timeframe: tf,
+              strategy_id: strategyKey,
+              strategy_key: strategyKey,
+              strategy_name: String(strategy?.name || strategyKey || "Strategy").trim(),
+              batch_combo_key: comboKey,
+            }))),
+          );
+          rows.push({
+            status: "completed",
+            strategy_id: strategyKey,
+            strategy_name: String(strategy?.name || strategyKey || "Strategy").trim(),
+            symbol,
+            tf,
+            total_trades: rowTrades,
+            win_rate_pct: Number.isFinite(rowWinRate) ? round(rowWinRate, 2) : 0,
+            total_pnl: Number.isFinite(rowPnl) ? round(rowPnl, 5) : 0,
+            total_r: Number.isFinite(rowR) ? round(rowR, 5) : 0,
+          });
+        } catch (error) {
+          failed += 1;
+          const comboKey = `${strategyKey}:${tf}`;
+          if (!matrix.has(comboKey)) {
+            matrix.set(comboKey, {
+              strategy_id: strategyKey,
+              strategy_name: String(strategy?.name || strategyKey || "Strategy").trim(),
+              tf,
+              total_trades: 0,
+              total_pnl: 0,
+              total_r: 0,
+              weighted_wins: 0,
+              completed: 0,
+              failed: 0,
+              symbols: new Set(),
+            });
+          }
+          matrix.get(comboKey).failed += 1;
+          rows.push({
+            status: "failed",
+            strategy_id: strategyKey,
+            strategy_name: String(strategy?.name || strategyKey || "Strategy").trim(),
+            symbol,
+            tf,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }
+  }
+
+  combinedTrades.sort(compareBatchTradeAsc);
+  combinedEvents.sort(compareBatchEventAsc);
+
+  const firstBarAt = firstBarTimes
+    .map((value) => toTimestampMs(value))
+    .filter((value) => Number.isFinite(value))
+    .sort((a, b) => a - b)[0];
+  const lastBarAt = lastBarTimes
+    .map((value) => toTimestampMs(value))
+    .filter((value) => Number.isFinite(value))
+    .sort((a, b) => b - a)[0];
+  const matrixRows = strategies.map((strategy) => {
+    const strategyKey = String(strategy?.key || strategy?.id || "").trim();
+    const cells = requestedTimeframes.map((tf) => {
+      const cell = matrix.get(`${strategyKey}:${tf}`) || null;
+      const cellTrades = Number(cell?.total_trades || 0);
+      const weightedWinRate = cellTrades
+        ? round((Number(cell?.weighted_wins || 0) / cellTrades) * 100, 2)
+        : 0;
+      return {
+        tf,
+        completed: Number(cell?.completed || 0),
+        failed: Number(cell?.failed || 0),
+        total_trades: cellTrades,
+        total_pnl: round(Number(cell?.total_pnl || 0), 5) || 0,
+        total_r: round(Number(cell?.total_r || 0), 5) || 0,
+        win_rate_pct: weightedWinRate,
+        symbols: Array.from(cell?.symbols || []),
+      };
+    });
+    return {
+      strategy_id: strategyKey,
+      strategy_name: String(strategy?.name || strategyKey || "Strategy").trim(),
+      cells,
+    };
+  });
+  const combinedWins = combinedTrades.filter((trade) => trade?.result === "win").length;
+  const combinedLosses = combinedTrades.filter((trade) => trade?.result === "loss").length;
+  const combinedFlats = combinedTrades.filter((trade) => trade?.result === "flat").length;
+
+  const summary = {
+    bars_analyzed: barsAnalyzedValues.length ? Math.max(...barsAnalyzedValues) : 0,
+    total_trades: totalTrades,
+    generated_signals: totalTrades,
+    wins: combinedWins,
+    losses: combinedLosses,
+    flats: combinedFlats,
+    win_rate_pct: totalTrades ? round((weightedWins / totalTrades) * 100, 2) : 0,
+    total_pnl: round(totalPnl, 5),
+    average_pnl: totalTrades ? round(totalPnl / totalTrades, 5) : 0,
+    total_r: round(totalR, 5),
+    average_r: totalTrades ? round(totalR / totalTrades, 5) : 0,
+    strategy_key:
+      strategies.length === 1 ? String(strategies[0]?.key || strategies[0]?.id || "batch_mix").trim() : "batch_mix",
+    strategy_id:
+      strategies.length === 1 ? String(strategies[0]?.id || strategies[0]?.key || "batch_mix").trim() : "batch_mix",
+    strategy_name:
+      strategies.length === 1
+        ? String(strategies[0]?.name || strategies[0]?.key || "Strategy").trim()
+        : `${strategies.length} Strategies Mixed`,
+    first_bar_at: firstBarAt ? new Date(firstBarAt).toISOString() : null,
+    last_bar_at: lastBarAt ? new Date(lastBarAt).toISOString() : null,
+  };
+  const completedAt = new Date().toISOString();
+  const batchRunId = makeRunId();
+  const run = {
+    run_id: batchRunId,
+    user_id: userId,
+    symbol: requestedSymbols.length === 1 ? requestedSymbols[0] : "MULTI",
+    tf: requestedTimeframes.length === 1 ? requestedTimeframes[0] : "multi",
+    limit: Number(payload?.limit) === 0 ? 0 : Math.max(0, Number(payload?.limit || 0)),
+    direction: normalizeBacktestDirection(payload.direction, "all"),
+    session: normalizeBacktestSession(payload.session, "Any"),
+    one_r_value: asFiniteNumber(payload.one_r_value, null),
+    status: "completed",
+    strategy_key: summary.strategy_key,
+    strategy_id: summary.strategy_id,
+    strategy_name: summary.strategy_name,
+    started_at: startedAt,
+    completed_at: completedAt,
+    updated_at: completedAt,
+    ephemeral: true,
+    batch_mix: true,
+    selection: {
+      symbols: requestedSymbols,
+      timeframes: requestedTimeframes,
+      strategy_ids: strategies.map((item) => String(item?.key || item?.id || "").trim()),
+    },
+    summary,
+  };
+
+  return {
+    ok: true,
+    run,
+    summary,
+    trades: combinedTrades,
+    events: combinedEvents,
+    strategies: await listAvailableStrategies(userId),
+    report: {
+      generated_at: new Date().toISOString(),
+      selection: {
+        symbols: requestedSymbols,
+        timeframes: requestedTimeframes,
+        strategy_ids: strategies.map((item) => String(item?.key || item?.id || "").trim()),
+      },
+      matrix_timeframes: requestedTimeframes,
+      matrix_rows: matrixRows,
+      totals: {
+        strategies: strategies.length,
+        symbols: requestedSymbols.length,
+        timeframes: requestedTimeframes.length,
+        combinations: strategies.length * requestedSymbols.length * requestedTimeframes.length,
+        completed,
+        failed,
+        total_trades: totalTrades,
+        total_pnl: round(totalPnl, 5),
+        total_r: round(totalR, 5),
+        weighted_win_rate_pct: totalTrades ? round((weightedWins / totalTrades) * 100, 2) : 0,
+      },
+      rows,
+    },
+  };
 }
 
 async function listBacktestRuns(userId) {
@@ -2940,6 +3379,7 @@ module.exports = {
   listStrategies,
   listAvailableStrategies,
   runBacktest,
+  runBacktestBatch,
   persistBacktestResult,
   listBacktestRuns,
   getBacktestRun,

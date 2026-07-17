@@ -4,6 +4,7 @@
   "kind": "preset",
   "description": "Aligns fast, medium, and slow EMAs to ride trend continuation phases.",
   "engine_version": "42trade.strategy.v2",
+  "status": "active",
   "params": {
     "fast_period": 8,
     "mid_period": 21,
@@ -134,5 +135,9 @@
     "fallback_stop_pct": 0.001,
     "fallback_tp_pct": 0.002
   },
-  "min_bars": 80
+  "min_bars": 80,
+  "conditions": {
+    "skip_news": true,
+    "news_window_minutes": 120
+  }
 }

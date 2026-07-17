@@ -46,13 +46,58 @@ function extractMessageText(message = {}) {
   return "";
 }
 
+function normalizeFilePart(part = {}) {
+  const mediaType = String(part?.mediaType || "application/octet-stream")
+    .trim()
+    .toLowerCase();
+  const url = String(part?.url || "").trim();
+  if (!url) return null;
+  return {
+    type: "file",
+    mediaType,
+    filename: String(part?.filename || "").trim(),
+    url,
+    size: Number(part?.size || 0) || undefined,
+  };
+}
+
+function normalizeMessageParts(message = {}) {
+  if (Array.isArray(message?.parts)) {
+    return message.parts
+      .map((part) => {
+        if (!part || typeof part !== "object") return null;
+        if (part.type === "text" || part.type === "reasoning") {
+          const text = String(part.text || "").trim();
+          return text ? { type: "text", text } : null;
+        }
+        if (part.type === "file") {
+          return normalizeFilePart(part);
+        }
+        return null;
+      })
+      .filter(Boolean);
+  }
+  if (Array.isArray(message?.content)) {
+    return normalizeMessageParts({ parts: message.content });
+  }
+  if (Array.isArray(message?.files)) {
+    return message.files.map((part) => normalizeFilePart(part)).filter(Boolean);
+  }
+  const text = extractMessageText(message);
+  return text ? [{ type: "text", text }] : [];
+}
+
 function normalizeIncomingChatMessages(messages = []) {
   const items = Array.isArray(messages) ? messages : [];
   return items
-    .map((message) => ({
-      role: normalizeRole(message?.role),
-      content: extractMessageText(message),
-    }))
+    .map((message) => {
+      const parts = normalizeMessageParts(message);
+      return {
+        role: normalizeRole(message?.role),
+        content: extractTextFromParts(parts),
+        parts,
+      };
+    })
     .filter((message) => message.content);
 }
 

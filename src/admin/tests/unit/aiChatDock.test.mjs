@@ -13,3 +13,11 @@ test("AiChatDock defaults the chat mode selector to Codex", () => {
     /const \[selectedMode,\s*setSelectedMode\] = useState\("codex"\);/,
   );
 });
+
+test("AiChatDock exposes attachment controls and preview actions", () => {
+  assert.match(aiChatDockSource, /const CHAT_ATTACHMENT_ACCEPT =/);
+  assert.match(aiChatDockSource, /Attach/);
+  assert.match(aiChatDockSource, /Long text/);
+  assert.match(aiChatDockSource, /Preview/);
+  assert.match(aiChatDockSource, /Download/);
+});

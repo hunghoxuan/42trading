@@ -1,61 +1,34 @@
-export const SYSTEM_SYMBOL_GROUP_PRESETS = {
-  forex: [
-    "EURUSD",
-    "GBPUSD",
-    "USDJPY",
-    "AUDUSD",
-    "NZDUSD",
-    "USDCAD",
-    "USDCHF",
-    "EURGBP",
-    "EURJPY",
-    "GBPJPY",
-    "AUDJPY",
-    "CADJPY",
-    "AUDNZD",
-    "AUDCAD",
-    "GBPCAD",
-    "EURAUD",
-    "EURCHF",
-    "GBPCHF",
-  ],
-  indices: ["US30", "US100", "US500", "DE40", "UK100", "FR40", "JP225", "HK50"],
-  metals: ["XAUUSD", "XAGUSD", "XPTUSD", "XPDUSD", "XAUAUD", "XAGAUD"],
-  crypto: [
-    "BTCUSD",
-    "ETHUSD",
-    "XRPUSD",
-    "SOLUSD",
-    "ADAUSD",
-    "DOGEUSD",
-    "LTCUSD",
-    "DOTUSD",
-    "BCHUSD",
-    "LINKUSD",
-    "AVAXUSD",
-    "MATICUSD",
-  ],
-};
+import symbolGroupsConfig from "./symbolGroups.json";
 
-export const SYSTEM_SYMBOL_GROUP_LABELS = {
+export const SYMBOL_GROUPS_CONFIG = symbolGroupsConfig;
+
+export const SYSTEM_SYMBOL_GROUP_PRESETS = Object.freeze(
+  Object.fromEntries(
+    (symbolGroupsConfig.groups || []).map((group) => [group.id, [...new Set(group.symbols || [])]]),
+  ),
+);
+
+export const SYSTEM_SYMBOL_GROUP_LABELS = Object.freeze({
   "system:watchlist": "Watchlist",
   "system:all": "All",
-  "system:forex": "Forex",
-  "system:indices": "Indices",
-  "system:metals": "Metals",
-  "system:crypto": "Crypto",
-};
+  ...Object.fromEntries(
+    (symbolGroupsConfig.groups || []).map((group) => [`system:${group.id}`, group.name || group.id]),
+  ),
+});
 
-export const SYSTEM_SYMBOL_GROUP_ORDER = [
+export const SYSTEM_SYMBOL_GROUP_ORDER = Object.freeze([
   "system:watchlist",
   "system:all",
-  "system:forex",
-  "system:indices",
-  "system:metals",
-  "system:crypto",
-];
+  ...(symbolGroupsConfig.groups || []).map((group) => `system:${group.id}`),
+]);
 
 export const RESERVED_SYMBOL_GROUP_IDS = new Set(["watchlist"]);
+
+const LEGACY_SYSTEM_GROUP_ALIASES = Object.freeze({
+  precious_metals: "metals",
+  agricultural: "grains",
+  agriculture: "grains",
+});
 
 export function normalizeSymbol(value) {
   return String(value || "")
@@ -184,8 +157,9 @@ export function normalizeCronSymbolGroupValue(value) {
   if (raw === "watchlist") return "system:watchlist";
   if (raw === "newslist") return "system:watchlist";
   if (raw === "all") return "system:all";
-  if (["forex", "indices", "metals", "crypto"].includes(raw)) {
-    return `system:${raw}`;
+  const alias = LEGACY_SYSTEM_GROUP_ALIASES[raw] || raw;
+  if (Object.prototype.hasOwnProperty.call(SYSTEM_SYMBOL_GROUP_PRESETS, alias)) {
+    return `system:${alias}`;
   }
   if (raw.startsWith("system:") || raw.startsWith("custom:")) return raw;
   return encodeCustomSymbolGroupValue(raw);
@@ -199,10 +173,14 @@ export function getSymbolGroupSymbols(data, value, allSymbols = []) {
     return getWatchlistGroup(data)?.symbols || [];
   }
   if (normalized.startsWith("system:")) {
-    const presetKey = normalized.slice(7);
+    const presetKey = LEGACY_SYSTEM_GROUP_ALIASES[normalized.slice(7)] || normalized.slice(7);
     return normalizeSymbolList(SYSTEM_SYMBOL_GROUP_PRESETS[presetKey] || []);
   }
   const customId = decodeCustomSymbolGroupValue(normalized);
   const group = normalizeSymbolGroupsData(data).groups.find((item) => item.id === customId);
   return normalizeSymbolList(group?.symbols || []);
+}
+
+export function getSymbolCatalogEntry(key) {
+  return SYMBOL_GROUPS_CONFIG?.symbols?.[String(key || "").trim().toUpperCase()] || null;
 }

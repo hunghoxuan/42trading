@@ -4,24 +4,26 @@
 
 Provider:
 
-- existing object-store SQLite provider
+- universal-store facade backed by SQLite or Postgres adapters
 
-SQLite location:
+SQLite demo / local adapter location:
 
-- shared `42trade` object-store layout under `data/users/.../object_store.db`
-- 42Pay records are stored under the logical scope `__42pay__`
+- `.local/universal-store.sqlite` or environment-specific adapter path
 
-Internal physical table:
+Primary physical tables:
 
-- `object_store`
+- `object_entities`
+- `object_links`
+- `object_journal`
+- `object_processes`
 
-42Pay uses logical object types instead of new hard SQL tables. This keeps the storage implementation aligned with the current `42trade` repository patterns while preserving the requested product / offer / order design.
+42Pay uses logical entity types in the universal-store tables instead of adding many dedicated SQL tables.
 
 ## Logical Tables
 
 ### `products`
 
-Stored as object type: `42pay_products`
+Stored as `object_entities.entity_type = 42pay_products`
 
 Fields:
 
@@ -46,7 +48,7 @@ Notes:
 
 ### `product_offers`
 
-Stored as object type: `42pay_product_offers`
+Stored as `object_entities.entity_type = 42pay_product_offers`
 
 Fields:
 
@@ -76,7 +78,7 @@ Notes:
 
 ### `product_orders`
 
-Stored as object type: `42pay_product_orders`
+Stored as `object_entities.entity_type = 42pay_product_orders`
 
 Fields:
 
@@ -101,15 +103,13 @@ Notes:
 - `profit` is currently used as the seller revenue-before-tax figure from the selected offer
 - `metadata` stores `seller_id`, `product_id`, payment method, and original QR payload
 
-## Suggested Future Expansion
+## Universal-Store Notes
 
-When 42Pay needs stronger relational guarantees, the next evolution can lift these logical tables into dedicated Drizzle-managed SQLite tables:
+42Pay records should use governance columns in `object_entities`:
 
-- `pay42_products`
-- `pay42_product_offers`
-- `pay42_product_orders`
-- `pay42_payments`
-- `pay42_refunds`
-- `pay42_inventory_reservations`
+- `scope_type = TENANT` for tenant-owned catalog/order rows
+- `scope_module = 42pay`
+- `visibility = PRIVATE`, `TENANT`, or `PUBLIC` depending on page exposure
+- `access_level` to distinguish owner-only vs tenant-visible records
 
-For the initial release, the object-store model keeps the implementation faster, lower-risk, and easier to ship inside the existing application.
+Wallet identity and current balance snapshots live in `object_entities`, while wallet movement history belongs in `object_journal`.

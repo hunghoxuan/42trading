@@ -108,6 +108,12 @@ function createConfigStore(options = {}) {
     async saveRuleVariables(value) {
       return saveFileBackedDocument("root", "ruleVariables", value);
     },
+    async getHealth(options = {}) {
+      return loadFileBackedDocument("root", "health", options);
+    },
+    async saveHealth(value) {
+      return saveFileBackedDocument("root", "health", value);
+    },
     async getStrategyFunctions(options = {}) {
       return loadFileBackedDocument("root", "strategyFunctions", options);
     },
@@ -128,7 +134,9 @@ function createConfigStore(options = {}) {
     },
     async listStrategies(options = {}) {
       const keys = await listStrategyKeys();
-      return Promise.all(keys.map((key) => this.getStrategy(key, options)));
+      return Promise.all(
+        keys.map((key) => this.getStrategy(key, { ...options, refresh: true })),
+      );
     },
   };
 }

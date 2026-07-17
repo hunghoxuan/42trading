@@ -7,6 +7,7 @@ import TradeSignalChart from "../TradeSignalChart";
 import ChartSVG from "./ChartSVG";
 import TradingViewLoginModal from "../modals/TradingViewLoginModal";
 import ImageViewer from "../../../../shared/components/ImageViewer";
+import BooleanButton from "../../../../shared/components/BooleanButton";
 import GroupButtons from "../../../../shared/components/GroupButtons";
 import ResponsivePanel from "../../../../shared/components/ResponsivePanel";
 import { StatusDisplay } from "../../../../shared/components/StatusBadge";
@@ -38,7 +39,14 @@ import {
   resolveTradeFetchEndTimeSec,
   resolveTradeViewportEndTimeSec,
 } from "../../../../shared/utils/tradeAnchor";
-import { evaluateChartStrategies } from "../../../../shared/utils/chartStrategyChecks";
+import {
+  collectContextualStrategyTradePlans,
+  evaluateChartStrategies,
+} from "../../../../shared/utils/chartStrategyChecks";
+import {
+  mergeStrategiesById,
+  normalizeStrategyCatalog,
+} from "../../../../shared/utils/strategyCatalog";
 import {
   buildClientChartArtifactEnvelope,
   buildClientChartMultiTfAnalysis,
@@ -48,6 +56,9 @@ import {
   normalizeHybridTradePlans,
   updateClientReplayArtifactEngineState,
 } from "../../chartArtifacts/clientChartAnalysis.js";
+import {
+  buildSuggestedTradeLevels as sharedBuildSuggestedTradeLevels,
+} from "../../../../shared/utils/suggestedTradeLevels.js";
 
 const BASE_MODES = ["live", "cache", "svg"];
 const REPLAY_MODE = "replay";
@@ -56,6 +67,7 @@ const HISTORY_BARS_ACTION_COUNT = 2000;
 const MAX_HISTORY_BARS = 20000;
 const SYMBOL_CHART_MIN_LOADED_BARS = 5000;
 const POST_LOAD_RECENTER_VISIBLE_BARS = 1500;
+const MANUAL_VIEWPORT_SUPPRESS_MS = 12000;
 const MODE_LABELS = {
   live: "Live",
   cache: "Chart",
@@ -71,12 +83,11 @@ const GENERIC_REPLAY_SPEED_OPTIONS = [
   { value: 5000, label: "5s" },
 ];
 const LAYERS_TAB_ITEMS = [
-  { value: "chart", label: "Charts" },
-  { value: "artifacts", label: "Artifacts" },
-  { value: "events", label: "Events" },
-  { value: "momentum", label: "Momentum" },
-  { value: "trend", label: "Trend" },
-  { value: "debug", label: "Debug" },
+  { value: "chart", label: <LayersTabChartIcon />, title: "Charts" },
+  { value: "artifacts", label: <LayersTabArtifactsIcon />, title: "Artifacts" },
+  { value: "events", label: <LayersTabEventsIcon />, title: "Events" },
+  { value: "momentum", label: <LayersTabMomentumIcon />, title: "Momentum" },
+  { value: "trend", label: <LayersTabTrendIcon />, title: "Trend" },
 ];
 const STATUS_COLORS = {
   IDLE: "var(--muted)",
@@ -105,6 +116,132 @@ const LIVE_DEBUG_CRYPTO_PREFIXES = [
   "TON",
   "SHIB",
 ];
+const EVENT_PANEL_CATALOG = [
+  { eventKey: "ENG", direction: "sell" },
+  { eventKey: "PIN", direction: "sell" },
+  { eventKey: "INSI", direction: "neutral" },
+  { eventKey: "OUTS", direction: "neutral" },
+  { eventKey: "BOS", direction: "buy" },
+  { eventKey: "CH", direction: "sell" },
+  { eventKey: "SW", direction: "sell" },
+  { eventKey: "SH", direction: "sell" },
+  { eventKey: "SL", direction: "buy" },
+  { eventKey: "DIV", direction: "neutral" },
+  { eventKey: "REJ", direction: "neutral" },
+  { eventKey: "BRK", direction: "neutral" },
+];
+const LAYER_BOOLEAN_GRID_STYLE = {
+  display: "grid",
+  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+  gap: 6,
+};
+
+function LayerBooleanGrid({ items = [] }) {
+  return (
+    <div style={LAYER_BOOLEAN_GRID_STYLE}>
+      {(Array.isArray(items) ? items : []).map((item) => (
+        <BooleanButton
+          key={item.key}
+          checked={item.checked}
+          onChange={item.onChange}
+          label={item.label}
+          description={item.description}
+          count={item.count}
+          tone={item.tone}
+          title={item.title}
+          mode="toggle_button"
+          compact
+        />
+      ))}
+    </div>
+  );
+}
+let SYMBOL_CHART_STRATEGY_CACHE = null;
+let SYMBOL_CHART_STRATEGY_CACHE_PROMISE = null;
+let SYMBOL_CHART_NEWS_CACHE = null;
+let SYMBOL_CHART_NEWS_CACHE_PROMISE = null;
+let SYMBOL_CHART_NEWS_CACHE_AT = 0;
+const SYMBOL_CHART_STRATEGY_SCAN_CACHE = new Map();
+const SYMBOL_CHART_STRATEGY_SCAN_CACHE_TTL_MS = 5 * 60 * 1000;
+
+async function loadSymbolChartStrategyCache() {
+  if (Array.isArray(SYMBOL_CHART_STRATEGY_CACHE)) {
+    return SYMBOL_CHART_STRATEGY_CACHE;
+  }
+  if (SYMBOL_CHART_STRATEGY_CACHE_PROMISE) {
+    return SYMBOL_CHART_STRATEGY_CACHE_PROMISE;
+  }
+  SYMBOL_CHART_STRATEGY_CACHE_PROMISE = api
+    .listStrategies()
+    .then((response) => {
+      const items = normalizeStrategyCatalog(response?.items);
+      const next = items.filter((item) => {
+        const status = String(item?.status || "").trim().toLowerCase();
+        return status !== "archived";
+      });
+      SYMBOL_CHART_STRATEGY_CACHE = next;
+      return next;
+    })
+    .finally(() => {
+      SYMBOL_CHART_STRATEGY_CACHE_PROMISE = null;
+    });
+  return SYMBOL_CHART_STRATEGY_CACHE_PROMISE;
+}
+
+async function loadSymbolChartNewsCache() {
+  if (
+    Array.isArray(SYMBOL_CHART_NEWS_CACHE) &&
+    Number.isFinite(SYMBOL_CHART_NEWS_CACHE_AT) &&
+    Date.now() - SYMBOL_CHART_NEWS_CACHE_AT < SYMBOL_CHART_STRATEGY_SCAN_CACHE_TTL_MS
+  ) {
+    return SYMBOL_CHART_NEWS_CACHE;
+  }
+  if (SYMBOL_CHART_NEWS_CACHE_PROMISE) {
+    return SYMBOL_CHART_NEWS_CACHE_PROMISE;
+  }
+  SYMBOL_CHART_NEWS_CACHE_PROMISE = api
+    .calendarWeek()
+    .then((response) => {
+      const events = Array.isArray(response?.events) ? response.events : [];
+      SYMBOL_CHART_NEWS_CACHE = events;
+      SYMBOL_CHART_NEWS_CACHE_AT = Date.now();
+      return events;
+    })
+    .catch(() => {
+      if (Array.isArray(SYMBOL_CHART_NEWS_CACHE)) return SYMBOL_CHART_NEWS_CACHE;
+      return [];
+    })
+    .finally(() => {
+      SYMBOL_CHART_NEWS_CACHE_PROMISE = null;
+    });
+  return SYMBOL_CHART_NEWS_CACHE_PROMISE;
+}
+
+function resolveContextMenuTf(ctxMenu = null, activeChartId = "") {
+  const rawTf =
+    ctxMenu?.interval ||
+    ctxMenu?.tf ||
+    String(ctxMenu?.chartId || activeChartId || "")
+      .split("-")
+      .slice(-1)[0];
+  return String(rawTf || "").trim().toLowerCase();
+}
+
+function resolveTradesNamespaceBase(pathname = "") {
+  const path = String(pathname || "").trim().toLowerCase();
+  return "/trades";
+}
+
+function buildContextStrategyScanCacheKey({ symbol = "", tf = "", tfSet = [] } = {}) {
+  const normalizedSymbol = String(symbol || "").trim().toUpperCase();
+  const normalizedTf = String(tf || "").trim().toLowerCase();
+  const normalizedTfSet = [...new Set((Array.isArray(tfSet) ? tfSet : []).map((item) =>
+    String(item || "").trim().toLowerCase(),
+  ).filter(Boolean))].sort();
+  const timeBucket = Math.floor(Date.now() / SYMBOL_CHART_STRATEGY_SCAN_CACHE_TTL_MS);
+  return [normalizedSymbol, normalizedTf, normalizedTfSet.join(","), timeBucket].join("|");
+}
+
 const INDICATOR_GROUPS = [
   {
     label: "MOMENTUM",
@@ -213,6 +350,8 @@ function resolveAnalysisTargetVisual(entry = {}) {
   const bias = String(entry?.bias || "").trim().toLowerCase();
   const trend = String(entry?.trend || "").trim().toLowerCase();
   const rangeMode = String(entry?.phase_target?.range_mode || "").trim().toLowerCase();
+  const phaseTargetKind = String(entry?.phase_target?.kind || "").trim().toLowerCase();
+  if (phaseTargetKind === "range" || rangeMode === "surrounding_bounds") return null;
   const anchorPrice = Number(entry?.phase_target?.anchor_price);
   const explicitTargetPrice = Number(entry?.phase_target?.target_price);
   const low = Number(entry?.phase_target?.low);
@@ -494,18 +633,18 @@ function RealtimeTfAnalysisOverlay({
     <div
       style={{
         position: "absolute",
-        top: 44,
+        top: 6,
         left: 8,
         zIndex: 11,
         pointerEvents: "auto",
         display: "flex",
         flexDirection: "column",
-        gap: 3,
-        minWidth: 124,
-        padding: "6px 7px",
-        borderRadius: 7,
+        gap: 1,
+        minWidth: 110,
+        padding: "1px 2px",
+        borderRadius: 0,
         background: "transparent",
-        border: "1px solid rgba(148, 163, 184, 0.26)",
+        border: "none",
         boxShadow: "none",
         backdropFilter: "none",
       }}
@@ -519,17 +658,21 @@ function RealtimeTfAnalysisOverlay({
         const trendTooltip = buildTrendTooltip(entry, tf);
         const phaseTooltip = buildPhaseTooltip(entry, tf);
         const phaseTargetVisual = resolveAnalysisTargetVisual(entry);
-        const recentEvent = recentEventsByTf?.[tf] || null;
+        const recentEvents = Array.isArray(recentEventsByTf?.[tf])
+          ? recentEventsByTf[tf]
+          : recentEventsByTf?.[tf]
+            ? [recentEventsByTf[tf]]
+            : [];
         return (
           <div
             key={tf}
             style={{
               display: "grid",
-              gridTemplateColumns: "22px auto",
+              gridTemplateColumns: "18px auto",
               alignItems: "center",
-              gap: 3,
+              gap: 2,
               fontSize: 10,
-              lineHeight: 1.1,
+              lineHeight: 1,
               color: isActive ? "#f8fafc" : "rgba(226, 232, 240, 0.94)",
               fontWeight: isActive ? 700 : 600,
             }}
@@ -546,15 +689,16 @@ function RealtimeTfAnalysisOverlay({
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "flex-start",
-                gap: 4,
+                gap: 2,
+                flexWrap: "wrap",
               }}
             >
               <span
                 style={{
                   color: accent,
                   borderRadius: 999,
-                  padding: "1px 5px",
-                  letterSpacing: 0.15,
+                  padding: "0 3px",
+                  letterSpacing: 0.1,
                   background: `${accent}12`,
                   cursor: "help",
                   pointerEvents: "auto",
@@ -569,12 +713,12 @@ function RealtimeTfAnalysisOverlay({
                   style={{
                     color: phaseTargetVisual.tone,
                     borderRadius: 999,
-                    padding: "1px 5px",
-                    letterSpacing: 0.12,
+                    padding: "0 3px",
+                    letterSpacing: 0.08,
                     fontVariantNumeric: "tabular-nums",
                     display: "inline-flex",
                     alignItems: "center",
-                    gap: 4,
+                    gap: 2,
                     background: "transparent",
                   }}
                   title={phaseTooltip}
@@ -585,18 +729,19 @@ function RealtimeTfAnalysisOverlay({
                   {phaseTargetVisual.text}
                 </span>
               ) : null}
-              {recentEvent?.markerText ? (
+              {recentEvents.map((recentEvent, index) => (
                 <span
+                  key={`${tf}-${recentEvent.markerText}-${recentEvent.eventTime || index}`}
                   style={{
                     color: recentEvent.color,
-                    border: `1px solid ${recentEvent.color}55`,
+                    border: "none",
                     borderRadius: 999,
-                    padding: "1px 5px",
-                    letterSpacing: 0.12,
+                    padding: "0 3px",
+                    letterSpacing: 0.08,
                     fontVariantNumeric: "tabular-nums",
                     display: "inline-flex",
                     alignItems: "center",
-                    gap: 4,
+                    gap: 2,
                     background: `${recentEvent.color}12`,
                   }}
                   title={recentEvent.title}
@@ -610,7 +755,7 @@ function RealtimeTfAnalysisOverlay({
                   </span>
                   {recentEvent.markerText}
                 </span>
-              ) : null}
+              ))}
             </span>
           </div>
         );
@@ -1063,6 +1208,13 @@ function formatHeaderTimeExact(ts) {
   }
 }
 
+function tradeMatchesTimeframe(trade = {}, tf = "") {
+  const chartTf = displayTfLabel(tf);
+  const tradeTf = displayTfLabel(trade?.tf || trade?.timeframe || "");
+  if (!chartTf || !tradeTf) return false;
+  return chartTf === tradeTf;
+}
+
 function buildHeaderRangeLabel(startMs, endMs, barsCount, prefix) {
   const safeBars = Number(barsCount);
   const hasBars = Number.isFinite(safeBars) && safeBars > 0;
@@ -1260,6 +1412,49 @@ function LayersIcon({ size = 14 }) {
         strokeLinecap="round"
         strokeLinejoin="round"
       />
+    </svg>
+  );
+}
+
+function LayersTabChartIcon() {
+  return <span style={{ fontSize: 11, fontWeight: 800, lineHeight: 1 }}>◫</span>;
+}
+
+function LayersTabArtifactsIcon() {
+  return <span style={{ fontSize: 11, fontWeight: 800, lineHeight: 1 }}>◇</span>;
+}
+
+function LayersTabEventsIcon() {
+  return <span style={{ fontSize: 11, fontWeight: 800, lineHeight: 1 }}>✦</span>;
+}
+
+function LayersTabMomentumIcon() {
+  return <span style={{ fontSize: 11, fontWeight: 800, lineHeight: 1 }}>∿</span>;
+}
+
+function LayersTabTrendIcon() {
+  return <span style={{ fontSize: 11, fontWeight: 800, lineHeight: 1 }}>↗</span>;
+}
+
+function SaveConfigIcon({ size = 13 }) {
+  const iconSize = Math.max(10, Number(size) || 13);
+  return (
+    <svg
+      width={iconSize}
+      height={iconSize}
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M3 2.5H10.8L13 4.7V13.5H3V2.5Z"
+        stroke="currentColor"
+        strokeWidth="1.1"
+        strokeLinejoin="round"
+      />
+      <path d="M5 2.8H9.2V5.8H5V2.8Z" stroke="currentColor" strokeWidth="1.1" />
+      <path d="M5.2 10.1H10.8" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+      <path d="M5.2 12H10.8" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
     </svg>
   );
 }
@@ -1851,10 +2046,11 @@ function artifactTypeAbbr(typeRaw = "") {
   }
   if (type === "swing_low") return "SL";
   if (type === "swing_high") return "SH";
-  if (type === "liquidity_low") return "LL";
-  if (type === "liquidity_high") return "LH";
+  if (type === "liquidity_low") return "SSL";
+  if (type === "liquidity_high") return "BSL";
   if (type === "support") return "SUP";
   if (type === "demand") return "DEM";
+  if (type === "supply") return "SPLY";
   if (type === "pdh") return "PDH";
   if (type === "pdl") return "PDL";
   if (type === "fvg") return "FVG";
@@ -1929,6 +2125,10 @@ function artifactInlineLabel(item = {}, fallbackTf = "") {
   ) {
     return "";
   }
+  const groupKey = artifactGroupKeyForItem(item);
+  if (groupKey === "fvg" || groupKey === "ifvg" || groupKey === "bb" || groupKey === "ob") {
+    return artifactTypeAbbr(artifactDisplayTypeKey(item));
+  }
   const type = artifactTypeAbbr(artifactDisplayTypeKey(item));
   return type;
 }
@@ -1988,34 +2188,55 @@ function artifactEventSourceAbbr(item = {}) {
 
 function artifactMarkerText(item = {}) {
   const eventKey = String(item?.event_key || "").trim().toLowerCase();
-  if (eventKey === "reject") {
-    const source = artifactEventSourceAbbr(item);
-    return source ? `REJ ${source}` : "REJ";
-  }
-  if (eventKey === "breakout") {
-    const source = artifactEventSourceAbbr(item);
-    return source ? `BRK ${source}` : "BRK";
-  }
+  if (eventKey === "reject") return "REJ";
+  if (eventKey === "breakout") return "BRK";
   const type = artifactDisplayTypeKey(item);
   if (type === "bos") return "BOS";
   if (type === "choch") return "CH";
   if (type === "sweep_high" || type === "sweep_low") return "SW";
   if (type === "inside_bar") return "INSI";
   if (type === "outside_bar") return "OUTS";
+  if (type === "liquidity_high") return "BSL";
+  if (type === "liquidity_low") return "SSL";
+  if (type === "hh" || type === "hl" || type === "lh" || type === "ll") {
+    return type.toUpperCase();
+  }
+  if (type === "swing_high_event") return "SH";
+  if (type === "swing_low_event") return "SL";
   if (type === "bullish_divergence" || type === "bearish_divergence" || type === "divergence") {
     return "DIV";
   }
   return artifactTypeAbbr(type).slice(0, 4).toUpperCase();
 }
 
-const DEFAULT_HIDDEN_SIGNAL_EVENT_KEYS = new Set(["INSI", "OUTS", "LH", "LL"]);
+function isTrueSignalEventItem(item = {}) {
+  if (!item || typeof item !== "object" || item?.is_event !== true) return false;
+  const type = artifactDisplayTypeKey(item);
+  if (
+    type === "liquidity_high" ||
+    type === "liquidity_low" ||
+    type === "hh" ||
+    type === "hl" ||
+    type === "lh" ||
+    type === "ll"
+  ) {
+    return false;
+  }
+  return true;
+}
+
+const DEFAULT_HIDDEN_SIGNAL_EVENT_KEYS = new Set(["INSI", "OUTS", "SH", "SL"]);
 const DEFAULT_VISIBLE_SIGNAL_EVENT_KEYS = new Set([
   "SW",
   "BOS",
   "CH",
   "ENG",
   "PIN",
+  "REJ",
+  "BRK",
+  "DIV",
 ]);
+const DEFAULT_HIDDEN_ARTIFACT_GROUP_KEYS = new Set(["swings", "patterns"]);
 
 function resolveArtifactEventDirection(item = {}) {
   const artifactPayload =
@@ -2056,7 +2277,7 @@ function resolveArtifactEventDirection(item = {}) {
 }
 
 function defaultArtifactEventVisible(item = {}) {
-  if (!item?.is_event) return true;
+  if (!isTrueSignalEventItem(item)) return true;
   const eventKey = artifactMarkerText(item);
   if (!eventKey) return false;
   if (eventKey.startsWith("BRK ") || eventKey.startsWith("REJ ")) return true;
@@ -2077,13 +2298,28 @@ function isSignalArtifactPanelItem(item = {}) {
   ) {
     return true;
   }
-  return item?.is_event === true;
+  return isTrueSignalEventItem(item);
+}
+
+function defaultArtifactGroupVisible(groupKey = "") {
+  return !DEFAULT_HIDDEN_ARTIFACT_GROUP_KEYS.has(
+    String(groupKey || "").trim().toLowerCase(),
+  );
 }
 
 function signalEventColorFromDirection(direction = "neutral") {
   if (direction === "sell") return "#ef4444";
   if (direction === "buy") return "#22c55e";
   return "#94a3b8";
+}
+
+function eventPanelGroupRank(eventKey = "") {
+  const key = String(eventKey || "").trim().toUpperCase();
+  if (["ENG", "PIN", "INSI", "OUTS"].includes(key)) return 1;
+  if (["BOS", "CH", "SW", "SH", "SL"].includes(key)) return 3;
+  if (["REJ", "BRK"].includes(key)) return 4;
+  if (["DIV"].includes(key)) return 5;
+  return 9;
 }
 
 function resolveZoneEventMarkerPrice(item = {}, top = null, bottom = null, fallbackPrice = null) {
@@ -2485,16 +2721,33 @@ function formatObjectLabel(type, rawLabel) {
   return normalized ? `All ${normalized}` : "";
 }
 
+function withHexAlpha(color = "", alpha = "ff") {
+  const base = String(color || "").trim();
+  const normalized = /^#[0-9a-f]{8}$/i.test(base) ? base.slice(0, 7) : base;
+  if (!/^#[0-9a-f]{6}$/i.test(normalized)) return base;
+  return `${normalized}${String(alpha || "ff").trim()}`;
+}
+
 function artifactColorForItem(item = {}) {
   if (item?.is_event) {
     const direction = resolveArtifactEventDirection(item);
     return signalEventColorFromDirection(direction);
   }
   const timeframeColor = artifactTimeframeColor(item?.timeframe || item?.tf || item?.source_tf);
-  if (timeframeColor) return timeframeColor;
   const group = artifactGroupKeyForItem(item);
+  if (group === "fvg" || group === "ifvg" || group === "ob" || group === "bb") {
+    return withHexAlpha(timeframeColor, "55");
+  }
+  if (timeframeColor) return timeframeColor;
   if (group === "pdh" || group === "pdl") return "#94a3b8";
-  if (group === "support" || group === "demand") return "#94a3b8";
+  if (
+    group === "support" ||
+    group === "resistance" ||
+    group === "demand" ||
+    group === "supply"
+  ) {
+    return "#94a3b8";
+  }
   if (group === "fvg" || group === "ifvg") return "#94a3b8";
   if (group === "ob" || group === "bb") return "#f59e0b";
   if (group === "liquidity") return "#14b8a6";
@@ -2515,7 +2768,9 @@ function artifactGroupKeyForItem(item = {}) {
   if (/\bpdh\b/.test(text)) return "pdh";
   if (/\bpdl\b/.test(text)) return "pdl";
   if (type.includes("support") || label.includes("support")) return "support";
+  if (type.includes("resistance") || label.includes("resistance")) return "resistance";
   if (type.includes("demand") || label.includes("demand")) return "demand";
+  if (type.includes("supply") || label.includes("supply")) return "supply";
   if (
     /\bifvg\b/.test(text) ||
     /\bi_fvg\b/.test(text) ||
@@ -2535,6 +2790,19 @@ function artifactGroupKeyForItem(item = {}) {
   if (type.includes("fvg") || label.includes("fvg")) return "fvg";
   if (type.includes("ob") || /\border block\b/.test(text)) return "ob";
   if (type.includes("liquidity") || label.includes("liquidity")) return "liquidity";
+  if (type === "hh" || type === "hl" || type === "lh" || type === "ll") return "swings";
+  if (
+    type === "hh_level" ||
+    type === "hl_level" ||
+    type === "lh_level" ||
+    type === "ll_level" ||
+    type === "hh_pivot" ||
+    type === "hl_pivot" ||
+    type === "lh_pivot" ||
+    type === "ll_pivot"
+  ) {
+    return "swings";
+  }
   if (type === "bos" || label.includes("bos")) return "bos";
   if (type === "choch" || label.includes("choch")) return "choch";
   if (type.includes("sweep") || label.includes("sweep")) return "sweep";
@@ -2555,21 +2823,37 @@ function artifactGroupLabel(groupKey = "") {
   const key = String(groupKey || "").trim().toLowerCase();
   if (key === "pdh") return "PDH";
   if (key === "pdl") return "PDL";
-  if (key === "support") return "Support";
-  if (key === "demand") return "Demand";
+  if (key === "support") return "SUP";
+  if (key === "resistance") return "RES";
+  if (key === "demand") return "DEM";
+  if (key === "supply") return "SPLY";
   if (key === "ifvg") return "iFVG";
   if (key === "fvg") return "FVG";
   if (key === "bb") return "BB";
   if (key === "ob") return "OB";
-  if (key === "liquidity") return "Liquidity";
+  if (key === "liquidity") return "LIQ";
   if (key === "bos") return "BOS";
   if (key === "choch") return "CHOCH";
-  if (key === "sweep") return "Sweep";
-  if (key === "swings") return "Swings";
-  if (key === "trendline") return "Trendlines";
-  if (key === "divergence") return "Divergence";
-  if (key === "patterns") return "Candle Patterns";
+  if (key === "sweep") return "SW";
+  if (key === "swings") return "SWG";
+  if (key === "trendline") return "TL";
+  if (key === "divergence") return "DIV";
+  if (key === "patterns") return "PAT";
   return key.toUpperCase() || "Other";
+}
+
+function artifactPanelGroupRank(groupKey = "") {
+  const key = String(groupKey || "").trim().toLowerCase();
+  if (["bb", "ob", "fvg", "ifvg"].includes(key)) return 1;
+  if (
+    ["support", "resistance", "demand", "supply", "liquidity", "pdh", "pdl"].includes(key)
+  ) {
+    return 2;
+  }
+  if (["hh", "hl", "lh", "ll", "swings", "bos", "choch", "sweep"].includes(key)) return 3;
+  if (["trendline", "divergence"].includes(key)) return 4;
+  if (["patterns"].includes(key)) return 5;
+  return 9;
 }
 
 function resolveArtifactWindow(
@@ -2827,42 +3111,45 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
         ? price
         : null;
     if (!Number.isFinite(top) || !Number.isFinite(bottom)) return null;
-    const itemStatus = String(item?.status || "").trim().toLowerCase();
-    const lifecycleState = String(item?.payload?.lifecycle_state || "")
-      .trim()
-      .toLowerCase();
-    const isUnvisitedZone =
-      (groupKey === "fvg" || groupKey === "ob") &&
-      itemStatus === "active" &&
-      lifecycleState === "awaiting_touch";
     const explicitEndTimeSec =
       Number(item?.bar_end ?? item?.end_bar ?? item?.payload?.end_time) || null;
     const tfSeconds = Math.max(1, Number(timeframeToSeconds(tf)) || 60);
     const shouldExtendZoneOneBar = groupKey === "fvg" || groupKey === "ob";
+    const zoneExtensionBars = shouldExtendZoneOneBar ? 5 : 0;
+    const zoneEndSource = Number.isFinite(explicitEndTimeSec)
+      ? "explicit_end_plus_extension"
+      : Number.isFinite(timeSec)
+        ? "start_plus_extension"
+        : "missing_end_time";
     const zoneEndTimeSec =
       Number.isFinite(explicitEndTimeSec)
-        ? explicitEndTimeSec + (shouldExtendZoneOneBar ? tfSeconds : 0)
+        ? explicitEndTimeSec + tfSeconds * zoneExtensionBars
         : Number.isFinite(timeSec)
-          ? timeSec + (shouldExtendZoneOneBar ? tfSeconds : 0)
+          ? timeSec + tfSeconds * zoneExtensionBars
           : null;
     const zoneObject = {
       id: String(item.id || `${family}-${type}-${timeSec || top}`),
       kind: "zone",
       type: type.toUpperCase() || "ZONE",
       label: artifactInlineLabel(item, tf),
+      label_font_size:
+        groupKey === "fvg" || groupKey === "ifvg" || groupKey === "bb" || groupKey === "ob"
+          ? 8
+          : undefined,
       visible: true,
       tf,
       color,
-      bg_color: `${color}0d`,
+      bg_color:
+        groupKey === "fvg" || groupKey === "ifvg" || groupKey === "bb" || groupKey === "ob"
+          ? withHexAlpha(color, "05")
+          : withHexAlpha(color, "0d"),
       price_top: top,
       price_bottom: bottom,
       time: Number.isFinite(timeSec) ? timeSec : null,
       anchorTimeMs: Number.isFinite(timeSec) ? timeSec * 1000 : null,
-      anchorTimeMs2: isUnvisitedZone
-        ? null
-        : Number.isFinite(zoneEndTimeSec)
-          ? zoneEndTimeSec * 1000
-          : null,
+      anchorTimeMs2: Number.isFinite(zoneEndTimeSec)
+        ? zoneEndTimeSec * 1000
+        : null,
       anchorPrice: top,
       anchorPrice2: bottom,
       line_style: groupKey === "ob" ? "solid" : "dot",
@@ -2871,9 +3158,32 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
       artifact_type: type,
       artifact_group: groupKey,
       source_tf: tf,
+      artifact_debug: shouldExtendZoneOneBar
+        ? {
+            tf,
+            groupKey,
+            startTimeSec: Number.isFinite(timeSec) ? timeSec : null,
+            explicitEndTimeSec: Number.isFinite(explicitEndTimeSec)
+              ? explicitEndTimeSec
+              : null,
+            tfSeconds,
+            zoneExtensionBars,
+            zoneEndTimeSec: Number.isFinite(zoneEndTimeSec) ? zoneEndTimeSec : null,
+            zoneEndSource,
+            itemStatus: String(item?.status || "").trim().toLowerCase() || null,
+            lifecycleState:
+              String(item?.payload?.lifecycle_state || "").trim().toLowerCase() || null,
+            eventTimeSec:
+              Number.isFinite(Number(item?.event_time)) ? Number(item?.event_time) : null,
+            barStart:
+              Number.isFinite(Number(item?.bar_start)) ? Number(item?.bar_start) : null,
+            barEnd:
+              Number.isFinite(Number(item?.bar_end)) ? Number(item?.bar_end) : null,
+          }
+        : null,
       artifact_payload: item,
     };
-    const suppressedZoneEventTypes = new Set(["fvg", "ifvg", "bb", "ob"]);
+    const suppressedZoneEventTypes = new Set(["fvg", "ifvg", "bb"]);
     const normalizedZoneType = String(type || "").trim().toLowerCase();
     const eventTimeSec = Number(item?.event_time ?? item?.anchor_time ?? item?.bar_end) || null;
     const eventDirection = String(
@@ -3100,7 +3410,7 @@ function buildSvgSummaryObjectsFromAnalysisEntry(entry = {}, tf = "") {
     { key: "supports", label: "SUP", color: "#22c55e", kind: "line" },
     { key: "resistances", label: "RES", color: "#ef4444", kind: "line" },
     { key: "demands", label: "DEM", color: "#14b8a6", kind: "zone" },
-    { key: "supplies", label: "SUPPLY", color: "#f97316", kind: "zone" },
+    { key: "supplies", label: "SPLY", color: "#f97316", kind: "zone" },
   ];
   return bucketConfigs.flatMap((bucket) => {
     const items = Array.isArray(entry?.[bucket.key]) ? entry[bucket.key] : [];
@@ -3149,7 +3459,7 @@ function buildSvgSummaryObjectsFromAnalysisEntry(entry = {}, tf = "") {
           anchorPrice: price,
           line_style: "dot",
           line_width: 0.8,
-          line_scope: "full",
+          line_scope: "segment_to_scale",
           artifact_family: "analysis_summary",
           artifact_group: bucket.key,
           artifact_type: bucket.key,
@@ -3164,6 +3474,12 @@ function buildPhaseTargetBoundaryObjects(entry = {}, tf = "") {
   const tfKey = String(tf || entry?.timeframe || "").trim().toLowerCase();
   const low = Number(entry?.phase_target?.low);
   const high = Number(entry?.phase_target?.high);
+  const lowStartTime =
+    Number(entry?.phase_target?.lower_bound?.startTime ?? entry?.phase_target?.lower_bound?.anchorTime) ||
+    null;
+  const highStartTime =
+    Number(entry?.phase_target?.upper_bound?.startTime ?? entry?.phase_target?.upper_bound?.anchorTime) ||
+    null;
   const tfColor = artifactTimeframeColor(tfKey || "1m");
   const objects = [];
   if (Number.isFinite(low)) {
@@ -3178,9 +3494,10 @@ function buildPhaseTargetBoundaryObjects(entry = {}, tf = "") {
       color: tfColor,
       price: low,
       anchorPrice: low,
+      anchorTimeMs: lowStartTime,
       line_style: "dot",
-      line_width: 0.9,
-      line_scope: "full",
+      line_width: 1.15,
+      line_scope: Number.isFinite(lowStartTime) ? "segment" : "full",
       artifact_family: "analysis_range",
       artifact_group: "phase_target_range",
       artifact_type: "phase_target_low",
@@ -3199,9 +3516,10 @@ function buildPhaseTargetBoundaryObjects(entry = {}, tf = "") {
       color: tfColor,
       price: high,
       anchorPrice: high,
+      anchorTimeMs: highStartTime,
       line_style: "dot",
-      line_width: 0.9,
-      line_scope: "full",
+      line_width: 1.15,
+      line_scope: Number.isFinite(highStartTime) ? "segment" : "full",
       artifact_family: "analysis_range",
       artifact_group: "phase_target_range",
       artifact_type: "phase_target_high",
@@ -3362,43 +3680,538 @@ function latestArtifactEventTimeSec(item = {}) {
 }
 
 function buildRecentArtifactEventsByTf({
+  artifactObjectsByChartId = {},
   artifactItemsByTf = {},
   barsByTf = {},
+  artifactTfVisibility = {},
+  artifactEventVisibility = {},
 }) {
   const output = {};
+  const recentEventEntriesByTf = {};
+  const chartObjectPresenceByTf = {};
+  for (const [chartId, itemsRaw] of Object.entries(artifactObjectsByChartId || {})) {
+    const fallbackTf = String(chartId || "").trim().toLowerCase().split("-").slice(-1)[0];
+    const items = Array.isArray(itemsRaw) ? itemsRaw : [];
+    for (const item of items) {
+      const tfKey = String(item?.source_tf || item?.tf || fallbackTf || "")
+        .trim()
+        .toLowerCase();
+      if (tfKey) chartObjectPresenceByTf[tfKey] = true;
+      if (!item || typeof item !== "object" || item?.kind !== "point" || item?.is_event !== true) {
+        continue;
+      }
+      if (item?.visible === false) continue;
+      if (!tfKey) continue;
+      const itemTfKey = artifactSourceTfLabel(item?.source_tf || item?.tf || tfKey);
+      if (itemTfKey && artifactTfVisibility?.[itemTfKey] === false) continue;
+      const eventKey = String(item?.marker_text || item?.event_key || "").trim().toUpperCase();
+      if (!eventKey) continue;
+      const storedVisible = artifactEventVisibility?.[eventKey];
+      const fallbackVisible = defaultArtifactEventVisible(item?.artifact_payload || item);
+      if (typeof storedVisible === "boolean" ? !storedVisible : !fallbackVisible) continue;
+      const eventTime = Number(
+        item?.event_time ??
+          item?.time ??
+          (Number.isFinite(Number(item?.anchorTimeMs)) ? Number(item.anchorTimeMs) / 1000 : null),
+      );
+      if (!Number.isFinite(eventTime) || eventTime <= 0) continue;
+      if (!Array.isArray(recentEventEntriesByTf[tfKey])) recentEventEntriesByTf[tfKey] = [];
+      recentEventEntriesByTf[tfKey].push({
+        markerText: eventKey,
+        fullLabel: String(item?.label || item?.type || eventKey).trim(),
+        color: String(item?.color || artifactColorForItem(item?.artifact_payload || item)).trim(),
+        direction: normalizeArtifactEventDirection(item?.artifact_payload || item),
+        eventTime,
+        title: `${displayTfLabel(tfKey)} ${String(item?.label || item?.type || eventKey).trim()} at ${new Date(eventTime * 1000).toLocaleString()}`,
+      });
+    }
+  }
   for (const [tfKeyRaw, itemsRaw] of Object.entries(artifactItemsByTf || {})) {
     const tfKey = String(tfKeyRaw || "").trim().toLowerCase();
+    if (
+      !tfKey ||
+      chartObjectPresenceByTf[tfKey] === true ||
+      (Array.isArray(recentEventEntriesByTf[tfKey]) && recentEventEntriesByTf[tfKey].length)
+    ) {
+      continue;
+    }
+    const itemTfKey = artifactSourceTfLabel(tfKey);
+    if (itemTfKey && artifactTfVisibility?.[itemTfKey] === false) continue;
+    const entries = (Array.isArray(itemsRaw) ? itemsRaw : [])
+      .filter((item) => isTrueSignalEventItem(item))
+      .map((item) => {
+        const eventKey = artifactMarkerText(item);
+        if (!eventKey) return null;
+        const storedVisible = artifactEventVisibility?.[eventKey];
+        const fallbackVisible = defaultArtifactEventVisible(item);
+        if (typeof storedVisible === "boolean" ? !storedVisible : !fallbackVisible) return null;
+        const eventTime = latestArtifactEventTimeSec(item);
+        if (!Number.isFinite(eventTime) || eventTime <= 0) return null;
+        const fullLabel = String(item?.label || item?.type || eventKey).trim();
+        return {
+          markerText: eventKey,
+          fullLabel,
+          color: artifactColorForItem(item),
+          direction: normalizeArtifactEventDirection(item),
+          eventTime,
+          title: `${displayTfLabel(tfKey)} ${fullLabel} at ${new Date(eventTime * 1000).toLocaleString()}`,
+        };
+      })
+      .filter(Boolean);
+    if (entries.length) {
+      recentEventEntriesByTf[tfKey] = entries;
+    }
+  }
+  for (const [tfKeyRaw, itemsRaw] of Object.entries(recentEventEntriesByTf || {})) {
+    const tfKey = String(tfKeyRaw || "").trim().toLowerCase();
     if (!tfKey) continue;
-    const items = Array.isArray(itemsRaw) ? itemsRaw : [];
     const bars = Array.isArray(barsByTf?.[tfKey]) ? barsByTf[tfKey] : [];
     const lastBarTime = Number(bars?.[bars.length - 1]?.time || 0);
     const tfSeconds = Math.max(1, Number(timeframeToSeconds(tfKey)) || 60);
     const recentCutoff = Number.isFinite(lastBarTime) && lastBarTime > 0
       ? lastBarTime - tfSeconds * 1.25
       : null;
-    const latestEvent = items
-      .filter((item) => item && item.is_event !== false)
-      .map((item) => ({
-        item,
-        eventTime: latestArtifactEventTimeSec(item),
-      }))
-      .filter(({ eventTime }) => Number.isFinite(eventTime))
-      .filter(({ eventTime }) => recentCutoff == null || eventTime >= recentCutoff)
-      .sort((left, right) => Number(right.eventTime) - Number(left.eventTime))[0];
-    if (!latestEvent) continue;
-    const item = latestEvent.item;
-    const markerText = artifactMarkerText(item);
-    const fullLabel = String(item?.label || item?.type || markerText).trim();
-    output[tfKey] = {
-      markerText,
-      fullLabel,
-      color: artifactColorForItem(item),
-      direction: normalizeArtifactEventDirection(item),
-      eventTime: latestEvent.eventTime,
-      title: `${displayTfLabel(tfKey)} ${fullLabel} at ${new Date(latestEvent.eventTime * 1000).toLocaleString()}`,
-    };
+    const recentEvents = (Array.isArray(itemsRaw) ? itemsRaw : [])
+      .filter((entry) => Number.isFinite(Number(entry?.eventTime)))
+      .filter((entry) => recentCutoff == null || Number(entry.eventTime) >= recentCutoff)
+      .sort((left, right) => Number(left.eventTime) - Number(right.eventTime))
+      .slice(-5)
+      .filter((entry) => entry?.markerText);
+    if (!recentEvents.length) continue;
+    output[tfKey] = recentEvents;
   }
   return output;
+}
+
+function artifactPriceBounds(item = {}) {
+  const top = Number(
+    item?.price_top ??
+      item?.high ??
+      item?.priceHigh ??
+      item?.artifact_payload?.price_top,
+  );
+  const bottom = Number(
+    item?.price_bottom ??
+      item?.low ??
+      item?.priceLow ??
+      item?.artifact_payload?.price_bottom,
+  );
+  const price = Number(
+    item?.price ??
+      item?.level_price ??
+      item?.anchorPrice ??
+      item?.anchor_price ??
+      item?.artifact_payload?.price,
+  );
+  if (Number.isFinite(top) && Number.isFinite(bottom)) {
+    return {
+      low: Math.min(top, bottom),
+      high: Math.max(top, bottom),
+    };
+  }
+  if (Number.isFinite(price)) {
+    return { low: price, high: price };
+  }
+  return null;
+}
+
+function artifactTradeGroupWeight(groupKey = "", side = "BUY", kind = "tp") {
+  const key = String(groupKey || "").trim().toLowerCase();
+  const upperSide = String(side || "BUY").trim().toUpperCase();
+  const stopWeights = upperSide === "BUY"
+    ? {
+        pdl: 10,
+        demand: 9,
+        support: 9,
+        ob: 9,
+        bb: 9,
+        fvg: 8,
+        ifvg: 8,
+        swings: 7,
+        liquidity: 6,
+        bos: 4,
+        choch: 4,
+      }
+    : {
+        pdh: 10,
+        supply: 9,
+        resistance: 9,
+        ob: 9,
+        bb: 9,
+        fvg: 8,
+        ifvg: 8,
+        swings: 7,
+        liquidity: 6,
+        bos: 4,
+        choch: 4,
+      };
+  const targetWeights = upperSide === "BUY"
+    ? {
+        pdh: 10,
+        liquidity: 9,
+        bos: 8,
+        choch: 8,
+        bb: 8,
+        ob: 7,
+        fvg: 7,
+        ifvg: 7,
+        swings: 6,
+        resistance: 6,
+        supply: 6,
+      }
+    : {
+        pdl: 10,
+        liquidity: 9,
+        bos: 8,
+        choch: 8,
+        bb: 8,
+        ob: 7,
+        fvg: 7,
+        ifvg: 7,
+        swings: 6,
+        support: 6,
+        demand: 6,
+      };
+  const table = kind === "sl" ? stopWeights : targetWeights;
+  return Number(table[key] || 0);
+}
+
+function timeframePriorityWeight(tf = "", activeTf = "") {
+  const tfSec = Math.max(1, Number(timeframeToSeconds(tf)) || 60);
+  const activeSec = Math.max(1, Number(timeframeToSeconds(activeTf)) || 60);
+  const ratio = Math.abs(Math.log(tfSec / activeSec));
+  return Math.max(0, 3 - ratio);
+}
+
+function resolveSuggestedTradeTimeframes(
+  activeTf = "",
+  selectedTfs = [],
+  artifactItemsByTf = {},
+) {
+  const normalizedActiveTf = String(activeTf || "").trim().toLowerCase();
+  const activeTfSeconds = Math.max(
+    1,
+    Number(timeframeToSeconds(normalizedActiveTf)) || 0,
+  );
+  const requestedTfs = Array.isArray(selectedTfs) ? selectedTfs : [];
+  const configuredTfs = requestedTfs
+    .map((tf) => String(tf || "").trim().toLowerCase())
+    .filter(Boolean);
+  const fallbackArtifactTfs = Object.keys(
+    artifactItemsByTf && typeof artifactItemsByTf === "object" ? artifactItemsByTf : {},
+  )
+    .map((tf) => String(tf || "").trim().toLowerCase())
+    .filter(Boolean);
+  const candidateTfs = [
+    ...new Set([
+      ...configuredTfs,
+      ...(normalizedActiveTf ? [normalizedActiveTf] : []),
+      ...fallbackArtifactTfs,
+    ]),
+  ];
+  if (!candidateTfs.length) {
+    return normalizedActiveTf ? [normalizedActiveTf] : [];
+  }
+  const scopedTfs = candidateTfs.filter((tf) => {
+    const tfSeconds = Math.max(1, Number(timeframeToSeconds(tf)) || 0);
+    if (!activeTfSeconds || !tfSeconds) return true;
+    return tfSeconds >= activeTfSeconds;
+  });
+  const sortedScopedTfs = sortTimeframes(
+    scopedTfs.length ? scopedTfs : candidateTfs,
+    "desc",
+  ).map((tf) => String(tf || "").trim().toLowerCase());
+  return sortedScopedTfs.length
+    ? sortedScopedTfs
+    : normalizedActiveTf
+      ? [normalizedActiveTf]
+      : [];
+}
+
+function applyTradeStopBuffer(entry = null, stop = null, side = "BUY") {
+  const numericEntry = Number(entry);
+  const numericStop = Number(stop);
+  if (!Number.isFinite(numericEntry) || !Number.isFinite(numericStop)) {
+    return numericStop;
+  }
+  const upperSide = String(side || "BUY").trim().toUpperCase();
+  const rawRisk = Math.abs(numericEntry - numericStop);
+  if (!(rawRisk > 0)) return numericStop;
+  const buffer = Math.max(Math.abs(numericEntry) * 0.00025, rawRisk * 0.2);
+  return upperSide === "BUY" ? numericStop - buffer : numericStop + buffer;
+}
+
+function applyTradeTargetTrim({
+  entry = null,
+  rawTarget = null,
+  side = "BUY",
+  risk = null,
+  minRr = 1.5,
+}) {
+  const numericEntry = Number(entry);
+  const numericTarget = Number(rawTarget);
+  const numericRisk = Number(risk);
+  if (
+    !Number.isFinite(numericEntry) ||
+    !Number.isFinite(numericTarget) ||
+    !(numericRisk > 0)
+  ) {
+    return numericTarget;
+  }
+  const upperSide = String(side || "BUY").trim().toUpperCase();
+  const rawReward = Math.abs(numericTarget - numericEntry);
+  if (!(rawReward > 0)) return numericTarget;
+  const minReward = numericRisk * Math.max(1, Number(minRr) || 1.5);
+  const trim = Math.max(Math.abs(numericEntry) * 0.0001, numericRisk * 0.08);
+  const trimmedReward = Math.max(minReward, rawReward - trim);
+  return upperSide === "BUY"
+    ? numericEntry + trimmedReward
+    : numericEntry - trimmedReward;
+}
+
+function isReasonableArtifactPriceForTradeLevel(candidatePrice = null, entryPrice = null) {
+  const candidate = Number(candidatePrice);
+  const entry = Number(entryPrice);
+  if (!Number.isFinite(candidate) || !(candidate > 0)) return false;
+  if (!Number.isFinite(entry) || !(entry > 0)) return true;
+  const ratio = candidate / entry;
+  if (!Number.isFinite(ratio) || ratio <= 0) return false;
+  return ratio >= 0.25 && ratio <= 4;
+}
+
+function buildSuggestedTradeLevels({
+  side = "BUY",
+  entryPrice = null,
+  referencePrice = null,
+  activeTf = "",
+  selectedTfs = [],
+  artifactItemsByTf = {},
+}) {
+  return sharedBuildSuggestedTradeLevels({
+    side,
+    entryPrice,
+    referencePrice,
+    activeTf,
+    selectedTfs,
+    artifactItemsByTf,
+  });
+}
+
+function toPositiveTradePlanPrice(value) {
+  if (value == null || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+function resolveSuggestedTradeLevelsWithFallback({
+  suggested = {},
+  requestedSide = "BUY",
+  clickedEntryPrice = null,
+  currentSide = "",
+  currentEntryPrice = null,
+  currentTpPrice = null,
+  currentSlPrice = null,
+}) {
+  const normalizedSide = String(requestedSide || "BUY").trim().toUpperCase();
+  const clickedEntry = toPositiveTradePlanPrice(clickedEntryPrice);
+  const currentEntry = toPositiveTradePlanPrice(currentEntryPrice);
+  const sanityAnchor = clickedEntry ?? currentEntry;
+  const sanitizeLevel = (value) => {
+    const numeric = toPositiveTradePlanPrice(value);
+    if (numeric == null) return null;
+    if (!isReasonableArtifactPriceForTradeLevel(numeric, sanityAnchor)) {
+      return null;
+    }
+    return numeric;
+  };
+  const suggestedTp = sanitizeLevel(suggested?.tp);
+  const suggestedSl = sanitizeLevel(suggested?.sl);
+  if (suggestedTp != null || suggestedSl != null) {
+    return { tp: suggestedTp, sl: suggestedSl };
+  }
+  const activeSide = String(currentSide || "").trim().toUpperCase();
+  if (
+    activeSide !== normalizedSide ||
+    clickedEntry == null ||
+    currentEntry == null
+  ) {
+    return { tp: suggestedTp, sl: suggestedSl };
+  }
+  const proximityThreshold = Math.max(Math.abs(clickedEntry) * 0.00025, 0.01);
+  if (Math.abs(clickedEntry - currentEntry) > proximityThreshold) {
+    return { tp: suggestedTp, sl: suggestedSl };
+  }
+  return {
+    tp: sanitizeLevel(currentTpPrice),
+    sl: sanitizeLevel(currentSlPrice),
+  };
+}
+
+function resolveTradePlanAnchorTimeSec(plan = {}) {
+  const candidates = [
+    plan?.start_bar,
+    plan?.bar_start,
+    plan?.opened_at_unix,
+    plan?.openedAtSec,
+    plan?.opened_at,
+    plan?.time,
+  ];
+  for (const candidate of candidates) {
+    const numeric = Number(candidate);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric;
+    const parsed = toEpochSec(candidate);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return 0;
+}
+
+function resolveTradePlanEndTimeSec(plan = {}) {
+  const candidates = [
+    plan?.end_bar,
+    plan?.bar_end,
+    plan?.closed_at_unix,
+    plan?.closedAtSec,
+    plan?.closed_at,
+  ];
+  for (const candidate of candidates) {
+    const numeric = Number(candidate);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric;
+    const parsed = toEpochSec(candidate);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return 0;
+}
+
+function collectDefaultContextTradePlans({
+  plansByTf = {},
+  selectedTfs = [],
+  contextualTf = "",
+  contextualTimeSec = 0,
+  contextualPrice = null,
+  limit = 6,
+}) {
+  const tfList = Array.isArray(selectedTfs) ? selectedTfs : [];
+  const normalizedContextTf = String(contextualTf || "").trim().toLowerCase();
+  const normalizedContextTime = Number(contextualTimeSec);
+  const normalizedContextPrice = Number(contextualPrice);
+  const collected = tfList.flatMap((tfRaw) => {
+    const tfKey = String(tfRaw || "").trim().toLowerCase();
+    if (!tfKey) return [];
+    const plans = Array.isArray(plansByTf?.[tfKey]) ? plansByTf[tfKey] : [];
+    return plans
+      .map((plan, index) => {
+        const entry = toPositiveTradePlanPrice(plan?.entry ?? plan?.entry_price);
+        const tp = toPositiveTradePlanPrice(plan?.tp ?? plan?.tp_price);
+        const sl = toPositiveTradePlanPrice(plan?.sl ?? plan?.sl_price);
+        const direction =
+          String(plan?.direction || plan?.side || plan?.action || "")
+            .trim()
+            .toUpperCase() === "SELL"
+            ? "SELL"
+            : "BUY";
+        if (entry == null || tp == null || sl == null) return null;
+        const startSec = resolveTradePlanAnchorTimeSec(plan);
+        const endSec = resolveTradePlanEndTimeSec(plan);
+        const isActiveAtContext =
+          Number.isFinite(normalizedContextTime) && normalizedContextTime > 0
+            ? startSec > 0 &&
+              startSec <= normalizedContextTime &&
+              (!endSec || endSec >= normalizedContextTime)
+            : false;
+        const timeDistance =
+          Number.isFinite(normalizedContextTime) && normalizedContextTime > 0 && startSec > 0
+            ? Math.abs(normalizedContextTime - startSec)
+            : Number.POSITIVE_INFINITY;
+        const entryDistance =
+          Number.isFinite(normalizedContextPrice) && normalizedContextPrice > 0
+            ? Math.abs(normalizedContextPrice - entry)
+            : Number.POSITIVE_INFINITY;
+        return {
+          ...plan,
+          direction,
+          entry,
+          tp,
+          sl,
+          _menu_tf: tfKey,
+          _menu_index: index,
+          _menu_start_sec: startSec,
+          _menu_end_sec: endSec,
+          _menu_active: isActiveAtContext,
+          _menu_time_distance: timeDistance,
+          _menu_entry_distance: entryDistance,
+          _menu_tf_priority: tfKey === normalizedContextTf ? 0 : 1,
+        };
+      })
+      .filter(Boolean);
+  });
+  const deduped = [];
+  const seen = new Set();
+  collected
+    .sort((left, right) => {
+      if (Boolean(left?._menu_active) !== Boolean(right?._menu_active)) {
+        return left?._menu_active ? -1 : 1;
+      }
+      const tfCompare =
+        Number(left?._menu_tf_priority || 0) - Number(right?._menu_tf_priority || 0);
+      if (tfCompare !== 0) return tfCompare;
+      const timeCompare =
+        Number(left?._menu_time_distance || 0) - Number(right?._menu_time_distance || 0);
+      if (timeCompare !== 0) return timeCompare;
+      const priceCompare =
+        Number(left?._menu_entry_distance || 0) - Number(right?._menu_entry_distance || 0);
+      if (priceCompare !== 0) return priceCompare;
+      return String(left?.strategy_name || left?.strategy || "").localeCompare(
+        String(right?.strategy_name || right?.strategy || ""),
+      );
+    })
+    .forEach((plan) => {
+      const dedupeKey = [
+        String(plan?.strategy_id || plan?.strategy_name || plan?.strategy || "").trim(),
+        String(plan?.event_id || plan?.rule_name || plan?.condition || "").trim(),
+        String(plan?._menu_tf || "").trim(),
+        String(plan?._menu_start_sec || "").trim(),
+        String(plan?.direction || "").trim(),
+      ].join("|");
+      if (!dedupeKey || seen.has(dedupeKey)) return;
+      seen.add(dedupeKey);
+      deduped.push(plan);
+  });
+  return deduped.slice(0, Math.max(1, Number(limit) || 6));
+}
+
+function collectDefaultContextTradePlansFromList({
+  plans = [],
+  selectedTfs = [],
+  contextualTf = "",
+  contextualTimeSec = 0,
+  contextualPrice = null,
+  limit = 6,
+}) {
+  const groupedPlansByTf = {};
+  (Array.isArray(plans) ? plans : []).forEach((plan) => {
+    if (!plan || typeof plan !== "object") return;
+    const tfKey = String(
+      plan?._menu_tf ||
+        plan?.timeframe ||
+        plan?.tf ||
+        plan?.chart_tf ||
+        contextualTf ||
+        "",
+    )
+      .trim()
+      .toLowerCase();
+    if (!tfKey) return;
+    if (!Array.isArray(groupedPlansByTf[tfKey])) groupedPlansByTf[tfKey] = [];
+    groupedPlansByTf[tfKey].push(plan);
+  });
+  return collectDefaultContextTradePlans({
+    plansByTf: groupedPlansByTf,
+    selectedTfs,
+    contextualTf,
+    contextualTimeSec,
+    contextualPrice,
+    limit,
+  });
 }
 
 function limitArtifactObjectsNearLastBar(objects = [], bars = []) {
@@ -3513,6 +4326,8 @@ function NumberAdjuster({
 function TfHeader({
   tf,
   symbol,
+  tradeCount = 0,
+  showSymbolTfBadge = true,
   provider,
   context,
   master,
@@ -3637,6 +4452,10 @@ function TfHeader({
     .toUpperCase();
   const tfLabel = displayTfLabel(tf);
   const tfColor = artifactTimeframeColor(tf);
+  const tradeCountLabel =
+    Number.isFinite(Number(tradeCount)) && Number(tradeCount) > 0
+      ? `${Math.round(Number(tradeCount))}T`
+      : "";
   const updatedBars =
     Number(metadata?.updated_bars) > 0 ? Number(metadata.updated_bars) : null;
   const storedBars =
@@ -3903,50 +4722,76 @@ function TfHeader({
         flexWrap: "wrap",
       }}
     >
-      <button
-        type="button"
-        className="secondary-button"
-        onClick={() => {
-          if (!tvUrl) return;
-          window.open(tvUrl, "_blank", "noopener,noreferrer");
-        }}
-        style={{
-          lineHeight: 1.2,
-          minHeight: 16,
-          padding: "0 6px",
-          minWidth: 34,
-          fontSize: 11,
-          fontWeight: 800,
-          opacity: 0.95,
-          cursor: tvUrl ? "pointer" : "default",
-        }}
-        title={
-          tvUrl
-            ? `Open ${tvSymbol} ${displayTfLabel(tf)} in TradingView`
-            : `Timeframe ${displayTfLabel(tf)}`
-        }
-      >
-        <span
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6,
+      {showSymbolTfBadge ? (
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() => {
+            if (!tvUrl) return;
+            window.open(tvUrl, "_blank", "noopener,noreferrer");
           }}
+          style={{
+            lineHeight: 1.2,
+            minHeight: 18,
+            padding: "1px 4px",
+            minWidth: 24,
+            fontSize: 10,
+            fontWeight: 800,
+            opacity: 0.95,
+            cursor: tvUrl ? "pointer" : "default",
+            border: "none",
+            background: "transparent",
+            borderRadius: 0,
+            boxShadow: "none",
+          }}
+          title={
+            tvUrl
+              ? `Open ${tvSymbol} ${displayTfLabel(tf)} in TradingView`
+              : `Timeframe ${displayTfLabel(tf)}`
+          }
         >
-          {shouldShowStatusBadge ? (
-            <StatusDisplay
-              status={liveBadge?.status || "neutral"}
-              label=""
-              size="mini"
-              title={liveStatusTooltip || "Live status unavailable"}
-              tooltipContent={liveStatusTooltip || "Live status unavailable"}
-            />
-          ) : null}
-          <span style={{ color: tfColor }}>
-            {[symbolLabel, tfLabel].filter(Boolean).join(" ")}
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            {shouldShowStatusBadge ? (
+              <StatusDisplay
+                status={liveBadge?.status || "neutral"}
+                label=""
+                size="mini"
+                title={liveStatusTooltip || "Live status unavailable"}
+                tooltipContent={liveStatusTooltip || "Live status unavailable"}
+              />
+            ) : null}
+            <span style={{ color: tfColor }}>
+              {[symbolLabel, tfLabel].filter(Boolean).join(" ")}
+            </span>
+            {tradeCountLabel ? (
+              <span
+                style={{
+                  color: "#94a3b8",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: "0.02em",
+                }}
+              >
+                {tradeCountLabel}
+              </span>
+            ) : null}
           </span>
-        </span>
-      </button>
+        </button>
+      ) : shouldShowStatusBadge ? (
+        <StatusDisplay
+          status={liveBadge?.status || "neutral"}
+          label=""
+          size="mini"
+          title={liveStatusTooltip || "Live status unavailable"}
+          tooltipContent={liveStatusTooltip || "Live status unavailable"}
+        />
+      ) : null}
       {["cache", "replay"].includes(mode) && typeof onViewportNavigate === "function" ? (
         <div
           style={{
@@ -3969,18 +4814,21 @@ function TfHeader({
             <button
               key={item.action}
               type="button"
-              className="secondary-button"
+              className="secondary-button symbol-chart-toolbar-button"
               onClick={() => handleViewportNav(item.action)}
               style={{
                 minHeight: 16,
-                minWidth: item.iconOnly ? 28 : 24,
-                padding: "0 5px",
+                minWidth: item.iconOnly ? 18 : 16,
+                padding: "0 3px",
                 lineHeight: 1.1,
                 fontSize: 10,
                 fontWeight: 700,
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
+                border: "none",
+                background: "transparent",
+                boxShadow: "none",
               }}
               title={item.action === "show_compact" ? "Normal" : item.label}
             >
@@ -4012,32 +4860,23 @@ function TfHeader({
           >
             <button
               type="button"
-              className="secondary-button"
+              className="secondary-button symbol-chart-toolbar-button"
               onClick={() => setShowDataMenu((prev) => !prev)}
               title={cacheLiveBadge?.title || "Toggle timeframe stats"}
               style={{
                 lineHeight: 1.2,
                 minHeight: 16,
-                minWidth: cacheLiveBadge?.label ? 40 : 28,
-                padding: cacheLiveBadge?.label ? "0 8px" : "0 6px",
-                fontSize: 11,
+                minWidth: cacheLiveBadge?.label ? 28 : 18,
+                padding: cacheLiveBadge?.label ? "0 4px" : "0 3px",
+                fontSize: 10,
                 fontWeight: 700,
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
                 gap: 6,
-                borderColor:
-                  cacheLiveBadge?.status === "live"
-                    ? "rgba(16,185,129,0.45)"
-                    : cacheLiveBadge?.status === "warning"
-                      ? "rgba(251,191,36,0.45)"
-                      : "rgba(148,163,184,0.28)",
-                background:
-                  cacheLiveBadge?.status === "live"
-                    ? "rgba(16,185,129,0.14)"
-                    : cacheLiveBadge?.status === "warning"
-                      ? "rgba(251,191,36,0.14)"
-                      : undefined,
+                border: "none",
+                background: "transparent",
+                boxShadow: "none",
                 color:
                   cacheLiveBadge?.status === "live"
                     ? "#6ee7b7"
@@ -4263,6 +5102,123 @@ function formatArtifactExactPrice(value) {
   if (!Number.isFinite(num)) return "";
   return Math.abs(num) >= 1000 ? num.toFixed(2) : num.toFixed(5);
 }
+const ENTRY_PLAN_COLOR = "#38bdf8";
+const TP_PLAN_COLOR = "#10b981";
+const SL_PLAN_COLOR = "#ef4444";
+
+function countTradePriceDecimals(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  const normalized = n.toFixed(10).replace(/0+$/, "").replace(/\.$/, "");
+  const idx = normalized.indexOf(".");
+  return idx >= 0 ? normalized.length - idx - 1 : 0;
+}
+
+function inferTradePricePrecision(values = []) {
+  let precision = 0;
+  for (const value of Array.isArray(values) ? values : []) {
+    precision = Math.max(precision, countTradePriceDecimals(value));
+  }
+  return Math.min(Math.max(precision, 0), 8);
+}
+
+function inferMagnitudeBasedTradePricePrecision(values = []) {
+  const finiteValues = (Array.isArray(values) ? values : [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  if (!finiteValues.length) return 2;
+  const representative =
+    finiteValues.find((value) => countTradePriceDecimals(value) > 0) ??
+    finiteValues[0];
+  if (representative >= 1) return 2;
+  if (representative >= 0.1) return 3;
+  if (representative >= 0.01) return 4;
+  return 5;
+}
+
+function coerceTradePricePrecision(value) {
+  if (value == null) return null;
+  if (typeof value === "string" && !value.trim()) return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.min(Math.max(Math.round(n), 0), 8);
+}
+
+function resolveSymbolTradePricePrecision(symbol = "", values = [], explicitPrecision = null) {
+  const direct = coerceTradePricePrecision(explicitPrecision);
+  if (direct != null) return direct;
+  const sym = String(symbol || "").trim().toUpperCase();
+  const base = sym.slice(0, 3);
+  const quote = sym.endsWith("USDT") ? "USDT" : sym.slice(-3);
+  const inferredPrecision = inferTradePricePrecision(values);
+  const forexCurrencies = new Set([
+    "USD",
+    "EUR",
+    "GBP",
+    "JPY",
+    "AUD",
+    "CAD",
+    "CHF",
+    "NZD",
+    "SGD",
+    "HKD",
+    "CNH",
+    "NOK",
+    "SEK",
+    "DKK",
+    "ZAR",
+    "TRY",
+    "MXN",
+    "PLN",
+    "CZK",
+    "HUF",
+  ]);
+  if ((quote === "USD" || quote === "USDT") && !forexCurrencies.has(base)) {
+    return Math.max(
+      2,
+      Math.min(inferredPrecision, inferMagnitudeBasedTradePricePrecision(values)),
+    );
+  }
+  if (/^[A-Z]{6}$/.test(sym) && forexCurrencies.has(base) && forexCurrencies.has(quote)) {
+    return sym.endsWith("JPY") ? 3 : 5;
+  }
+  if (sym.startsWith("XAU") || sym.startsWith("XAG")) return 2;
+  if (
+    sym.startsWith("UK") ||
+    sym.startsWith("US") ||
+    sym.startsWith("DE") ||
+    sym.startsWith("JP") ||
+    sym.startsWith("AU")
+  ) {
+    return 3;
+  }
+  if (sym.endsWith("USD") || sym.endsWith("USDT")) {
+    return Math.max(
+      2,
+      Math.min(inferredPrecision, inferMagnitudeBasedTradePricePrecision(values)),
+    );
+  }
+  return inferredPrecision;
+}
+
+function formatTradePriceByPrecision(value, precision = null) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "n/a";
+  const safePrecision = coerceTradePricePrecision(precision);
+  if (safePrecision != null) return numeric.toFixed(safePrecision);
+  return Math.abs(numeric) >= 1000 ? numeric.toFixed(2) : numeric.toFixed(5);
+}
+
+function resolvePreferredTradePrice(candidates = []) {
+  const finiteValues = (Array.isArray(candidates) ? candidates : [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+  if (!finiteValues.length) return null;
+  const decimalValue = finiteValues.find(
+    (value) => countTradePriceDecimals(value) > 0,
+  );
+  return decimalValue ?? finiteValues[0];
+}
 
 function isDedupableManualLine(item = {}) {
   if (!item || typeof item !== "object") return false;
@@ -4351,6 +5307,7 @@ export default function SymbolChart({
   profile = "day",
   attachedSnapshotFiles = EMPTY_ARRAY,
   tradeSid = "",
+  apiScope = "",
   onQuickTradeIntent = null,
   onTrade = null,
   showAnalyzeButton = true,
@@ -4380,6 +5337,7 @@ export default function SymbolChart({
   extraRequestedTimeframes = EMPTY_ARRAY,
   liveBars = true,
   bootstrapLiveBarsOnMount = false,
+  showSymbolTfBadge = true,
 }) {
   const rootRef = useRef(null);
   const gridRef = useRef(null);
@@ -4414,6 +5372,12 @@ export default function SymbolChart({
     useState(0);
   const [viewportAutoFitNonce, setViewportAutoFitNonce] = useState(0);
   const viewportAutoFitKeyRef = useRef("");
+  const hasStickyManualViewportRef = useRef(false);
+  const lastManualViewportActionRef = useRef({
+    at: 0,
+    action: "",
+    source: "",
+  });
   const bootstrapRepairRef = useRef({
     key: "",
     status: "idle",
@@ -4489,7 +5453,7 @@ export default function SymbolChart({
     if (!tradeSid) return;
     let cancelled = false;
     api
-      .loadChartObjects(tradeSid)
+      .loadChartObjects(tradeSid, { scope: apiScope })
       .then((res) => {
         if (cancelled) return;
         const objs = Array.isArray(res?.chart_objects)
@@ -4525,7 +5489,7 @@ export default function SymbolChart({
               tpPrice: Number.isFinite(tp) && tp > 0 ? tp : null,
               slPrice: Number.isFinite(sl) && sl > 0 ? sl : null,
               visible: true,
-              color: dir === "SELL" ? "#ef4444" : "#10b981",
+              color: ENTRY_PLAN_COLOR,
               line_width: 0.1,
               line_style: "solid",
               bg_color: "transparent",
@@ -4539,12 +5503,12 @@ export default function SymbolChart({
     return () => {
       cancelled = true;
     };
-  }, [tradeSid]);
+  }, [tradeSid, apiScope]);
 
   const handleSaveObjects = useCallback(() => {
     if (!tradeSid || !annotations.length) return;
-    api.saveChartObjects(tradeSid, annotations).catch(() => {});
-  }, [tradeSid, annotations]);
+    api.saveChartObjects(tradeSid, annotations, { scope: apiScope }).catch(() => {});
+  }, [tradeSid, annotations, apiScope]);
   const [forceRefresh, setForceRefresh] = useState(false);
   const [localReplayPlaying, setLocalReplayPlaying] = useState(false);
   const [localReplaySpeedMs, setLocalReplaySpeedMs] = useState(100);
@@ -4556,6 +5520,30 @@ export default function SymbolChart({
   const [manualTfVisibleBars, setManualTfVisibleBars] = useState({});
   const [savedTfViewportPrefs, setSavedTfViewportPrefs] = useState({});
   const [ctxMenu, setCtxMenu] = useState(null);
+  const [menuStrategyScanState, setMenuStrategyScanState] = useState({
+    cacheKey: "",
+    status: "idle",
+    plans: [],
+    visibleCount: 6,
+    scannedAt: 0,
+  });
+  const applyOverlayButtonImportantStyle = useCallback((node) => {
+    if (!node) return;
+    node.style.setProperty("font-size", "10px", "important");
+    node.style.setProperty("font-weight", "400", "important");
+    node.style.setProperty("line-height", "1.15", "important");
+    node.style.setProperty("padding", "2px 4px", "important");
+  }, []);
+  const applyOverlayTradeButtonImportantStyle = useCallback((node) => {
+    if (!node) return;
+    node.style.setProperty("font-size", "10px", "important");
+    node.style.setProperty("font-weight", "400", "important");
+    node.style.setProperty("line-height", "1.15", "important");
+    node.style.setProperty("padding", "2px 4px", "important");
+    node.style.setProperty("text-align", "left", "important");
+    node.style.setProperty("justify-content", "flex-start", "important");
+  }, []);
+  const [strategyCalendarEvents, setStrategyCalendarEvents] = useState([]);
   const [activeChartId, setActiveChartId] = useState(null);
   const [showIndicatorsMenu, setShowIndicatorsMenu] = useState(false);
   const [showLiveDebugMenu, setShowLiveDebugMenu] = useState(false);
@@ -4664,6 +5652,7 @@ export default function SymbolChart({
   useEffect(() => {
     loadedMarketUiConfigRef.current = false;
     viewportAutoFitKeyRef.current = "";
+    hasStickyManualViewportRef.current = false;
     hasAutoExpandedBootstrapViewRef.current = false;
     missingTfBackfillKeyRef.current = "";
     lastRenderableBarsByChartIdRef.current = {};
@@ -4684,7 +5673,15 @@ export default function SymbolChart({
     parentDrivenSelectionRef.current = null;
     lastIncomingPlanGroupRef.current = null;
     lastPropagatedPlanGroupRef.current = "";
-  }, [chartSessionTradeSid, cleanSym]);
+  }, [cleanSym]);
+
+  useEffect(() => {
+    setActivePlanGroup("P1");
+    setSelectedObjectId(null);
+    parentDrivenSelectionRef.current = null;
+    lastIncomingPlanGroupRef.current = null;
+    lastPropagatedPlanGroupRef.current = "";
+  }, [chartSessionTradeSid]);
 
   useEffect(() => {
     const onTimezoneUiChanged = () => setTimezoneTick((n) => n + 1);
@@ -5378,6 +6375,37 @@ export default function SymbolChart({
     () => sortTimeframes(timeframes, "desc"),
     [timeframes],
   );
+  const defaultActiveTf = useMemo(() => {
+    const configuredTfs = Array.isArray(timeframes)
+      ? timeframes
+          .map((tf) => String(tf || "").trim().toLowerCase())
+          .filter(Boolean)
+      : [];
+    const orderedTfs = configuredTfs.length
+      ? sortTimeframes(configuredTfs, "desc")
+      : sortTimeframes(sortedTfs, "desc");
+    return orderedTfs.find((tf) => tf === "d" || tf === "1d") || orderedTfs[0] || "";
+  }, [sortedTfs, timeframes]);
+  useEffect(() => {
+    if (!cleanSym || !defaultActiveTf) {
+      if (activeChartId !== null) setActiveChartId(null);
+      return;
+    }
+    const nextChartId = `${cleanSym}-${defaultActiveTf}`;
+    const activeTf = String(activeChartId || "")
+      .split("-")
+      .slice(-1)[0]
+      .trim()
+      .toLowerCase();
+    const hasActiveTf =
+      activeTf &&
+      (Array.isArray(sortedTfs) ? sortedTfs : []).some(
+        (tf) => String(tf || "").trim().toLowerCase() === activeTf,
+      );
+    if (!hasActiveTf && activeChartId !== nextChartId) {
+      setActiveChartId(nextChartId);
+    }
+  }, [activeChartId, cleanSym, defaultActiveTf, sortedTfs]);
   const multiTfAnalysisByTf = useMemo(() => {
     if (replayDisablesLive) return {};
     const streamedAnalysis =
@@ -6028,10 +7056,21 @@ export default function SymbolChart({
   const recentArtifactEventsByTf = useMemo(
     () =>
       buildRecentArtifactEventsByTf({
+        artifactObjectsByChartId: rawArtifactObjectsByChartId,
         artifactItemsByTf: sharedArtifactItemsByTf,
         barsByTf: isBacktestChartReplay ? replayBarsByTf : master?.bars,
+        artifactTfVisibility,
+        artifactEventVisibility,
       }),
-    [sharedArtifactItemsByTf, isBacktestChartReplay, replayBarsByTf, master?.bars],
+    [
+      rawArtifactObjectsByChartId,
+      sharedArtifactItemsByTf,
+      isBacktestChartReplay,
+      replayBarsByTf,
+      master?.bars,
+      artifactTfVisibility,
+      artifactEventVisibility,
+    ],
   );
   const clientStrategyTradePlansByTf = useMemo(() => {
     const normalizedStrategies = (Array.isArray(chartStrategies) ? chartStrategies : [])
@@ -6049,6 +7088,8 @@ export default function SymbolChart({
         symbol: cleanSym,
         tf: tfKey,
         multiTfBars: barsByTfSource,
+        scanMode: isBacktestChartReplay ? "backtest" : "live",
+        newsEvents: strategyCalendarEvents,
       });
       const plans = Array.isArray(evaluation?.latestTradePlans)
         ? evaluation.latestTradePlans
@@ -6059,7 +7100,14 @@ export default function SymbolChart({
       output[String(tfKey || "").trim().toLowerCase()] = plans;
     });
     return output;
-  }, [chartStrategies, cleanSym, isBacktestChartReplay, master?.bars, replayBarsByTf]);
+  }, [
+    chartStrategies,
+    cleanSym,
+    isBacktestChartReplay,
+    master?.bars,
+    replayBarsByTf,
+    strategyCalendarEvents,
+  ]);
   const effectiveBarsByTfForPlans = useMemo(
     () => (isBacktestChartReplay ? replayBarsByTf : master?.bars || {}),
     [isBacktestChartReplay, master?.bars, replayBarsByTf],
@@ -6449,9 +7497,12 @@ export default function SymbolChart({
   useEffect(() => {
     if (!shouldBootstrapLiveBars || !hasCompletedLiveBarsBootstrap) return;
     if (liveBarsEnabled) return;
+    if (hasStickyManualViewportRef.current) return;
     if (hasAutoExpandedBootstrapViewRef.current) return;
     if (!areAllRenderedChartsLoaded) return;
     if (!areBootstrapArtifactsLoaded) return;
+    const manualViewportAge = Date.now() - Number(lastManualViewportActionRef.current.at || 0);
+    if (manualViewportAge >= 0 && manualViewportAge < MANUAL_VIEWPORT_SUPPRESS_MS) return;
     const targetTfs = expectedLoadedTfKeys.filter(Boolean);
     if (!targetTfs.length) return;
     const timer = window.setTimeout(() => {
@@ -6485,6 +7536,9 @@ export default function SymbolChart({
     if (!(status === "READY" || status === "STALE")) return;
     if (!hasAnyBars) return;
     if (!areAllRenderedChartsLoaded) return;
+    if (hasStickyManualViewportRef.current) return;
+    const manualViewportAge = Date.now() - Number(lastManualViewportActionRef.current.at || 0);
+    if (manualViewportAge >= 0 && manualViewportAge < MANUAL_VIEWPORT_SUPPRESS_MS) return;
     const barsSignature = sortedTfs
       .map((tf) => {
         const key = String(tf || "").trim().toLowerCase();
@@ -6816,7 +7870,7 @@ export default function SymbolChart({
               ? defaults.sl
               : null,
           visible: existing?.visible !== false,
-          color: direction === "SELL" ? "#ef4444" : "#10b981",
+          color: ENTRY_PLAN_COLOR,
           line_width: 0.1,
           line_style: "dot",
           bg_color: "transparent",
@@ -7277,13 +8331,8 @@ export default function SymbolChart({
       .slice(-1)[0]
       ?.trim();
     if (activeTf) return activeTf;
-    const configuredTfs = Array.isArray(timeframes) ? timeframes : [];
-    return String(
-      configuredTfs[configuredTfs.length - 1] ||
-        sortedTfs[sortedTfs.length - 1] ||
-        "5m",
-    ).trim();
-  }, [activeChartId, sortedTfs, timeframes]);
+    return String(defaultActiveTf || "d").trim();
+  }, [activeChartId, defaultActiveTf]);
   const analysisStatusContext =
     analysisStatusTf && master?.context
       ? master.context[String(analysisStatusTf).toLowerCase()] || null
@@ -7878,6 +8927,12 @@ export default function SymbolChart({
       const tfKey = String(tf || "").trim().toLowerCase();
       if (!tfKey) return;
       const chartId = `${cleanSym}-${tfKey}`;
+      hasStickyManualViewportRef.current = true;
+      lastManualViewportActionRef.current = {
+        at: Date.now(),
+        action: String(action || "").trim(),
+        source: `single-tf:${tfKey}`,
+      };
       if (action === "jump_first") {
         const viewport = viewports?.[chartId] || null;
         const bars = Array.isArray(master?.bars?.[tfKey]) ? master.bars[tfKey] : [];
@@ -7911,7 +8966,7 @@ export default function SymbolChart({
         },
       }));
     },
-    [cleanSym, handleLoadMoreTf, handleRefreshTf, master?.bars, viewports],
+    [cleanSym, handleLoadMoreTf, handleRefreshTf, liveBarsEnabled, master?.bars, mode, viewports],
   );
 
   const applyPostLoadRecenter = useCallback((targetTfs = []) => {
@@ -7919,6 +8974,9 @@ export default function SymbolChart({
       .map((tf) => String(tf || "").trim().toLowerCase())
       .filter(Boolean);
     if (!cleanSym || !tfKeys.length) return;
+    if (hasStickyManualViewportRef.current) return;
+    const manualViewportAge = Date.now() - Number(lastManualViewportActionRef.current.at || 0);
+    if (manualViewportAge >= 0 && manualViewportAge < MANUAL_VIEWPORT_SUPPRESS_MS) return;
     setManualTfVisibleBars((prev) => {
       const next = { ...(prev || {}) };
       tfKeys.forEach((tfKey) => {
@@ -7941,7 +8999,7 @@ export default function SymbolChart({
         });
       }, 220);
     }
-  }, [cleanSym]);
+  }, [cleanSym, liveBarsEnabled, mode]);
 
   const handleEnterFullscreen = useCallback(async (chartId) => {
     if (!chartId || typeof document === "undefined") return;
@@ -7971,6 +9029,12 @@ export default function SymbolChart({
         .map((tf) => String(tf || "").trim().toLowerCase())
         .filter(Boolean);
       if (!cleanSym || !targetTfs.length) return;
+      hasStickyManualViewportRef.current = true;
+      lastManualViewportActionRef.current = {
+        at: Date.now(),
+        action: String(action || "").trim(),
+        source: "all-timeframes",
+      };
       setViewportCommandByChartId((prev) => {
         const next = { ...(prev || {}) };
         const nonceBase = Date.now();
@@ -7983,7 +9047,7 @@ export default function SymbolChart({
         return next;
       });
     },
-    [cleanSym, expectedLoadedTfKeys, sortedTfs],
+    [cleanSym, expectedLoadedTfKeys, liveBarsEnabled, mode, sortedTfs],
   );
 
   const handleCompactAllTimeframes = useCallback(() => {
@@ -8603,7 +9667,7 @@ export default function SymbolChart({
 
   const artifactPanelGroups = useMemo(() => {
     const groups = new Map();
-    for (const [chartId, items] of Object.entries(artifactObjectsByChartId || {})) {
+    for (const [chartId, items] of Object.entries(rawArtifactObjectsByChartId || {})) {
       for (const item of Array.isArray(items) ? items : []) {
         if (isSignalArtifactPanelItem(item)) continue;
         if (!shouldShowArtifactOnChart(item, item?.source_tf || item?.tf, "5m")) {
@@ -8619,12 +9683,18 @@ export default function SymbolChart({
             color: artifactColorForItem(item),
             count: 0,
             visible: false,
+            defaultVisible: defaultArtifactGroupVisible(groupKey),
           });
         }
         const group = groups.get(mapKey);
         group.chartIds.add(chartId);
         group.count += 1;
-        if (item?.visible !== false) group.visible = true;
+        const storedVisible = artifactGroupVisibility?.[mapKey];
+        const nextVisible =
+          typeof storedVisible === "boolean"
+            ? storedVisible
+            : group.defaultVisible;
+        if (item?.visible !== false && nextVisible !== false) group.visible = true;
       }
     }
     return Array.from(groups.values())
@@ -8632,12 +9702,16 @@ export default function SymbolChart({
         ...group,
         chartIds: Array.from(group.chartIds || []),
       }))
-      .sort((a, b) => String(a.label || "").localeCompare(String(b.label || "")));
-  }, [artifactObjectsByChartId, cleanSym]);
+      .sort((a, b) => {
+        const rankDiff = artifactPanelGroupRank(a.groupKey) - artifactPanelGroupRank(b.groupKey);
+        if (rankDiff !== 0) return rankDiff;
+        return String(a.label || "").localeCompare(String(b.label || ""));
+      });
+  }, [rawArtifactObjectsByChartId, cleanSym, artifactGroupVisibility]);
 
   const artifactPanelTimeframes = useMemo(() => {
     const groups = new Map();
-    for (const items of Object.values(artifactObjectsByChartId || {})) {
+    for (const items of Object.values(rawArtifactObjectsByChartId || {})) {
       for (const item of Array.isArray(items) ? items : []) {
         const tfKey = artifactSourceTfLabel(item?.source_tf || item?.tf || item?.timeframe || "");
         if (!tfKey) continue;
@@ -8661,12 +9735,28 @@ export default function SymbolChart({
       (a, b) =>
         Number(timeframeToSeconds(b.tfKey)) - Number(timeframeToSeconds(a.tfKey)),
     );
-  }, [artifactObjectsByChartId, artifactTfVisibility]);
+  }, [rawArtifactObjectsByChartId, artifactTfVisibility]);
   const artifactPanelEvents = useMemo(() => {
     const groups = new Map();
-    for (const items of Object.values(artifactObjectsByChartId || {})) {
+    for (const entry of EVENT_PANEL_CATALOG) {
+      const eventKey = String(entry?.eventKey || "").trim();
+      if (!eventKey) continue;
+      const direction = String(entry?.direction || "neutral").trim().toLowerCase();
+      groups.set(eventKey, {
+        eventKey,
+        label: eventKey,
+        color: signalEventColorFromDirection(direction),
+        direction,
+        count: 0,
+        visible: false,
+        defaultVisible:
+          DEFAULT_VISIBLE_SIGNAL_EVENT_KEYS.has(eventKey) &&
+          !DEFAULT_HIDDEN_SIGNAL_EVENT_KEYS.has(eventKey),
+      });
+    }
+    for (const items of Object.values(sharedArtifactItemsByTf || {})) {
       for (const item of Array.isArray(items) ? items : []) {
-        if (!item?.is_event) continue;
+        if (!isTrueSignalEventItem(item)) continue;
         const eventKey = artifactMarkerText(item);
         if (!eventKey) continue;
         if (!groups.has(eventKey)) {
@@ -8700,10 +9790,12 @@ export default function SymbolChart({
         }
       }
     }
-    return Array.from(groups.values()).sort((a, b) =>
-      String(a.label || "").localeCompare(String(b.label || "")),
-    );
-  }, [artifactEventVisibility, artifactObjectsByChartId]);
+    return Array.from(groups.values()).sort((a, b) => {
+      const rankDiff = eventPanelGroupRank(a.eventKey) - eventPanelGroupRank(b.eventKey);
+      if (rankDiff !== 0) return rankDiff;
+      return String(a.label || "").localeCompare(String(b.label || ""));
+    });
+  }, [artifactEventVisibility, sharedArtifactItemsByTf]);
 
   const strategyMarkerObjectsByTf = useMemo(() => {
     const normalizedStrategies = (Array.isArray(chartStrategies) ? chartStrategies : [])
@@ -8721,6 +9813,8 @@ export default function SymbolChart({
         symbol: cleanSym,
         tf: tfKey,
         multiTfBars: barsByTfSource,
+        scanMode: isBacktestChartReplay ? "backtest" : "live",
+        newsEvents: strategyCalendarEvents,
       });
       const hits = Array.isArray(evaluation?.matches) ? evaluation.matches : [];
       if (!hits.length) return;
@@ -8732,7 +9826,251 @@ export default function SymbolChart({
         .filter(Boolean);
     });
     return output;
-  }, [chartStrategies, cleanSym, isBacktestChartReplay, master?.bars, replayBarsByTf]);
+  }, [
+    chartStrategies,
+    cleanSym,
+    isBacktestChartReplay,
+    master?.bars,
+    replayBarsByTf,
+    strategyCalendarEvents,
+  ]);
+  useEffect(() => {
+    if (Array.isArray(SYMBOL_CHART_STRATEGY_CACHE)) return;
+    void loadSymbolChartStrategyCache().catch(() => {});
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    void loadSymbolChartNewsCache()
+      .then((events) => {
+        if (!cancelled) setStrategyCalendarEvents(Array.isArray(events) ? events : []);
+      })
+      .catch(() => {
+        if (!cancelled) setStrategyCalendarEvents([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const resolveMenuStrategyScanCacheKey = useCallback(
+    (menu) => {
+      if (!menu) return "";
+      const contextualTf = resolveContextMenuTf(menu, activeChartId);
+      const availableTfKeys = Object.keys(effectiveBarsByTfForPlans || {})
+        .map((tfKey) => String(tfKey || "").trim().toLowerCase())
+        .filter((tfKey) => {
+          const bars = Array.isArray(effectiveBarsByTfForPlans?.[tfKey])
+            ? effectiveBarsByTfForPlans[tfKey]
+            : [];
+          return bars.length >= 2;
+        });
+      return buildContextStrategyScanCacheKey({
+        symbol: cleanSym,
+        tf: contextualTf,
+        tfSet: availableTfKeys,
+      });
+    },
+    [activeChartId, cleanSym, effectiveBarsByTfForPlans],
+  );
+  const resolveContextualScanTimeSec = useCallback((bars = [], contextualTimeSec) => {
+    const fallback = Number(bars[bars.length - 1]?.time || 0);
+    if (!Number.isFinite(Number(contextualTimeSec)) || Number(contextualTimeSec) <= 0) {
+      return Number.isFinite(fallback) && fallback > 0 ? fallback : 0;
+    }
+    for (let index = bars.length - 1; index >= 0; index -= 1) {
+      const candidate = Number(bars[index]?.time || 0);
+      if (Number.isFinite(candidate) && candidate <= Number(contextualTimeSec)) {
+        return candidate;
+      }
+    }
+    return Number.isFinite(fallback) && fallback > 0 ? fallback : 0;
+  }, []);
+  useEffect(() => {
+    if (!ctxMenu) {
+      setMenuStrategyScanState({
+        cacheKey: "",
+        status: "idle",
+        plans: [],
+        visibleCount: 6,
+        scannedAt: 0,
+      });
+      return;
+    }
+    const cacheKey = resolveMenuStrategyScanCacheKey(ctxMenu);
+    const cachedEntry = cacheKey
+      ? SYMBOL_CHART_STRATEGY_SCAN_CACHE.get(cacheKey)
+      : null;
+    if (
+      cachedEntry &&
+      Number.isFinite(Number(cachedEntry.cachedAt)) &&
+      Date.now() - Number(cachedEntry.cachedAt) < SYMBOL_CHART_STRATEGY_SCAN_CACHE_TTL_MS
+    ) {
+      setMenuStrategyScanState({
+        cacheKey,
+        status: "done",
+        plans: Array.isArray(cachedEntry.plans) ? cachedEntry.plans : [],
+        visibleCount: 6,
+        scannedAt: Number(cachedEntry.cachedAt) || Date.now(),
+      });
+      return;
+    }
+    setMenuStrategyScanState({
+      cacheKey,
+      status: "idle",
+      plans: [],
+      visibleCount: 6,
+      scannedAt: 0,
+    });
+  }, [ctxMenu, resolveMenuStrategyScanCacheKey]);
+  const handleScanMenuStrategies = useCallback(async () => {
+    if (!ctxMenu) return;
+    const contextualTf = resolveContextMenuTf(ctxMenu, activeChartId);
+    const contextualPrice = Number(ctxMenu?.price);
+    const contextualTimeSec = Number(ctxMenu?.time || 0);
+    const availableTfKeys = Object.keys(effectiveBarsByTfForPlans || {})
+      .map((tfKey) => String(tfKey || "").trim().toLowerCase())
+      .filter((tfKey) => {
+        const bars = Array.isArray(effectiveBarsByTfForPlans?.[tfKey])
+          ? effectiveBarsByTfForPlans[tfKey]
+          : [];
+        return bars.length >= 2;
+      });
+    const cacheKey = buildContextStrategyScanCacheKey({
+      symbol: cleanSym,
+      tf: contextualTf,
+      tfSet: availableTfKeys,
+    });
+    const cachedEntry = SYMBOL_CHART_STRATEGY_SCAN_CACHE.get(cacheKey);
+    if (
+      cachedEntry &&
+      Number.isFinite(Number(cachedEntry.cachedAt)) &&
+      Date.now() - Number(cachedEntry.cachedAt) < SYMBOL_CHART_STRATEGY_SCAN_CACHE_TTL_MS
+    ) {
+      setMenuStrategyScanState({
+        cacheKey,
+        status: "done",
+        plans: Array.isArray(cachedEntry.plans) ? cachedEntry.plans : [],
+        visibleCount: 6,
+        scannedAt: Number(cachedEntry.cachedAt) || Date.now(),
+      });
+      return;
+    }
+    setMenuStrategyScanState((prev) => ({
+      ...prev,
+      cacheKey,
+      status: "loading",
+      plans: [],
+      visibleCount: 6,
+      scannedAt: 0,
+    }));
+    try {
+      const [loadedStrategies, cachedNewsEvents] = await Promise.all([
+        Array.isArray(SYMBOL_CHART_STRATEGY_CACHE)
+          ? Promise.resolve(SYMBOL_CHART_STRATEGY_CACHE)
+          : loadSymbolChartStrategyCache(),
+        loadSymbolChartNewsCache(),
+      ]);
+      setStrategyCalendarEvents(Array.isArray(cachedNewsEvents) ? cachedNewsEvents : []);
+      const mergedStrategies = normalizeStrategyCatalog(
+        mergeStrategiesById(
+          Array.isArray(chartStrategies) ? chartStrategies : [],
+          Array.isArray(loadedStrategies) ? loadedStrategies : [],
+        ),
+      ).filter(Boolean);
+      const plans = availableTfKeys
+        .flatMap((tfKey) => {
+          const tfBars = Array.isArray(effectiveBarsByTfForPlans?.[tfKey])
+            ? effectiveBarsByTfForPlans[tfKey]
+            : [];
+          const targetTfTimeSec = resolveContextualScanTimeSec(
+            tfBars,
+            contextualTimeSec,
+          );
+          if (!Number.isFinite(targetTfTimeSec) || targetTfTimeSec <= 0) return [];
+          return collectContextualStrategyTradePlans({
+            barsByTf: effectiveBarsByTfForPlans,
+            strategies: mergedStrategies,
+            lookbackBars: Number.MAX_SAFE_INTEGER,
+            symbol: cleanSym,
+            tf: tfKey,
+            timeSec: targetTfTimeSec,
+            scanMode: isBacktestChartReplay ? "backtest" : "live",
+            newsEvents: cachedNewsEvents,
+          })
+            .filter((plan) => {
+              const triggeredAt = Number(plan?.start_bar || plan?.bar_start || 0);
+              return Number.isFinite(triggeredAt) && triggeredAt === targetTfTimeSec;
+            })
+            .map((plan) => ({
+              ...plan,
+              _scan_tf: tfKey,
+            }));
+        })
+        .map((plan) => ({
+          ...plan,
+          _entryDistance:
+            Number.isFinite(contextualPrice) && Number.isFinite(Number(plan?.entry))
+              ? Math.abs(Number(plan.entry) - contextualPrice)
+              : Number.POSITIVE_INFINITY,
+          _tfPriority:
+            String(plan?._scan_tf || "").trim().toLowerCase() === contextualTf ? 0 : 1,
+        }))
+        .sort((left, right) => {
+          const tfCompare =
+            Number(left?._tfPriority || 0) - Number(right?._tfPriority || 0);
+          if (tfCompare !== 0) return tfCompare;
+          const distanceCompare =
+            Number(left?._entryDistance || 0) - Number(right?._entryDistance || 0);
+          if (distanceCompare !== 0) return distanceCompare;
+          return String(left?.strategy_name || left?.strategy || "").localeCompare(
+            String(right?.strategy_name || right?.strategy || ""),
+          );
+        });
+      const cachedAt = Date.now();
+      SYMBOL_CHART_STRATEGY_SCAN_CACHE.set(cacheKey, {
+        cachedAt,
+        plans,
+      });
+      setMenuStrategyScanState({
+        cacheKey,
+        status: "done",
+        plans,
+        visibleCount: 6,
+        scannedAt: cachedAt,
+      });
+    } catch (error) {
+      setMenuStrategyScanState({
+        cacheKey,
+        status: "error",
+        plans: [],
+        visibleCount: 6,
+        scannedAt: 0,
+      });
+      showToast({
+        message:
+          error instanceof Error
+            ? error.message
+            : "Failed to scan strategies for this chart context.",
+        tone: "error",
+      });
+    }
+  }, [
+    activeChartId,
+    chartStrategies,
+    cleanSym,
+    ctxMenu,
+    effectiveBarsByTfForPlans,
+    isBacktestChartReplay,
+    resolveContextualScanTimeSec,
+  ]);
+  const handleLoadMoreMenuStrategies = useCallback(() => {
+    setMenuStrategyScanState((prev) => ({
+      ...prev,
+      visibleCount: Math.min(
+        Array.isArray(prev.plans) ? prev.plans.length : prev.visibleCount,
+        Number(prev.visibleCount || 0) + 6,
+      ),
+    }));
+  }, []);
   useEffect(() => {
     if (!isBacktestChartReplay || !cleanSym) return;
     const targetTfs = Object.keys(replayBarsByTf || {});
@@ -8827,6 +10165,120 @@ export default function SymbolChart({
         .flatMap((group) => group.items)
         .filter((item) => item.key !== "zigzag"),
     [],
+  );
+  const chartLayerToggleItems = useMemo(
+    () => [
+      ...artifactPanelTimeframes.map(({ tfKey, label, color, count, visible }) => ({
+        key: `tf-${tfKey}`,
+        checked: visible,
+        onChange: () => toggleArtifactTfVisibility(tfKey),
+        label,
+        description: `${count} item${count === 1 ? "" : "s"}`,
+        tone: color,
+        title: `${label} artifacts · ${count} item${count === 1 ? "" : "s"}`,
+      })),
+      {
+        key: "chart-rsi-panel",
+        checked: indicatorVisibility.rsiPanel !== false,
+        onChange: (evt) =>
+          setIndicatorVisibility((prev) => ({
+            ...prev,
+            rsiPanel: evt.target.checked,
+          })),
+        label: "RSI",
+        description: "Momentum panel",
+        tone: "#a855f7",
+        title: "Toggle momentum panel",
+      },
+      {
+        key: "chart-strategy-markers",
+        checked: showStrategyMarkers,
+        onChange: (evt) => setShowStrategyMarkers(evt.target.checked),
+        label: "STRAT",
+        description: "Buy/sell markers",
+        tone: "#38bdf8",
+        title: "Toggle strategy buy/sell markers",
+      },
+      {
+        key: "chart-zigzag",
+        checked: indicatorVisibility.zigzag !== false,
+        onChange: (evt) =>
+          setIndicatorVisibility((prev) => ({
+            ...prev,
+            zigzag: evt.target.checked,
+            candles: true,
+          })),
+        label: "ZZ",
+        description: "Zigzag/candles",
+        tone: "#facc15",
+        title: "Toggle zigzag and candle guidance",
+      },
+    ],
+    [
+      artifactPanelTimeframes,
+      indicatorVisibility.rsiPanel,
+      indicatorVisibility.zigzag,
+      showStrategyMarkers,
+      toggleArtifactTfVisibility,
+    ],
+  );
+  const artifactGroupToggleItems = useMemo(
+    () =>
+      artifactPanelGroups.map(({ groupKey, label, color, count, visible }) => ({
+        key: groupKey,
+        checked: visible,
+        onChange: () => toggleArtifactGroupVisibility(groupKey),
+        label,
+        description: `${count} item${count === 1 ? "" : "s"}`,
+        tone: color,
+        title: label,
+      })),
+    [artifactPanelGroups, toggleArtifactGroupVisibility],
+  );
+  const eventToggleItems = useMemo(
+    () =>
+      artifactPanelEvents.map(({ eventKey, label, color, count, visible, direction }) => ({
+        key: eventKey,
+        checked: visible,
+        onChange: () => toggleArtifactEventVisibility(eventKey),
+        label,
+        description: `${count} · ${direction === "sell" ? "bearish" : direction === "buy" ? "bullish" : "neutral"}`,
+        tone: color,
+        title: label,
+      })),
+    [artifactPanelEvents, toggleArtifactEventVisibility],
+  );
+  const momentumToggleItems = useMemo(
+    () =>
+      momentumLayerItems.map((item) => ({
+        key: item.key,
+        checked: indicatorVisibility[item.key] !== false,
+        onChange: (evt) =>
+          setIndicatorVisibility((prev) => ({
+            ...prev,
+            [item.key]: evt.target.checked,
+          })),
+        label: item.label,
+        tone: item.color,
+        title: item.label,
+      })),
+    [indicatorVisibility, momentumLayerItems],
+  );
+  const trendToggleItems = useMemo(
+    () =>
+      trendLayerItems.map((item) => ({
+        key: item.key,
+        checked: indicatorVisibility[item.key] !== false,
+        onChange: (evt) =>
+          setIndicatorVisibility((prev) => ({
+            ...prev,
+            [item.key]: evt.target.checked,
+          })),
+        label: item.label,
+        tone: item.color,
+        title: item.label,
+      })),
+    [indicatorVisibility, trendLayerItems],
   );
   const liveDebugRows = useMemo(() => {
     const cronInfo =
@@ -9194,15 +10646,26 @@ export default function SymbolChart({
   }, [master]);
 
   const handleQuickTrade = useCallback(
-    (side, explicitPrice = null) => {
-      const sourceChartId = String(ctxMenu?.chartId || activeChartId || "");
+    (side, explicitPrice = null, explicitCtx = null, options = null) => {
+      const contextSnapshot =
+        explicitCtx && typeof explicitCtx === "object" ? explicitCtx : ctxMenu;
+      const normalizedOptions =
+        options && typeof options === "object" ? options : {};
+      const sourceChartId = String(
+        contextSnapshot?.chartId || activeChartId || "",
+      );
       const activeTf = sourceChartId.split("-").slice(-1)[0];
       const activeBars = master?.bars?.[activeTf] || [];
       const activeLastClose = Number(activeBars[activeBars.length - 1]?.close);
+      const pricePrecision = resolveSymbolTradePricePrecision(
+        cleanSym,
+        activeBars.flatMap((bar) => [bar?.open, bar?.high, bar?.low, bar?.close]),
+        normalizedOptions?.price_precision,
+      );
       const usePrice = Number.isFinite(Number(explicitPrice))
         ? Number(explicitPrice)
-        : Number.isFinite(Number(ctxMenu?.price))
-          ? Number(ctxMenu?.price)
+        : Number.isFinite(Number(contextSnapshot?.price))
+          ? Number(contextSnapshot?.price)
           : Number.isFinite(Number(hoverInfo?.price))
             ? Number(hoverInfo.price)
             : Number.isFinite(activeLastClose)
@@ -9211,14 +10674,120 @@ export default function SymbolChart({
                 ? Number(latestCachedPrice)
                 : null;
       if (!Number.isFinite(usePrice)) return;
+      const pathname =
+        typeof window !== "undefined"
+          ? String(window.location.pathname || "").trim().toLowerCase()
+          : "";
+      const hash =
+        typeof window !== "undefined"
+          ? String(window.location.hash || "").trim().toLowerCase()
+          : "";
+      const tradesNamespaceBase = resolveTradesNamespaceBase(pathname);
+      const isAnalyzeRoute = pathname.startsWith("/trades/analyze");
+      const isManualRoute = pathname.startsWith("/trades/manual");
+      const isManualChartAnalysisRoute =
+        isManualRoute && hash === "#chart-analysis";
+      const suggestionTfs = resolveSuggestedTradeTimeframes(
+        activeTf,
+        timeframes,
+        sharedArtifactItemsByTf,
+      );
+      const tradeType =
+        String(normalizedOptions?.trade_type || normalizedOptions?.order_type || "limit")
+          .trim()
+          .toLowerCase() === "market"
+          ? "market"
+          : "limit";
+      const referencePrice = Number.isFinite(activeLastClose)
+        ? activeLastClose
+        : Number.isFinite(Number(latestCachedPrice))
+          ? Number(latestCachedPrice)
+          : usePrice;
+      const suggestedLevels = buildSuggestedTradeLevels({
+        side,
+        entryPrice: usePrice,
+        referencePrice: tradeType === "market" ? usePrice : referencePrice,
+        activeTf,
+        selectedTfs: suggestionTfs,
+        artifactItemsByTf: sharedArtifactItemsByTf,
+      });
+      const resolvedSuggestedLevels = resolveSuggestedTradeLevelsWithFallback({
+        suggested: suggestedLevels,
+        requestedSide: side,
+        clickedEntryPrice: usePrice,
+        currentSide: side,
+        currentEntryPrice: entryPrice,
+        currentTpPrice: tp1Price ?? tpPrice,
+        currentSlPrice: slPrice,
+      });
+      const suggestedTp = resolvedSuggestedLevels.tp;
+      const suggestedSl = resolvedSuggestedLevels.sl;
+      const entryPayloadPrice = usePrice;
+      const baseChartIntentMeta = {
+        strategy: "Price Action",
+        entry_model: "Rejection",
+        source_id: "auto_chart",
+        source: "auto_chart",
+      };
+      if (isManualRoute && typeof onQuickTradeIntent === "function") {
+        onQuickTradeIntent({
+          symbol: cleanSym,
+          side: String(side || "BUY").toUpperCase(),
+          action: "ENTRY",
+          plan_id: activePlanGroup,
+          price: entryPayloadPrice,
+          tp: suggestedTp,
+          sl: suggestedSl,
+          trade_type: tradeType,
+          price_precision: pricePrecision,
+          time: contextSnapshot?.time || null,
+          interval: contextSnapshot?.interval || null,
+          ...baseChartIntentMeta,
+        });
+        if (!isManualChartAnalysisRoute && typeof window !== "undefined") {
+          const nextHref = `${window.location.pathname}${window.location.search}#chart-analysis`;
+          window.history.replaceState(null, "", nextHref);
+        }
+        setCtxMenu(null);
+        return;
+      }
+      if (typeof window !== "undefined") {
+        const search = new URLSearchParams();
+        search.set("direction", String(side || "BUY").toUpperCase());
+        if (entryPayloadPrice != null) {
+          search.set("entry", String(entryPayloadPrice));
+        }
+        if (suggestedTp != null) {
+          search.set("tp", String(suggestedTp));
+        }
+        if (suggestedSl != null) {
+          search.set("sl", String(suggestedSl));
+        }
+        search.set("trade_type", tradeType);
+        search.set("price_precision", String(pricePrecision));
+        search.set("chart_tf", String(activeTf || ""));
+        search.set("source_id", "auto_chart");
+        search.set("strategy", "Price Action");
+        search.set("entry_model", "Rejection");
+        window.location.href = `${tradesNamespaceBase}/manual/${encodeURIComponent(
+          String(cleanSym || "").toUpperCase(),
+        )}?${search.toString()}#chart-analysis`;
+        setCtxMenu(null);
+        return;
+      }
       const payload = {
         symbol: cleanSym,
         side: String(side || "BUY").toUpperCase(),
         action: "ENTRY",
         plan_id: activePlanGroup,
-        price: usePrice,
-        time: ctxMenu?.time || null,
-        interval: ctxMenu?.interval || null,
+        price: entryPayloadPrice,
+        tp: suggestedTp,
+        sl: suggestedSl,
+        trade_type: tradeType,
+        price_precision: pricePrecision,
+        time: contextSnapshot?.time || null,
+        interval: contextSnapshot?.interval || null,
+        ...baseChartIntentMeta,
       };
       if (typeof onQuickTradeIntent === "function") {
         onQuickTradeIntent(payload);
@@ -9234,6 +10803,13 @@ export default function SymbolChart({
       activeChartId,
       master,
       activePlanGroup,
+      side,
+      entryPrice,
+      tpPrice,
+      tp1Price,
+      slPrice,
+      timeframes,
+      sharedArtifactItemsByTf,
     ],
   );
 
@@ -9261,6 +10837,10 @@ export default function SymbolChart({
         price: levelPrice,
         time: ctxMenu.time || null,
         interval: ctxMenu.interval || null,
+        strategy: "Price Action",
+        entry_model: "Rejection",
+        source_id: "auto_chart",
+        source: "auto_chart",
       };
       if (typeof onQuickTradeIntent === "function") onQuickTradeIntent(payload);
       const isTp = String(kind || "").toUpperCase() === "TP";
@@ -9353,10 +10933,11 @@ export default function SymbolChart({
             }
             title="AI analyze"
             style={{
-              border: "none",
-              background: "transparent",
-              padding: 0,
+              border: "1px solid rgba(34, 211, 238, 0.45)",
+              background: "rgba(15, 23, 42, 0.68)",
+              padding: "4px 8px",
               margin: 0,
+              borderRadius: 8,
               fontWeight: 800,
               fontSize: 14,
               color: "inherit",
@@ -9594,19 +11175,28 @@ export default function SymbolChart({
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "space-between",
-                      marginBottom: 10,
-                      fontSize: 12,
-                      fontWeight: 800,
-                      letterSpacing: "0.12em",
-                      color: "#cbd5e1",
+                      gap: 8,
+                      marginBottom: 8,
                     }}
                   >
-                    <span>LAYERS</span>
+                    <div style={{ flex: "1 1 auto", minWidth: 0 }}>
+                      <GroupButtons
+                        items={LAYERS_TAB_ITEMS}
+                        selectedItems={[activeLayersTab]}
+                        onChange={(values) => setActiveLayersTab(String(values?.[0] || "chart"))}
+                        border_type="multiple"
+                        itemsLayout="row"
+                        size="md"
+                        ariaLabel="Layers tabs"
+                        style={{ width: "100%" }}
+                      />
+                    </div>
                     <div
                       style={{
                         display: "inline-flex",
                         alignItems: "center",
                         gap: 8,
+                        flex: "0 0 auto",
                       }}
                     >
                       {canUseMarketUiConfig ? (
@@ -9618,7 +11208,13 @@ export default function SymbolChart({
                           title="Save chart config"
                           style={{
                             fontWeight: 700,
-                            minWidth: 42,
+                            minWidth: 34,
+                            width: 34,
+                            height: 30,
+                            padding: 0,
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
                             color:
                               configSaveState === "saved"
                                 ? "#10b981"
@@ -9634,10 +11230,10 @@ export default function SymbolChart({
                           }}
                         >
                           {configSaveState === "saving"
-                            ? "..."
+                            ? "…"
                             : configSaveState === "saved"
-                              ? "Saved"
-                              : "Save"}
+                              ? "✓"
+                              : <SaveConfigIcon />}
                         </button>
                       ) : null}
                       <button
@@ -9656,292 +11252,30 @@ export default function SymbolChart({
                       </button>
                     </div>
                   </div>
-                  <div style={{ display: "grid", gap: 12 }}>
-                    <GroupButtons
-                      items={LAYERS_TAB_ITEMS}
-                      selectedItems={[activeLayersTab]}
-                      onChange={(values) => setActiveLayersTab(String(values?.[0] || "chart"))}
-                      border_type="multiple"
-                      itemsLayout="row"
-                      size="md"
-                      ariaLabel="Layers tabs"
-                      style={{ width: "100%" }}
-                    />
+                  <div style={{ display: "grid", gap: 8 }}>
                     <div
                       style={{
                         display: "grid",
-                        gap: 8,
+                        gap: 6,
                         borderRadius: 10,
                         border: "1px solid rgba(255,255,255,0.06)",
                         background: "rgba(255,255,255,0.015)",
-                        padding: 10,
+                        padding: 8,
                       }}
                     >
                       {activeLayersTab === "chart" ? (
                         <>
-                          <div
-                            style={{
-                              fontSize: 11,
-                              fontWeight: 800,
-                              letterSpacing: "0.08em",
-                              color: "#94a3b8",
-                              textTransform: "uppercase",
-                            }}
-                          >
-                            Chart
-                          </div>
                           {artifactPanelTimeframes.length ? (
-                            <div style={{ display: "grid", gap: 6 }}>
-                              <div
-                                style={{
-                                  fontSize: 10,
-                                  fontWeight: 800,
-                                  letterSpacing: "0.08em",
-                                  color: "#64748b",
-                                  textTransform: "uppercase",
-                                }}
-                              >
-                                Timeframes
-                              </div>
-                              <div
-                                style={{
-                                  display: "flex",
-                                  flexWrap: "wrap",
-                                  gap: 6,
-                                }}
-                              >
-                                {artifactPanelTimeframes.map(({ tfKey, label, color, count, visible }) => (
-                                  <button
-                                    key={tfKey}
-                                    type="button"
-                                    onClick={() => toggleArtifactTfVisibility(tfKey)}
-                                    title={`${label} artifacts · ${count} item${count === 1 ? "" : "s"}`}
-                                    style={{
-                                      display: "inline-flex",
-                                      alignItems: "center",
-                                      gap: 6,
-                                      padding: "4px 8px",
-                                      borderRadius: 999,
-                                      border: `1px solid ${visible ? color : "rgba(148,163,184,0.28)"}`,
-                                      background: visible ? `${color}1a` : "rgba(15,23,42,0.6)",
-                                      color: visible ? "#e2e8f0" : "#94a3b8",
-                                      fontSize: 11,
-                                      fontWeight: 700,
-                                      cursor: "pointer",
-                                    }}
-                                  >
-                                    <span
-                                      style={{
-                                        width: 6,
-                                        height: 6,
-                                        borderRadius: 999,
-                                        background: color,
-                                        boxShadow: visible ? `0 0 0 3px ${color}22` : "none",
-                                      }}
-                                    />
-                                    <span>{label}</span>
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
+                            <LayerBooleanGrid items={chartLayerToggleItems.slice(0, artifactPanelTimeframes.length)} />
                           ) : null}
-                          <label
-                            style={{
-                              display: "grid",
-                              gridTemplateColumns: "18px minmax(0, 1fr)",
-                              alignItems: "center",
-                              gap: 12,
-                              padding: "6px 0",
-                              fontSize: 12,
-                              color: "#e2e8f0",
-                              cursor: "pointer",
-                            }}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={indicatorVisibility.rsiPanel !== false}
-                              onChange={(evt) =>
-                                setIndicatorVisibility((prev) => ({
-                                  ...prev,
-                                  rsiPanel: evt.target.checked,
-                                }))
-                              }
-                            />
-                            <span>Momentum Panel</span>
-                          </label>
-                          <label
-                            style={{
-                              display: "grid",
-                              gridTemplateColumns: "18px minmax(0, 1fr)",
-                              alignItems: "center",
-                              gap: 12,
-                              padding: "6px 0",
-                              fontSize: 12,
-                              color: "#e2e8f0",
-                              cursor: "pointer",
-                            }}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={showStrategyMarkers}
-                              onChange={(evt) =>
-                                setShowStrategyMarkers(evt.target.checked)
-                              }
-                            />
-                            <span
-                              style={{
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: 8,
-                              }}
-                            >
-                              <span
-                                style={{
-                                  width: 8,
-                                  height: 8,
-                                  borderRadius: 999,
-                                  background: "#38bdf8",
-                                  boxShadow: "0 0 0 3px #38bdf822",
-                                }}
-                              />
-                              Strategy Buy/Sell Markers
-                            </span>
-                          </label>
-                          <label
-                            style={{
-                              display: "grid",
-                              gridTemplateColumns: "18px minmax(0, 1fr)",
-                              alignItems: "center",
-                              gap: 12,
-                              padding: "6px 0",
-                              fontSize: 12,
-                              color: "#e2e8f0",
-                              cursor: "pointer",
-                            }}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={indicatorVisibility.zigzag !== false}
-                              onChange={(evt) =>
-                                setIndicatorVisibility((prev) => ({
-                                  ...prev,
-                                  zigzag: evt.target.checked,
-                                  candles: true,
-                                }))
-                              }
-                            />
-                            <span
-                              style={{
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: 8,
-                              }}
-                            >
-                              <span
-                                style={{
-                                  width: 8,
-                                  height: 8,
-                                  borderRadius: 999,
-                                  background: "#facc15",
-                                  boxShadow: "0 0 0 3px #facc1522",
-                                }}
-                              />
-                              Zigzag/Candles
-                            </span>
-                          </label>
+                          <LayerBooleanGrid items={chartLayerToggleItems.slice(artifactPanelTimeframes.length)} />
                         </>
                       ) : null}
                       {activeLayersTab === "artifacts" ? (
                         <>
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                              gap: 8,
-                            }}
-                          >
-                            <div
-                              style={{
-                                fontSize: 11,
-                                fontWeight: 800,
-                                letterSpacing: "0.08em",
-                                color: "#94a3b8",
-                                textTransform: "uppercase",
-                              }}
-                            >
-                              Artifacts
-                            </div>
-                            <div style={{ fontSize: 10, color: "#64748b" }}>
-                              {artifactPanelGroups.length
-                                ? `${artifactPanelGroups.length} types`
-                                : "No artifacts loaded"}
-                            </div>
-                          </div>
                           <div style={{ display: "grid", gap: 6 }}>
                             {artifactPanelGroups.length ? (
-                              artifactPanelGroups.map(({ groupKey, label, color, count, visible }) => {
-                                const itemTitle = label;
-                                const itemDetails = `${count} item${count === 1 ? "" : "s"}`;
-                                return (
-                                  <label
-                                    key={groupKey}
-                                    style={{
-                                      display: "grid",
-                                      gridTemplateColumns: "18px 12px minmax(0, 1fr)",
-                                      gap: 12,
-                                      alignItems: "start",
-                                      padding: "6px 0",
-                                      cursor: "pointer",
-                                    }}
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      checked={visible}
-                                      onChange={() => toggleArtifactGroupVisibility(groupKey)}
-                                      style={{ marginTop: 1 }}
-                                    />
-                                    <span
-                                      style={{
-                                        width: 8,
-                                        height: groupKey === "fvg" || groupKey === "ob" ? 8 : 2,
-                                        borderRadius:
-                                          groupKey === "swings" || groupKey === "patterns" ? 999 : 2,
-                                        background:
-                                          groupKey === "fvg" || groupKey === "ob" ? `${color}33` : color,
-                                        border: `1px solid ${color}`,
-                                        display: "inline-block",
-                                        justifySelf: "center",
-                                      }}
-                                    />
-                                    <span style={{ minWidth: 0 }}>
-                                      <div
-                                        style={{
-                                          fontSize: 12,
-                                          color: visible ? "#e2e8f0" : "#64748b",
-                                          whiteSpace: "nowrap",
-                                          overflow: "hidden",
-                                          textOverflow: "ellipsis",
-                                        }}
-                                        title={itemTitle}
-                                      >
-                                        {itemTitle}
-                                      </div>
-                                      <div
-                                        style={{
-                                          display: "grid",
-                                          gap: 2,
-                                          fontSize: 9,
-                                          color: visible ? "#94a3b8" : "#475569",
-                                          lineHeight: 1.3,
-                                        }}
-                                      >
-                                        <div>{itemDetails}</div>
-                                      </div>
-                                    </span>
-                                  </label>
-                                );
-                              })
+                              <LayerBooleanGrid items={artifactGroupToggleItems} />
                             ) : (
                               <div style={{ fontSize: 11, color: "#64748b", padding: "2px 0 8px" }}>
                                 Open or scroll a chart window to auto-load artifact layers, or use the
@@ -9953,94 +11287,9 @@ export default function SymbolChart({
                       ) : null}
                       {activeLayersTab === "events" ? (
                         <>
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                              gap: 8,
-                            }}
-                          >
-                            <div
-                              style={{
-                                fontSize: 11,
-                                fontWeight: 800,
-                                letterSpacing: "0.08em",
-                                color: "#94a3b8",
-                                textTransform: "uppercase",
-                              }}
-                            >
-                              Events
-                            </div>
-                            <div style={{ fontSize: 10, color: "#64748b" }}>
-                              {artifactPanelEvents.length
-                                ? `${artifactPanelEvents.length} types`
-                                : "No events loaded"}
-                            </div>
-                          </div>
                           <div style={{ display: "grid", gap: 6 }}>
                             {artifactPanelEvents.length ? (
-                              artifactPanelEvents.map(({ eventKey, label, color, count, visible }) => {
-                                const itemTitle = label;
-                                const itemDetails = `${count} item${count === 1 ? "" : "s"}`;
-                                return (
-                                  <label
-                                    key={eventKey}
-                                    style={{
-                                      display: "grid",
-                                      gridTemplateColumns: "18px 12px minmax(0, 1fr)",
-                                      gap: 12,
-                                      alignItems: "start",
-                                      padding: "6px 0",
-                                      cursor: "pointer",
-                                    }}
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      checked={visible}
-                                      onChange={() => toggleArtifactEventVisibility(eventKey)}
-                                      style={{ marginTop: 1 }}
-                                    />
-                                    <span
-                                      style={{
-                                        width: 8,
-                                        height: 8,
-                                        borderRadius: 999,
-                                        background: color,
-                                        border: `1px solid ${color}`,
-                                        display: "inline-block",
-                                        justifySelf: "center",
-                                        boxShadow: visible ? `0 0 0 3px ${color}22` : "none",
-                                      }}
-                                    />
-                                    <span style={{ minWidth: 0 }}>
-                                      <div
-                                        style={{
-                                          fontSize: 12,
-                                          color: visible ? "#e2e8f0" : "#64748b",
-                                          whiteSpace: "nowrap",
-                                          overflow: "hidden",
-                                          textOverflow: "ellipsis",
-                                        }}
-                                        title={itemTitle}
-                                      >
-                                        {itemTitle}
-                                      </div>
-                                      <div
-                                        style={{
-                                          display: "grid",
-                                          gap: 2,
-                                          fontSize: 9,
-                                          color: visible ? "#94a3b8" : "#475569",
-                                          lineHeight: 1.3,
-                                        }}
-                                      >
-                                        <div>{itemDetails}</div>
-                                      </div>
-                                    </span>
-                                  </label>
-                                );
-                              })
+                              <LayerBooleanGrid items={eventToggleItems} />
                             ) : (
                               <div style={{ fontSize: 11, color: "#64748b", padding: "2px 0 8px" }}>
                                 Event markers appear here after artifacts are loaded for the visible chart
@@ -10052,221 +11301,12 @@ export default function SymbolChart({
                       ) : null}
                       {activeLayersTab === "momentum" ? (
                         <>
-                          <div
-                            style={{
-                              fontSize: 11,
-                              fontWeight: 800,
-                              letterSpacing: "0.08em",
-                              color: "#94a3b8",
-                              textTransform: "uppercase",
-                            }}
-                          >
-                            Momentum
-                          </div>
-                          {momentumLayerItems.map((item) => {
-                            const active = indicatorVisibility[item.key] !== false;
-                            return (
-                              <label
-                                key={item.key}
-                                style={{
-                                  display: "grid",
-                                  gridTemplateColumns: "18px minmax(0, 1fr)",
-                                  alignItems: "center",
-                                  gap: 12,
-                                  padding: "6px 0",
-                                  fontSize: 12,
-                                  color: "#e2e8f0",
-                                  cursor: "pointer",
-                                }}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={active}
-                                  onChange={(evt) =>
-                                    setIndicatorVisibility((prev) => ({
-                                      ...prev,
-                                      [item.key]: evt.target.checked,
-                                    }))
-                                  }
-                                />
-                                <span
-                                  style={{
-                                    display: "inline-flex",
-                                    alignItems: "center",
-                                    gap: 8,
-                                  }}
-                                >
-                                  <span
-                                    style={{
-                                      width: 8,
-                                      height: 8,
-                                      borderRadius: 999,
-                                      background: item.color,
-                                      boxShadow: `0 0 0 3px ${item.color}22`,
-                                    }}
-                                  />
-                                  {item.label}
-                                </span>
-                              </label>
-                            );
-                          })}
+                          <LayerBooleanGrid items={momentumToggleItems} />
                         </>
                       ) : null}
                       {activeLayersTab === "trend" ? (
                         <>
-                          <div
-                            style={{
-                              fontSize: 11,
-                              fontWeight: 800,
-                              letterSpacing: "0.08em",
-                              color: "#94a3b8",
-                              textTransform: "uppercase",
-                            }}
-                          >
-                            Trend
-                          </div>
-                          {trendLayerItems.map((item) => {
-                            const active = indicatorVisibility[item.key] !== false;
-                            return (
-                              <label
-                                key={item.key}
-                                style={{
-                                  display: "grid",
-                                  gridTemplateColumns: "18px minmax(0, 1fr)",
-                                  alignItems: "center",
-                                  gap: 12,
-                                  padding: "6px 0",
-                                  fontSize: 12,
-                                  color: "#e2e8f0",
-                                  cursor: "pointer",
-                                }}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={active}
-                                  onChange={(evt) =>
-                                    setIndicatorVisibility((prev) => ({
-                                      ...prev,
-                                      [item.key]: evt.target.checked,
-                                    }))
-                                  }
-                                />
-                                <span
-                                  style={{
-                                    display: "inline-flex",
-                                    alignItems: "center",
-                                    gap: 8,
-                                  }}
-                                >
-                                  <span
-                                    style={{
-                                      width: 8,
-                                      height: 8,
-                                      borderRadius: 999,
-                                      background: item.color,
-                                      boxShadow: `0 0 0 3px ${item.color}22`,
-                                    }}
-                                  />
-                                  {item.label}
-                                </span>
-                              </label>
-                            );
-                          })}
-                        </>
-                      ) : null}
-                      {activeLayersTab === "debug" ? (
-                        <>
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                              gap: 8,
-                            }}
-                          >
-                            <div
-                              style={{
-                                fontSize: 11,
-                                fontWeight: 800,
-                                letterSpacing: "0.08em",
-                                color: "#94a3b8",
-                                textTransform: "uppercase",
-                              }}
-                            >
-                              Live Debug
-                            </div>
-                            <div style={{ fontSize: 10, color: "#64748b" }}>
-                              {String(cleanSym || symbol || "").toUpperCase()} · {displayTfLabel(primaryDebugTf || "1m")}
-                            </div>
-                          </div>
-                          <div style={{ display: "grid", gap: 8 }}>
-                            {liveDebugRows.map((row) => {
-                              const tone = debugTone(row.active, row.warning);
-                              return (
-                                <div
-                                  key={row.key}
-                                  style={{
-                                    display: "grid",
-                                    gridTemplateColumns: "10px minmax(0, 1fr)",
-                                    gap: 10,
-                                    padding: "8px 10px",
-                                    borderRadius: 10,
-                                    border: "1px solid rgba(255,255,255,0.06)",
-                                    background: "rgba(255,255,255,0.02)",
-                                  }}
-                                >
-                                  <span
-                                    style={{
-                                      width: 8,
-                                      height: 8,
-                                      marginTop: 4,
-                                      borderRadius: 999,
-                                      background: tone,
-                                      boxShadow: `0 0 0 3px ${tone}22`,
-                                    }}
-                                  />
-                                  <div style={{ minWidth: 0 }}>
-                                    <div
-                                      style={{
-                                        fontSize: 11,
-                                        fontWeight: 800,
-                                        color: "#e2e8f0",
-                                      }}
-                                    >
-                                      {row.label}
-                                    </div>
-                                    <div
-                                      style={{
-                                        marginTop: 2,
-                                        fontSize: 11,
-                                        lineHeight: 1.4,
-                                        color: "#94a3b8",
-                                        wordBreak: "break-word",
-                                      }}
-                                    >
-                                      {row.detail}
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                            {liveDebugHealthError ? (
-                              <div
-                                style={{
-                                  padding: "8px 10px",
-                                  borderRadius: 10,
-                                  border: "1px solid rgba(239,68,68,0.18)",
-                                  background: "rgba(127,29,29,0.2)",
-                                  color: "#fca5a5",
-                                  fontSize: 11,
-                                  lineHeight: 1.45,
-                                  wordBreak: "break-word",
-                                }}
-                              >
-                                Health check error: {liveDebugHealthError}
-                              </div>
-                            ) : null}
-                          </div>
+                          <LayerBooleanGrid items={trendToggleItems} />
                         </>
                       ) : null}
                     </div>
@@ -10436,6 +11476,41 @@ export default function SymbolChart({
               const isSvg = mode === "svg";
               const context = getTimeframeValue(master?.context, tf);
               const chartId = `${cleanSym}-${String(tf).toLowerCase()}`;
+              const tfTrades = replayTrades.filter((trade) =>
+                tradeMatchesTimeframe(trade, tf),
+              );
+              const tfSelectedTrade =
+                tfTrades.find(
+                  (trade) => String(trade?.sid || "") === String(effectiveTradeSid || ""),
+                ) ||
+                tfTrades[0] ||
+                null;
+              const tfTradeSid = String(tfSelectedTrade?.sid || "");
+              const tfTradeLabel = String(
+                tfSelectedTrade?.tradeLabel ||
+                  tfSelectedTrade?.strategy_name ||
+                  tfSelectedTrade?.strategy_key ||
+                  effectiveTradeLabel ||
+                  "",
+              ).trim();
+              const tfTradeSide = String(
+                tfSelectedTrade?.side || tfSelectedTrade?.action || effectiveTradeSide || "",
+              ).trim();
+              const tfCreatedAt = tfSelectedTrade?.createdAt ?? effectiveCreatedAt;
+              const tfOpenedAt = tfSelectedTrade?.openedAt ?? effectiveOpenedAt;
+              const tfClosedAt = tfSelectedTrade?.closedAt ?? effectiveClosedAt;
+              const tfCreatedAtSec =
+                tfSelectedTrade?.createdAtSec ?? toEpochSec(tfCreatedAt);
+              const tfOpenedAtSec =
+                tfSelectedTrade?.openedAtSec ?? toEpochSec(tfOpenedAt);
+              const tfClosedAtSec =
+                tfSelectedTrade?.closedAtSec ?? toEpochSec(tfClosedAt);
+              const tfExitPrice =
+                tfSelectedTrade?.exitPrice ?? effectiveExitPrice;
+              const tfPnlRealized =
+                tfSelectedTrade?.pnlRealized ?? effectivePnlRealized;
+              const tfCloseStatus =
+                tfSelectedTrade?.closeStatus || effectiveCloseStatus;
               const manualVisibleBars = Number(manualTfVisibleBars?.[chartId]);
               const savedVisibleBars = Number(savedTfVisibleBars?.[chartId]);
               const fetchedVisibleBars = Number(selectedTradeFetchBarsCountByTf?.[String(tf).toLowerCase()]);
@@ -10456,9 +11531,9 @@ export default function SymbolChart({
               const barsForTf = Array.isArray(getTimeframeValue(master?.bars, tf))
                 ? getTimeframeValue(master?.bars, tf)
                 : [];
-              const createdAtSec = effectiveCreatedAtSec;
-              const openedAtSec = effectiveOpenedAtSec;
-              const closedAtSec = effectiveClosedAtSec;
+              const createdAtSec = tfCreatedAtSec;
+              const openedAtSec = tfOpenedAtSec;
+              const closedAtSec = tfClosedAtSec;
               const anchoredBarsForTf =
                 shouldLoadTradeFocusedData &&
                 !isBacktestChartReplay &&
@@ -10681,16 +11756,29 @@ export default function SymbolChart({
                       tf,
                     ),
                   )
-                  .map((item) => ({
-                    ...item,
-                    visible:
-                      mode === "svg" && isActiveSwingArtifactObject(item)
-                        ? true
-                        : item?.visible,
-                    color: artifactTimeframeColor(
-                      item?.source_tf || item?.tf || sourceTf,
-                    ),
-                  }))
+                  .map((item) => {
+                    const itemGroupKey = artifactGroupKeyForItem(item);
+                    const storedGroupVisible = artifactGroupVisibility?.[itemGroupKey];
+                    const groupVisible =
+                      typeof storedGroupVisible === "boolean"
+                        ? storedGroupVisible
+                        : defaultArtifactGroupVisible(itemGroupKey);
+                    const isHiddenByDefaultGroup =
+                      typeof storedGroupVisible !== "boolean" &&
+                      defaultArtifactGroupVisible(itemGroupKey) === false;
+                    return {
+                      ...item,
+                      visible:
+                        mode === "svg" && isActiveSwingArtifactObject(item)
+                          ? true
+                          : item?.visible !== false &&
+                            groupVisible !== false &&
+                            !isHiddenByDefaultGroup,
+                      color: artifactTimeframeColor(
+                        item?.source_tf || item?.tf || sourceTf,
+                      ),
+                    };
+                  })
                   .filter((item) => {
                     if (mode === "svg" && isActiveSwingArtifactObject(item)) return true;
                   const itemTfKey = artifactSourceTfLabel(
@@ -10703,22 +11791,19 @@ export default function SymbolChart({
                   );
                   });
               });
-              const svgSummaryObjects =
-                mode === "svg"
-                  ? buildSvgSummaryObjectsFromAnalysisEntry(
-                      effectiveMultiTfAnalysisByTf?.[String(tf).toLowerCase()] || {},
-                      tf,
-                    ).filter((item) => {
-                      const itemTfKey = artifactSourceTfLabel(
-                        item?.source_tf || item?.tf || tf,
-                      );
-                      if (!itemTfKey) return true;
-                      return (
-                        artifactTfVisibility?.[itemTfKey] !== false &&
-                        isArtifactEventVisible(item)
-                      );
-                    })
-                  : [];
+              const analysisSummaryObjects = buildSvgSummaryObjectsFromAnalysisEntry(
+                effectiveMultiTfAnalysisByTf?.[String(tf).toLowerCase()] || {},
+                tf,
+              ).filter((item) => {
+                const itemTfKey = artifactSourceTfLabel(
+                  item?.source_tf || item?.tf || tf,
+                );
+                if (!itemTfKey) return true;
+                return (
+                  artifactTfVisibility?.[itemTfKey] !== false &&
+                  isArtifactEventVisible(item)
+                );
+              });
               const phaseTargetBoundaryObjects = buildPhaseTargetBoundaryObjects(
                 effectiveMultiTfAnalysisByTf?.[String(tf).toLowerCase()] || {},
                 tf,
@@ -10742,7 +11827,7 @@ export default function SymbolChart({
                     ...strategyMarkerObjects,
                     ...artifactObjects,
                     ...phaseTargetBoundaryObjects,
-                    ...svgSummaryObjects,
+                    ...analysisSummaryObjects,
                     ...annotationObjects,
                   ]
                     .map((item) => projectArtifactObjectForReplay(item, replayCurrentBarTimeSec))
@@ -10754,7 +11839,7 @@ export default function SymbolChart({
                     ...strategyMarkerObjects,
                     ...artifactObjects,
                     ...phaseTargetBoundaryObjects,
-                    ...svgSummaryObjects,
+                    ...analysisSummaryObjects,
                     ...annotationObjects,
                   ];
               const isActiveTf = activeChartId === chartId;
@@ -10772,10 +11857,8 @@ export default function SymbolChart({
                   style={{
                     minWidth: 0,
                     position: "relative",
-                    border: "1px solid",
-                    borderColor: isActiveTf ? "#22d3ee" : "transparent",
                     borderRadius: 8,
-                    overflow: "hidden",
+                    overflow: "visible",
                     padding: 0,
                   }}
                   onMouseEnter={() => setActiveChartId(chartId)}
@@ -10783,10 +11866,12 @@ export default function SymbolChart({
                   onMouseMove={() => {
                     if (activeChartId !== chartId) setActiveChartId(chartId);
                   }}
-                >
+                  >
                   <TfHeader
                     tf={tf}
                     symbol={cleanSym}
+                    tradeCount={tfTrades.length}
+                    showSymbolTfBadge={showSymbolTfBadge}
                     provider={provider}
                     context={context}
                     master={master}
@@ -10808,16 +11893,25 @@ export default function SymbolChart({
                     showLiveStatus={!showAnalysisHeaderLiveStatus && !replayDisablesLive}
                     liveStatusMode={analysisHeaderStatusMode}
                   />
-                  {Object.keys(effectiveMultiTfAnalysisByTf || {}).length > 0 ? (
-                    <RealtimeTfAnalysisOverlay
-                      analysisByTf={effectiveMultiTfAnalysisByTf}
-                      orderedTfs={analysisOrderedTfs}
-                      activeTf={tf}
-                      recentEventsByTf={recentArtifactEventsByTf}
-                    />
-                  ) : null}
-                  {isLive ? (
-                    <div style={{ position: "relative", height: chartHeight }}>
+                  <div
+                    style={{
+                      position: "relative",
+                      border: "1px solid",
+                      borderColor: isActiveTf ? "#22d3ee" : "rgba(148, 163, 184, 0.18)",
+                      borderRadius: 8,
+                      overflow: "hidden",
+                    }}
+                  >
+                    {Object.keys(effectiveMultiTfAnalysisByTf || {}).length > 0 ? (
+                      <RealtimeTfAnalysisOverlay
+                        analysisByTf={effectiveMultiTfAnalysisByTf}
+                        orderedTfs={analysisOrderedTfs}
+                        activeTf={tf}
+                        recentEventsByTf={recentArtifactEventsByTf}
+                      />
+                    ) : null}
+                    {isLive ? (
+                      <div style={{ position: "relative", height: chartHeight }}>
                       {(() => {
                         const tvSymbol = toTradingViewSymbol(
                           cleanSym,
@@ -10913,94 +12007,130 @@ export default function SymbolChart({
                       >
                         ⛶
                       </button>
-                    </div>
-                  ) : mode === "snapshots" &&
-                    master?.snapshots?.[tf.toLowerCase()] ? (
-                    /* Snapshot image */
-                    <div
-                      style={{
-                        position: "relative",
-                        height: isMasterSnapshotMode ? 410 : chartHeight,
-                        overflow: "hidden",
-                        borderRadius: 6,
-                      }}
-                    >
-                      <img
-                        src={
-                          master.snapshots[tf.toLowerCase()].url ||
-                          `${window.location.origin}/api/chart/snapshots/${encodeURIComponent(master.snapshots[tf.toLowerCase()].file_name || "")}`
-                        }
-                        alt={`snapshot-${tf}`}
+                      </div>
+                    ) : mode === "snapshots" &&
+                      master?.snapshots?.[tf.toLowerCase()] ? (
+                      /* Snapshot image */
+                      <div
                         style={{
-                          width: "100%",
-                          height: "100%",
-                          objectFit: isMasterSnapshotMode ? "fill" : "contain",
-                          background: "#000",
-                          cursor: "pointer",
+                          position: "relative",
+                          height: isMasterSnapshotMode ? 410 : chartHeight,
+                          overflow: "hidden",
+                          borderRadius: 6,
                         }}
-                        onError={(e) => {
-                          e.target.style.display = "none";
-                        }}
-                        onClick={() => {
-                          const snap = master?.snapshots?.[tf.toLowerCase()];
-                          if (snap) {
-                            const url =
-                              snap.url ||
-                              `${window.location.origin}/api/chart/snapshots/${encodeURIComponent(snap.file_name || "")}`;
-                            setSnapshotModalFiles([
-                              {
-                                name: snap.file_name || `snapshot-${tf}`,
-                                url,
-                                size_bytes: snap.size_bytes || 0,
-                              },
-                            ]);
+                      >
+                        <img
+                          src={
+                            master.snapshots[tf.toLowerCase()].url ||
+                            `${window.location.origin}/api/chart/snapshots/${encodeURIComponent(master.snapshots[tf.toLowerCase()].file_name || "")}`
                           }
+                          alt={`snapshot-${tf}`}
+                          style={{
+                            width: "100%",
+                            height: "100%",
+                            objectFit: isMasterSnapshotMode ? "fill" : "contain",
+                            background: "#000",
+                            cursor: "pointer",
+                          }}
+                          onError={(e) => {
+                            e.target.style.display = "none";
+                          }}
+                          onClick={() => {
+                            const snap = master?.snapshots?.[tf.toLowerCase()];
+                            if (snap) {
+                              const url =
+                                snap.url ||
+                                `${window.location.origin}/api/chart/snapshots/${encodeURIComponent(snap.file_name || "")}`;
+                              setSnapshotModalFiles([
+                                {
+                                  name: snap.file_name || `snapshot-${tf}`,
+                                  url,
+                                  size_bytes: snap.size_bytes || 0,
+                                },
+                              ]);
+                            }
+                          }}
+                        />
+                      </div>
+                    ) : isSvg && hasBars ? (
+                      <div
+                        style={{
+                          position: "relative",
+                          height: chartHeight,
+                          overflow: "hidden",
+                          borderRadius: 6,
                         }}
-                      />
-                    </div>
-                  ) : isSvg && hasBars ? (
-                    <div
-                      style={{
-                        position: "relative",
-                        height: chartHeight,
-                        overflow: "hidden",
-                        borderRadius: 6,
-                      }}
-                    >
-                      <ChartSVG
-                        key={`svg-${chartId}`}
-                        bars={barsToRender}
-                        side={effectiveTradeSide}
-                        action={effectiveTradeSide}
-                        tradeLabel={effectiveTradeLabel}
-                        entryPrice={overlays.plan1 ? effectiveEntryPrice : null}
-                        slPrice={overlays.plan1 ? effectiveSlPrice : null}
-                        tpPrice={overlays.plan1 ? effectiveTpPrice : null}
-                        tp1Price={overlays.plan1 ? tp1Price : null}
-                        tp2Price={overlays.plan1 ? tp2Price : null}
-                        tp3Price={overlays.plan1 ? tp3Price : null}
-                        createdAt={showEventMarkers ? effectiveCreatedAt : null}
-                        openedAt={showEventMarkers ? effectiveOpenedAt : null}
-                        closedAt={showEventMarkers ? effectiveClosedAt : null}
-                        closeStatus={showEventMarkers ? effectiveCloseStatus : ""}
-                        exitPrice={showEventMarkers ? effectiveExitPrice : null}
-                        pnlRealized={showEventMarkers ? effectivePnlRealized : null}
-                        trades={
-                          showEventMarkers ? replayTrades : []
-                        }
-                        selectedTradeSid={effectiveTradeSid}
-                        barsCount={initialVisibleBars}
-                        height={chartHeight}
-                        showLegend={false}
-                        showIndicators={true}
-                        indicatorVisibilityConfig={indicatorVisibility}
-                        sharedObjects={sharedChartObjects}
-                      />
-                    </div>
-                  ) : hasBars ? (
-                    <>
+                      >
+                        {(() => {
+                          const fallbackTradeEventTimeSec =
+                            overlays.plan1 &&
+                            tradeObjectsVisible &&
+                            Number.isFinite(Number(effectiveEntryPrice)) &&
+                            !Number.isFinite(Number(tfCreatedAtSec)) &&
+                            !Number.isFinite(Number(tfOpenedAtSec)) &&
+                            Array.isArray(barsToRender) &&
+                            barsToRender.length > 0
+                              ? Number(barsToRender[barsToRender.length - 1]?.time)
+                              : null;
+                          return (
+                        <ChartSVG
+                          key={`svg-${chartId}`}
+                          bars={barsToRender}
+                          side={tfTradeSide}
+                          action={tfTradeSide}
+                          tradeLabel={tfTradeLabel}
+                          entryPrice={overlays.plan1 ? effectiveEntryPrice : null}
+                          slPrice={overlays.plan1 ? effectiveSlPrice : null}
+                          tpPrice={overlays.plan1 ? effectiveTpPrice : null}
+                          tp1Price={overlays.plan1 ? tp1Price : null}
+                          tp2Price={overlays.plan1 ? tp2Price : null}
+                          tp3Price={overlays.plan1 ? tp3Price : null}
+                          createdAt={showEventMarkers ? tfCreatedAt : null}
+                          createdAtSec={
+                            showEventMarkers
+                              ? tfCreatedAtSec ?? fallbackTradeEventTimeSec
+                              : null
+                          }
+                          openedAt={showEventMarkers ? tfOpenedAt : null}
+                          openedAtSec={
+                            showEventMarkers
+                              ? tfOpenedAtSec ?? fallbackTradeEventTimeSec
+                              : null
+                          }
+                          closedAt={showEventMarkers ? tfClosedAt : null}
+                          closeStatus={showEventMarkers ? tfCloseStatus : ""}
+                          exitPrice={showEventMarkers ? tfExitPrice : null}
+                          pnlRealized={showEventMarkers ? tfPnlRealized : null}
+                          trades={
+                            showEventMarkers ? tfTrades : []
+                          }
+                          selectedTradeSid={tfTradeSid}
+                          barsCount={initialVisibleBars}
+                          height={chartHeight}
+                          showLegend={false}
+                          showIndicators={true}
+                          indicatorVisibilityConfig={indicatorVisibility}
+                          sharedObjects={sharedChartObjects}
+                        />
+                          );
+                        })()}
+                      </div>
+                    ) : hasBars ? (
+                      <>
+                      {(() => {
+                        const fallbackTradeEventTimeSec =
+                          overlays.plan1 &&
+                          tradeObjectsVisible &&
+                          Number.isFinite(Number(effectiveEntryPrice)) &&
+                          !Number.isFinite(Number(tfCreatedAtSec)) &&
+                          !Number.isFinite(Number(tfOpenedAtSec)) &&
+                          Array.isArray(barsToRender) &&
+                          barsToRender.length > 0
+                            ? Number(barsToRender[barsToRender.length - 1]?.time)
+                            : null;
+                        return (
                       <TradeSignalChart
-                        key={`tsc-${chartId}-${effectiveTradeOverlayRenderKey}`}
+                        key={`tsc-${chartId}-${effectiveTradeOverlayRenderKey}-${tfTradeSid || "none"}`}
                         chartId={chartId}
                         symbol={cleanSym}
                         provider={provider}
@@ -11028,41 +12158,41 @@ export default function SymbolChart({
                           overlays.plan1 && tradeObjectsVisible ? tp3Price : null
                         }
                         createdAt={
-                          showEventMarkers && createdMarkerVisible ? effectiveCreatedAt : null
+                          showEventMarkers && createdMarkerVisible ? tfCreatedAt : null
                         }
                         createdAtSec={
                           showEventMarkers && createdMarkerVisible
-                            ? effectiveCreatedAtSec
+                            ? tfCreatedAtSec ?? fallbackTradeEventTimeSec
                             : null
                         }
                         openedAt={
-                          showEventMarkers && openedMarkerVisible ? effectiveOpenedAt : null
+                          showEventMarkers && openedMarkerVisible ? tfOpenedAt : null
                         }
                         openedAtSec={
                           showEventMarkers && openedMarkerVisible
-                            ? effectiveOpenedAtSec
+                            ? tfOpenedAtSec ?? fallbackTradeEventTimeSec
                             : null
                         }
                         closedAt={
-                          showEventMarkers && closedMarkerVisible ? effectiveClosedAt : null
+                          showEventMarkers && closedMarkerVisible ? tfClosedAt : null
                         }
                         closedAtSec={
                           showEventMarkers && closedMarkerVisible
-                            ? effectiveClosedAtSec
+                            ? tfClosedAtSec
                             : null
                         }
                         closeStatus={
-                          showEventMarkers ? effectiveCloseStatus : ""
+                          showEventMarkers ? tfCloseStatus : ""
                         }
                         exitPrice={
-                          showEventMarkers ? effectiveExitPrice : null
+                          showEventMarkers ? tfExitPrice : null
                         }
-                        pnlRealized={showEventMarkers ? effectivePnlRealized : null}
-                        tradeLabel={effectiveTradeLabel}
+                        pnlRealized={showEventMarkers ? tfPnlRealized : null}
+                        tradeLabel={tfTradeLabel}
                         trades={
-                          showEventMarkers ? replayTrades : []
+                          showEventMarkers ? tfTrades : []
                         }
-                        selectedTradeSid={effectiveTradeSid}
+                        selectedTradeSid={tfTradeSid}
                         animateTradeViewport={
                           isBacktestChartReplay ? false : animateTradeViewport
                         }
@@ -11107,6 +12237,8 @@ export default function SymbolChart({
                         showIndicatorPanel={false}
                         indicatorVisibilityConfig={indicatorVisibility}
                       />
+                        );
+                      })()}
                       {isCacheLikeMode && (
                         <div
                           style={{
@@ -11263,42 +12395,43 @@ export default function SymbolChart({
                           {/* All annotations now rendered via createPriceLine API */}
                         </div>
                       )}
-                    </>
-                  ) : (
-                    <div
-                      style={{
-                        height: chartHeight,
-                        display: "flex",
-                        flexDirection: "column",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: 10,
-                        color: "var(--muted)",
-                        fontSize: 11,
-                      }}
-                    >
-                      <div>
-                        {status === "LOADING"
-                          ? "Loading..."
-                          : mode === "snapshots"
-                            ? "No saved snapshots"
-                            : "Loading chart data..."}
+                      </>
+                    ) : (
+                      <div
+                        style={{
+                          height: chartHeight,
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: 10,
+                          color: "var(--muted)",
+                          fontSize: 11,
+                        }}
+                      >
+                        <div>
+                          {status === "LOADING"
+                            ? "Loading..."
+                            : mode === "snapshots"
+                              ? "No saved snapshots"
+                              : "Loading chart data..."}
+                        </div>
+                        {mode !== "live" &&
+                        mode !== "snapshots" &&
+                        status !== "LOADING" &&
+                        (!autoLoadOnMount || hasAttemptedAutoLoad) ? (
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={handleRefreshChartsAndArtifacts}
+                            title="Load bars for the current symbol and visible chart windows, then rebuild artifacts"
+                          >
+                            Load chart data
+                          </button>
+                        ) : null}
                       </div>
-                      {mode !== "live" &&
-                      mode !== "snapshots" &&
-                      status !== "LOADING" &&
-                      (!autoLoadOnMount || hasAttemptedAutoLoad) ? (
-                        <button
-                          type="button"
-                          className="secondary-button"
-                          onClick={handleRefreshChartsAndArtifacts}
-                          title="Load bars for the current symbol and visible chart windows, then rebuild artifacts"
-                        >
-                          Load chart data
-                        </button>
-                      ) : null}
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -11430,8 +12563,22 @@ export default function SymbolChart({
         <div
           style={{
             position: "fixed",
-            left: Math.max(8, Number(ctxMenu.clientX || 0)),
-            top: Math.max(8, Number(ctxMenu.clientY || 0)),
+            left: (() => {
+              const targetChartId = String(ctxMenu?.chartId || activeChartId || "").trim();
+              const rect =
+                targetChartId && chartTileRefs.current?.[targetChartId]
+                  ? chartTileRefs.current[targetChartId].getBoundingClientRect?.()
+                  : null;
+              return Math.max(8, Number(rect?.left || 0) + 8);
+            })(),
+            top: (() => {
+              const targetChartId = String(ctxMenu?.chartId || activeChartId || "").trim();
+              const rect =
+                targetChartId && chartTileRefs.current?.[targetChartId]
+                  ? chartTileRefs.current[targetChartId].getBoundingClientRect?.()
+                  : null;
+              return Math.max(8, Number(rect?.top || 0) + 34);
+            })(),
             background: "#0f1729",
             border: "1px solid rgba(148,163,184,0.35)",
             borderRadius: 8,
@@ -11446,37 +12593,250 @@ export default function SymbolChart({
           <div
             style={{
               padding: "4px 8px",
-              fontSize: 10,
+              fontSize: 12,
               color: "#94a3b8",
               borderBottom: "1px solid rgba(148,163,184,0.15)",
               fontFamily: "monospace",
-              display: "grid",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-start",
               gap: 2,
             }}
           >
-            <div>
+            <span style={{ whiteSpace: "nowrap" }}>
               {(() => {
                 const timeMs = toEpochMs(ctxMenu?.time);
                 return timeMs ? showDateTime(timeMs) : "n/a";
               })()}
-            </div>
-            <div>
-              {Number(ctxMenu?.price || 0).toFixed(
-                Number(ctxMenu?.price) >= 1000
-                  ? 1
-                  : Number(ctxMenu?.price) >= 100
-                    ? 2
-                    : 3,
-              )}
-            </div>
+            </span>
+            <span style={{ whiteSpace: "nowrap" }}>
+              {(() => {
+                const contextualTf = String(ctxMenu?.chartId || activeChartId || "")
+                  .split("-")
+                  .slice(-1)[0];
+                const contextualBars = master?.bars?.[contextualTf] || [];
+                const contextualLastClose = Number(
+                  contextualBars?.[contextualBars.length - 1]?.close,
+                );
+                const currentPrice = resolvePreferredTradePrice([
+                  contextualLastClose,
+                  latestCachedPrice,
+                  ctxMenu?.currentPrice,
+                ]);
+                const clickedPrice = Number.isFinite(Number(ctxMenu?.price))
+                  ? Number(ctxMenu.price)
+                  : null;
+                const precisionSourceValues = [
+                  currentPrice,
+                  clickedPrice,
+                  contextualLastClose,
+                ];
+                const precision = resolveSymbolTradePricePrecision(
+                  cleanSym,
+                  [
+                    ...contextualBars.flatMap((bar) => [bar?.open, bar?.high, bar?.low, bar?.close]),
+                    ...precisionSourceValues,
+                  ],
+                );
+                const clickedText = Number.isFinite(clickedPrice)
+                  ? formatTradePriceByPrecision(clickedPrice, precision)
+                  : "n/a";
+                const currentText = Number.isFinite(currentPrice)
+                  ? formatTradePriceByPrecision(currentPrice, precision)
+                  : "n/a";
+                return `Clicked: ${clickedText}  Current: ${currentText}`;
+              })()}
+            </span>
           </div>
           {(() => {
             const price = Number(ctxMenu?.price || 0);
-            const priceStr = price.toFixed(
-              price >= 1000 ? 1 : price >= 100 ? 2 : 3,
+            const contextualTf = resolveContextMenuTf(ctxMenu, activeChartId);
+            const sourceChartId = String(ctxMenu?.chartId || activeChartId || "");
+            const activeTf = sourceChartId.split("-").slice(-1)[0];
+            const contextualBars = effectiveBarsByTfForPlans?.[contextualTf] || [];
+            const activeBars = master?.bars?.[contextualTf] || master?.bars?.[activeTf] || [];
+            const activeLastClose = Number(
+              activeBars[activeBars.length - 1]?.close,
             );
+            const effectiveCurrentPrice = resolvePreferredTradePrice([
+              activeLastClose,
+              Number(contextualBars[contextualBars.length - 1]?.close),
+              latestCachedPrice,
+              ctxMenu?.currentPrice,
+            ]);
+            const tradePricePrecision = resolveSymbolTradePricePrecision(
+              cleanSym,
+              [
+                ...contextualBars.flatMap((bar) => [bar?.open, bar?.high, bar?.low, bar?.close]),
+                price,
+                effectiveCurrentPrice,
+                activeLastClose,
+                latestCachedPrice,
+              ],
+            );
+            const formatTradeMenuPrice = (value) => {
+              const numeric = toPositiveTradePlanPrice(value);
+              if (numeric == null) return "n/a";
+              return formatTradePriceByPrecision(numeric, tradePricePrecision);
+            };
+            const priceStr = formatTradeMenuPrice(price);
             const menuTfColor = artifactTimeframeColor(ctxMenu?.interval || ctxMenu?.tf || "");
-            return [
+            const pathname =
+              typeof window !== "undefined"
+                ? String(window.location.pathname || "").trim().toLowerCase()
+                : "";
+            const tradesNamespaceBase = resolveTradesNamespaceBase(pathname);
+            const isAnalyzeRoute =
+              pathname.startsWith("/trades/analyze");
+            const isManualRoute =
+              pathname.startsWith("/trades/manual");
+            const quickTradeContext = {
+              chartId: sourceChartId,
+              price,
+              time: ctxMenu?.time || null,
+              interval: ctxMenu?.interval || null,
+            };
+            const suggestionTfs = resolveSuggestedTradeTimeframes(
+              activeTf,
+              timeframes,
+              sharedArtifactItemsByTf,
+            );
+            const defaultContextTradePlansFromTf = collectDefaultContextTradePlans({
+              plansByTf: effectiveTradePlansByTf,
+              selectedTfs: suggestionTfs,
+              contextualTf: activeTf,
+              contextualTimeSec: Number(ctxMenu?.time || 0),
+              contextualPrice: price,
+              limit: 6,
+            });
+            const analysisSnapshotTradePlans = Array.isArray(
+              effectiveAnalysisSnapshot?.trade_plan,
+            )
+              ? effectiveAnalysisSnapshot.trade_plan
+              : effectiveAnalysisSnapshot?.trade_plan &&
+                  typeof effectiveAnalysisSnapshot.trade_plan === "object"
+                ? [effectiveAnalysisSnapshot.trade_plan]
+                : Array.isArray(analysisSnapshot?.trade_plan)
+                  ? analysisSnapshot.trade_plan
+                  : analysisSnapshot?.trade_plan &&
+                      typeof analysisSnapshot.trade_plan === "object"
+                    ? [analysisSnapshot.trade_plan]
+                    : [];
+            const defaultContextTradePlans =
+              defaultContextTradePlansFromTf.length > 0
+                ? defaultContextTradePlansFromTf
+                : collectDefaultContextTradePlansFromList({
+                    plans: analysisSnapshotTradePlans,
+                    selectedTfs: suggestionTfs,
+                    contextualTf: activeTf,
+                    contextualTimeSec: Number(ctxMenu?.time || 0),
+                    contextualPrice: price,
+                    limit: 6,
+                  });
+            const currentMarketPrice = resolvePreferredTradePrice([
+              effectiveCurrentPrice,
+              latestCachedPrice,
+            ]);
+            const effectiveMarketEntryPrice = Number.isFinite(currentMarketPrice)
+              ? currentMarketPrice
+              : price;
+            const buyLimitSuggestedLevels = buildSuggestedTradeLevels({
+              side: "BUY",
+              entryPrice: price,
+              referencePrice: effectiveMarketEntryPrice,
+              activeTf,
+              selectedTfs: suggestionTfs,
+              artifactItemsByTf: sharedArtifactItemsByTf,
+            });
+            const sellLimitSuggestedLevels = buildSuggestedTradeLevels({
+              side: "SELL",
+              entryPrice: price,
+              referencePrice: effectiveMarketEntryPrice,
+              activeTf,
+              selectedTfs: suggestionTfs,
+              artifactItemsByTf: sharedArtifactItemsByTf,
+            });
+            const buyMarketSuggestedLevels = buildSuggestedTradeLevels({
+              side: "BUY",
+              entryPrice: effectiveMarketEntryPrice,
+              referencePrice: effectiveMarketEntryPrice,
+              activeTf,
+              selectedTfs: suggestionTfs,
+              artifactItemsByTf: sharedArtifactItemsByTf,
+            });
+            const sellMarketSuggestedLevels = buildSuggestedTradeLevels({
+              side: "SELL",
+              entryPrice: effectiveMarketEntryPrice,
+              referencePrice: effectiveMarketEntryPrice,
+              activeTf,
+              selectedTfs: suggestionTfs,
+              artifactItemsByTf: sharedArtifactItemsByTf,
+            });
+            const buyLimitResolvedSuggestedLevels =
+              resolveSuggestedTradeLevelsWithFallback({
+                suggested: buyLimitSuggestedLevels,
+                requestedSide: "BUY",
+                clickedEntryPrice: price,
+                currentSide: side,
+                currentEntryPrice: entryPrice,
+                currentTpPrice: tp1Price ?? tpPrice,
+                currentSlPrice: slPrice,
+              });
+            const sellLimitResolvedSuggestedLevels =
+              resolveSuggestedTradeLevelsWithFallback({
+                suggested: sellLimitSuggestedLevels,
+                requestedSide: "SELL",
+                clickedEntryPrice: price,
+                currentSide: side,
+                currentEntryPrice: entryPrice,
+                currentTpPrice: tp1Price ?? tpPrice,
+                currentSlPrice: slPrice,
+              });
+            const buyMarketResolvedSuggestedLevels =
+              resolveSuggestedTradeLevelsWithFallback({
+                suggested: buyMarketSuggestedLevels,
+                requestedSide: "BUY",
+                clickedEntryPrice: effectiveMarketEntryPrice,
+                currentSide: side,
+                currentEntryPrice: entryPrice,
+                currentTpPrice: tp1Price ?? tpPrice,
+                currentSlPrice: slPrice,
+              });
+            const sellMarketResolvedSuggestedLevels =
+              resolveSuggestedTradeLevelsWithFallback({
+                suggested: sellMarketSuggestedLevels,
+                requestedSide: "SELL",
+                clickedEntryPrice: effectiveMarketEntryPrice,
+                currentSide: side,
+                currentEntryPrice: entryPrice,
+                currentTpPrice: tp1Price ?? tpPrice,
+                currentSlPrice: slPrice,
+              });
+            const buyLimitSuggestedTp = toPositiveTradePlanPrice(
+              buyLimitResolvedSuggestedLevels.tp,
+            );
+            const buyLimitSuggestedSl = toPositiveTradePlanPrice(
+              buyLimitResolvedSuggestedLevels.sl,
+            );
+            const sellLimitSuggestedTp = toPositiveTradePlanPrice(
+              sellLimitResolvedSuggestedLevels.tp,
+            );
+            const sellLimitSuggestedSl = toPositiveTradePlanPrice(
+              sellLimitResolvedSuggestedLevels.sl,
+            );
+            const buyMarketSuggestedTp = toPositiveTradePlanPrice(
+              buyMarketResolvedSuggestedLevels.tp,
+            );
+            const buyMarketSuggestedSl = toPositiveTradePlanPrice(
+              buyMarketResolvedSuggestedLevels.sl,
+            );
+            const sellMarketSuggestedTp = toPositiveTradePlanPrice(
+              sellMarketResolvedSuggestedLevels.tp,
+            );
+            const sellMarketSuggestedSl = toPositiveTradePlanPrice(
+              sellMarketResolvedSuggestedLevels.sl,
+            );
+            const drawToolItems = [
               { label: "Line", color: menuTfColor, fn: handleDrawLine },
               { label: "Segment", color: menuTfColor, fn: handleDrawSegment },
               {
@@ -11484,15 +12844,231 @@ export default function SymbolChart({
                 color: "#22c55e",
                 fn: () => addObject("ZONE", "#22c55e", "zone"),
               },
-              { label: `Buy @ ${priceStr}`, fn: () => handleQuickTrade("BUY") },
+            ];
+            const ENTRY_MENU_COLOR = ENTRY_PLAN_COLOR;
+            const suggestedEntryPrice = price;
+            const suggestedTpPrice = buyLimitSuggestedTp;
+            const suggestedSlPrice = buyLimitSuggestedSl;
+            const displayedStrategyScanPlans = Array.isArray(menuStrategyScanState?.plans)
+              ? menuStrategyScanState.plans.slice(
+                  0,
+                  Math.max(0, Number(menuStrategyScanState?.visibleCount) || 0),
+                )
+              : [];
+            const applyDefaultMenuPlanSelection = (plan) => {
+              const direction =
+                String(plan?.direction || plan?.side || plan?.action || "")
+                  .trim()
+                  .toUpperCase() === "SELL"
+                  ? "SELL"
+                  : "BUY";
+              const entry = toPositiveTradePlanPrice(plan?.entry ?? plan?.entry_price);
+              const tp = toPositiveTradePlanPrice(plan?.tp ?? plan?.tp_price);
+              const sl = toPositiveTradePlanPrice(plan?.sl ?? plan?.sl_price);
+              const tradeType =
+                String(plan?.trade_type || plan?.order_type || "limit")
+                  .trim()
+                  .toLowerCase() === "market"
+                  ? "market"
+                  : "limit";
+              if (typeof onQuickTradeIntent === "function" && isManualRoute) {
+                onQuickTradeIntent({
+                  symbol: cleanSym,
+                  side: direction,
+                  action: "ENTRY",
+                  plan_id: activePlanGroup,
+                  price: entry,
+                  tp,
+                  sl,
+                  trade_type: tradeType,
+                  price_precision: tradePricePrecision,
+                  time: ctxMenu?.time || null,
+                  interval: String(plan?._menu_tf || plan?.tf || activeTf || "").trim(),
+                  source_id: "auto_chart",
+                  source: "auto_chart",
+                  strategy: String(plan?.strategy_name || plan?.strategy || "").trim(),
+                  entry_model: String(plan?.entry_model || plan?.entryModel || "").trim(),
+                  rule_name: String(plan?.rule_name || plan?.event_name || "").trim(),
+                });
+                setCtxMenu(null);
+                return;
+              }
+              if (typeof window === "undefined") return;
+              const search = new URLSearchParams();
+              search.set("direction", direction);
+              if (entry != null) search.set("entry", String(entry));
+              if (tp != null) search.set("tp", String(tp));
+              if (sl != null) search.set("sl", String(sl));
+              search.set("trade_type", tradeType);
+              search.set("price_precision", String(tradePricePrecision));
+              search.set(
+                "chart_tf",
+                String(plan?._menu_tf || plan?.tf || activeTf || "").trim(),
+              );
+              search.set("source_id", "auto_chart");
+              if (plan?.strategy_name || plan?.strategy) {
+                search.set(
+                  "strategy",
+                  String(plan?.strategy_name || plan?.strategy || "").trim(),
+                );
+              }
+              if (plan?.entry_model || plan?.entryModel) {
+                search.set(
+                  "entry_model",
+                  String(plan?.entry_model || plan?.entryModel || "").trim(),
+                );
+              }
+              window.location.href = `${tradesNamespaceBase}/manual/${encodeURIComponent(
+                String(cleanSym || "").toUpperCase(),
+              )}?${search.toString()}#chart-analysis`;
+            };
+            const hasMoreStrategyScanPlans =
+              Array.isArray(menuStrategyScanState?.plans) &&
+              menuStrategyScanState.plans.length >
+                Math.max(0, Number(menuStrategyScanState?.visibleCount) || 0);
+            const applyScannedPlanSelection = (plan) => {
+              if (!plan) return;
+              const direction = String(plan?.direction || "BUY").trim().toUpperCase();
+              const tradeType =
+                String(plan?.type || plan?.trade_type || "market").trim().toLowerCase() ===
+                "limit"
+                  ? "limit"
+                  : "market";
+              const entry = toPositiveTradePlanPrice(plan?.entry);
+              const tp = toPositiveTradePlanPrice(plan?.tp);
+              const sl = toPositiveTradePlanPrice(plan?.sl);
+              if (typeof onQuickTradeIntent === "function") {
+                onQuickTradeIntent({
+                  symbol: cleanSym,
+                  side: direction === "SELL" ? "SELL" : "BUY",
+                  action: "ENTRY",
+                  plan_id: activePlanGroup,
+                  price: entry,
+                  tp,
+                  sl,
+                  trade_type: tradeType,
+                  price_precision: tradePricePrecision,
+                  time: ctxMenu?.time || null,
+                  interval: String(plan?._scan_tf || plan?.tf || contextualTf || "").trim(),
+                  source_id: "auto_chart",
+                  source: "auto_chart",
+                  strategy: String(plan?.strategy_name || plan?.strategy || "").trim(),
+                  entry_model: "scan",
+                  rule_name: String(plan?.rule_name || plan?.event_name || "").trim(),
+                });
+                setCtxMenu(null);
+                return;
+              }
+              if (typeof window === "undefined") return;
+              const search = new URLSearchParams();
+              search.set("direction", direction === "SELL" ? "SELL" : "BUY");
+              if (entry != null) {
+                search.set("entry", String(entry));
+              }
+              if (tp != null) {
+                search.set("tp", String(tp));
+              }
+              if (sl != null) {
+                search.set("sl", String(sl));
+              }
+              search.set("trade_type", tradeType);
+              search.set("price_precision", String(tradePricePrecision));
+              search.set(
+                "chart_tf",
+                String(plan?._scan_tf || plan?.tf || contextualTf || "").trim(),
+              );
+              search.set("source_id", "auto_chart");
+              if (plan?.strategy_name || plan?.strategy) {
+                search.set(
+                  "strategy",
+                  String(plan?.strategy_name || plan?.strategy || "").trim(),
+                );
+              }
+              search.set("entry_model", "scan");
+              window.location.href = `${tradesNamespaceBase}/manual/${encodeURIComponent(
+                String(cleanSym || "").toUpperCase(),
+              )}?${search.toString()}#chart-analysis`;
+            };
+            const buildTradeActionPayload = (actionSide, actionTradeType = "limit") => {
+              const normalizedSide = String(actionSide || "BUY").toUpperCase() === "SELL" ? "SELL" : "BUY";
+              const isMarketTrade = actionTradeType === "market";
+              return {
+                side: normalizedSide,
+                tradeType: isMarketTrade ? "market" : "limit",
+                entry: isMarketTrade ? effectiveMarketEntryPrice : price,
+                tp: isMarketTrade
+                  ? normalizedSide === "SELL"
+                    ? sellMarketSuggestedTp
+                    : buyMarketSuggestedTp
+                  : normalizedSide === "SELL"
+                    ? sellLimitSuggestedTp
+                    : buyLimitSuggestedTp,
+                sl: isMarketTrade
+                  ? normalizedSide === "SELL"
+                    ? sellMarketSuggestedSl
+                    : buyMarketSuggestedSl
+                  : normalizedSide === "SELL"
+                    ? sellLimitSuggestedSl
+                    : buyLimitSuggestedSl,
+              };
+            };
+            const marketTradeActions = [
               {
-                label: `Sell @ ${priceStr}`,
-                fn: () => handleQuickTrade("SELL"),
+                key: "buy-market",
+                side: "BUY",
+                tradeType: "market",
+                fn: () =>
+                  handleQuickTrade("BUY", effectiveMarketEntryPrice, {
+                    ...quickTradeContext,
+                    price: effectiveMarketEntryPrice,
+                  }, {
+                    trade_type: "market",
+                    price_precision: tradePricePrecision,
+                  }),
               },
               {
-                label: `Entry @ ${priceStr}`,
+                key: "sell-market",
+                side: "SELL",
+                tradeType: "market",
+                fn: () =>
+                  handleQuickTrade("SELL", effectiveMarketEntryPrice, {
+                    ...quickTradeContext,
+                    price: effectiveMarketEntryPrice,
+                  }, {
+                    trade_type: "market",
+                    price_precision: tradePricePrecision,
+                  }),
+              },
+            ];
+            const limitTradeActions = [
+              {
+                key: "buy-limit",
+                side: "BUY",
+                tradeType: "limit",
+                fn: () =>
+                  handleQuickTrade("BUY", price, quickTradeContext, {
+                    trade_type: "limit",
+                    price_precision: tradePricePrecision,
+                  }),
+              },
+              {
+                key: "sell-limit",
+                side: "SELL",
+                tradeType: "limit",
+                fn: () =>
+                  handleQuickTrade("SELL", price, quickTradeContext, {
+                    trade_type: "limit",
+                    price_precision: tradePricePrecision,
+                  }),
+              },
+            ];
+            const manualTradeActions = [
+              {
+                key: "entry",
+                buttonLabel: "Entry",
+                label: `Entry @ ${formatTradeMenuPrice(suggestedEntryPrice)}`,
                 fn: () => {
-                  const p = Number(ctxMenu?.price);
+                  const p = suggestedEntryPrice;
                   if (typeof onPlanLevelChange === "function") {
                     onPlanLevelChange("entry", p);
                   }
@@ -11508,18 +13084,24 @@ export default function SymbolChart({
                   setCtxMenu(null);
                 },
               },
-              ...["TP1", "TP2", "TP3"].map((tpKey) => ({
-                label: `${tpKey} @ ${priceStr}`,
+              ...[
+                { key: "tp1", actionKey: "TP1", buttonLabel: "TP" },
+                { key: "tp2", actionKey: "TP2", buttonLabel: "TP2" },
+                { key: "tp3", actionKey: "TP3", buttonLabel: "TP3" },
+              ].map(({ key, actionKey, buttonLabel }) => ({
+                key,
+                buttonLabel,
+                label: `${actionKey} @ ${formatTradeMenuPrice(suggestedTpPrice)}`,
                 fn: () => {
-                  const p = Number(ctxMenu?.price);
+                  const p = suggestedTpPrice;
                   if (typeof onPlanLevelChange === "function") {
-                    onPlanLevelChange(tpKey.toLowerCase(), p);
+                    onPlanLevelChange(key, p);
                   }
                   if (typeof onQuickTradeIntent === "function") {
                     onQuickTradeIntent({
                       symbol: cleanSym,
-                      side: tpKey,
-                      action: tpKey,
+                      side: actionKey,
+                      action: actionKey,
                       plan_id: activePlanGroup,
                       price: p,
                     });
@@ -11528,9 +13110,11 @@ export default function SymbolChart({
                 },
               })),
               {
-                label: `SL @ ${priceStr}`,
+                key: "sl",
+                buttonLabel: "SL",
+                label: `SL @ ${formatTradeMenuPrice(suggestedSlPrice)}`,
                 fn: () => {
-                  const p = Number(ctxMenu?.price);
+                  const p = suggestedSlPrice;
                   if (typeof onPlanLevelChange === "function") {
                     onPlanLevelChange("sl", p);
                   }
@@ -11546,48 +13130,420 @@ export default function SymbolChart({
                   setCtxMenu(null);
                 },
               },
-            ].map((it) => (
-              <button
-                key={it.label}
-                type="button"
-                onClick={it.fn}
-                title={`Add ${it.label} to the current chart`}
-                style={{
-                  width: "100%",
-                  textAlign: "left",
-                  background: "transparent",
-                  color:
-                    it.label.startsWith("Buy") ||
-                    it.label.startsWith("Entry") ||
-                    it.label.startsWith("TP")
-                      ? "#10b981"
-                      : it.label.startsWith("Sell") || it.label.startsWith("SL")
-                        ? "#ef4444"
-                        : "#e2e8f0",
-                  border: "none",
-
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                }}
-              >
-                {it.color ? (
+            ];
+            const levelTradeActions = manualTradeActions;
+            const renderTradeActionButton = (item) => {
+              const payload = buildTradeActionPayload(item.side, item.tradeType);
+              const isSell = payload.side === "SELL";
+              const tradeLabel = `${payload.side === "SELL" ? "S" : "B"} ${
+                payload.tradeType === "market" ? "mkt" : "lmt"
+              }`;
+              return (
+                <button
+                  key={item.key}
+                  ref={applyOverlayTradeButtonImportantStyle}
+                  type="button"
+                  onClick={item.fn}
+                  title={`Apply ${payload.side} ${payload.tradeType}`}
+                  style={{
+                    textAlign: "left",
+                    background: "rgba(255,255,255,0.02)",
+                    color: isSell ? "#ef4444" : "#10b981",
+                    border: "1px solid rgba(148,163,184,0.14)",
+                    borderRadius: 6,
+                    cursor: "pointer",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "flex-start",
+                    justifyContent: "center",
+                    gap: 2,
+                    padding: "4px 6px",
+                    fontSize: 9,
+                    fontWeight: 500,
+                    lineHeight: 1.15,
+                  }}
+                >
+                  <span style={{ color: isSell ? "#ef4444" : "#10b981", flex: "0 0 auto" }}>
+                    {tradeLabel}
+                  </span>
                   <span
                     style={{
-                      width: 16,
-                      height: it.label === "Zone" ? 10 : 2,
-                      borderRadius: 2,
-                      border: `1px solid ${it.color}`,
-                      background:
-                        it.label === "Zone" ? `${it.color}33` : it.color,
-                      display: "inline-block",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 2,
+                      flexWrap: "wrap",
+                      fontSize: 8,
+                      fontWeight: 500,
+                      whiteSpace: "normal",
                     }}
-                  />
-                ) : null}
-                {it.label}
-              </button>
-            ));
+                  >
+                    <span style={{ color: ENTRY_MENU_COLOR }}>
+                      {formatTradeMenuPrice(payload.entry)}
+                    </span>
+                    <span style={{ color: "rgba(226,232,240,0.58)" }}>-&gt;</span>
+                    <span style={{ color: TP_PLAN_COLOR }}>
+                      {formatTradeMenuPrice(payload.tp)}
+                    </span>
+                    <span style={{ color: "rgba(226,232,240,0.58)" }}>/</span>
+                    <span style={{ color: SL_PLAN_COLOR }}>
+                      {formatTradeMenuPrice(payload.sl)}
+                    </span>
+                  </span>
+                </button>
+              );
+            };
+            return (
+              <div style={{ padding: 6, display: "grid", gap: 4 }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                    gap: 4,
+                  }}
+                >
+                  {drawToolItems.map((it) => (
+                    <button
+                      key={it.label}
+                      ref={applyOverlayButtonImportantStyle}
+                      type="button"
+                      onClick={it.fn}
+                      title={`Add ${it.label} to the current chart`}
+                      style={{
+                        textAlign: "left",
+                        background: "rgba(255,255,255,0.02)",
+                        color: "#e2e8f0",
+                        border: "1px solid rgba(148,163,184,0.14)",
+                        borderRadius: 6,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 4,
+                        padding: "3px 5px",
+                        fontSize: 6,
+                        fontWeight: 400,
+                        lineHeight: 1.05,
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 12,
+                          height: it.label === "Zone" ? 8 : 2,
+                          borderRadius: 2,
+                          border: `1px solid ${it.color}`,
+                          background:
+                            it.label === "Zone" ? `${it.color}33` : it.color,
+                          display: "inline-block",
+                          flex: "0 0 auto",
+                        }}
+                      />
+                      <span>{it.label}</span>
+                    </button>
+                  ))}
+                </div>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+                    gap: 4,
+                  }}
+                >
+                  {levelTradeActions.map((it) => (
+                    <button
+                      key={it.key}
+                      ref={applyOverlayButtonImportantStyle}
+                      type="button"
+                      onClick={it.fn}
+                      title={it.label}
+                      style={{
+                        textAlign: "center",
+                        background: "rgba(255,255,255,0.02)",
+                        color:
+                          it.key === "entry"
+                            ? ENTRY_MENU_COLOR
+                            : String(it.key).startsWith("tp")
+                              ? TP_PLAN_COLOR
+                              : SL_PLAN_COLOR,
+                        border: "1px solid rgba(148,163,184,0.14)",
+                        borderRadius: 6,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: "2px 3px",
+                        fontSize: 6,
+                        fontWeight: 400,
+                        lineHeight: 1.05,
+                      }}
+                    >
+                      {it.buttonLabel}
+                    </button>
+                  ))}
+                </div>
+
+                {marketTradeActions.length > 0 && (
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: `repeat(${Math.max(
+                          1,
+                          marketTradeActions.length,
+                        )}, minmax(0, 1fr))`,
+                        gap: 4,
+                      }}
+                    >
+                      {marketTradeActions.map(renderTradeActionButton)}
+                    </div>
+                  )}
+
+                {limitTradeActions.length > 0 && (
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: `repeat(${Math.max(
+                          1,
+                          limitTradeActions.length,
+                        )}, minmax(0, 1fr))`,
+                        gap: 4,
+                      }}
+                    >
+                      {limitTradeActions.map(renderTradeActionButton)}
+                    </div>
+                  )}
+                {defaultContextTradePlans.length > 0 && (
+                  <div style={{ display: "grid", gap: 4 }}>
+                    {defaultContextTradePlans.map((plan) => {
+                      const isSell =
+                        String(plan?.direction || "").trim().toUpperCase() === "SELL";
+                      return (
+                        <button
+                          key={String(
+                            plan?.id ||
+                              `${plan?.strategy_id || ""}-${plan?.event_id || ""}-${plan?._menu_tf || ""}-${plan?._menu_index || 0}`,
+                          )}
+                          ref={applyOverlayButtonImportantStyle}
+                          type="button"
+                          title={`${String(plan?.strategy_name || plan?.strategy || "Strategy")} · ${String(plan?._menu_tf || plan?.tf || "")}`}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 5,
+                            minWidth: 0,
+                            padding: "3px 5px",
+                            background: "rgba(255,255,255,0.02)",
+                            border: "1px solid rgba(148,163,184,0.14)",
+                            borderRadius: 6,
+                            fontSize: 10,
+                            fontWeight: 400,
+                            lineHeight: 1.15,
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            cursor: "pointer",
+                            textAlign: "left",
+                          }}
+                          onClick={() => applyDefaultMenuPlanSelection(plan)}
+                        >
+                          <span
+                            style={{
+                              color: isSell ? "#ef4444" : "#10b981",
+                              flex: "0 1 auto",
+                              minWidth: 0,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                            }}
+                          >
+                            {String(plan?.strategy_name || plan?.strategy || "Strategy")}
+                          </span>
+                          <span style={{ color: ENTRY_MENU_COLOR, flex: "0 0 auto" }}>
+                            {formatTradeMenuPrice(plan?.entry)}
+                          </span>
+                          <span style={{ color: TP_PLAN_COLOR, flex: "0 0 auto" }}>
+                            {formatTradeMenuPrice(plan?.tp)}
+                          </span>
+                          <span style={{ color: SL_PLAN_COLOR, flex: "0 0 auto" }}>
+                            {formatTradeMenuPrice(plan?.sl)}
+                          </span>
+                          <span
+                            style={{
+                              color: "#94a3b8",
+                              fontSize: 10,
+                              fontWeight: 400,
+                              flex: "0 0 auto",
+                            }}
+                          >
+                            {String(plan?._menu_tf || plan?.tf || "").trim().toUpperCase()}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                <div style={{ display: "grid", gap: 4, paddingTop: 2 }}>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "minmax(0, 1fr) auto",
+                      gap: 4,
+                    }}
+                  >
+                    <button
+                      ref={applyOverlayButtonImportantStyle}
+                      type="button"
+                      onClick={handleScanMenuStrategies}
+                      disabled={menuStrategyScanState?.status === "loading"}
+                      style={{
+                        textAlign: "center",
+                        background: "rgba(255,255,255,0.02)",
+                        color: "#e2e8f0",
+                        border: "1px solid rgba(148,163,184,0.14)",
+                        borderRadius: 6,
+                        cursor:
+                          menuStrategyScanState?.status === "loading"
+                            ? "progress"
+                            : "pointer",
+                        padding: "3px 5px",
+                        fontSize: 10,
+                        fontWeight: 400,
+                        lineHeight: 1.15,
+                      }}
+                    >
+                      {menuStrategyScanState?.status === "loading"
+                        ? "Scanning Strategies..."
+                        : "Scan Strategies"}
+                    </button>
+                    <button
+                      ref={applyOverlayButtonImportantStyle}
+                      type="button"
+                      onClick={() => setCtxMenu(null)}
+                      aria-label="Close menu"
+                      title="Close"
+                      style={{
+                        textAlign: "center",
+                        background: "rgba(255,255,255,0.02)",
+                        color: "#94a3b8",
+                        border: "1px solid rgba(148,163,184,0.14)",
+                        borderRadius: 6,
+                        cursor: "pointer",
+                        padding: "3px 6px",
+                        fontSize: 10,
+                        fontWeight: 400,
+                        lineHeight: 1.15,
+                        minWidth: 28,
+                      }}
+                    >
+                      X
+                    </button>
+                  </div>
+                  {menuStrategyScanState?.status === "done" &&
+                    displayedStrategyScanPlans.length > 0 && (
+                      <div style={{ display: "grid", gap: 4 }}>
+                        {displayedStrategyScanPlans.map((plan) => {
+                          const isSell =
+                            String(plan?.direction || "").trim().toUpperCase() === "SELL";
+                          return (
+                            <button
+                              key={String(
+                                plan?.id ||
+                                  `${plan?.strategy_id || ""}-${plan?.event_id || ""}`,
+                              )}
+                              ref={applyOverlayButtonImportantStyle}
+                              type="button"
+                              title={`${String(plan?.strategy_name || plan?.strategy || "Strategy")} · ${String(plan?.rule_name || plan?.event_name || plan?.condition || "Rule")}`}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 5,
+                                minWidth: 0,
+                                padding: "3px 5px",
+                                background: "rgba(255,255,255,0.02)",
+                                border: "1px solid rgba(148,163,184,0.14)",
+                                borderRadius: 6,
+                                fontSize: 10,
+                                fontWeight: 400,
+                                lineHeight: 1.15,
+                                whiteSpace: "nowrap",
+                                overflow: "hidden",
+                                cursor: "pointer",
+                              }}
+                              onClick={() => applyScannedPlanSelection(plan)}
+                            >
+                              <span
+                                style={{
+                                  color: isSell ? "#ef4444" : "#10b981",
+                                  flex: "0 1 auto",
+                                  minWidth: 0,
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                }}
+                              >
+                                {String(plan?.strategy_name || plan?.strategy || "Strategy")}
+                              </span>
+                              <span style={{ color: ENTRY_MENU_COLOR, flex: "0 0 auto" }}>
+                                {formatTradeMenuPrice(plan?.entry)}
+                              </span>
+                              <span style={{ color: TP_PLAN_COLOR, flex: "0 0 auto" }}>
+                                {formatTradeMenuPrice(plan?.tp)}
+                              </span>
+                              <span style={{ color: SL_PLAN_COLOR, flex: "0 0 auto" }}>
+                                {formatTradeMenuPrice(plan?.sl)}
+                              </span>
+                              <span
+                                style={{
+                                  color: "#94a3b8",
+                                  fontSize: 10,
+                                  fontWeight: 400,
+                                  flex: "0 0 auto",
+                                }}
+                              >
+                                {String(
+                                  plan?._scan_tf || plan?.tf || plan?.timeframe || "",
+                                )
+                                  .trim()
+                                  .toUpperCase()}
+                              </span>
+                            </button>
+                          );
+                        })}
+                        {hasMoreStrategyScanPlans && (
+                          <button
+                            ref={applyOverlayButtonImportantStyle}
+                            type="button"
+                            onClick={handleLoadMoreMenuStrategies}
+                            style={{
+                              textAlign: "center",
+                              background: "rgba(255,255,255,0.02)",
+                              color: "#94a3b8",
+                              border: "1px solid rgba(148,163,184,0.14)",
+                              borderRadius: 6,
+                              cursor: "pointer",
+                              padding: "3px 5px",
+                              fontSize: 10,
+                              fontWeight: 400,
+                              lineHeight: 1.15,
+                            }}
+                          >
+                            Load More
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  {menuStrategyScanState?.status === "done" &&
+                    !displayedStrategyScanPlans.length && (
+                      <div
+                        style={{
+                          fontSize: 10,
+                          color: "#64748b",
+                          padding: "3px 5px",
+                          border: "1px dashed rgba(148,163,184,0.18)",
+                          borderRadius: 6,
+                          lineHeight: 1.15,
+                        }}
+                      >
+                        No strategy match at this candle.
+                      </div>
+                    )}
+                </div>
+              </div>
+            );
           })()}
         </div>
       )}

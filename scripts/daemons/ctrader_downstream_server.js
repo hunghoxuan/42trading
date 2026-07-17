@@ -5,7 +5,7 @@ const http = require("http");
 const crypto = require("crypto");
 const { CTraderConnection } = require("@max89701/ctrader-layer");
 
-const TAG = "ctrader-downstream";
+const TAG = envStr(process.env.CTRADER_SERVICE_TAG, "ctrader-downstream");
 
 function envStr(v, fallback = "") {
   if (v === undefined || v === null) return fallback;
@@ -385,9 +385,23 @@ function normalizeIncomingTask(reqBody = {}) {
     sl: Number.isFinite(sl) ? sl : null,
     tp: Number.isFinite(tp) ? tp : null,
     volume: Number.isFinite(volume) && volume > 0 ? volume : null,
+    strategy: String(signal.strategy || signal.strategy_name || "").trim(),
     note: String(signal.note || "").trim(),
     accountId: String(reqBody.account_id || signal.account_id || CFG.accountId || "").trim(),
   };
+}
+
+function buildBrokerLabel(strategy = "", fallbackId = "") {
+  const candidate = String(strategy || "").trim().replace(/\s+/g, " ");
+  if (candidate) return candidate.slice(0, 50);
+  return envStr(fallbackId || `sig_${Date.now()}`).slice(0, 50);
+}
+
+function buildBrokerComment(signalId = "", note = "") {
+  const sid = envStr(signalId);
+  const detail = String(note || "").trim().replace(/\s+/g, " ");
+  const combined = [sid, detail].filter(Boolean).join(" | ");
+  return combined.slice(0, 100);
 }
 
 function matchesTaskEntity(entity = {}, task = {}, symbolResolved = null) {
@@ -574,8 +588,8 @@ async function placeOrder(reqBody = {}) {
     orderType: orderType.toUpperCase(),
     tradeSide: action,
     volume,
-    label: envStr(signal?.id || signal?.signal_id || `sig_${Date.now()}`),
-    comment: envStr(signal?.note || "").slice(0, 100),
+    label: buildBrokerLabel(signal?.strategy || signal?.strategy_name, signal?.id || signal?.signal_id),
+    comment: buildBrokerComment(signal?.id || signal?.signal_id, signal?.note),
   };
 
   if (orderType === "limit") payload.limitPrice = Number.isFinite(entry) ? entry : undefined;
@@ -628,6 +642,9 @@ async function fetchBars(reqBody = {}) {
   const barCount = Math.max(10, Math.min(5000, Number(reqBody.bars || reqBody.bar_count || 500)));
   const webhookUrl = envStr(reqBody.webhook_url || process.env.WEBHOOK_URL || "http://127.0.0.1:3001");
   const webhookKey = envStr(reqBody.webhook_key || process.env.WEBHOOK_API_KEY || "");
+  const webhookSyncPath = envStr(
+    reqBody.webhook_sync_path || process.env.WEBHOOK_SYNC_PATH || "/api/broker/prices-sync",
+  );
 
   const { conn: connRef } = await ensureAuthorized(accountId);
   const symCache = await loadSymbols(accountId);
@@ -696,7 +713,7 @@ async function fetchBars(reqBody = {}) {
             }],
           };
           try {
-            const pushRes = await fetch(`${webhookUrl.replace(/\/+$/, "")}/api/broker/prices-sync`, {
+            const pushRes = await fetch(`${webhookUrl.replace(/\/+$/, "")}${webhookSyncPath}`, {
               method: "POST",
               headers: {
                 "content-type": "application/json",
@@ -827,6 +844,8 @@ if (require.main === module) {
 }
 
 module.exports = {
+  buildBrokerComment,
+  buildBrokerLabel,
   executeTask,
   matchesTaskEntity,
   normalizeIncomingTask,

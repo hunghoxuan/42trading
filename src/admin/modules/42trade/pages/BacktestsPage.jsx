@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../../../app/api";
 import BacktestBarsSelector from "../components/BacktestBarsSelector";
@@ -23,11 +23,12 @@ import {
   buildRuleVariableOptions,
   buildRuleVariableValues,
 } from "../../../shared/utils/ruleVariableOptions";
-import { SYSTEM_SYMBOL_GROUP_PRESETS } from "../../../shared/utils/symbolGroups";
+import { SYSTEM_SYMBOL_GROUP_PRESETS } from "../../../../config/symbolGroups.js";
 import {
   mergeStrategiesById,
   normalizeStrategyCatalog,
 } from "../../../shared/utils/strategyCatalog";
+import TradePriceInline from "../components/TradePriceInline";
 
 function formatNumber(value, digits = 2) {
   const num = Number(value);
@@ -38,6 +39,7 @@ function formatNumber(value, digits = 2) {
 function timeframeLabel(tfRaw) {
   const tf = String(tfRaw || "").trim().toLowerCase();
   if (!tf) return "-";
+  if (tf === "multi" || tf === "mixed") return "Multi TF";
   if (tf === "1" || tf === "1m") return "1m";
   if (tf === "5" || tf === "5m") return "5m";
   if (tf === "15" || tf === "15m") return "15m";
@@ -56,33 +58,33 @@ function higherBacktestTimeframes(tfRaw = "") {
   return BACKTEST_TF_SEQUENCE.slice(startIndex + 1);
 }
 
-function strategySourceMeta(strategy = {}) {
-  const kind = String(strategy?.kind || "").trim().toLowerCase();
-  if (kind === "custom") {
+function strategyStatusMeta(strategy = {}) {
+  const status = String(strategy?.status || "active").trim().toLowerCase();
+  if (status === "inactive" || status === "draft" || status === "archived") {
     return {
-      badge: "USR",
-      text: "user",
-      color: "#22c55e",
-      background: "rgba(34,197,94,0.12)",
-      border: "rgba(34,197,94,0.32)",
+      badge: "INACTIVE",
+      text: "inactive",
+      color: "#f59e0b",
+      background: "rgba(245,158,11,0.12)",
+      border: "rgba(245,158,11,0.32)",
     };
   }
   return {
-    badge: "CFG",
-    text: "config",
-    color: "#38bdf8",
-    background: "rgba(56,189,248,0.12)",
-    border: "rgba(56,189,248,0.32)",
+    badge: "ACTIVE",
+    text: "active",
+    color: "#22c55e",
+    background: "rgba(34,197,94,0.12)",
+    border: "rgba(34,197,94,0.32)",
   };
 }
 
 function formatStrategyOptionLabel(strategy = {}) {
   const name = String(strategy?.name || strategy?.key || strategy?.id || "Strategy").trim();
-  const kind = String(strategy?.kind || "").trim().toLowerCase();
   const status = String(strategy?.status || "").trim().toLowerCase();
-  if (kind === "custom" && status === "draft") return `${name} (Custom Draft)`;
-  if (kind === "custom") return `${name} (Custom)`;
-  if (kind === "preset") return `${name} (Preset)`;
+  if (status === "inactive" || status === "draft" || status === "archived") {
+    return `${name} (Inactive)`;
+  }
+  if (status === "active") return `${name} (Active)`;
   return name;
 }
 
@@ -121,6 +123,10 @@ function pickInitialTradeSid(trades = []) {
   if (!Array.isArray(trades) || !trades.length) return "";
   const firstTrade = [...trades].sort(compareTradeReplayAsc)[0];
   return String(firstTrade?.sid || "");
+}
+
+function tradeTimeframeKey(trade = {}) {
+  return timeframeLabel(trade?.tf || trade?.timeframe || "");
 }
 
 const LEFT_TABS = [
@@ -820,7 +826,49 @@ function runMatchesStrategy(run = {}, strategy = null, fallbackStrategyId = "") 
   return runIds.some((value) => strategyIds.has(value));
 }
 
+function runMatchesStrategySelection(run = {}, strategyIds = []) {
+  const selectedIds = new Set(
+    normalizeSelectionList(strategyIds).map((value) => String(value || "").trim()),
+  );
+  if (!selectedIds.size) return true;
+  const runIds = new Set(
+    [
+      run?.strategy_key,
+      run?.strategy_id,
+      run?.strategy_name,
+      ...(Array.isArray(run?.selection?.strategy_ids) ? run.selection.strategy_ids : []),
+    ]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
+  );
+  if (!runIds.size) return false;
+  for (const value of runIds) {
+    if (selectedIds.has(value)) return true;
+  }
+  return false;
+}
+
 function formatRunSelectorLabel(run = {}) {
+  if (run?.batch_mix) {
+    const strategyCount = Array.isArray(run?.selection?.strategy_ids)
+      ? run.selection.strategy_ids.length
+      : 0;
+    const timeframeCount = Array.isArray(run?.selection?.timeframes)
+      ? run.selection.timeframes.length
+      : 0;
+    const symbolCount = Array.isArray(run?.selection?.symbols)
+      ? run.selection.symbols.length
+      : 0;
+    const scopeParts = [
+      strategyCount ? `${strategyCount} strategies` : "",
+      timeframeCount ? `${timeframeCount} TFs` : "",
+      symbolCount ? `${symbolCount} symbols` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    const rangeLabel = formatBacktestDataRange(run);
+    return `Batch Mix${scopeParts ? ` - ${scopeParts}` : ""}${rangeLabel ? ` - ${rangeLabel}` : ""}`;
+  }
   const strategyLabel = String(run?.strategy_name || run?.strategy_key || "Run")
     .trim();
   const tfLabel = timeframeLabel(run?.tf);
@@ -831,6 +879,15 @@ function formatRunSelectorLabel(run = {}) {
 
 function buildEphemeralRunSaveName(result = {}) {
   const run = result?.run && typeof result.run === "object" ? result.run : {};
+  if (run?.batch_mix) {
+    const strategyCount = Array.isArray(run?.selection?.strategy_ids)
+      ? run.selection.strategy_ids.length
+      : 0;
+    const timeframeCount = Array.isArray(run?.selection?.timeframes)
+      ? run.selection.timeframes.length
+      : 0;
+    return `Batch Mix ${strategyCount || 1} Strategies ${timeframeCount || 1} TFs`;
+  }
   return (
     formatRunSelectorLabel(run) ||
     String(run?.run_id || "backtest_run").trim() ||
@@ -844,17 +901,88 @@ function strategyIdFromLocation(location) {
   return String(params.get("strategy") || "").trim();
 }
 
+function normalizeBacktestTimeframeValue(value = "", fallback = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return String(fallback || "").trim();
+  const mapped = {
+    "1": "1",
+    "1m": "1",
+    "5": "5",
+    "5m": "5",
+    "15": "15",
+    "15m": "15",
+    "60": "60",
+    "1h": "60",
+    "240": "240",
+    "4h": "240",
+    "1440": "1440",
+    "1d": "1440",
+    d: "1440",
+  }[normalized];
+  return String(mapped || fallback || "").trim();
+}
+
+function resolveRequestedStrategyId(strategyId = "", options = []) {
+  const requested = String(strategyId || "").trim();
+  if (!requested) return "";
+  const available = Array.isArray(options) ? options : [];
+  const exact = available.find(
+    (item) => String(item?.key || item?.id || "").trim() === requested,
+  );
+  if (exact) return requested;
+  if (requested.endsWith("_custom")) {
+    const baseId = requested.slice(0, -7);
+    const fallback = available.find(
+      (item) => String(item?.key || item?.id || "").trim() === baseId,
+    );
+    if (fallback) return baseId;
+    return baseId;
+  }
+  return requested;
+}
+
+function resolveCustomStrategyBaseId(strategyId = "") {
+  const requested = String(strategyId || "").trim();
+  if (!requested) return "";
+  return requested.endsWith("_custom") ? requested.slice(0, -7) : requested;
+}
+
 function editorHashActive(location) {
   const hash = String(location?.hash || "").trim().toLowerCase();
   return hash === "#edit" || hash === "#json";
 }
 
-function buildBacktestsStrategyUrl(strategyId = "", hash = "#edit") {
+function resolveBacktestsBasePath(pathname = "") {
+  const path = String(pathname || "").trim().toLowerCase();
+  return "/trades/backtests";
+}
+
+function buildBacktestsStrategyUrl(
+  strategyId = "",
+  hash = "#edit",
+  basePath = "/trades/backtests",
+) {
   const normalizedId = String(strategyId || "").trim();
   const nextHash = String(hash || "#edit").trim() || "#edit";
   return normalizedId
-    ? `/trades/backtests?strategy=${encodeURIComponent(normalizedId)}${nextHash}`
-    : `/trades/backtests${nextHash}`;
+    ? `${basePath}?strategy=${encodeURIComponent(normalizedId)}${nextHash}`
+    : `${basePath}${nextHash}`;
+}
+
+function buildBacktestsRunUrl(
+  strategyId = "",
+  params = {},
+  basePath = "/trades/backtests",
+) {
+  const query = new URLSearchParams();
+  const normalizedId = String(strategyId || "").trim();
+  if (normalizedId) query.set("strategy", normalizedId);
+  Object.entries(params || {}).forEach(([key, rawValue]) => {
+    const value = String(rawValue || "").trim();
+    if (value) query.set(key, value);
+  });
+  const queryText = query.toString();
+  return queryText ? `${basePath}?${queryText}` : basePath;
 }
 
 function formatBacktestDateLabel(value) {
@@ -939,6 +1067,51 @@ function formatMoneyCompact(value, digits = 0) {
   return `${num >= 0 ? "+" : "-"}$${Math.abs(num).toFixed(digits)}`;
 }
 
+function normalizeSelectionList(values = []) {
+  return [...new Set((Array.isArray(values) ? values : []).map((value) => String(value || "").trim()).filter(Boolean))];
+}
+
+function normalizeStrategySelection(form = {}, fallback = "") {
+  const selected = normalizeSelectionList(form?.strategy_keys);
+  if (selected.length) return selected;
+  const single = String(form?.strategy_key || fallback || "").trim();
+  return single ? [single] : [];
+}
+
+function normalizeTimeframeSelection(form = {}, fallback = "") {
+  const selected = normalizeSelectionList(form?.tfs);
+  if (selected.length) return selected;
+  const single = String(form?.tf || fallback || "").trim();
+  return single ? [single] : [];
+}
+
+function formatBatchCellCompact(cell = null) {
+  if (!cell) return "-";
+  if (Number(cell?.completed || 0) <= 0 && Number(cell?.failed || 0) <= 0) return "-";
+  if (Number(cell?.completed || 0) <= 0 && Number(cell?.failed || 0) > 0) return "Failed";
+  return [
+    `${Math.round(Number(cell?.total_trades || 0))}T`,
+    `WR ${formatNumber(cell?.win_rate_pct || 0, 0)}%`,
+    `RR ${formatNumber(cell?.total_r || 0, 1)}`,
+  ].join(" · ");
+}
+
+function buildMetricsMatrixCell({
+  tf = "",
+  totalTrades = 0,
+  winRatePct = 0,
+  totalR = 0,
+} = {}) {
+  return {
+    tf: timeframeLabel(tf),
+    completed: 1,
+    failed: 0,
+    total_trades: Math.max(0, Number(totalTrades) || 0),
+    win_rate_pct: Number(winRatePct) || 0,
+    total_r: Number(totalR) || 0,
+  };
+}
+
 function normalizeStrategyBacktestSummary(strategy = null) {
   const summary =
     strategy?.backtest_summary && typeof strategy.backtest_summary === "object"
@@ -986,8 +1159,8 @@ function buildNewStrategyDraft(example, defaults = {}) {
     kind: "custom",
     status: "draft",
     market: {
-      symbol: defaults.symbol || base.market?.symbol || "EURAUD",
-      tf: defaults.tf || base.market?.tf || "15",
+      symbol: defaults.symbol || base.market?.symbol || "",
+      tf: defaults.tf || base.market?.tf || "",
     },
     params:
       base.params && typeof base.params === "object" && !Array.isArray(base.params)
@@ -1036,6 +1209,11 @@ function TradeListCard({
   const action = String(trade?.action || trade?.side || "").toUpperCase();
   const pnl = Number(trade?.pnl_realized || 0);
   const rr = calcRr(trade);
+  const tradeSymbol = String(trade?.symbol || symbol || "-").trim() || "-";
+  const tradeTf = timeframeLabel(trade?.tf || trade?.timeframe || "");
+  const strategyLabel = String(
+    trade?.strategy_name || trade?.strategy_key || trade?.strategy_id || "",
+  ).trim();
   return (
     <div
       role="button"
@@ -1057,24 +1235,34 @@ function TradeListCard({
             gap: 8,
           }}
         >
-          <span
-            style={{
-              fontWeight: 700,
-              fontSize: 10,
-              color: action === "SELL" ? "#ef5350" : "#26a69a",
-            }}
-          >
-            {symbol || "-"}
-          </span>
-          <span
-            style={{
-              fontWeight: 700,
-              fontSize: 10,
-              color: pnl >= 0 ? "#10b981" : "#ef4444",
-            }}
-          >
-            {`${pnl >= 0 ? "+" : "-"}$${Math.abs(pnl).toFixed(0)}`}
-          </span>
+          <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            {strategyLabel ? (
+              <span style={{ fontWeight: 700, fontSize: 10, color: "#cbd5e1" }}>
+                {strategyLabel}
+              </span>
+            ) : null}
+            <span
+              style={{
+                fontWeight: 700,
+                fontSize: 10,
+                color: action === "SELL" ? "#ef5350" : "#26a69a",
+              }}
+            >
+              {tradeSymbol}
+            </span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <span style={{ color: "var(--muted)", fontSize: 9 }}>{tradeTf}</span>
+            <span
+              style={{
+                fontWeight: 700,
+                fontSize: 10,
+                color: pnl >= 0 ? "#10b981" : "#ef4444",
+              }}
+            >
+              {`${pnl >= 0 ? "+" : "-"}$${Math.abs(pnl).toFixed(0)}`}
+            </span>
+          </div>
         </div>
         <div
           style={{
@@ -1087,7 +1275,12 @@ function TradeListCard({
         >
           <div>
             <div style={{ color: "var(--muted)", fontSize: 9, lineHeight: 1.2 }}>
-              {trade?.entry || "-"} → {trade?.tp || "-"}
+              <TradePriceInline
+                entry={trade?.entry}
+                tp={trade?.tp1 ?? trade?.tp}
+                sl={trade?.sl}
+                symbol={tradeSymbol}
+              />
             </div>
           </div>
           <div style={{ color: "var(--muted)", fontSize: 9, lineHeight: 1.2 }}>
@@ -1107,12 +1300,24 @@ export default function BacktestsPage() {
   const isMobile = useIsMobile();
   const routeRunId = String(params.runId || "").trim();
   const routeStrategyId = strategyIdFromLocation(location);
+  const routeStrategyCandidateId = resolveCustomStrategyBaseId(routeStrategyId);
+  const locationHash = String(location?.hash || "").trim().toLowerCase();
+  const locationSearch = String(location?.search || "").trim();
+  const routeQueryParams = useMemo(() => new URLSearchParams(locationSearch), [locationSearch]);
+  const routeSymbol = String(routeQueryParams.get("symbol") || "").trim().toUpperCase();
+  const routeTf = normalizeBacktestTimeframeValue(
+    routeQueryParams.get("tf") || routeQueryParams.get("timeframe") || "",
+    "",
+  );
+  const backtestsBasePath = useMemo(
+    () => resolveBacktestsBasePath(location?.pathname || ""),
+    [location?.pathname],
+  );
 
   const [activeTab, setActiveTab] = useState(() => {
-    const hash = String(location?.hash || "").trim().toLowerCase();
-    if (hash === "#rules") return "rules";
-    if (editorHashActive(location)) return "strategies";
-    if (hash === "#history") return "history";
+    if (locationHash === "#rules") return "rules";
+    if (editorHashActive({ hash: locationHash })) return "strategies";
+    if (locationHash === "#history") return "history";
     return "backtest";
   });
   const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(true);
@@ -1120,7 +1325,7 @@ export default function BacktestsPage() {
   const [strategies, setStrategies] = useState([]);
   const [customStrategies, setCustomStrategies] = useState([]);
   const [strategyExample, setStrategyExample] = useState(null);
-  const [selectedStrategyId, setSelectedStrategyId] = useState("");
+  const [selectedStrategyId, setSelectedStrategyId] = useState(routeStrategyId);
   const [draftStrategySeed, setDraftStrategySeed] = useState(null);
   const [selectedRunId, setSelectedRunId] = useState(routeRunId);
   const [selectedRunDetail, setSelectedRunDetail] = useState(null);
@@ -1132,6 +1337,7 @@ export default function BacktestsPage() {
   const [running, setRunning] = useState(false);
   const [savingRun, setSavingRun] = useState(false);
   const [error, setError] = useState("");
+  const [batchReport, setBatchReport] = useState(null);
   const [replayPlaying, setReplayPlaying] = useState(false);
   const [replaySpeedMs, setReplaySpeedMs] = useState(200);
   const [replayStartTradeSid, setReplayStartTradeSid] = useState("");
@@ -1151,16 +1357,19 @@ export default function BacktestsPage() {
   const [ruleLibraryTab, setRuleLibraryTab] = useState("popular");
   const [testedRuleStrategy, setTestedRuleStrategy] = useState(null);
   const [ruleTestRunKey, setRuleTestRunKey] = useState(0);
+  const routeAutoRunKeyRef = useRef("");
   const [form, setForm] = useState({
-    symbol: "EURAUD",
-    tf: "15",
-    limit: "all",
+    symbol: routeSymbol || "BTCUSD",
+    tf: routeTf || "1",
+    tfs: [routeTf || "1"],
+    limit: "3000",
     limit_mode: "bars",
-    limit_bars_value: "all",
+    limit_bars_value: "3000",
     limit_preset: "today",
     limit_start_date: "",
     limit_end_date: "",
-    strategy_key: DEFAULT_BACKTEST_STRATEGY_ID,
+    strategy_key: routeStrategyId || DEFAULT_BACKTEST_STRATEGY_ID,
+    strategy_keys: [routeStrategyId || DEFAULT_BACKTEST_STRATEGY_ID],
     direction: "all",
     session: "Any",
     one_r_value: "100",
@@ -1174,11 +1383,20 @@ export default function BacktestsPage() {
       const nextRuns = Array.isArray(res?.runs) ? res.runs : [];
       setRuns(nextRuns);
       setStrategies(Array.isArray(res?.strategies) ? res.strategies : []);
+      const shouldHoldRunSelection =
+        !preferredRunId &&
+        !routeRunId &&
+        !selectedRunId &&
+        Boolean(String(routeStrategyId || "").trim());
       const nextSelectedRunId =
         preferredRunId ||
         routeRunId ||
         selectedRunId ||
-        (nextRuns[0] ? String(nextRuns[0].run_id || "") : "");
+        (shouldHoldRunSelection
+          ? ""
+          : nextRuns[0]
+            ? String(nextRuns[0].run_id || "")
+            : "");
       if (nextSelectedRunId) {
         setSelectedRunId(nextSelectedRunId);
       }
@@ -1208,37 +1426,173 @@ export default function BacktestsPage() {
     }
   }
 
+  async function loadRouteStrategy(strategyId) {
+    const targetId = String(strategyId || "").trim();
+    if (!targetId) return null;
+    try {
+      const res = await api.getStrategy(targetId);
+      const item = res?.item && typeof res.item === "object" ? res.item : null;
+      if (!item) return null;
+      setCustomStrategies((prev) =>
+        normalizeStrategyCatalog([
+          ...(Array.isArray(prev) ? prev : []),
+          item,
+        ]).filter((entry) => String(entry?.kind || "").trim() === "custom"),
+      );
+      return item;
+    } catch {
+      return null;
+    }
+  }
+
   useEffect(() => {
     loadRuns();
     loadStrategyCatalog();
   }, []);
 
   useEffect(() => {
-    if (!editorHashActive(location)) return;
-    setActiveTab("strategies");
-    const preferredStrategyId =
-      routeStrategyId || String(form.strategy_key || "").trim() || DEFAULT_EDIT_STRATEGY_ID;
-    if (!preferredStrategyId) return;
-    setSelectedStrategyId((current) =>
-      current && current !== "__new__" ? current : preferredStrategyId,
-    );
-    setForm((prev) => ({
-      ...prev,
-      strategy_key: preferredStrategyId,
-    }));
-  }, [location, routeStrategyId, form.strategy_key]);
+    if (!routeStrategyId) return;
+    const existsInCatalog =
+      strategies.some((item) => String(item?.key || item?.id || "").trim() === routeStrategyId) ||
+      customStrategies.some(
+        (item) => String(item?.key || item?.id || "").trim() === routeStrategyId,
+      );
+    if (existsInCatalog) return;
+    void loadRouteStrategy(routeStrategyId);
+  }, [customStrategies, routeStrategyId, strategies]);
 
   useEffect(() => {
-    const hash = String(location?.hash || "").trim().toLowerCase();
-    if (hash === "#rules") {
-      setActiveTab("rules");
+    if (!editorHashActive({ hash: locationHash })) return;
+    if (activeTab !== "strategies") {
+      setActiveTab("strategies");
+    }
+    const preferredStrategyId = routeStrategyCandidateId || routeStrategyId || DEFAULT_EDIT_STRATEGY_ID;
+    if (!preferredStrategyId) return;
+    setSelectedStrategyId((current) => {
+      if (current && current !== "__new__") return current;
+      return current === preferredStrategyId ? current : preferredStrategyId;
+    });
+    setForm((prev) =>
+      prev.strategy_key === preferredStrategyId
+        ? prev
+        : {
+            ...prev,
+            strategy_key: preferredStrategyId,
+          },
+    );
+  }, [activeTab, locationHash, routeStrategyCandidateId, routeStrategyId]);
+
+  useEffect(() => {
+    if (locationHash === "#rules") {
+      if (activeTab !== "rules") {
+        setActiveTab("rules");
+      }
       return;
     }
-    if (hash === "#history") {
-      setActiveTab("history");
+    if (locationHash === "#history") {
+      if (activeTab !== "history") {
+        setActiveTab("history");
+      }
       return;
     }
-  }, [location]);
+  }, [activeTab, locationHash]);
+
+  useEffect(() => {
+    const nextStrategyId = String(routeStrategyCandidateId || routeStrategyId || "").trim();
+    const nextSymbol = routeSymbol;
+    const nextTf = routeTf;
+    if (!nextStrategyId && !nextSymbol && !nextTf) return;
+    if (nextStrategyId && selectedStrategyId !== nextStrategyId) {
+      setDraftStrategySeed(null);
+      setSelectedStrategyId(nextStrategyId);
+    }
+    setForm((prev) => {
+      const next = { ...prev };
+      if (nextStrategyId) {
+        next.strategy_key = nextStrategyId;
+        const currentStrategyKeys = normalizeStrategySelection(prev);
+        next.strategy_keys =
+          currentStrategyKeys.length > 1 && currentStrategyKeys.includes(nextStrategyId)
+            ? currentStrategyKeys
+            : [nextStrategyId];
+      }
+      if (nextSymbol) {
+        next.symbol = nextSymbol;
+      }
+      if (nextTf) {
+        next.tf = nextTf;
+        const currentTfs = normalizeTimeframeSelection(prev);
+        next.tfs =
+          currentTfs.length > 1 && currentTfs.includes(nextTf)
+            ? currentTfs
+            : [nextTf];
+      }
+      const prevJson = JSON.stringify(prev);
+      const nextJson = JSON.stringify(next);
+      return prevJson === nextJson ? prev : next;
+    });
+  }, [routeStrategyCandidateId, routeStrategyId, routeSymbol, routeTf, selectedStrategyId]);
+
+  useEffect(() => {
+    if (!routeStrategyId || routeRunId) return;
+    setEphemeralRunDetail(null);
+    setEphemeralRunSaveName("");
+    setSelectedRunDetail(null);
+    setSelectedRunId("");
+    setSelectedTradeSid("");
+    setBatchReport(null);
+  }, [routeRunId, routeStrategyId]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(locationSearch);
+    const autoRun = params.get("autorun") === "1";
+    if (!autoRun) {
+      routeAutoRunKeyRef.current = "";
+      return;
+    }
+    const nextStrategyId = String(
+      routeStrategyCandidateId || routeStrategyId || params.get("strategy") || "",
+    ).trim();
+    const nextSymbol = String(params.get("symbol") || "").trim().toUpperCase();
+    const nextTf = normalizeBacktestTimeframeValue(
+      params.get("tf") || params.get("timeframe") || "",
+      "",
+    );
+    if (activeTab !== "backtest") {
+      setActiveTab("backtest");
+    }
+    if (nextStrategyId && selectedStrategyId !== nextStrategyId) {
+      setDraftStrategySeed(null);
+      setSelectedStrategyId(nextStrategyId);
+    }
+    setForm((prev) => {
+      const next = {
+        ...prev,
+      };
+      if (nextStrategyId) {
+        next.strategy_key = nextStrategyId;
+        const currentStrategyKeys = normalizeStrategySelection(prev);
+        next.strategy_keys =
+          currentStrategyKeys.length > 1 && currentStrategyKeys.includes(nextStrategyId)
+            ? currentStrategyKeys
+            : [nextStrategyId];
+      }
+      if (nextSymbol) {
+        next.symbol = nextSymbol;
+      }
+      if (nextTf) {
+        next.tf = nextTf;
+        const currentTfs = normalizeTimeframeSelection(prev);
+        next.tfs =
+          currentTfs.length > 1 && currentTfs.includes(nextTf)
+            ? currentTfs
+            : [nextTf];
+      }
+      const prevJson = JSON.stringify(prev);
+      const nextJson = JSON.stringify(next);
+      return prevJson === nextJson ? prev : next;
+    });
+  }, [activeTab, locationSearch, routeStrategyCandidateId, routeStrategyId, selectedStrategyId]);
 
   useEffect(() => {
     if (routeRunId && routeRunId !== selectedRunId) {
@@ -1282,6 +1636,7 @@ export default function BacktestsPage() {
   const activeEvents = Array.isArray(activeRunDetail?.events)
     ? activeRunDetail.events
     : [];
+  const activeBatchReport = activeRunDetail?.report || batchReport || null;
   const strategyOptions = useMemo(
     () =>
       strategies.length || customStrategies.length
@@ -1290,6 +1645,18 @@ export default function BacktestsPage() {
     [customStrategies, strategies],
   );
   const allStrategies = strategyOptions;
+  const resolvedRouteStrategyId = useMemo(
+    () => resolveRequestedStrategyId(routeStrategyId, allStrategies),
+    [allStrategies, routeStrategyId],
+  );
+  const selectedStrategyKeys = useMemo(
+    () => normalizeStrategySelection(form, DEFAULT_BACKTEST_STRATEGY_ID),
+    [form],
+  );
+  const selectedTimeframes = useMemo(
+    () => normalizeTimeframeSelection(form, "1"),
+    [form],
+  );
   const selectedExistingStrategy = useMemo(
     () =>
       allStrategies.find((item) => String(item.key || item.id || "") === String(selectedStrategyId || "")) ||
@@ -1326,6 +1693,15 @@ export default function BacktestsPage() {
     if (form.symbol) known.add(String(form.symbol).trim().toUpperCase());
     return Array.from(known).filter(Boolean).sort((a, b) => a.localeCompare(b));
   }, [activeRun?.symbol, form.symbol]);
+  const selectedStrategyItems = useMemo(
+    () =>
+      selectedStrategyKeys
+        .map((key) =>
+          allStrategies.find((item) => String(item?.key || item?.id || "") === key) || null,
+        )
+        .filter(Boolean),
+    [allStrategies, selectedStrategyKeys],
+  );
   const ruleTesterBarsCount = useMemo(() => {
     const raw = String(ruleTester.bars || "").trim().toLowerCase();
     if (raw === "all") return 3000;
@@ -1589,6 +1965,52 @@ export default function BacktestsPage() {
       null,
     [effectiveTradeSid, sortedActiveTrades],
   );
+  const activeChartSymbol = String(
+    selectedTrade?.symbol || activeRun?.symbol || form.symbol || "",
+  )
+    .trim()
+    .toUpperCase();
+  const activeChartTf = String(
+    selectedTrade?.tf || selectedTrade?.timeframe || activeRun?.tf || form.tf || "1",
+  ).trim();
+  const activeChartTfKey = timeframeLabel(activeChartTf);
+  const activeRunTimeframes = useMemo(() => {
+    const preferred = Array.isArray(activeBatchReport?.matrix_timeframes)
+      ? activeBatchReport.matrix_timeframes
+      : Array.isArray(activeRun?.selection?.timeframes)
+        ? activeRun.selection.timeframes
+        : [];
+    const derived = [
+      ...preferred,
+      ...sortedActiveTrades.map((trade) => trade?.tf || trade?.timeframe || ""),
+      activeRun?.tf || "",
+      form.tf || "",
+    ]
+      .map((value) => timeframeLabel(value))
+      .filter((value) => value && value !== "-");
+    return [...new Set(derived)];
+  }, [
+    activeBatchReport?.matrix_timeframes,
+    activeRun?.selection?.timeframes,
+    activeRun?.tf,
+    form.tf,
+    sortedActiveTrades,
+  ]);
+  const filteredActiveTrades = useMemo(() => {
+    if (!sortedActiveTrades.length) return [];
+    if (!activeChartTfKey || activeChartTfKey === "-") return sortedActiveTrades;
+    const scoped = sortedActiveTrades.filter(
+      (trade) => tradeTimeframeKey(trade) === activeChartTfKey,
+    );
+    return scoped.length ? scoped : sortedActiveTrades;
+  }, [activeChartTfKey, sortedActiveTrades]);
+  const activeChartTradeLabel = String(
+    selectedTrade?.strategy_name ||
+      selectedTrade?.strategy_key ||
+      activeRun?.strategy_name ||
+      activeRun?.strategy_key ||
+      "",
+  ).trim();
   const activeDataRangeLabel = useMemo(
     () => formatBacktestDataRange(activeRun, activeSummary),
     [activeRun, activeSummary],
@@ -1610,11 +2032,91 @@ export default function BacktestsPage() {
   }, [activeSummary?.total_pnl, oneRValue]);
   const selectedTradeIndex = useMemo(
     () =>
-      sortedActiveTrades.findIndex(
+      filteredActiveTrades.findIndex(
         (trade) => String(trade?.sid || "") === String(selectedTrade?.sid || ""),
       ),
-    [sortedActiveTrades, selectedTrade],
+    [filteredActiveTrades, selectedTrade],
   );
+  const tradesByTimeframe = useMemo(() => {
+    const grouped = new Map();
+    activeRunTimeframes.forEach((tf) => grouped.set(tf, []));
+    sortedActiveTrades.forEach((trade) => {
+      const tfKey = tradeTimeframeKey(trade);
+      if (!grouped.has(tfKey)) grouped.set(tfKey, []);
+      grouped.get(tfKey).push(trade);
+    });
+    return grouped;
+  }, [activeRunTimeframes, sortedActiveTrades]);
+  const metricsMatrixModel = useMemo(() => {
+    if (
+      Array.isArray(activeBatchReport?.matrix_rows) &&
+      activeBatchReport.matrix_rows.length
+    ) {
+      return {
+        timeframes: (Array.isArray(activeBatchReport?.matrix_timeframes)
+          ? activeBatchReport.matrix_timeframes
+          : activeRunTimeframes
+        ).map((tf) => timeframeLabel(tf)),
+        rows: activeBatchReport.matrix_rows,
+      };
+    }
+    if (!activeRun) return { timeframes: [], rows: [] };
+    const resolvedTfs = activeRunTimeframes.length
+      ? activeRunTimeframes
+      : [timeframeLabel(activeRun?.tf || form.tf || "1")];
+    const strategyName =
+      String(
+        activeRun?.strategy_name ||
+          activeRun?.strategy_key ||
+          activeRun?.strategy_id ||
+          "Strategy",
+      ).trim() || "Strategy";
+    const strategyId =
+      String(activeRun?.strategy_id || activeRun?.strategy_key || strategyName).trim() ||
+      strategyName;
+    return {
+      timeframes: resolvedTfs,
+      rows: [
+        {
+          strategy_id: strategyId,
+          strategy_name: strategyName,
+          cells: resolvedTfs.map((tf) => {
+            const tfTrades = tradesByTimeframe.get(tf) || [];
+            const closedTradeLike = tfTrades.filter((trade) => {
+              const status = String(trade?.execution_status || "").trim().toUpperCase();
+              return ["CLOSED", "FILLED", "REJECTED", "CANCELLED", "OPEN", "PENDING", "NEW", "DRAFT"].includes(status);
+            });
+            const totalTrades = closedTradeLike.length;
+            const wins = closedTradeLike.filter(
+              (trade) => Number(trade?.pnl_realized ?? trade?.pnl ?? 0) > 0,
+            ).length;
+            const winRatePct = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
+            const totalR = closedTradeLike.reduce((sum, trade) => {
+              const rawR =
+                Number(trade?.r_multiple) ||
+                Number(trade?.rr_realized) ||
+                Number(trade?.rr) ||
+                0;
+              return sum + (Number.isFinite(rawR) ? rawR : 0);
+            }, 0);
+            return buildMetricsMatrixCell({
+              tf,
+              totalTrades,
+              winRatePct,
+              totalR,
+            });
+          }),
+        },
+      ],
+    };
+  }, [
+    activeBatchReport?.matrix_rows,
+    activeBatchReport?.matrix_timeframes,
+    activeRun,
+    activeRunTimeframes,
+    form.tf,
+    tradesByTimeframe,
+  ]);
   const visibleBacktestEvents = useMemo(() => {
     if (!activeEvents.length) return [];
     const tradeTimeMs =
@@ -1636,16 +2138,21 @@ export default function BacktestsPage() {
   const selectedStrategyRuns = useMemo(
     () =>
       runs.filter((run) =>
-        runMatchesStrategy(run, selectedExistingStrategy, form.strategy_key),
+        runMatchesStrategySelection(
+          run,
+          selectedStrategyKeys.length
+            ? selectedStrategyKeys
+            : [selectedExistingStrategy?.key, selectedExistingStrategy?.id, form.strategy_key],
+        ),
       ),
-    [form.strategy_key, runs, selectedExistingStrategy],
+    [form.strategy_key, runs, selectedExistingStrategy, selectedStrategyKeys],
   );
   const replaySummary = useMemo(() => {
     if (!replayPlaying || !replayProgress || !activeSummary) return null;
     const replayTimeSec = Number(replayProgress.clockTimeSec);
     if (!Number.isFinite(replayTimeSec) || replayTimeSec <= 0) return null;
     const replayTimeMs = replayTimeSec * 1000;
-    const closedTrades = sortedActiveTrades.filter((trade) => {
+    const closedTrades = filteredActiveTrades.filter((trade) => {
       const closedAtMs = toTimeMs(trade?.closed_at);
       return Number.isFinite(closedAtMs) && closedAtMs <= replayTimeMs;
     });
@@ -1680,7 +2187,7 @@ export default function BacktestsPage() {
     oneRValue,
     replayPlaying,
     replayProgress,
-    sortedActiveTrades,
+    filteredActiveTrades,
   ]);
   const summaryRangeText =
     replaySummary?.rangeLabel || activeSummaryRangeLabel || activeDataRangeLabel || "-";
@@ -1711,10 +2218,11 @@ export default function BacktestsPage() {
       speedOptions: REPLAY_SPEED_OPTIONS,
       runKey: selectedRunId || activeRun?.run_id || "",
       startTradeSid: String(
-        replayStartTradeSid || selectedTrade?.sid || sortedActiveTrades[0]?.sid || "",
+        replayStartTradeSid || selectedTrade?.sid || filteredActiveTrades[0]?.sid || "",
       ),
+      barsAnalyzed: Math.max(0, Number(activeSummary?.bars_analyzed) || 0),
       currentTradeIndex: selectedTradeIndex,
-      totalTrades: sortedActiveTrades.length,
+      totalTrades: filteredActiveTrades.length,
       onSpeedChange: (nextSpeedMs) =>
         setReplaySpeedMs(Math.max(100, Number(nextSpeedMs) || 200)),
       onToggle: () => {
@@ -1722,7 +2230,7 @@ export default function BacktestsPage() {
           const next = !prev;
           if (next) {
             const startSid = String(
-              selectedTrade?.sid || sortedActiveTrades[0]?.sid || "",
+              selectedTrade?.sid || filteredActiveTrades[0]?.sid || "",
             );
             setReplayStartTradeSid(startSid);
             setReplayActiveTradeSid(startSid);
@@ -1734,15 +2242,65 @@ export default function BacktestsPage() {
     }),
     [
       activeRun?.run_id,
+      activeSummary?.bars_analyzed,
       replayPlaying,
       replayStartTradeSid,
       replaySpeedMs,
       selectedTradeIndex,
       selectedRunId,
       selectedTrade?.sid,
-      sortedActiveTrades,
+      filteredActiveTrades,
     ],
   );
+  const batchMetricsPanel = Array.isArray(metricsMatrixModel?.rows) &&
+    metricsMatrixModel.rows.length ? (
+      <ResponsivePanel
+        title="Metrics Result"
+        showToggle={false}
+        border="always"
+        bodyClassName="stack-layout"
+      >
+        <div style={{ overflowX: "auto" }}>
+          <table className="table-dense" style={{ minWidth: 620, fontSize: 11 }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", fontSize: 10, fontWeight: 700 }}>Strategy</th>
+                {(Array.isArray(metricsMatrixModel?.timeframes)
+                  ? metricsMatrixModel.timeframes
+                  : []
+                ).map((tf) => (
+                  <th key={tf} style={{ textAlign: "left", fontSize: 10, fontWeight: 700 }}>
+                    {timeframeLabel(tf)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {metricsMatrixModel.rows.map((row) => (
+                <tr key={row.strategy_id || row.strategy_name}>
+                  <td style={{ fontWeight: 700, fontSize: 11 }}>{row.strategy_name || row.strategy_id}</td>
+                  {(Array.isArray(row.cells) ? row.cells : []).map((cell) => (
+                    <td key={`${row.strategy_id || row.strategy_name}:${cell.tf}`} style={{ fontSize: 11 }}>
+                      <span
+                        className={
+                          Number(cell?.total_r || 0) > 0
+                            ? "money-pos"
+                            : Number(cell?.total_r || 0) < 0
+                              ? "money-neg"
+                              : "money-neutral"
+                        }
+                      >
+                        {formatBatchCellCompact(cell)}
+                      </span>
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </ResponsivePanel>
+    ) : null;
 
   useEffect(() => {
     setReplayPlaying(false);
@@ -1753,14 +2311,30 @@ export default function BacktestsPage() {
 
   useEffect(() => {
     if (selectedStrategyId === "__new__") return;
-    const preferredId = String(selectedStrategyId || form.strategy_key || "").trim();
+    const routePreferredId = String(resolvedRouteStrategyId || routeStrategyId || "").trim();
+    const preferredId = String(routePreferredId || selectedStrategyId || form.strategy_key || "").trim();
     const exists = allStrategies.some(
       (item) => String(item.key || item.id || "") === preferredId,
     );
     if (preferredId && exists) {
-      if (form.strategy_key !== preferredId) {
-        setForm((prev) => ({ ...prev, strategy_key: preferredId }));
+      if (selectedStrategyId !== preferredId) {
+        setSelectedStrategyId(preferredId);
       }
+      if (
+        form.strategy_key !== preferredId ||
+        !normalizeStrategySelection(form).length
+      ) {
+        setForm((prev) => ({
+          ...prev,
+          strategy_key: preferredId,
+          strategy_keys: normalizeStrategySelection(prev).length
+            ? normalizeStrategySelection(prev)
+            : [preferredId],
+        }));
+      }
+      return;
+    }
+    if (routePreferredId) {
       return;
     }
     const fallbackId = String(
@@ -1778,23 +2352,34 @@ export default function BacktestsPage() {
         "",
     ).trim();
     if (!fallbackId) return;
-    setSelectedStrategyId(fallbackId);
-    if (form.strategy_key !== fallbackId) {
-      setForm((prev) => ({ ...prev, strategy_key: fallbackId }));
+    if (selectedStrategyId !== fallbackId) {
+      setSelectedStrategyId(fallbackId);
     }
-  }, [allStrategies, form.strategy_key, selectedStrategyId]);
+    if (form.strategy_key !== fallbackId) {
+      setForm((prev) =>
+        prev.strategy_key === fallbackId
+          ? {
+              ...prev,
+              strategy_keys: normalizeStrategySelection(prev).length
+                ? normalizeStrategySelection(prev)
+                : [fallbackId],
+            }
+          : { ...prev, strategy_key: fallbackId, strategy_keys: [fallbackId] },
+      );
+    }
+  }, [allStrategies, form, resolvedRouteStrategyId, routeStrategyId, selectedStrategyId]);
 
   useEffect(() => {
-    if (!sortedActiveTrades.length) {
+    if (!filteredActiveTrades.length) {
       setReplayPlaying(false);
       setReplayActiveTradeSid("");
       setReplayProgress(null);
       return;
     }
     if (!selectedTrade) {
-        setSelectedTradeSid(String(sortedActiveTrades[0]?.sid || ""));
+      setSelectedTradeSid(String(filteredActiveTrades[0]?.sid || ""));
     }
-  }, [sortedActiveTrades, selectedTrade]);
+  }, [filteredActiveTrades, selectedTrade]);
 
   useEffect(() => {
     if (replayPlaying) return;
@@ -1805,8 +2390,9 @@ export default function BacktestsPage() {
 
   useEffect(() => {
     if (!activeRun) return;
+    if (routeStrategyId && !routeRunId) return;
     setForm((prev) => deriveBacktestFormFromRun(activeRun, prev));
-  }, [activeRun]);
+  }, [activeRun, routeRunId, routeStrategyId]);
 
   useEffect(() => {
     if (!ephemeralRunDetail) {
@@ -1816,8 +2402,7 @@ export default function BacktestsPage() {
     setEphemeralRunSaveName(buildEphemeralRunSaveName(ephemeralRunDetail));
   }, [ephemeralRunDetail]);
 
-  async function handleRun(event) {
-    event.preventDefault();
+  async function executeBacktestRun() {
     setRunning(true);
     setError("");
     setReplayPlaying(false);
@@ -1829,25 +2414,63 @@ export default function BacktestsPage() {
     setSelectedRunDetail(null);
     setSelectedRunId("");
     setSelectedTradeSid("");
-    navigate("/trades/backtests");
-    try {
-      const payload = {
-        ...form,
-        symbol: form.symbol,
-        strategy_key: String(
+    setBatchReport(null);
+    navigate(
+      buildBacktestsRunUrl(
+        String(
           selectedStrategy?.key ||
             selectedStrategy?.id ||
             form.strategy_key ||
             DEFAULT_BACKTEST_STRATEGY_ID,
         ).trim(),
+        {
+          symbol: form.symbol,
+          tf: normalizeTimeframeSelection(form, "1")[0] || form.tf,
+        },
+        backtestsBasePath,
+      ),
+      { replace: false },
+    );
+    try {
+      const requestedStrategyKeys = selectedStrategyKeys.length
+        ? selectedStrategyKeys
+        : [String(
+            selectedStrategy?.key ||
+              selectedStrategy?.id ||
+              form.strategy_key ||
+              DEFAULT_BACKTEST_STRATEGY_ID,
+          ).trim()];
+      const requestedTimeframes = selectedTimeframes.length
+        ? selectedTimeframes
+        : [String(form.tf || "1").trim()];
+      const payload = {
+        ...form,
+        symbol: form.symbol,
+        strategy_key: String(requestedStrategyKeys[0] || DEFAULT_BACKTEST_STRATEGY_ID).trim(),
+        strategy_keys: requestedStrategyKeys,
+        strategy_ids: requestedStrategyKeys,
+        tf: String(requestedTimeframes[0] || form.tf || "1").trim(),
+        tfs: requestedTimeframes,
+        timeframes: requestedTimeframes,
         limit: form.limit === "all" ? 0 : Number(form.limit || 500),
+        limit_mode: form.limit_mode,
         direction: String(form.direction || "all").trim().toLowerCase(),
         session: String(form.session || "Any").trim() || "Any",
+        scan_mode: "backtest",
+        skip_conditions: false,
         persist: false,
+        one_r_value: form.one_r_value,
       };
-      const res = await api.runBacktest(payload);
+      const res =
+        requestedStrategyKeys.length > 1 || requestedTimeframes.length > 1
+          ? await api.runBacktestBatch({
+              ...payload,
+              symbols: [form.symbol],
+            })
+          : await api.runBacktest(payload);
       if (res) {
         setEphemeralRunDetail(res);
+        setBatchReport(res?.report || null);
         setSelectedRunDetail(null);
         setSelectedRunId("");
         setEphemeralRunSaveName(buildEphemeralRunSaveName(res));
@@ -1859,6 +2482,47 @@ export default function BacktestsPage() {
       setRunning(false);
     }
   }
+
+  async function handleRun(event) {
+    event.preventDefault();
+    await executeBacktestRun();
+  }
+
+  useEffect(() => {
+    const params = new URLSearchParams(locationSearch);
+    const autoRun = params.get("autorun") === "1";
+    if (!autoRun || running) return;
+    const strategyId = String(params.get("strategy") || routeStrategyId || "").trim();
+    const symbol = String(params.get("symbol") || "").trim().toUpperCase();
+    const tf = normalizeBacktestTimeframeValue(
+      params.get("tf") || params.get("timeframe") || "",
+      "",
+    );
+    const autoRunKey = JSON.stringify({
+      strategyId,
+      symbol,
+      tf,
+    });
+    if (routeAutoRunKeyRef.current === autoRunKey) return;
+    if (activeTab !== "backtest") return;
+    if (strategyId && form.strategy_key !== strategyId) return;
+    if (symbol && String(form.symbol || "").trim().toUpperCase() !== symbol) return;
+    if (tf && !normalizeTimeframeSelection(form, "1").includes(tf)) return;
+    routeAutoRunKeyRef.current = autoRunKey;
+    void executeBacktestRun().finally(() => {
+      navigate(
+        buildBacktestsRunUrl(
+          strategyId || form.strategy_key || DEFAULT_BACKTEST_STRATEGY_ID,
+          {
+            symbol: symbol || form.symbol,
+            tf: tf || form.tf,
+          },
+          backtestsBasePath,
+        ),
+        { replace: true },
+      );
+    });
+  }, [activeTab, backtestsBasePath, form, locationSearch, navigate, routeStrategyId, running]);
 
   async function handleSaveRun() {
     if (!ephemeralRunDetail) return;
@@ -1883,7 +2547,7 @@ export default function BacktestsPage() {
       await loadRuns(runId);
       if (runId) {
         setSelectedRunId(runId);
-        navigate(`/trades/backtests/${encodeURIComponent(runId)}`);
+        navigate(`${backtestsBasePath}/${encodeURIComponent(runId)}`);
       }
       if (res) {
         setSelectedRunDetail(res);
@@ -1901,9 +2565,15 @@ export default function BacktestsPage() {
     if (!nextId) return;
     setDraftStrategySeed(null);
     setSelectedStrategyId(nextId);
-    setForm((prev) => ({ ...prev, strategy_key: nextId }));
+    setForm((prev) => ({
+      ...prev,
+      strategy_key: nextId,
+      strategy_keys: normalizeStrategySelection(prev).includes(nextId)
+        ? normalizeStrategySelection(prev)
+        : [nextId],
+    }));
     if (activeTab === "strategies" || editorHashActive(location)) {
-      navigate(buildBacktestsStrategyUrl(nextId, "#edit"), { replace: false });
+      navigate(buildBacktestsStrategyUrl(nextId, "#edit", backtestsBasePath), { replace: false });
     }
   }
 
@@ -1914,9 +2584,15 @@ export default function BacktestsPage() {
     if (!nextId) return;
     setDraftStrategySeed(null);
     setSelectedStrategyId(nextId);
-    setForm((prev) => ({ ...prev, strategy_key: nextId }));
+    setForm((prev) => ({
+      ...prev,
+      strategy_key: nextId,
+      strategy_keys: normalizeStrategySelection(prev).includes(nextId)
+        ? normalizeStrategySelection(prev)
+        : [nextId],
+    }));
     setActiveTab("strategies");
-    navigate(buildBacktestsStrategyUrl(nextId, "#edit"), { replace: false });
+    navigate(buildBacktestsStrategyUrl(nextId, "#edit", backtestsBasePath), { replace: false });
   }
 
   function handleRuleTesterRun() {
@@ -1962,13 +2638,60 @@ export default function BacktestsPage() {
   }
 
   function handleOpenStrategyBacktest(strategyOrId) {
+    const nextStrategy =
+      strategyOrId && typeof strategyOrId === "object" ? strategyOrId : null;
     const nextId = String(
-      strategyOrId?.id || strategyOrId?.key || strategyOrId || "",
+      nextStrategy?.id || nextStrategy?.key || strategyOrId || "",
     ).trim();
     if (!nextId) return;
-    handleStrategySelect(nextId);
+    const nextSymbol = String(nextStrategy?.market?.symbol || "").trim().toUpperCase();
+    const nextTf = normalizeBacktestTimeframeValue(nextStrategy?.market?.tf, "");
+    setDraftStrategySeed(null);
+    setEphemeralRunDetail(null);
+    setEphemeralRunSaveName("");
+    setSelectedRunDetail(null);
+    setSelectedRunId("");
+    setSelectedTradeSid("");
+    setBatchReport(null);
+    setSelectedStrategyId(nextId);
+    setForm((prev) => ({
+      ...prev,
+      strategy_key: nextId,
+      strategy_keys: [nextId],
+      symbol: nextSymbol || prev.symbol,
+      tf: nextTf || prev.tf,
+      tfs: nextTf ? [nextTf] : normalizeTimeframeSelection(prev, "1"),
+    }));
     setActiveTab("backtest");
-    navigate("/trades/backtests", { replace: false });
+    navigate(
+      buildBacktestsRunUrl(nextId, {
+        autorun: "1",
+        symbol: nextSymbol,
+        tf: nextTf,
+      }, backtestsBasePath),
+      { replace: false },
+    );
+  }
+
+  async function handleRunStrategyBatch({ strategy = null, symbols = [], timeframes = [] } = {}) {
+    setError("");
+    const strategyId = String(strategy?.id || strategy?.key || "").trim();
+    const res = await api.runBacktestBatch({
+      symbols,
+      timeframes,
+      strategy_ids: strategyId ? [strategyId] : selectedStrategyKeys,
+      persist: false,
+      scan_mode: "backtest",
+      skip_conditions: false,
+      limit: form.limit === "all" ? 0 : Number(form.limit || 500),
+      limit_mode: form.limit_mode,
+      limit_bars_value: form.limit_bars_value,
+      limit_days_value: form.limit_days_value,
+      direction: String(form.direction || "all").trim().toLowerCase(),
+      session: String(form.session || "Any").trim() || "Any",
+      one_r_value: form.one_r_value,
+    });
+    return res;
   }
 
   function handleCreateStrategyDraft() {
@@ -1979,7 +2702,7 @@ export default function BacktestsPage() {
     setDraftStrategySeed(draft);
     setSelectedStrategyId("__new__");
     setActiveTab("strategies");
-    navigate("/trades/backtests#edit", { replace: false });
+    navigate(`${backtestsBasePath}#edit`, { replace: false });
   }
 
   async function handleSaveStrategy(payload) {
@@ -2045,18 +2768,18 @@ export default function BacktestsPage() {
     const nextTab = String(nextValue || "backtest").trim().toLowerCase() || "backtest";
     setActiveTab(nextTab);
     if (nextTab === "rules") {
-      navigate("/trades/backtests#rules", { replace: false });
+      navigate(`${backtestsBasePath}#rules`, { replace: false });
       return;
     }
     if (nextTab === "history") {
-      navigate("/trades/backtests#history", { replace: false });
+      navigate(`${backtestsBasePath}#history`, { replace: false });
       return;
     }
     if (nextTab === "strategies") {
-      navigate("/trades/backtests#edit", { replace: false });
+      navigate(`${backtestsBasePath}#edit`, { replace: false });
       return;
     }
-    navigate("/trades/backtests", { replace: false });
+    navigate(backtestsBasePath, { replace: false });
   }
 
   async function handleDeleteRun(run) {
@@ -2076,7 +2799,7 @@ export default function BacktestsPage() {
         setSelectedRunId("");
         setSelectedRunDetail(null);
         setSelectedTradeSid("");
-        navigate("/trades/backtests");
+        navigate(backtestsBasePath);
       }
       await loadRuns("");
     } catch (deleteError) {
@@ -2095,11 +2818,21 @@ export default function BacktestsPage() {
           }}
         >
           <label className="stack-layout" style={{ gap: 5 }}>
-            <span className="minor-text">Strategy</span>
+            <span className="minor-text">Strategies</span>
             <InputComboSelect
-              value={form.strategy_key}
+              value={selectedStrategyKeys}
+              multiple
               searchable
-              onChange={(event) => handleStrategySelect(event.target.value)}
+              onChange={(event) => {
+                const nextValues = normalizeSelectionList(event?.target?.values);
+                if (!nextValues.length) return;
+                setForm((prev) => ({
+                  ...prev,
+                  strategy_key: nextValues[0],
+                  strategy_keys: nextValues,
+                }));
+                setSelectedStrategyId(nextValues[0]);
+              }}
             >
               {strategyOptions.map((item) => (
                 <option key={item.key || item.id} value={item.key || item.id}>
@@ -2136,13 +2869,16 @@ export default function BacktestsPage() {
           }}
         >
           <label className="stack-layout" style={{ gap: 5 }}>
-            <span className="minor-text">Timeframe</span>
+            <span className="minor-text">TFs</span>
             <InputComboSelect
-              value={form.tf}
+              value={selectedTimeframes}
+              multiple
               searchable
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, tf: event.target.value }))
-              }
+              onChange={(event) => {
+                const nextValues = normalizeSelectionList(event?.target?.values);
+                if (!nextValues.length) return;
+                setForm((prev) => ({ ...prev, tf: nextValues[0], tfs: nextValues }));
+              }}
             >
               {TIMEFRAME_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -2280,8 +3016,9 @@ export default function BacktestsPage() {
                       lineHeight: 1.2,
                     }}
                   >
-                    {run.strategy_name || run.strategy_key} - {timeframeLabel(run.tf)} -{" "}
-                    {run.symbol || "-"}
+                    {run?.batch_mix
+                      ? formatRunSelectorLabel(run)
+                      : `${run.strategy_name || run.strategy_key} - ${timeframeLabel(run.tf)} - ${run.symbol || "-"}`}
                   </div>
                   <div
                     style={{
@@ -2357,7 +3094,7 @@ export default function BacktestsPage() {
       {allStrategies.map((item) => {
         const id = item.key || item.id;
         const active = String(selectedStrategyId || form.strategy_key || "") === String(id || "");
-        const sourceMeta = strategySourceMeta(item);
+        const sourceMeta = strategyStatusMeta(item);
         const backtestSummary = normalizeStrategyBacktestSummary(item);
         const totalTrades = Math.round(Number(backtestSummary?.total_trades || 0));
         const weightedWinRate = Number(backtestSummary?.weighted_win_rate_pct || 0);
@@ -2404,53 +3141,85 @@ export default function BacktestsPage() {
                   style={{
                     display: "flex",
                     alignItems: "center",
+                    justifyContent: "space-between",
                     gap: 8,
                     minWidth: 0,
                   }}
                 >
-                  <span
+                  <div
                     style={{
-                      display: "inline-flex",
+                      display: "flex",
                       alignItems: "center",
-                      justifyContent: "center",
-                      minWidth: 32,
-                      padding: "2px 6px",
-                      borderRadius: 999,
-                      fontSize: 9,
-                      fontWeight: 900,
-                      letterSpacing: "0.08em",
-                      color: sourceMeta.color,
-                      background: sourceMeta.background,
-                      border: `1px solid ${sourceMeta.border}`,
-                      flex: "0 0 auto",
-                    }}
-                    title={sourceMeta.text}
-                  >
-                    {sourceMeta.badge}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: 12,
-                      fontWeight: 850,
+                      gap: 8,
                       minWidth: 0,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
+                      flex: "1 1 auto",
                     }}
-                    title={item.name || id}
                   >
-                    {item.name || id}
-                  </span>
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        minWidth: 32,
+                        padding: "2px 6px",
+                        borderRadius: 999,
+                        fontSize: 9,
+                        fontWeight: 800,
+                        letterSpacing: "0.08em",
+                        color: sourceMeta.color,
+                        background: sourceMeta.background,
+                        border: `1px solid ${sourceMeta.border}`,
+                        flex: "0 0 auto",
+                      }}
+                      title={sourceMeta.text}
+                    >
+                      {sourceMeta.badge}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 700,
+                        minWidth: 0,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                      title={item.name || id}
+                    >
+                      {item.name || id}
+                    </span>
+                  </div>
                 </div>
                 <div title={backtestTitle}>
                   {backtestSummary ? (
-                    <BacktestSummaryMetaRow
-                      leadLabel={`${totalTrades} trades`}
-                      winRateValue={weightedWinRate}
-                      rrValue={totalR}
-                      rangeLabel={backtestRangeLabel}
-                      title={backtestTitle}
-                    />
+                    <div
+                      className="minor-text"
+                      style={{
+                        fontSize: 10,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <span>{totalTrades} trades</span>
+                      <span>
+                        WR{" "}
+                        <span style={{ fontWeight: 700 }}>
+                          {formatNumber(weightedWinRate, 0)}%
+                        </span>
+                      </span>
+                      <span>
+                        RR{" "}
+                        <span
+                          className={totalR >= 0 ? "money-pos" : "money-neg"}
+                          style={{ fontWeight: 700 }}
+                        >
+                          {formatNumber(totalR, 1)}
+                        </span>
+                      </span>
+                      {backtestRangeLabel ? <span>Data {backtestRangeLabel}</span> : null}
+                    </div>
                   ) : (
                     <div className="minor-text" style={{ fontSize: 10 }}>
                       No backtests yet
@@ -2863,12 +3632,14 @@ export default function BacktestsPage() {
                   defaultSymbol={form.symbol}
                   defaultTf={form.tf}
                   isNewDraft={selectedStrategyId === "__new__"}
+                  hideBatchControls
                   onCreateNew={handleCreateStrategyDraft}
                   onSave={handleSaveStrategy}
                   onSaveAs={handleSaveAsStrategy}
                   onArchive={handleArchiveStrategy}
                   onDelete={handleDeleteStrategy}
                   onOpenBacktest={handleOpenStrategyBacktest}
+                  onRunBatch={handleRunStrategyBatch}
                 />
               ) : activeTab === "rules" ? (
                 <div className="stack-layout" style={{ gap: 14 }}>
@@ -2950,9 +3721,13 @@ export default function BacktestsPage() {
               ) : (
                 <div className="stack-layout" style={{ gap: 14 }}>
                   <SymbolChart
-                    symbol={activeRun.symbol}
-                    timeframes={[timeframeLabel(activeRun.tf)]}
-                    extraRequestedTimeframes={higherBacktestTimeframes(activeRun.tf)}
+                    key={`backtest-chart:${activeRun?.run_id || "run"}`}
+                    symbol={activeChartSymbol}
+                    showSymbolTfBadge={false}
+                    timeframes={activeRunTimeframes}
+                    extraRequestedTimeframes={activeRunTimeframes.flatMap((tf) =>
+                      higherBacktestTimeframes(tf),
+                    )}
                     liveBars={false}
                     bootstrapLiveBarsOnMount
                     defaultMode="cache"
@@ -2970,7 +3745,7 @@ export default function BacktestsPage() {
                     fillViewportForFourCharts={false}
                     tradeSid={selectedTrade?.sid || ""}
                     hasTradePlan={Boolean(selectedTrade)}
-                    showEventMarkers={Boolean(selectedTrade)}
+                    showEventMarkers={Boolean(sortedActiveTrades.length)}
                     side={selectedTrade?.action || ""}
                     action={selectedTrade?.action || ""}
                     entryPrice={selectedTrade?.entry || null}
@@ -2987,12 +3762,12 @@ export default function BacktestsPage() {
                     closeStatus={selectedTrade?.execution_status || ""}
                     exitPrice={selectedTrade?.exit_price || null}
                     pnlRealized={selectedTrade?.pnl_realized || null}
-                    tradeLabel={
-                      activeRun?.strategy_name || activeRun?.strategy_key || ""
-                    }
+                    tradeLabel={activeChartTradeLabel}
                     trades={sortedActiveTrades}
                     animateTradeViewport
-                    anchorToTradeTime={Boolean(backtestReplayConfig?.enabled && backtestReplayConfig?.playing)}
+                    anchorToTradeTime={Boolean(
+                      backtestReplayConfig?.enabled && backtestReplayConfig?.playing,
+                    )}
                     onReplayActiveTradeChange={(tradeSid) => {
                       if (!tradeSid) return;
                       setReplayActiveTradeSid(String(tradeSid));
@@ -3001,6 +3776,7 @@ export default function BacktestsPage() {
                     backtestReplay={backtestReplayConfig}
                     chartStrategies={activeChartStrategy ? [activeChartStrategy] : []}
                   />
+                  {batchMetricsPanel}
                   <ResponsivePanel
                     title="Strategy Events"
                     showToggle={false}

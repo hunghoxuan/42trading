@@ -82,6 +82,13 @@ Required local env files:
 - `src/api/.env`
 - `src/admin/.env`
 
+Startup note:
+
+- API startup already runs DB migrations through `src/db/provider.js`
+- universal-store indexes are included in both SQLite and Postgres migration paths
+- existing databases also get missing universal-store indexes ensured at bootstrap
+- no separate manual index-setup script is required for universal-store tables
+
 Safety notes:
 
 - `local_host_db.sh` uses local Postgres.

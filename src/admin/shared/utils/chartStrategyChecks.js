@@ -1,5 +1,8 @@
 import * as sharedArtifactDetection from "../../modules/42trade/chartArtifacts/detectArtifacts.js";
 import * as strategyEventFunctions from "../../modules/42trade/chartArtifacts/strategyEventFunctions.js";
+import * as strategyScanEngine from "../../../shared/utils/strategyScanEngine.js";
+
+const { createStrategyScanEngine } = strategyScanEngine;
 
 function valueAtPath(source, pathName = "") {
   const parts = String(pathName || "")
@@ -353,6 +356,10 @@ const RULE_FUNCTION_EVALUATORS = {
     strategyEventFunctions.evaluateNamedFunction("bias", args, ctx, evaluate),
   phase: (args, ctx, evaluate) =>
     strategyEventFunctions.evaluateNamedFunction("phase", args, ctx, evaluate),
+  price_action_sl: (args, ctx, evaluate) =>
+    strategyEventFunctions.evaluateNamedFunction("price_action_sl", args, ctx, evaluate),
+  price_action_tp: (args, ctx, evaluate) =>
+    strategyEventFunctions.evaluateNamedFunction("price_action_tp", args, ctx, evaluate),
   get_artifacts: (args, ctx, evaluate) =>
     strategyEventFunctions.evaluateNamedFunction("get_artifacts", args, ctx, evaluate),
   is_true: (args, ctx, evaluate) =>
@@ -511,6 +518,46 @@ function rocSeries(values = [], period = 14) {
     }
     return ((current - previous) / previous) * 100;
   });
+}
+
+function atrSeries(bars = [], period = 14) {
+  const length = Math.max(1, Number(period) || 14);
+  const trueRanges = bars.map((bar, index) => {
+    const high = Number(bar?.high);
+    const low = Number(bar?.low);
+    const previousClose = Number(bars[index - 1]?.close);
+    if (!Number.isFinite(high) || !Number.isFinite(low)) return null;
+    if (!Number.isFinite(previousClose)) return high - low;
+    return Math.max(
+      high - low,
+      Math.abs(high - previousClose),
+      Math.abs(low - previousClose),
+    );
+  });
+  return trueRanges.map((_, index) => {
+    if (index < length - 1) return null;
+    const window = trueRanges.slice(index - length + 1, index + 1).map(Number);
+    if (window.some((value) => !Number.isFinite(value))) return null;
+    return window.reduce((sum, value) => sum + value, 0) / length;
+  });
+}
+
+function getUtcHourFraction(unixSeconds) {
+  const date = new Date(Number(unixSeconds || 0) * 1000);
+  return (
+    date.getUTCHours() +
+    date.getUTCMinutes() / 60 +
+    date.getUTCSeconds() / 3600
+  );
+}
+
+function inferSessionName(unixSeconds) {
+  const hour = getUtcHourFraction(unixSeconds);
+  if (!Number.isFinite(hour)) return "Any";
+  if (hour >= 0 && hour < 9) return "Asian";
+  if (hour >= 8 && hour < 17) return "London";
+  if (hour >= 13 && hour < 22) return "New York";
+  return "Any";
 }
 
 function macdSeries(values = [], fastPeriod = 12, slowPeriod = 26, signalPeriod = 9) {
@@ -751,6 +798,479 @@ function artifactSourceTf(item = {}, fallbackTf = "") {
   );
 }
 
+function normalizeTradeDirection(value = "", fallback = "BUY") {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (["SELL", "SHORT", "BEAR", "BEARISH"].includes(normalized)) return "SELL";
+  if (["BUY", "LONG", "BULL", "BULLISH"].includes(normalized)) return "BUY";
+  return String(fallback || "BUY").trim().toUpperCase() === "SELL" ? "SELL" : "BUY";
+}
+
+function resolveTradeDirectionFromAction(
+  action = {},
+  fallbackEventBias = "",
+  latestArtifact = null,
+) {
+  const explicit = normalizeTradeDirection(
+    action?.trade_plan?.direction || "",
+    "",
+  );
+  if (explicit === "BUY" || explicit === "SELL") return explicit;
+  const actionType = String(action?.action || action?.type || "")
+    .trim()
+    .toLowerCase();
+  if (actionType.includes("open.long") || actionType.includes("close.short")) {
+    return "BUY";
+  }
+  if (actionType.includes("open.short") || actionType.includes("close.long")) {
+    return "SELL";
+  }
+  const artifactBias = String(
+    latestArtifact?.direction ||
+      latestArtifact?.payload?.bias ||
+      latestArtifact?.subtype ||
+      "",
+  )
+    .trim()
+    .toLowerCase();
+  if (/\bbear\b|\bsell\b|\bshort\b|\bdown\b/.test(artifactBias)) return "SELL";
+  if (/\bbull\b|\bbuy\b|\blong\b|\bup\b/.test(artifactBias)) return "BUY";
+  const fallbackBias = String(fallbackEventBias || "").trim().toLowerCase();
+  return /\bbear\b|\bsell\b|\bshort\b|\bdown\b/.test(fallbackBias) ? "SELL" : "BUY";
+}
+
+function toFiniteNumber(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function splitPlanExpressionArgs(source = "") {
+  const args = [];
+  let current = "";
+  let depth = 0;
+  let quote = "";
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (quote) {
+      current += char;
+      if (char === quote && source[index - 1] !== "\\") quote = "";
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      current += char;
+      continue;
+    }
+    if (char === "(") {
+      depth += 1;
+      current += char;
+      continue;
+    }
+    if (char === ")") {
+      depth = Math.max(0, depth - 1);
+      current += char;
+      continue;
+    }
+    if (char === "," && depth === 0) {
+      args.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  if (current.trim()) args.push(current.trim());
+  return args;
+}
+
+function parsePlanExpressionValue(rawValue, { forArgument = false } = {}) {
+  if (typeof rawValue !== "string") return rawValue;
+  const raw = rawValue.trim();
+  if (!raw) return null;
+  if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) {
+    return raw.slice(1, -1);
+  }
+  if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw);
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  if (raw === "null") return null;
+  const fnMatch = raw.match(/^([a-zA-Z_][a-zA-Z0-9._-]*)\((.*)\)$/);
+  if (fnMatch) {
+    return {
+      fn: fnMatch[1],
+      args: splitPlanExpressionArgs(fnMatch[2]).map((item) =>
+        parsePlanExpressionValue(item, { forArgument: true }),
+      ),
+    };
+  }
+  if (
+    forArgument &&
+    new Set(["buy", "sell", "bullish", "bearish", "all", "any"]).has(
+      raw.toLowerCase(),
+    )
+  ) {
+    return raw.toLowerCase();
+  }
+  return { var: raw };
+}
+
+function resolvePlanFieldValue(rawValue, ctx) {
+  const normalizedValue =
+    typeof rawValue === "string"
+      ? parsePlanExpressionValue(rawValue)
+      : rawValue;
+  const value =
+    normalizedValue &&
+    typeof normalizedValue === "object" &&
+    !Array.isArray(normalizedValue)
+      ? evaluateRule(normalizedValue, ctx)
+      : normalizedValue;
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const firstNumeric = [
+      value?.price,
+      value?.value,
+      value?.close,
+      value?.entry,
+      value?.tp,
+      value?.sl,
+    ]
+      .map(toFiniteNumber)
+      .find(Number.isFinite);
+    return firstNumeric ?? value;
+  }
+  return value;
+}
+
+function midArtifactPrice(item = {}) {
+  const low = toFiniteNumber(item?.price_low);
+  const high = toFiniteNumber(item?.price_high);
+  const price = toFiniteNumber(item?.price);
+  if (Number.isFinite(low) && Number.isFinite(high)) return (low + high) / 2;
+  if (Number.isFinite(price)) return price;
+  if (Number.isFinite(low)) return low;
+  if (Number.isFinite(high)) return high;
+  return null;
+}
+
+function defaultTpSlFromEntry(entry, direction) {
+  const e = Number(entry);
+  const isSell = normalizeTradeDirection(direction, "BUY") === "SELL";
+  if (!Number.isFinite(e)) return { tp: null, sl: null };
+  return {
+    tp: isSell ? e * 0.98 : e * 1.02,
+    sl: isSell ? e * 1.02 : e * 0.98,
+  };
+}
+
+function resolvePlanAnchorPrice(ctx = {}, latestArtifact = null) {
+  const explicitArtifactPrice = midArtifactPrice(latestArtifact || {});
+  if (Number.isFinite(explicitArtifactPrice)) return explicitArtifactPrice;
+  const close = toFiniteNumber(ctx?.bar?.close);
+  if (Number.isFinite(close)) return close;
+  const open = toFiniteNumber(ctx?.bar?.open);
+  return Number.isFinite(open) ? open : null;
+}
+
+function resolvePlanStopFromArtifact(direction = "BUY", latestArtifact = null) {
+  if (!latestArtifact || typeof latestArtifact !== "object") return null;
+  const low = toFiniteNumber(latestArtifact?.price_low);
+  const high = toFiniteNumber(latestArtifact?.price_high);
+  const price = toFiniteNumber(latestArtifact?.price);
+  const isSell = normalizeTradeDirection(direction, "BUY") === "SELL";
+  if (isSell) return high ?? price ?? null;
+  return low ?? price ?? null;
+}
+
+function resolvePlanTargetFromArtifact(direction = "BUY", latestArtifact = null) {
+  if (!latestArtifact || typeof latestArtifact !== "object") return null;
+  const low = toFiniteNumber(latestArtifact?.price_low);
+  const high = toFiniteNumber(latestArtifact?.price_high);
+  const price = toFiniteNumber(latestArtifact?.price);
+  const isSell = normalizeTradeDirection(direction, "BUY") === "SELL";
+  if (isSell) return low ?? price ?? null;
+  return high ?? price ?? null;
+}
+
+function normalizeStrategyArtifactLabel(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return "";
+  if (
+    normalized === "ob" ||
+    normalized === "order_block" ||
+    normalized === "orderblock"
+  ) {
+    return "OB";
+  }
+  if (
+    normalized === "fvg" ||
+    normalized === "fair_value_gap" ||
+    normalized === "fairvaluegap"
+  ) {
+    return "FVG";
+  }
+  if (normalized === "breaker" || normalized === "breaker_block") {
+    return "breaker";
+  }
+  if (normalized === "bsl") return "BSL";
+  if (normalized === "ssl") return "SSL";
+  if (normalized === "eqh") return "EQH";
+  if (normalized === "eql") return "EQL";
+  if (normalized === "liquidity") return "liquidity";
+  if (normalized === "rejection") return "rejection zone";
+  if (normalized === "sweep") return "liquidity";
+  return normalized.replace(/[_-]+/g, " ");
+}
+
+function collectStrategyRuleHints(node, sink = new Set()) {
+  if (node == null) return sink;
+  if (Array.isArray(node)) {
+    node.forEach((item) => collectStrategyRuleHints(item, sink));
+    return sink;
+  }
+  if (typeof node === "string") {
+    const text = node.toLowerCase();
+    [
+      "rejected",
+      "retest",
+      "touches",
+      "sweeps_above",
+      "sweeps_below",
+      "sweep",
+      "bos",
+      "choch",
+      "breakout",
+      "pin_bar",
+      "engulfing",
+      "inside_bar",
+      "outside_bar",
+      "ob",
+      "order_block",
+      "fvg",
+      "fair_value_gap",
+      "breaker",
+      "liquidity",
+    ].forEach((token) => {
+      if (text.includes(token)) sink.add(token);
+    });
+    return sink;
+  }
+  if (typeof node !== "object") return sink;
+  if (typeof node.fn === "string") {
+    sink.add(String(node.fn || "").trim().toLowerCase());
+  }
+  Object.entries(node).forEach(([key, value]) => {
+    sink.add(String(key || "").trim().toLowerCase());
+    collectStrategyRuleHints(value, sink);
+  });
+  return sink;
+}
+
+export function buildStrategyPlanNote({
+  action = {},
+  strategy = {},
+  event = {},
+  hit = {},
+  latestArtifact = null,
+}) {
+  const direction =
+    resolveTradeDirectionFromAction(
+      action,
+      event?.bias || hit?.eventBias || "",
+      latestArtifact,
+    ) === "SELL"
+      ? "Bearish"
+      : "Bullish";
+  const artifacts = [
+    ...(Array.isArray(hit?.artifacts) ? hit.artifacts : []),
+    latestArtifact,
+  ].filter(Boolean);
+  const artifactLabels = [
+    ...new Set(
+      artifacts
+        .flatMap((item) => [
+          normalizeStrategyArtifactLabel(item?.type),
+          normalizeStrategyArtifactLabel(item?.subtype),
+          normalizeStrategyArtifactLabel(item?.kind),
+        ])
+        .filter(Boolean),
+    ),
+  ];
+  const ruleHints = collectStrategyRuleHints(event?.when);
+  const hasHint = (value) => ruleHints.has(String(value || "").trim().toLowerCase());
+  const zoneLabel =
+    artifactLabels.includes("OB") && artifactLabels.includes("FVG")
+      ? "OB/FVG"
+      : artifactLabels.find((label) =>
+            ["OB", "FVG", "breaker", "BSL", "SSL", "EQH", "EQL", "liquidity"].includes(label),
+          ) || "";
+
+  let setupText = "";
+  if (
+    hasHint("sweep") ||
+    hasHint("sweeps_above") ||
+    hasHint("sweeps_below")
+  ) {
+    setupText = zoneLabel
+      ? `swept liquidity into ${zoneLabel} and reversed`
+      : "swept liquidity and reversed";
+  } else if (hasHint("rejected")) {
+    setupText = zoneLabel ? `rejected from ${zoneLabel}` : "rejected key level";
+  } else if (hasHint("retest")) {
+    setupText = zoneLabel ? `retested ${zoneLabel}` : "retested breakout level";
+  } else if (hasHint("breakout")) {
+    setupText = zoneLabel ? `broke out from ${zoneLabel}` : "broke structure";
+  } else if (zoneLabel) {
+    setupText = `reacted from ${zoneLabel}`;
+  }
+
+  const confirmations = [];
+  if (hasHint("bos")) confirmations.push("BOS");
+  if (hasHint("choch")) confirmations.push("CHoCH");
+  if (hasHint("engulfing")) confirmations.push("engulfing");
+  if (hasHint("pin_bar")) confirmations.push("pin bar");
+  if (hasHint("inside_bar")) confirmations.push("inside-bar break");
+
+  const confirmationText = confirmations.length
+    ? `${confirmations.slice(0, 2).join(" + ")} confirmation`
+    : "";
+
+  if (setupText && confirmationText) {
+    return `${direction} ${setupText} with ${confirmationText}`;
+  }
+  if (setupText) {
+    return `${direction} ${setupText}`;
+  }
+  if (confirmationText) {
+    return `${direction} setup with ${confirmationText}`;
+  }
+
+  const eventName = String(event?.name || hit?.eventName || "").trim();
+  const strategyName = String(strategy?.name || hit?.strategyName || "").trim();
+  if (eventName && !/^(buy|sell|long|short)$/i.test(eventName)) {
+    return `${direction} ${eventName.toLowerCase()}`;
+  }
+  if (strategyName) {
+    return `${direction} ${strategyName.toLowerCase()} setup`;
+  }
+  return `${direction} rule match`;
+}
+
+function buildClientTradePlanFromAction({
+  action = {},
+  ctx = {},
+  strategy = {},
+  event = {},
+  hit = {},
+  sourceTf = "",
+  latestArtifact = null,
+  planIndex = 0,
+  chartTf = "",
+}) {
+  const actionType = String(action?.action || action?.type || "")
+    .trim()
+    .toLowerCase();
+  if (!actionType || (!actionType.startsWith("trade") && actionType !== "trade")) {
+    return null;
+  }
+  const direction = resolveTradeDirectionFromAction(
+    action,
+    event?.bias || hit?.eventBias || "",
+    latestArtifact,
+  );
+  const rawEntry = resolvePlanFieldValue(action?.trade_plan?.entry, ctx);
+  const rawTp = resolvePlanFieldValue(action?.trade_plan?.tp, ctx);
+  const rawSl = resolvePlanFieldValue(action?.trade_plan?.sl, ctx);
+  const entry =
+    toFiniteNumber(rawEntry) ??
+    resolvePlanAnchorPrice(ctx, latestArtifact);
+  if (!Number.isFinite(entry)) return null;
+  let sl =
+    toFiniteNumber(rawSl) ??
+    resolvePlanStopFromArtifact(direction, latestArtifact);
+  let tp =
+    toFiniteNumber(rawTp) ??
+    resolvePlanTargetFromArtifact(direction, latestArtifact);
+  if (!Number.isFinite(sl) || !Number.isFinite(tp)) {
+    const defaults = defaultTpSlFromEntry(entry, direction);
+    if (!Number.isFinite(sl)) sl = defaults.sl;
+    if (!Number.isFinite(tp)) tp = defaults.tp;
+  }
+  if (!Number.isFinite(sl) || !Number.isFinite(tp)) return null;
+  const riskDistance = Math.abs(Number(entry) - Number(sl));
+  if (riskDistance > 0 && !toFiniteNumber(rawTp)) {
+    tp =
+      direction === "SELL"
+        ? Number(entry) - riskDistance * 2
+        : Number(entry) + riskDistance * 2;
+  }
+  const startBar = Number(hit?.barTimeUnix || ctx?.bar?.time || 0) || null;
+  const endBar =
+    Number(ctx?.bars?.[ctx?.bars?.length - 1]?.time || hit?.barTimeUnix || 0) || null;
+  return {
+    id: [
+      "client-plan",
+      String(strategy?.id || strategy?.key || "strategy").trim(),
+      String(event?.id || "event").trim(),
+      String(sourceTf || chartTf || "").trim().toLowerCase(),
+      String(startBar || 0),
+      String(planIndex),
+    ].join("|"),
+    source: "client_strategy_engine",
+    strategy: String(strategy?.name || strategy?.id || "Strategy").trim() || "Strategy",
+    strategy_id: String(strategy?.id || strategy?.key || "").trim(),
+    strategy_name: String(strategy?.name || strategy?.id || "Strategy").trim() || "Strategy",
+    event_id: String(event?.id || "").trim(),
+    event_name: String(event?.name || event?.id || "Rule").trim() || "Rule",
+    rule_name: String(event?.name || event?.id || "Rule").trim() || "Rule",
+    rules_checked: `${String(strategy?.name || strategy?.id || "Strategy").trim() || "Strategy"} · ${String(event?.name || event?.id || "Rule").trim() || "Rule"}`,
+    condition: String(event?.name || event?.id || "Rule").trim() || "Rule",
+    label: String(action?.label || event?.name || strategy?.name || "Trade Plan").trim(),
+    direction,
+    note: buildStrategyPlanNote({
+      action,
+      strategy,
+      event,
+      hit,
+      latestArtifact,
+    }),
+    type:
+      String(action?.trade_plan?.type || "market").trim().toLowerCase() || "market",
+    entry,
+    tp,
+    tp1: tp,
+    sl,
+    timeframe: normalizeTfKey(sourceTf || chartTf || hit?.sourceTf || hit?.tf || ""),
+    tf: normalizeTfKey(sourceTf || chartTf || hit?.sourceTf || hit?.tf || ""),
+    source_tf: normalizeTfKey(sourceTf || chartTf || hit?.sourceTf || hit?.tf || ""),
+    start_bar: startBar,
+    end_bar: endBar,
+    bar_start: startBar,
+    bar_end: endBar,
+    anchor_time: startBar,
+    actions: Array.isArray(hit?.actions) ? hit.actions : [],
+    latest_artifact: latestArtifact || null,
+  };
+}
+
+function dedupeTradePlans(plans = []) {
+  const map = new Map();
+  (Array.isArray(plans) ? plans : []).forEach((plan) => {
+    if (!plan || typeof plan !== "object") return;
+    const key = String(plan?.id || "").trim() || [
+      normalizeTfKey(plan?.tf || plan?.timeframe || ""),
+      String(plan?.strategy_id || plan?.strategy || ""),
+      String(plan?.event_id || ""),
+      String(plan?.start_bar || ""),
+      String(plan?.direction || ""),
+      String(plan?.entry || ""),
+      String(plan?.tp || ""),
+      String(plan?.sl || ""),
+    ].join("|");
+    map.set(key, plan);
+  });
+  return Array.from(map.values()).sort(
+    (left, right) => Number(left?.start_bar || 0) - Number(right?.start_bar || 0),
+  );
+}
+
 export function groupArtifactsBySourceTf(ruleResult, fallbackTf = "", fallbackTimeUnix = 0) {
   const groups = new Map();
   (Array.isArray(ruleResult?.matches) ? ruleResult.matches : []).forEach((item) => {
@@ -958,6 +1478,9 @@ export function evaluateChartStrategies({
   symbol = "",
   tf = "",
   multiTfBars = null,
+  scanMode = "live",
+  skipConditions = true,
+  newsEvents = [],
 } = {}) {
   const normalizedBars = Array.isArray(bars) ? bars : [];
   const normalizedStrategies = (Array.isArray(strategies) ? strategies : []).filter(
@@ -971,11 +1494,20 @@ export function evaluateChartStrategies({
   const startIndex = Math.max(1, normalizedBars.length - lookback);
   const matches = [];
   const latestMatches = [];
+  const tradePlans = [];
 
   normalizedStrategies.forEach((strategy) => {
-    const strategyTf = normalizeTfKey(strategy?.market?.tf || "");
     const chartTf = normalizeTfKey(tf);
-    if (strategyTf && chartTf && strategyTf !== chartTf) return;
+    const strategyTf = normalizeTfKey(strategy?.market?.tf || "");
+    const strategyEngine = createStrategyScanEngine({
+      strategy,
+      scanMode,
+      skipConditions,
+      tf: chartTf || strategyTf || tf,
+      symbol: String(symbol || strategy?.market?.symbol || "").trim().toUpperCase(),
+      newsEvents,
+    });
+    if (!strategyEngine.isStrategyAllowed().allowed) return;
     const derivedArtifacts = sharedArtifactDetection.buildDerivedItemsFromBars(
       normalizedBars,
       chartTf || strategyTf || "",
@@ -985,6 +1517,9 @@ export function evaluateChartStrategies({
       chartTf || strategyTf || tf,
     );
     const indicators = {};
+    const atrValues = atrSeries(normalizedBars, 14);
+    let lastSignalBarIndex = null;
+    const sessionSignalCounts = new Map();
     (Array.isArray(strategy?.indicators) ? strategy.indicators : []).forEach(
       (indicator) => {
         if (!indicator?.id) return;
@@ -1005,6 +1540,23 @@ export function evaluateChartStrategies({
           currentIndicators[indicatorId] = series[index];
           prevIndicators[indicatorId] = series[index - 1];
         });
+        const barTimeUnix = Number(normalizedBars[index]?.time || 0);
+        const currentSession = inferSessionName(barTimeUnix);
+        const runtimeState = {
+          atr: atrValues[index],
+          session: currentSession,
+          signalsInSession: sessionSignalCounts.get(currentSession) || 0,
+          barsSinceLastSignal:
+            lastSignalBarIndex == null ? Number.POSITIVE_INFINITY : index - lastSignalBarIndex,
+        };
+        if (
+          !strategyEngine.isAllowedAtTime(
+            Number.isFinite(barTimeUnix) ? barTimeUnix * 1000 : Date.now(),
+            runtimeState,
+          ).allowed
+        ) {
+          continue;
+        }
         const ctx = buildRuleContext({
           bars: normalizedBars,
           index,
@@ -1075,6 +1627,33 @@ export function evaluateChartStrategies({
                 ? ruleResult.meta
                 : null;
           }
+          const hitTradePlans = (Array.isArray(event.actions) ? event.actions : [])
+            .map((action, actionIndex) =>
+              strategyEngine.filterTradePlan(
+                buildClientTradePlanFromAction({
+                  action,
+                  ctx,
+                  strategy,
+                  event,
+                  hit,
+                  sourceTf: group.sourceTf || normalizeTfKey(chartTf || strategyTf || tf),
+                  latestArtifact: group.latestArtifact || null,
+                  planIndex: actionIndex,
+                  chartTf: chartTf || strategyTf || tf,
+                }),
+                {
+                  timeMs:
+                    (Number(hit?.barTimeUnix || ctx?.bar?.time || 0) || Date.now() / 1000) *
+                    1000,
+                  runtimeState,
+                },
+              ),
+            )
+            .filter(Boolean);
+          if (hitTradePlans.length) {
+            hit.tradePlans = hitTradePlans;
+            tradePlans.push(...hitTradePlans);
+          }
           const markerMeta = resolveStrategyMarkerMeta(
             hit.actions,
             hit.eventName,
@@ -1098,6 +1677,11 @@ export function evaluateChartStrategies({
           ].join("|");
           matches.push(hit);
           latestHit = hit;
+          lastSignalBarIndex = index;
+          sessionSignalCounts.set(
+            currentSession,
+            Number(sessionSignalCounts.get(currentSession) || 0) + 1,
+          );
         });
       }
       if (!latestHit) return;
@@ -1108,5 +1692,65 @@ export function evaluateChartStrategies({
   return {
     matches: dedupeStrategyHits(matches),
     latestMatches: dedupeStrategyHits(latestMatches),
+    tradePlans: dedupeTradePlans(tradePlans),
+    latestTradePlans: dedupeTradePlans(
+      latestMatches.flatMap((hit) => (Array.isArray(hit?.tradePlans) ? hit.tradePlans : [])),
+    ),
   };
+}
+
+export function collectContextualStrategyTradePlans({
+  barsByTf = null,
+  strategies = [],
+  lookbackBars = 100,
+  symbol = "",
+  tf = "",
+  timeSec = null,
+  scanMode = "live",
+  skipConditions = true,
+  newsEvents = [],
+} = {}) {
+  const normalizedStrategies = (Array.isArray(strategies) ? strategies : []).filter(
+    Boolean,
+  );
+  const normalizedTf = normalizeTfKey(tf);
+  if (!barsByTf || typeof barsByTf !== "object" || !normalizedTf || !normalizedStrategies.length) {
+    return [];
+  }
+  const cutoffTime = toFiniteNumber(timeSec);
+  const contextualBarsByTf = {};
+  Object.entries(barsByTf || {}).forEach(([tfKeyRaw, barsRaw]) => {
+    const tfKey = normalizeTfKey(tfKeyRaw);
+    const sourceBars = Array.isArray(barsRaw) ? barsRaw : [];
+    if (!tfKey || sourceBars.length < 2) return;
+    const scopedBars = Number.isFinite(cutoffTime)
+      ? sourceBars.filter((bar) => Number(bar?.time || 0) <= cutoffTime)
+      : sourceBars.slice();
+    if (scopedBars.length < 2) return;
+    contextualBarsByTf[tfKey] = scopedBars;
+  });
+  const focusBars = Array.isArray(contextualBarsByTf?.[normalizedTf])
+    ? contextualBarsByTf[normalizedTf]
+    : [];
+  if (focusBars.length < 2) return [];
+  const evaluation = evaluateChartStrategies({
+    bars: focusBars,
+    strategies: normalizedStrategies,
+    lookbackBars: Math.min(
+      focusBars.length,
+      Math.max(1, Math.round(Number(lookbackBars) || focusBars.length)),
+    ),
+    symbol,
+    tf: normalizedTf,
+    multiTfBars: contextualBarsByTf,
+    scanMode,
+    skipConditions,
+    newsEvents,
+  });
+  const plans = Array.isArray(evaluation?.latestTradePlans)
+    ? evaluation.latestTradePlans
+    : Array.isArray(evaluation?.tradePlans)
+      ? evaluation.tradePlans
+      : [];
+  return dedupeTradePlans(plans);
 }

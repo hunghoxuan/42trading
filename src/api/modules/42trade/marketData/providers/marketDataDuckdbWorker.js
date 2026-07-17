@@ -81,6 +81,29 @@ async function readParquet(payload = {}) {
   }
 }
 
+async function readPreviewTable(payload = {}) {
+  const parquetPath = String(payload.parquetPath || "").trim();
+  const duckdbPath = resolveWorkerDuckDbPath(payload);
+  const requestedLimit = Number(payload.limit);
+  const limit =
+    Number.isFinite(requestedLimit) && requestedLimit > 0
+      ? Math.max(1, Math.min(requestedLimit, 500))
+      : 100;
+  if (!parquetPath || !fs.existsSync(parquetPath)) return [];
+  const connection = await connectDuckDb(duckdbPath);
+  try {
+    const sql = `
+      SELECT *
+      FROM read_parquet('${escapeSqlString(parquetPath)}')
+      LIMIT ${limit}
+    `;
+    const reader = await connection.runAndReadAll(sql);
+    return reader.getRowObjects();
+  } finally {
+    connection.closeSync();
+  }
+}
+
 async function writeParquet(payload = {}) {
   const parquetPath = String(payload.parquetPath || "").trim();
   const duckdbPath = resolveWorkerDuckDbPath(payload);
@@ -139,6 +162,7 @@ async function main() {
   }
   const commands = {
     readParquet,
+    readPreviewTable,
     writeParquet,
   };
   if (!commands[command]) {

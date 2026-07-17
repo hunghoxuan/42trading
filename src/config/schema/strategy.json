@@ -221,12 +221,49 @@
       "type": "object",
       "properties": {
         "rr_target": { "type": "number" },
+        "min_rr": { "type": "number" },
         "stop_lookback": { "type": "number" },
         "max_open_trades": { "type": "number" },
         "fallback_stop_pct": { "type": "number" },
         "fallback_tp_pct": { "type": "number" }
       },
       "additionalProperties": false
+    },
+    "conditions": {
+      "type": "object",
+      "properties": {
+        "tf": { "type": "string" },
+        "timeframes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "symbols": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "skip_news": { "type": "boolean" },
+        "news_window_minutes": { "type": "number" },
+        "news_before_minutes": { "type": "number" },
+        "news_after_minutes": { "type": "number" },
+        "min_rr": { "type": "number" },
+        "max_spread": { "type": "number" },
+        "min_atr": { "type": "number" },
+        "cooldown_bars": { "type": "number" },
+        "max_signals_per_session": { "type": "number" },
+        "sessions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "regime_tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
     },
     "metadata": {
       "type": "object"

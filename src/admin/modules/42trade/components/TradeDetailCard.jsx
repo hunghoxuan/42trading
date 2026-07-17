@@ -16,8 +16,9 @@ import {
   formatNum3,
 } from "../../../shared/utils/tradeDetailUtils";
 const SymbolChart = lazy(() => import("./charts/SymbolChart"));
-import { SmartContent } from "../../../shared/components/SmartContent";
+import { SmartContent } from "../../../shared/components/SmartContent.jsx";
 import MobileCollapseSection from "../../../shared/components/MobileCollapseSection";
+import TradePriceInline from "./TradePriceInline";
 const TradeDraftTab = lazy(() => import("./TradeDraftTab"));
 const TradeLogsTab = lazy(() => import("./TradeLogsTab"));
 import { sortTimeframes } from "../../../shared/utils/format";
@@ -30,6 +31,12 @@ import { BrokerTicketBadge } from "./BrokerTicketBadge";
 import { StatusBadge } from "../../../shared/components/StatusBadge";
 import { isCurrentAiTradePlan } from "../../../shared/utils/tradePlanShape";
 import { buildSingleTradeForChart } from "./charts/backtestChartTheme";
+import {
+  formatTradePrice,
+  formatTradePriceField,
+  parseTradePriceNumber,
+  resolveTradePricePrecision,
+} from "../utils/tradePriceFormat";
 
 import {
   DEFAULT_TF_TABS,
@@ -207,10 +214,11 @@ function toTradingViewSymbol(raw) {
   return `OANDA:${s.replace(/[^A-Z0-9]/g, "")}`;
 }
 
-function parseNumLoose(v) {
-  if (v == null) return null;
-  const n = Number(String(v).trim().replace(",", "."));
-  return Number.isFinite(n) ? n : null;
+const parseNumLoose = parseTradePriceNumber;
+
+function parsePositiveNumLoose(v) {
+  const n = parseNumLoose(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 function normalizePlanSymbol(value) {
@@ -319,8 +327,17 @@ function normalizeRawPlan(p = {}) {
       src?.multiple_exits?.full_tp?.price,
   );
   const tpNum = tp1 ?? parseNumLoose(chosen.tp);
+  const pricePrecision = resolveTradePricePrecision(
+    src?.symbol || src?.ticker || src?.asset || "",
+    [entry, tp1, tp2, tp3, tpNum, sl].filter((value) => value != null),
+  );
   // Always sync tp from tp1 (TP1 is primary target)
-  const tpVal = tp1 ?? (chosen.tp ? String(parseNumLoose(chosen.tp)) : "");
+  const tpVal =
+    tp1 != null
+      ? formatTradePriceField(tp1, pricePrecision)
+      : chosen.tp
+        ? formatTradePriceField(parseNumLoose(chosen.tp), pricePrecision)
+        : "";
   const rrRaw = parseNumLoose(
     src?.execution_plan?.risk_reward ?? src?.rr ?? src?.risk_reward,
   );
@@ -333,14 +350,15 @@ function normalizeRawPlan(p = {}) {
     ...src,
     ai_rr: rrRaw == null ? "" : String(rrRaw),
     direction,
-    entry: entry == null ? "" : String(entry),
+    entry: formatTradePriceField(entry, pricePrecision),
     tp: tpVal,
-    tp1: tp1 == null ? "" : String(tp1),
-    tp2: tp2 == null ? "" : String(tp2),
-    tp3: tp3 == null ? "" : String(tp3),
-    sl: sl == null ? "" : String(sl),
+    tp1: formatTradePriceField(tp1, pricePrecision),
+    tp2: formatTradePriceField(tp2, pricePrecision),
+    tp3: formatTradePriceField(tp3, pricePrecision),
+    sl: formatTradePriceField(sl, pricePrecision),
     rr: rr == null ? "" : String(Number(rr.toFixed(1))),
     trade_type: String(src?.type || src?.order_type || "limit").toLowerCase(),
+    price_precision: pricePrecision,
     __canonical_plan: Boolean(canonical),
   };
 }
@@ -700,6 +718,24 @@ function PlanHeader({
   const tp = parseNumLoose(plan.tp ?? fallbackTp);
   const risk = entry != null && sl != null ? Math.abs(entry - sl) : null;
   const resolvedSymbol = plan.symbol || symbol;
+  const pricePrecision = resolveTradePricePrecision(resolvedSymbol, [
+    entry,
+    sl,
+    tp,
+    fallbackTp,
+    plan?.multiple_exits?.tp1?.price,
+    plan?.multiple_exits?.tp2?.price,
+    plan?.multiple_exits?.tp3?.price,
+    plan?.multiple_exits?.full_tp?.price,
+  ]);
+  const entryText = entry != null ? formatTradePrice(entry, pricePrecision) : "-";
+  const tpText =
+    tp != null
+      ? formatTradePrice(tp, pricePrecision)
+      : fallbackTp != null
+        ? formatTradePrice(fallbackTp, pricePrecision)
+        : "-";
+  const slText = sl != null ? formatTradePrice(sl, pricePrecision) : "-";
 
   const rrParsed = Number(String(plan.rr ?? "").replace(",", "."));
   const rrCandidate =
@@ -754,8 +790,18 @@ function PlanHeader({
   const riskPercentVal =
     riskPercentNum != null ? `${riskPercentNum.toFixed(2)}% risk` : "";
   const partials = Array.isArray(plan.partial_tps) ? plan.partial_tps : [];
-  const strategy = plan.strategy || "";
-  const entryModel = plan.entry_model || plan.entryModel || "";
+  const strategy =
+    plan.strategy ||
+    plan.strategy_name ||
+    plan.metadata?.broker_data?.strategy ||
+    plan.raw_json?.broker_data?.strategy ||
+    "";
+  const entryModel =
+    plan.entry_model ||
+    plan.entryModel ||
+    plan.metadata?.broker_data?.entry_model ||
+    plan.raw_json?.broker_data?.entry_model ||
+    "";
   const sourceVal = plan.source_id || plan.source || plan.model || "";
   const sidVal = String(plan.sid || plan.trade_id || plan.signal_id || "").trim();
   const brokerIdVal = String(
@@ -858,11 +904,12 @@ function PlanHeader({
               opacity: 0.9,
             }}
           >
-            {plan.entry || "-"} →{" "}
-            <span style={{ color: "var(--accent)" }}>
-              {plan.tp || fallbackTp || "-"}
-            </span>{" "}
-            / <span style={{ color: "var(--bearish)" }}>{plan.sl || "-"}</span>
+            <TradePriceInline
+              entry={entry}
+              tp={tp}
+              sl={sl}
+              symbol={resolvedSymbol}
+            />
             <span
               title="Risk-Reward ratio calculated from Plan prices (Entry, TP, SL). Broker-side 'Planned Profits' may diverge due to commissions, spreads, or platform-specific pip calculations."
               style={{
@@ -1789,6 +1836,14 @@ export default function TradeDetailCard({
     prevTradeEntityRef.current = entityKey;
   }, [mode, tradePlan?.tradeId, response?.id]);
 
+  const handleTradePlanReset = useCallback(() => {
+    setPlanDrafts({});
+    setSelectedPlanId("main");
+    if (typeof tradePlan?.onReset === "function") {
+      tradePlan.onReset();
+    }
+  }, [tradePlan]);
+
   const plansKey = useMemo(() => {
     return plans
       .map((p, i) => [i, p?.entry, p?.tp, p?.sl, p?.direction].join("|"))
@@ -1941,6 +1996,7 @@ export default function TradeDetailCard({
     return 1000;
   }, [chart?.initialBarsCount]);
   const chartTradeSide =
+    tradePlan?.value?.direction ||
     chart?.side ||
     chart?.action ||
     response?.side ||
@@ -1948,9 +2004,9 @@ export default function TradeDetailCard({
     rawData?.side ||
     rawData?.action ||
     selectedPlanRaw?.direction ||
-    tradePlan?.value?.direction ||
     "";
   const chartTradeAction =
+    tradePlan?.value?.direction ||
     chart?.action ||
     chart?.side ||
     response?.action ||
@@ -1958,9 +2014,61 @@ export default function TradeDetailCard({
     rawData?.action ||
     rawData?.side ||
     selectedPlanRaw?.direction ||
-    tradePlan?.value?.direction ||
     "";
+  const handleChartPlanLevelChange = useCallback(
+    (field, value) => {
+      const normalizedField = String(field || "").trim();
+      if (!normalizedField) return;
+      const targetPlanId = selectedPlanId || "main";
+      const planIndex =
+        targetPlanId === "main"
+          ? 0
+          : Math.max(
+              0,
+              Number(String(targetPlanId).replace("suggested_", "")) || 0,
+            );
+      const fallbackPlan =
+        (targetPlanId === "main"
+          ? plans[0]
+          : plans[planIndex]) ||
+        tradePlan?.value ||
+        {};
+      let nextPlan = null;
+      setPlanDrafts((prev) => {
+        nextPlan = applyLinkedPlanChange(
+          prev?.[targetPlanId] || fallbackPlan,
+          normalizedField,
+          value,
+        );
+        return {
+          ...prev,
+          [targetPlanId]: nextPlan,
+        };
+      });
+      if (targetPlanId === "main" && typeof tradePlan?.onChange === "function") {
+        const changedFields = new Set([normalizedField]);
+        if (normalizedField === "tp1" || normalizedField === "tp") {
+          changedFields.add("tp");
+          changedFields.add("tp1");
+          if (nextPlan?.rr !== undefined) changedFields.add("rr");
+        } else if (normalizedField === "entry" || normalizedField === "sl") {
+          if (nextPlan?.rr !== undefined) changedFields.add("rr");
+        } else if (normalizedField === "rr") {
+          changedFields.add("tp");
+          changedFields.add("tp1");
+        }
+        changedFields.forEach((nextField) => {
+          if (nextPlan?.[nextField] !== undefined) {
+            tradePlan.onChange(nextField, nextPlan[nextField]);
+          }
+        });
+      }
+      chart?.onPlanLevelChange?.(normalizedField, value);
+    },
+    [chart, plans, selectedPlanId, tradePlan],
+  );
   const chartEntryPrice =
+    selectedPlanRaw?.entry ||
     chart?.entryPrice ||
     response?.entry_exec ||
     response?.entryExec ||
@@ -1970,9 +2078,9 @@ export default function TradeDetailCard({
     rawData?.entryExec ||
     rawData?.entry ||
     rawData?.entry_price ||
-    selectedPlanRaw?.entry ||
     tradePlan?.value?.entry;
   const chartSlPrice =
+    selectedPlanRaw?.sl ||
     chart?.slPrice ||
     response?.sl_exec ||
     response?.slExec ||
@@ -1982,9 +2090,9 @@ export default function TradeDetailCard({
     rawData?.slExec ||
     rawData?.sl ||
     rawData?.stop_loss ||
-    selectedPlanRaw?.sl ||
     tradePlan?.value?.sl;
   const chartTpPrice =
+    selectedPlanRaw?.tp ||
     chart?.tpPrice ||
     response?.tp_exec ||
     response?.tpExec ||
@@ -1994,9 +2102,9 @@ export default function TradeDetailCard({
     rawData?.tpExec ||
     rawData?.tp ||
     rawData?.take_profit ||
-    selectedPlanRaw?.tp ||
     tradePlan?.value?.tp;
   const chartTp1Price =
+    selectedPlanRaw?.tp1 ||
     chart?.tp1Price ||
     response?.tp1_exec ||
     response?.tp1Exec ||
@@ -2004,24 +2112,22 @@ export default function TradeDetailCard({
     rawData?.tp1_exec ||
     rawData?.tp1Exec ||
     rawData?.tp1 ||
-    selectedPlanRaw?.tp1 ||
     tradePlan?.value?.tp1 ||
     chart?.tpPrice ||
     response?.tp ||
     rawData?.tp ||
-    selectedPlanRaw?.tp ||
     tradePlan?.value?.tp;
   const chartTp2Price =
+    selectedPlanRaw?.tp2 ||
     chart?.tp2Price ||
     response?.tp2 ||
     rawData?.tp2 ||
-    selectedPlanRaw?.tp2 ||
     tradePlan?.value?.tp2;
   const chartTp3Price =
+    selectedPlanRaw?.tp3 ||
     chart?.tp3Price ||
     response?.tp3 ||
     rawData?.tp3 ||
-    selectedPlanRaw?.tp3 ||
     tradePlan?.value?.tp3;
   const brokerData = firstObject(
     chart?.brokerData,
@@ -2589,6 +2695,7 @@ export default function TradeDetailCard({
                       <TradePlanEditor
                         tradeContextId={tradePlan.tradeId || null}
                         tradeId={tradePlan.tradeId || null}
+                        apiScope={tradePlan.apiScope || chart?.apiScope || ""}
                         value={planValue}
                         onChange={(k, v) => {
                           let nextPlan = null;
@@ -2616,7 +2723,7 @@ export default function TradeDetailCard({
                             }
                           }
                         }}
-                        onReset={tradePlan.onReset}
+                        onReset={handleTradePlanReset}
                         onGoTrade={tradePlan.onGoTrade}
                         onGoAnalyze={tradePlan.onGoAnalyze}
                         onCancel={tradePlan.onCancel}
@@ -2959,11 +3066,21 @@ export default function TradeDetailCard({
                 >
                   <div>
                     <span className="minor-text">Strategy</span>
-                    <div>{plan24?.strategy || "-"}</div>
+                    <div>
+                      {plan24?.strategy ||
+                        plan24?.strategy_name ||
+                        brokerData?.strategy ||
+                        "-"}
+                    </div>
                   </div>
                   <div>
                     <span className="minor-text">Entry Model</span>
-                    <div>{plan24?.entry_model || "-"}</div>
+                    <div>
+                      {plan24?.entry_model ||
+                        plan24?.entryModel ||
+                        brokerData?.entry_model ||
+                        "-"}
+                    </div>
                   </div>
                   <div>
                     <span className="minor-text">Trade Decision</span>
@@ -4016,7 +4133,7 @@ export default function TradeDetailCard({
             exitPrice={chartExitPriceForClosedTrade}
             pnlRealized={chartPnlRealizedForClosedTrade}
             tradeLabel={chartTradeLabel}
-            onPlanLevelChange={chart?.onPlanLevelChange}
+            onPlanLevelChange={handleChartPlanLevelChange}
             analysisSnapshot={chart2AnalysisSnapshot}
             hasTradePlan={Boolean(
               (Array.isArray(response?.tradePlans) &&
@@ -4041,6 +4158,7 @@ export default function TradeDetailCard({
                     : []
             }
             tradeSid={chartTradeSid}
+            apiScope={chart?.apiScope || tradePlan?.apiScope || ""}
             trades={singleTradeReplayTrades}
             backtestReplay={singleTradeReplayConfig}
             autoStartReplay={chartAutoReplayRequested}
@@ -4048,6 +4166,8 @@ export default function TradeDetailCard({
               const side = String(intent?.side || "BUY").toUpperCase();
               const action = String(intent?.action || "ENTRY").toUpperCase();
               const price = Number(intent?.price);
+              const suggestedTp = parsePositiveNumLoose(intent?.tp);
+              const suggestedSl = parsePositiveNumLoose(intent?.sl);
               const requestedPlan = String(
                 intent?.plan_id || "P1",
               ).toUpperCase();
@@ -4059,6 +4179,68 @@ export default function TradeDetailCard({
                   ? requestedPlanNum - 1
                   : 0;
               const planId = planIndex <= 0 ? "main" : `suggested_${planIndex}`;
+              const nextTradeType =
+                String(
+                  intent?.trade_type || intent?.order_type || "limit",
+                ).trim().toLowerCase() === "market"
+                  ? "market"
+                  : "limit";
+              const pricePrecision = resolveTradePricePrecision(
+                selectedPlanSymbol || chart?.symbol || tradePlan?.value?.symbol || "",
+                [price, suggestedTp, suggestedSl].filter((value) =>
+                  Number.isFinite(value),
+                ),
+              );
+              const formatPlanPrice = (value) =>
+                formatTradePriceField(value, pricePrecision);
+              if (action === "ENTRY") {
+                setSelectedPlanId(planId);
+              }
+              if (
+                planId === "main" &&
+                action === "ENTRY" &&
+                typeof tradePlan?.onApplyQuickTradeIntent === "function"
+              ) {
+                const entry = parsePositiveNumLoose(intent?.price);
+                const tp = parsePositiveNumLoose(intent?.tp);
+                const sl = parsePositiveNumLoose(intent?.sl);
+                const rr =
+                  entry != null &&
+                  tp != null &&
+                  sl != null &&
+                  Math.abs(entry - sl) > 0
+                    ? Math.abs(tp - entry) / Math.abs(entry - sl)
+                    : null;
+                setPlanDrafts((prev) => ({
+                  ...prev,
+                  main: {
+                    ...(prev?.main || tradePlan?.value || plans?.[0] || {}),
+                    direction: side,
+                    trade_type: nextTradeType,
+                    order_type: nextTradeType,
+                    entry: formatPlanPrice(entry),
+                    tp: formatPlanPrice(tp),
+                    tp1: formatPlanPrice(tp),
+                    tp2: "",
+                    tp3: "",
+                    sl: formatPlanPrice(sl),
+                    rr: rr != null ? String(Number(rr.toFixed(3))) : "",
+                    price_precision: pricePrecision,
+                    source_id:
+                      String(intent?.source_id || intent?.source || "auto_chart").trim() ||
+                      "auto_chart",
+                    source:
+                      String(intent?.source || intent?.source_id || "auto_chart").trim() ||
+                      "auto_chart",
+                    strategy: String(intent?.strategy || "").trim(),
+                    entry_model: String(
+                      intent?.entry_model || intent?.entryModel || "",
+                    ).trim(),
+                  },
+                }));
+                tradePlan.onApplyQuickTradeIntent(intent);
+                return;
+              }
               const applyToPlan = (field, value) => {
                 if (planId === "main") {
                   tradePlan?.onChange?.(field, value);
@@ -4100,9 +4282,9 @@ export default function TradeDetailCard({
                 uniq.sort((a, b) => (sideDir === "SELL" ? b - a : a - b));
                 const out = {
                   ...base,
-                  tp1: uniq[0] != null ? String(uniq[0]) : "",
-                  tp2: uniq[1] != null ? String(uniq[1]) : "",
-                  tp3: uniq[2] != null ? String(uniq[2]) : "",
+                  tp1: formatPlanPrice(uniq[0]),
+                  tp2: formatPlanPrice(uniq[1]),
+                  tp3: formatPlanPrice(uniq[2]),
                 };
                 out.tp = out.tp1 || "";
                 return out;
@@ -4111,8 +4293,8 @@ export default function TradeDetailCard({
                 if (/^TP[123]$/.test(action)) {
                   if (Number.isFinite(price)) {
                     const slot = action.toLowerCase();
-                    applyToPlan(slot, String(price));
-                    if (slot === "tp1") applyToPlan("tp", String(price));
+                    applyToPlan(slot, formatPlanPrice(price));
+                    if (slot === "tp1") applyToPlan("tp", formatPlanPrice(price));
                   }
                 } else if (action === "TP") {
                   if (Number.isFinite(price)) {
@@ -4127,7 +4309,7 @@ export default function TradeDetailCard({
                     applyToPlan("tp", nextPlan.tp || "");
                   }
                 } else if (action === "SL") {
-                  if (Number.isFinite(price)) applyToPlan("sl", String(price));
+                  if (Number.isFinite(price)) applyToPlan("sl", formatPlanPrice(price));
                 } else if (action === "CLEAR_TP") {
                   applyToPlan("tp", "");
                   applyToPlan("tp1", "");
@@ -4138,10 +4320,26 @@ export default function TradeDetailCard({
                 } else if (action === "CLEAR_ENTRY") {
                   applyToPlan("entry", "");
                 } else {
+                  applyToPlan("trade_type", nextTradeType);
                   applyToPlan("direction", side);
                   if (Number.isFinite(price)) {
-                    applyToPlan("entry", String(price));
+                    applyToPlan("entry", formatPlanPrice(price));
+                  } else {
+                    applyToPlan("entry", "");
                   }
+                  if (suggestedTp != null) {
+                    applyToPlan("tp", formatPlanPrice(suggestedTp));
+                    applyToPlan("tp1", formatPlanPrice(suggestedTp));
+                  } else {
+                    applyToPlan("tp", "");
+                    applyToPlan("tp1", "");
+                  }
+                  applyToPlan("tp2", "");
+                  applyToPlan("tp3", "");
+                  applyToPlan(
+                    "sl",
+                    formatPlanPrice(suggestedSl),
+                  );
                 }
               }
             }}
@@ -4182,6 +4380,7 @@ export default function TradeDetailCard({
               response?.id ||
               null
             }
+            apiScope={chart?.apiScope || tradePlan?.apiScope || ""}
             symbol={chart?.symbol || null}
             snapshotFiles={
               response?.snapshotFiles ||

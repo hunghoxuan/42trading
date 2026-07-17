@@ -8,6 +8,7 @@ export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WEB_API_ENTRY="${ROOT}/src/api/app/server.js"
+ENV_FILE="${ENV_FILE:-${ROOT}/src/api/.env}"
 NODE_BIN="${NODE_BIN:-$(command -v node || true)}"
 PORT="${PORT:-3001}"
 LOG_FILE="${LOG_FILE:-/tmp/trading-webhook-local.log}"
@@ -24,12 +25,37 @@ if [ "${2:-}" = "--force" ] || [ "${1:-}" = "--force" ]; then
   fi
 fi
 
+load_env_file() {
+  if [ ! -f "${ENV_FILE}" ]; then
+    return 0
+  fi
+  while IFS= read -r line || [ -n "${line}" ]; do
+    case "${line}" in
+      ''|\#*) continue ;;
+    esac
+    if [[ "${line}" != *=* ]]; then
+      continue
+    fi
+    local key="${line%%=*}"
+    local value="${line#*=}"
+    key="$(printf '%s' "${key}" | sed 's/[[:space:]]*$//')"
+    value="$(printf '%s' "${value}" | sed 's/^[[:space:]]*//')"
+    export "${key}=${value}"
+  done < "${ENV_FILE}"
+}
+
+load_env_file
+
 health_url() {
   printf "http://127.0.0.1:%s/health" "${PORT}"
 }
 
 port_pids() {
   lsof -ti "tcp:${PORT}" 2>/dev/null || true
+}
+
+server_pids() {
+  pgrep -f "node ${WEB_API_ENTRY}" 2>/dev/null || true
 }
 
 port_in_use() {
@@ -42,7 +68,7 @@ api_healthy() {
 
 resolved_mt5_enabled() {
   local mt5_storage
-  mt5_storage="${MT5_STORAGE:-postgres}"
+  mt5_storage="${MT5_STORAGE:-sqlite}"
   if [ "${mt5_storage}" = "postgres" ] && ! nc -z 127.0.0.1 5432 >/dev/null 2>&1; then
     echo "false"
   else
@@ -61,10 +87,22 @@ kill_port_owner() {
   sleep 1
 }
 
+kill_stale_server_processes() {
+  local pids
+  pids="$(server_pids)"
+  if [ -z "${pids}" ]; then
+    return 0
+  fi
+  echo "[src/api] force-killing stale API process(es): pids=${pids}"
+  echo "${pids}" | xargs kill -9 2>/dev/null || true
+  sleep 1
+}
+
 ensure_api_slot() {
   if api_healthy; then
     if [ "${FORCE}" = "1" ]; then
       kill_port_owner
+      kill_stale_server_processes
       return 0
     fi
     echo "[src/api] healthy API already running on :${PORT}; skipping start"
@@ -75,18 +113,22 @@ ensure_api_slot() {
     pids="$(port_pids)"
     if [ "${FORCE}" = "1" ]; then
       kill_port_owner
+      kill_stale_server_processes
       return 0
     fi
     echo "[src/api] port ${PORT} already in use by pid(s): ${pids}"
     echo "[src/api] refusing to kill existing owner without --force"
     return 20
   fi
+  if [ "${FORCE}" = "1" ]; then
+    kill_stale_server_processes
+  fi
   return 0
 }
 
 run_server() {
   local mt5_storage mt5_enabled
-  mt5_storage="${MT5_STORAGE:-postgres}"
+  mt5_storage="${MT5_STORAGE:-sqlite}"
   mt5_enabled="$(resolved_mt5_enabled)"
   if [ "${mt5_enabled}" != "true" ]; then
     echo "[src/api] postgres :5432 unavailable -> starting with MT5_ENABLED=false"
@@ -120,7 +162,7 @@ start_background() {
 
 write_launch_agent_plist() {
   local mt5_enabled mt5_storage node_path
-  mt5_storage="${MT5_STORAGE:-postgres}"
+  mt5_storage="${MT5_STORAGE:-sqlite}"
   mt5_enabled="$(resolved_mt5_enabled)"
   node_path="${NODE_BIN:-}"
   if [ -z "${node_path}" ]; then

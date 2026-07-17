@@ -9,7 +9,7 @@ import {
   normalizeSymbolGroupsData,
   makeSymbolGroupId,
   RESERVED_SYMBOL_GROUP_IDS,
-} from "../../../shared/utils/symbolGroups";
+} from "../../../../config/symbolGroups.js";
 import MasterDetailLayout from "../../../shared/components/MasterDetailLayout";
 import SymbolTogglePicker from "../components/SymbolTogglePicker";
 import SidebarListItem from "../components/SidebarListItem";

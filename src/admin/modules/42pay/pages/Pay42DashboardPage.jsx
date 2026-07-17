@@ -6,6 +6,7 @@ import DataTable from "../../../shared/components/DataTable";
 import PageHeader from "../../../shared/components/PageHeader";
 import ResponsivePanel from "../../../shared/components/ResponsivePanel";
 import Pay42MediaThumb from "./Pay42MediaThumb";
+import Pay42PageShell from "./Pay42PageShell";
 import { formatMetric, formatMoney, roleLabel, statusTone } from "./pay42Ui";
 
 const PERIOD_DISPLAY = [
@@ -556,7 +557,7 @@ export default function Pay42DashboardPage({ authUser }) {
   if (error) return <div className="error">{error}</div>;
 
   return (
-    <section className="logs-page-container trades-page-container pay42-page-container stack-layout fadeIn">
+    <Pay42PageShell>
       <PageHeader
         className="trades-page-header"
         title={dashboardRole === "buyer" ? "Wallet" : "Dashboard"}
@@ -1069,9 +1070,10 @@ export default function Pay42DashboardPage({ authUser }) {
           loading={loading}
           emptyText="No 42Pay activity yet."
           className="events-table"
+          showModeSwitcher
           mobileCard={mobileCard}
         />
       </ResponsivePanel>
-    </section>
+    </Pay42PageShell>
   );
 }

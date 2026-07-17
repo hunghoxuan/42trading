@@ -7,6 +7,7 @@ import PageHeader from "../../../shared/components/PageHeader";
 import ResponsivePanel from "../../../shared/components/ResponsivePanel";
 import { showToast } from "../../../shared/components/ToastContainer";
 import Pay42MediaThumb from "./Pay42MediaThumb";
+import Pay42PageShell from "./Pay42PageShell";
 import { formatMetric, formatMoney } from "./pay42Ui";
 
 const PAY_TABS = [
@@ -618,7 +619,7 @@ export default function Pay42ScanPage() {
     GIFT_CARDS.find((item) => item.id === giftForm.selectedGiftId) || GIFT_CARDS[0];
 
   return (
-    <section className="logs-page-container trades-page-container pay42-page-container stack-layout fadeIn">
+    <Pay42PageShell>
       <PageHeader
         className="trades-page-header"
         title="PAY"
@@ -1050,6 +1051,6 @@ export default function Pay42ScanPage() {
           </div>
         </div>
       ) : null}
-    </section>
+    </Pay42PageShell>
   );
 }

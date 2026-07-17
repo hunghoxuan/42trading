@@ -4,7 +4,11 @@ import PageHeader from "../../../shared/components/PageHeader";
 import AdminPageToolbar, {
   AdminToolbarGroup,
 } from "../../../shared/components/AdminPageToolbar";
+import CrudContainer from "../../../shared/components/CrudContainer";
+import PaginationBar from "../../../shared/components/PaginationBar";
 import ResponsivePanel from "../../../shared/components/ResponsivePanel";
+import SmartContent from "../../../shared/components/SmartContent.jsx";
+import TreeView from "../../../shared/components/TreeView";
 import "./SystemToolsPages.css";
 
 function formatBytes(value) {
@@ -28,59 +32,49 @@ function formatDate(value) {
   }
 }
 
-function TreeNode({
-  node,
-  activePath,
-  expandedPaths,
-  onToggle,
-  onSelect,
-}) {
-  const children = Array.isArray(node?.children) ? node.children : [];
-  const isExpanded = expandedPaths.has(String(node?.path || ""));
-  const isActive = String(node?.path || "") === String(activePath || "");
+function inferPreviewMode(item = {}, detail = null) {
+  const fileName = String(item?.name || item?.path || "").trim().toLowerCase();
+  const mimeType = String(
+    detail?.mime_type || detail?.mimeType || detail?.content_type || "",
+  )
+    .trim()
+    .toLowerCase();
+  if (
+    mimeType.startsWith("image/") ||
+    /\.(png|jpe?g|gif|webp|bmp|svg|ico|avif)$/i.test(fileName)
+  ) {
+    return "image";
+  }
+  if (
+    mimeType.startsWith("video/") ||
+    /\.(mp4|webm|mov|m4v|ogg)$/i.test(fileName)
+  ) {
+    return "video";
+  }
+  if (
+    mimeType.includes("html") ||
+    /\.(html?|xhtml)$/i.test(fileName)
+  ) {
+    return "html";
+  }
+  if (
+    detail?.kind === "text" ||
+    mimeType.startsWith("text/") ||
+    mimeType.includes("json") ||
+    /\.(txt|json|md|markdown|csv|log|yaml|yml|xml|js|jsx|ts|tsx|css|scss)$/i.test(fileName)
+  ) {
+    return "text";
+  }
+  return "binary";
+}
 
-  return (
-    <div className="system-tool-tree__node">
-      <div className="system-tool-tree__row">
-        <button
-          type="button"
-          className="system-tool-tree__toggle"
-          onClick={() => onToggle(String(node?.path || ""))}
-          disabled={!children.length}
-        >
-          {children.length ? (isExpanded ? "▾" : "▸") : "•"}
-        </button>
-        <button
-          type="button"
-          className={[
-            "system-tool-tree__item",
-            isActive ? "is-active" : "",
-          ].join(" ")}
-          onClick={() => onSelect(String(node?.path || ""))}
-        >
-          <div className="system-tool-tree__title">{node?.name || "/"}</div>
-          <div className="system-tool-tree__meta">
-            <span>{node?.meta || "folder"}</span>
-            <span>{node?.right || ""}</span>
-          </div>
-        </button>
-      </div>
-      {children.length && isExpanded ? (
-        <div className="system-tool-tree__children">
-          {children.map((child) => (
-            <TreeNode
-              key={child.path || child.name}
-              node={child}
-              activePath={activePath}
-              expandedPaths={expandedPaths}
-              onToggle={onToggle}
-              onSelect={onSelect}
-            />
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
+function collectTreePaths(node, bucket = []) {
+  if (!node || typeof node !== "object") return bucket;
+  const pathValue = String(node?.path || "").trim();
+  if (pathValue) bucket.push(pathValue);
+  const children = Array.isArray(node?.children) ? node.children : [];
+  children.forEach((child) => collectTreePaths(child, bucket));
+  return bucket;
 }
 
 export default function SystemBrowserPage({
@@ -97,10 +91,12 @@ export default function SystemBrowserPage({
   const [tree, setTree] = useState(null);
   const [treeMeta, setTreeMeta] = useState("");
   const [selectedDir, setSelectedDir] = useState("");
-  const [expandedPaths, setExpandedPaths] = useState(new Set([""]));
+  const [expandedPaths, setExpandedPaths] = useState([""]);
   const [items, setItems] = useState([]);
   const [selectedItem, setSelectedItem] = useState(null);
+  const [detailOpen, setDetailOpen] = useState(true);
   const [detail, setDetail] = useState(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
@@ -116,10 +112,11 @@ export default function SystemBrowserPage({
     try {
       setLoadingTree(true);
       const out = await api.systemBrowserTree(mode, canChooseUser ? userId : "");
-      setTree(out?.tree || null);
+      const nextTree = out?.tree || null;
+      setTree(nextTree);
       setTreeMeta(String(out?.meta || ""));
       setSelectedDir(String(out?.initialPath || ""));
-      setExpandedPaths(new Set(["", String(out?.initialPath || "")]));
+      setExpandedPaths(collectTreePaths(nextTree, [""]));
       if (canChooseUser && out?.user_id && !userId) {
         setUserId(String(out.user_id));
       }
@@ -194,14 +191,43 @@ export default function SystemBrowserPage({
     loadDetail(selectedItem);
   }, [selectedItem?.path, userId, mode]);
 
-  function toggleExpanded(pathValue) {
-    setExpandedPaths((current) => {
-      const next = new Set(current);
-      if (next.has(pathValue)) next.delete(pathValue);
-      else next.add(pathValue);
-      return next;
-    });
-  }
+  useEffect(() => {
+    if (selectedItem?.path) setDetailOpen(true);
+  }, [selectedItem?.path]);
+
+  useEffect(() => {
+    setPreviewOpen(false);
+  }, [selectedItem?.path]);
+
+  const itemColumns = useMemo(
+    () => [
+      {
+        accessorKey: "name",
+        header: "Name",
+        cell: ({ row }) => (
+          <div className="system-tool-table__primary">
+            <div className="system-tool-table__title">{row.original?.name || "-"}</div>
+          </div>
+        ),
+      },
+      {
+        accessorKey: "kind",
+        header: "Type",
+        cell: ({ row }) => row.original?.kind || "file",
+      },
+      {
+        accessorKey: "size",
+        header: "Size",
+        cell: ({ row }) => formatBytes(row.original?.size),
+      },
+      {
+        accessorKey: "updated_at",
+        header: "Updated",
+        cell: ({ row }) => formatDate(row.original?.updated_at),
+      },
+    ],
+    [],
+  );
 
   async function handleDelete() {
     if (!selectedItem?.path) return;
@@ -243,13 +269,29 @@ export default function SystemBrowserPage({
     }
   }
 
+  const selectedItemPreviewUrl = useMemo(() => {
+    if (!selectedItem?.path) return "";
+    const params = new URLSearchParams({
+      scope: String(mode || "files"),
+      file: String(selectedItem.path || ""),
+    });
+    if (canChooseUser && userId) params.set("userId", String(userId));
+    return `/api/system/browser/download?${params.toString()}`;
+  }, [canChooseUser, mode, selectedItem?.path, userId]);
+
+  const selectedItemPreviewMode = useMemo(
+    () => inferPreviewMode(selectedItem, detail),
+    [detail, selectedItem],
+  );
+
   return (
     <section className="system-tool-page">
       <PageHeader title={title} />
+
       <AdminPageToolbar
-        className="system-tool-toolbar"
+        className="db-manager-toolbar"
         filters={
-          <AdminToolbarGroup className="system-tool-toolbar__group">
+          <AdminToolbarGroup className="db-manager-toolbar__group db-manager-toolbar__group--compact">
             {canChooseUser ? (
               <input
                 className="text-input"
@@ -264,23 +306,12 @@ export default function SystemBrowserPage({
               onChange={(event) => setQuery(event.target.value)}
               placeholder={`Search ${mode}...`}
             />
-            <select
-              className="text-input"
-              value={pageSize}
-              onChange={(event) => setPageSize(Number(event.target.value) || 50)}
-            >
-              {[25, 50, 100, 200].map((value) => (
-                <option key={value} value={value}>
-                  {value} / page
-                </option>
-              ))}
-            </select>
           </AdminToolbarGroup>
         }
         actions={
-          <AdminToolbarGroup className="system-tool-toolbar__group">
-            <button type="button" className="secondary-button" onClick={loadTree}>
-              Refresh
+          <AdminToolbarGroup className="db-manager-toolbar__group">
+            <button type="button" className="secondary-button icon-button" onClick={loadTree}>
+              ↻
             </button>
             <span className="minor-text">{treeMeta || ""}</span>
           </AdminToolbarGroup>
@@ -293,126 +324,172 @@ export default function SystemBrowserPage({
         </div>
       ) : null}
 
-      <div className="system-tool-layout">
+      <div className="db-manager-workspace">
         <ResponsivePanel title="Folders" showToggle={false} className="system-tool-sidebar">
           <div className="system-tool-panel__body system-tool-panel__body--scroll">
             {loadingTree ? (
               <div className="minor-text">Loading directories...</div>
             ) : tree ? (
-              <div className="system-tool-tree">
-                <TreeNode
-                  node={tree}
-                  activePath={selectedDir}
-                  expandedPaths={expandedPaths}
-                  onToggle={toggleExpanded}
-                  onSelect={(pathValue) => {
-                    setSelectedDir(pathValue);
-                    setSelectedItem(null);
-                    setDetail(null);
-                  }}
-                />
-              </div>
+              <TreeView
+                className="system-tool-tree"
+                items={[tree]}
+                selectedId={selectedDir}
+                expandedIds={expandedPaths}
+                onExpandedIdsChange={setExpandedPaths}
+                ariaLabel={`${title} tree`}
+                getItemId={(node) => String(node?.path || "")}
+                getItemChildren={(node) =>
+                  Array.isArray(node?.children) ? node.children : []
+                }
+                getItemLabel={(node) => node?.name || "/"}
+                getItemHeaderMeta={() => ""}
+                getItemMeta={() => null}
+                onSelectionChange={(node, pathValue) => {
+                  const nextPath = String(pathValue || node?.path || "");
+                  setSelectedDir(nextPath);
+                  setSelectedItem(null);
+                  setDetail(null);
+                }}
+              />
             ) : (
               <div className="empty-state">No folders found.</div>
             )}
           </div>
         </ResponsivePanel>
 
-        <ResponsivePanel title="Items" showToggle={false} className="system-tool-main">
-          <div className="system-tool-panel__body system-tool-panel__body--scroll">
-            <div className="system-tool-list">
-              {loadingList ? (
-                <div className="minor-text">Loading items...</div>
-              ) : items.length ? (
-                items.map((item) => (
-                  <button
-                    key={item.path}
-                    type="button"
-                    className={[
-                      "system-tool-list__item",
-                      selectedItem?.path === item.path ? "is-active" : "",
-                    ].join(" ")}
-                    onClick={() => setSelectedItem(item)}
-                  >
-                    <div className="system-tool-list__title">{item.name}</div>
-                    <div className="system-tool-list__meta">
-                      <span>{item.kind || "file"}</span>
-                      <span>{formatBytes(item.size)}</span>
-                    </div>
-                    <div className="system-tool-list__meta">
-                      <span>{item.path}</span>
-                      <span>{formatDate(item.updated_at)}</span>
-                    </div>
-                  </button>
-                ))
-              ) : (
-                <div className="empty-state">No items in this folder.</div>
-              )}
-            </div>
-            <div
-              className="pager-area"
-              style={{ marginTop: 12, display: "flex", justifyContent: "space-between" }}
-            >
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => setPage((current) => Math.max(1, current - 1))}
-                disabled={page <= 1}
-              >
-                Prev
-              </button>
-              <span className="minor-text">
-                Page {page} / {totalPages}
-              </span>
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
-                disabled={page >= totalPages}
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        </ResponsivePanel>
-
-        <ResponsivePanel title="Detail" showToggle={false} className="system-tool-detail">
-          <div className="system-tool-panel__body system-tool-panel__body--scroll">
-            {selectedItem ? (
-              <div className="system-tool-detail__content">
-                <div className="system-tool-toolbar__group">
-                  <button type="button" className="secondary-button" onClick={handleDownload}>
-                    Download
-                  </button>
-                  <button type="button" className="danger-button" onClick={handleDelete}>
-                    Delete
-                  </button>
+        <CrudContainer
+          className="db-manager-crud system-tool-browser-crud"
+          sameHeight={false}
+          detailVisible={Boolean(selectedItem)}
+          detailOpen={detailOpen}
+          onDetailOpenChange={setDetailOpen}
+          detailCloseButton
+          list={{
+            title: "Items",
+            headerActions: (
+              <PaginationBar
+                page={page}
+                pages={totalPages}
+                total={total}
+                showPageSize={false}
+                onPageChange={setPage}
+                label={`Page ${page} / ${totalPages}`}
+              />
+            ),
+            panelClassName: "db-manager-rows-panel system-tool-main",
+            tableProps: {
+              columns: itemColumns,
+              data: items,
+              loading: loadingList,
+              emptyText: "No items in this folder.",
+              className: "events-table events-table--compact system-tool-browser-table",
+              onRowClick: (item) => setSelectedItem(item),
+              getRowId: (item) => item?.path || item?.name,
+              selectedRowId: selectedItem?.path || null,
+            },
+          }}
+          detail={{
+            title: "",
+            subtitle: "",
+            headerActions: selectedItem ? (
+              <>
+                <button type="button" className="secondary-button" onClick={handleDownload}>
+                  Download
+                </button>
+                <button type="button" className="danger-button" onClick={handleDelete}>
+                  Delete
+                </button>
+              </>
+            ) : null,
+            panelClassName: "system-tool-detail",
+            children: selectedItem ? (
+              <div className="system-tool-panel__body system-tool-panel__body--scroll">
+                <div className="system-tool-detail__content">
+                  {!loadingDetail &&
+                  selectedItemPreviewMode === "image" &&
+                  selectedItemPreviewUrl ? (
+                    <button
+                      type="button"
+                      className="system-tool-image-preview"
+                      onClick={() => setPreviewOpen(true)}
+                      title="Open large preview"
+                    >
+                      <img
+                        src={selectedItemPreviewUrl}
+                        alt={selectedItem?.name || "Preview"}
+                        className="system-tool-image-preview__img"
+                      />
+                    </button>
+                  ) : null}
+                  {loadingDetail ? (
+                    <div className="minor-text">Loading content...</div>
+                  ) : (
+                    <>
+                      {selectedItemPreviewMode === "image" ? (
+                        <div className="system-tool-image-preview__meta minor-text">
+                          IMAGE • {formatBytes(detail?.size || selectedItem?.size || 0)}
+                        </div>
+                      ) : null}
+                      {selectedItemPreviewMode !== "image" &&
+                      selectedItemPreviewMode !== "binary" ? (
+                        <SmartContent
+                          mode={selectedItemPreviewMode}
+                          content={
+                            selectedItemPreviewMode === "video"
+                              ? {
+                                  src: selectedItemPreviewUrl,
+                                }
+                              : detail?.content || ""
+                          }
+                          fileName={selectedItem?.name || ""}
+                          mimeType={
+                            detail?.mime_type || detail?.mimeType || detail?.content_type || ""
+                          }
+                          sizeBytes={detail?.size || selectedItem?.size || 0}
+                          showInfo
+                          showCopy={
+                            selectedItemPreviewMode === "text" ||
+                            selectedItemPreviewMode === "html"
+                          }
+                        />
+                      ) : null}
+                    </>
+                  )}
+                  <dl className="system-tool-kv">
+                    <dt>Name</dt>
+                    <dd>{selectedItem.name}</dd>
+                    <dt>Path</dt>
+                    <dd className="system-tool-code">{selectedItem.path}</dd>
+                    <dt>Size</dt>
+                    <dd>{formatBytes(detail?.size || selectedItem.size)}</dd>
+                    <dt>Updated</dt>
+                    <dd>{formatDate(detail?.updated_at || selectedItem.updated_at)}</dd>
+                  </dl>
                 </div>
-                <dl className="system-tool-kv">
-                  <dt>Name</dt>
-                  <dd>{selectedItem.name}</dd>
-                  <dt>Path</dt>
-                  <dd className="system-tool-code">{selectedItem.path}</dd>
-                  <dt>Size</dt>
-                  <dd>{formatBytes(detail?.size || selectedItem.size)}</dd>
-                  <dt>Updated</dt>
-                  <dd>{formatDate(detail?.updated_at || selectedItem.updated_at)}</dd>
-                </dl>
-                {loadingDetail ? (
-                  <div className="minor-text">Loading content...</div>
-                ) : detail?.kind === "text" ? (
-                  <pre>{detail?.content || ""}</pre>
-                ) : (
-                  <div className="empty-state">
-                    Binary preview is not rendered inline. Use download to inspect this file.
-                  </div>
-                )}
               </div>
-            ) : (
-              <div className="empty-state">Select a file to inspect it.</div>
-            )}
-          </div>
-        </ResponsivePanel>
+            ) : null,
+          }}
+        />
+
+        {previewOpen && selectedItemPreviewUrl ? (
+          <button
+            type="button"
+            className="system-tool-image-modal"
+            onClick={() => setPreviewOpen(false)}
+            aria-label="Close image preview"
+          >
+            <div
+              className="system-tool-image-modal__content"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <img
+                src={selectedItemPreviewUrl}
+                alt={selectedItem?.name || "Preview"}
+                className="system-tool-image-modal__img"
+              />
+            </div>
+          </button>
+        ) : null}
       </div>
     </section>
   );

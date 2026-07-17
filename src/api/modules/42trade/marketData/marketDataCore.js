@@ -28,6 +28,46 @@ const SUPPORTED_BARS_STORAGE_PROVIDERS = new Set([
   "parquet_duckdb",
   "postgres",
 ]);
+const CFD_SYMBOLS = new Set([
+  "XAUUSD",
+  "XAUEUR",
+  "XAUGBP",
+  "XAUJPY",
+  "XAGUSD",
+  "XTIUSD",
+  "USOIL",
+  "UKOIL",
+  "BRENT",
+  "DE40",
+  "GER40",
+  "DAX",
+  "NAS100",
+  "US100",
+  "SPX500",
+  "US500",
+  "US30",
+  "UK100",
+]);
+const CRYPTO_BASES = new Set([
+  "BTC",
+  "ETH",
+  "SOL",
+  "XRP",
+  "ADA",
+  "DOGE",
+  "BNB",
+  "AVAX",
+  "MATIC",
+  "LTC",
+  "DOT",
+  "LINK",
+  "TRX",
+  "BCH",
+  "XLM",
+  "ATOM",
+  "TON",
+  "SHIB",
+]);
 
 function getDataRoot(options = {}) {
   const explicit = String(options.dataRoot || "").trim();
@@ -125,6 +165,33 @@ function parseTfTokenToSeconds(tfToken) {
   const n = Number(s.replace(/[^\d]/g, ""));
   if (Number.isFinite(n) && n > 0) return n * 60;
   return 60;
+}
+
+function normalizeMarketDataSymbol(raw = "") {
+  return String(raw || "").trim().toUpperCase();
+}
+
+function isCryptoLikeSymbol(symbol = "") {
+  const sym = normalizeMarketDataSymbol(symbol);
+  if (!sym) return false;
+  if (sym.endsWith("USDT")) return true;
+  const compact = sym.replace(/[^A-Z0-9]/g, "");
+  if (compact.length < 6) return false;
+  return CRYPTO_BASES.has(compact.slice(0, 3));
+}
+
+function isForexOrCfdSymbol(symbol = "") {
+  const sym = normalizeMarketDataSymbol(symbol);
+  if (!sym || isCryptoLikeSymbol(sym)) return false;
+  if (CFD_SYMBOLS.has(sym)) return true;
+  return /^[A-Z]{6}$/.test(sym);
+}
+
+function shouldDropZeroVolumeDerivedBar(symbol = "", tfKey = "", volume = 0) {
+  const normalizedTf = normalizeCsvTfKey(tfKey);
+  if (!normalizedTf || normalizedTf === "1" || normalizedTf === "1w") return false;
+  if (!isForexOrCfdSymbol(symbol)) return false;
+  return Number(volume || 0) <= 0;
 }
 
 function normalizeBarTimeToUTC(time, tfSeconds) {
@@ -523,6 +590,7 @@ function aggregateBarsFromLowerTimeframe(
   targetTfSeconds = 15 * 60,
   sourceTfSeconds = 5 * 60,
   limit = 300,
+  options = {},
 ) {
   const sorted = Array.isArray(rows)
     ? rows
@@ -554,13 +622,23 @@ function aggregateBarsFromLowerTimeframe(
   let bucketRows = [];
   const flush = () => {
     if (!bucketRows.length || currentBucket === null) return;
+    const volume = bucketRows.reduce((sum, row) => sum + Number(row.volume || 0), 0);
+    if (
+      shouldDropZeroVolumeDerivedBar(
+        options.symbol || "",
+        options.targetTf || "",
+        volume,
+      )
+    ) {
+      return;
+    }
     out.push({
       time: currentBucket,
       open: bucketRows[0].open,
       high: Math.max(...bucketRows.map((row) => row.high)),
       low: Math.min(...bucketRows.map((row) => row.low)),
       close: bucketRows[bucketRows.length - 1].close,
-      volume: bucketRows.reduce((sum, row) => sum + Number(row.volume || 0), 0),
+      volume,
     });
   };
 
@@ -902,6 +980,7 @@ function reconcileDerivedBarsWithStored(
   lowerBars = [],
   targetTf = "",
   sourceTf = "",
+  options = {},
 ) {
   const targetTfKey = normalizeCsvTfKey(targetTf);
   const sourceTfKey = normalizeCsvTfKey(sourceTf);
@@ -911,6 +990,10 @@ function reconcileDerivedBarsWithStored(
     Math.max(60, parseTfTokenToSeconds(targetTfKey)),
     Math.max(60, parseTfTokenToSeconds(sourceTfKey)),
     0,
+    {
+      symbol: options.symbol || "",
+      targetTf: targetTfKey,
+    },
   );
   if (!derived.length) return [];
   const derivedStartTime = Number(derived[0]?.time);
@@ -919,7 +1002,15 @@ function reconcileDerivedBarsWithStored(
         (bar) => Number(bar?.time) < derivedStartTime,
       )
     : [];
-  return uniqueSortedBars([...prefix, ...derived], "time");
+  const cleanedPrefix = prefix.filter(
+    (bar) =>
+      !shouldDropZeroVolumeDerivedBar(
+        options.symbol || "",
+        targetTfKey,
+        Number(bar?.volume || 0),
+      ),
+  );
+  return uniqueSortedBars([...cleanedPrefix, ...derived], "time");
 }
 
 function rebuildBrokerBarsFromCanonicalSource(symbol, tf, options = {}) {
@@ -954,6 +1045,7 @@ function rebuildBrokerBarsFromCanonicalSource(symbol, tf, options = {}) {
     sourceBars,
     targetTfKey,
     sourceTfKey,
+    { symbol: sym },
   );
   if (!reconciled.length) {
     return { rewritten: false, rows: 0, reason: "empty_reconciled_series" };

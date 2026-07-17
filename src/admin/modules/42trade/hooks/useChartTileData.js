@@ -10,6 +10,10 @@ import {
   mergeHistoricalBarsIntoTfData,
   mergeRealtimeBarsIntoTfData,
 } from "../../../shared/utils/symbolChartStreaming";
+import {
+  normalizeHybridArtifacts,
+  normalizeHybridTradePlans,
+} from "../chartArtifacts/clientChartAnalysis.js";
 
 const DEFAULT_BARS_COUNT = 2000;
 const MAX_CHART_HISTORY_BARS = 20000;
@@ -173,6 +177,52 @@ function normalizeBrokerHistoryBars(rows = []) {
         Number.isFinite(bar.close),
     )
     .sort((left, right) => left.time - right.time);
+}
+
+function normalizeServerCoverage(source = {}, tf = "", bars = []) {
+  const startFromBars = Number(bars?.[0]?.time || 0) || null;
+  const endFromBars = Number(bars?.[bars.length - 1]?.time || 0) || null;
+  return {
+    timeframe: tfNorm(source?.timeframe || source?.tf || tf),
+    start_bar:
+      Number(source?.coverage?.start_bar ?? source?.start_bar ?? source?.bar_start) ||
+      startFromBars,
+    end_bar:
+      Number(source?.coverage?.end_bar ?? source?.end_bar ?? source?.bar_end) ||
+      endFromBars,
+  };
+}
+
+function extractServerArtifacts(source = {}, tf = "", bars = []) {
+  const rawItems = Array.isArray(source?.artifacts)
+    ? source.artifacts
+    : Array.isArray(source?.artifact_items)
+      ? source.artifact_items
+      : [];
+  return normalizeHybridArtifacts(
+    rawItems,
+    tf,
+    normalizeServerCoverage(source, tf, bars),
+  );
+}
+
+function extractServerTradePlans(source = {}, tf = "", bars = []) {
+  const rawPlans = Array.isArray(source?.trade_plans)
+    ? source.trade_plans
+    : Array.isArray(source?.tradePlans)
+      ? source.tradePlans
+      : Array.isArray(source?.trade_plan)
+        ? source.trade_plan
+        : source?.trade_plan &&
+            typeof source.trade_plan === "object" &&
+            !Array.isArray(source.trade_plan)
+          ? [source.trade_plan]
+          : [];
+  return normalizeHybridTradePlans(
+    rawPlans,
+    tf,
+    normalizeServerCoverage(source, tf, bars),
+  );
 }
 
 const BARS_BY_PROFILE = {
@@ -500,7 +550,7 @@ export function useSymbolChartData({
           }),
         );
         let forcedBatchCandlesByTf = new Map();
-        if (force && tfs.length > 1) {
+        if (force && tfs.length > 1 && !hasAnchoredEndTime) {
           forcedBatchCandlesByTf = new Map(
             (
               await Promise.all(
@@ -595,18 +645,6 @@ export function useSymbolChartData({
               const forcedBatchItem = forcedBatchCandlesByTf.get(key) || null;
               const anchoredBrokerBatchItem = anchoredBrokerBarsByTf.get(key) || null;
               if (hasAnchoredEndTime) {
-                if (force && !forcedBatchItem) {
-                  Promise.resolve(
-                    api.chartCandles(
-                      sym,
-                      tf,
-                      requestedBars,
-                      true,
-                      tradeSid,
-                      "latest",
-                    ),
-                  ).catch(() => null);
-                }
                 out =
                   anchoredBrokerBatchItem?.ok === true
                     ? anchoredBrokerBatchItem
@@ -741,8 +779,17 @@ export function useSymbolChartData({
                     ? `redis=${out.cache_debug.redis_key || "-"} ttl=${out.cache_debug.ttl_sec || "-"}s tf=${out.cache_debug.timeframe_normalized || "-"} api=${out.cache_debug.binance_interval || "-"}`
                     : hasAnchoredEndTime
                       ? `anchored<=${Number(endTimeSec)}`
-                    : "",
+                      : "",
               };
+              tfData.server_artifacts = extractServerArtifacts(out, tf, tfData.bars);
+              if (!tfData.server_artifacts.length) {
+                tfData.server_artifacts = extractServerArtifacts(snap, tf, tfData.bars);
+              }
+              tfData.server_trade_plans = extractServerTradePlans(out, tf, tfData.bars);
+              if (!tfData.server_trade_plans.length) {
+                tfData.server_trade_plans = extractServerTradePlans(snap, tf, tfData.bars);
+              }
+              tfData.server_coverage = normalizeServerCoverage(out, tf, tfData.bars);
               if (tfData.bars.length > 0) {
                 chartStreamStore.setBootstrap(
                   buildHistoryTrackingTopic(
@@ -1348,6 +1395,7 @@ export function useSymbolChartData({
                   true,
                   tradeSid,
                   direction,
+                  endTimeSec,
                 );
                 const forcedRefreshSnap =
                   forcedRefreshOut?.snapshot &&
@@ -1571,6 +1619,7 @@ export function useSymbolChartData({
                   false,
                   tradeSid,
                   isSocketHistoryRequest && historyRequestEndTimeSec ? "history" : direction,
+                  isSocketHistoryRequest ? historyRequestEndTimeSec : null,
                 );
                 snap =
                   out?.snapshot && typeof out.snapshot === "object"
@@ -2278,7 +2327,10 @@ export function useSymbolChartData({
     const streamState = sym ? chartStreamStore.getState(buildRealtimeChartTopic(sym)) : null;
     const bars = {},
       context = {},
-      snapshots = {};
+      snapshots = {},
+      serverArtifactsByTf = {},
+      serverTradePlansByTf = {},
+      serverCoverageByTf = {};
     for (const [tf, entry] of Object.entries(data)) {
       bars[tf] = entry.bars || [];
       context[tf] = {
@@ -2291,11 +2343,24 @@ export function useSymbolChartData({
         cached_at: entry.created_at || null,
       };
       if (entry.snapshot) snapshots[tf] = entry.snapshot;
+      serverArtifactsByTf[tf] = Array.isArray(entry.server_artifacts)
+        ? entry.server_artifacts
+        : [];
+      serverTradePlansByTf[tf] = Array.isArray(entry.server_trade_plans)
+        ? entry.server_trade_plans
+        : [];
+      serverCoverageByTf[tf] =
+        entry.server_coverage && typeof entry.server_coverage === "object"
+          ? entry.server_coverage
+          : null;
     }
     return {
       bars,
       context,
       snapshots,
+      serverArtifactsByTf,
+      serverTradePlansByTf,
+      serverCoverageByTf,
       analysis:
         streamState?.analysis &&
         typeof streamState.analysis === "object" &&

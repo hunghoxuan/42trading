@@ -23,9 +23,48 @@ const backtestsDomain = require("../modules/42trade/backtests");
 const strategiesDomain = require("../modules/42trade/strategies");
 const { createConfigStore } = require("../shared/config/configStore");
 const { createMt5PythonBridgeClient } = require("../shared/clients/mt5PythonBridgeClient");
-const tradesDomain = require("../modules/42trade/trades");
+const tradesDomain = require("../modules/42trade/trades0");
 const usersDomain = require("../modules/system/users");
-const { create42PayRepo } = require("../modules/42pay/repo");
+const { create42PayService } = require("../modules/42pay/service");
+const { createTradesService } = require("../modules/trades/service");
+const {
+  handle42PayDashboard,
+  handle42PayProductsList,
+  handle42PayProductUpsert,
+  handle42PayOffersList,
+  handle42PayOfferUpsert,
+  handle42PayOrdersList,
+  handle42PayWalletSummary,
+  handle42PayWalletTopupsList,
+  handle42PayWalletTopup,
+  handle42PayOrderCreate,
+  handle42PayScanPreview,
+  handle42PayAdminUsers,
+} = require("../modules/42pay/httpHandlers");
+const {
+  handleTradesList,
+  handleTradesCounts,
+  handleTradesDashboard,
+  handleTradesGet,
+  handleTradesUpsert,
+  handleTradesClone,
+} = require("../modules/trades/httpHandlers");
+const { createUniversalStoreService } = require("../shared/universal-store");
+const {
+  handleUniversalEntitiesList,
+  handleUniversalEntityUpsert,
+  handleUniversalEntityGet,
+  handleUniversalEntityDelete,
+  handleUniversalLinksList,
+  handleUniversalLinkUpsert,
+  handleUniversalLinkDelete,
+  handleUniversalJournalList,
+  handleUniversalJournalAppend,
+  handleUniversalProcessesList,
+  handleUniversalProcessUpsert,
+  handleUniversalUserLinks,
+  handleUniversalUserJournal,
+} = require("../shared/universal-store/httpHandlers");
 const { seedDemoUsers } = require("../modules/system/users/demoUsers");
 const {
   DEFAULT_BOOTSTRAP_EMAIL,
@@ -50,7 +89,7 @@ const {
   normalizeCronSymbolGroupValue,
   resolveSymbolsGroupSymbols,
   RESERVED_GROUP_IDS,
-} = require("../shared/utils/symbolGroups");
+} = require("../../config/symbolGroups.cjs");
 const {
   normalizeNewsConfig,
   buildTrackedNewsEvent,
@@ -72,6 +111,9 @@ const { ForexLiveIngestorService } = require("../modules/42trade/marketData/fore
 const {
   buildMultiTfAnalysis,
 } = require("../../admin/modules/42trade/chartArtifacts/realtimeAnalysis.cjs");
+const {
+  evaluateChartStrategies,
+} = require("../../admin/shared/utils/chartStrategyChecks.cjs");
 const settingsStore = settingsDomain.settingsStore;
 const barsStorage = marketDataDomain.marketDataRepo;
 const marketDataAuditService = marketDataDomain.marketDataAuditService;
@@ -503,6 +545,7 @@ function isOllamaRunnerStoppedError(error) {
 
 loadEnvFile();
 const PROJECT_ROOT = path.resolve(__dirname, "..", "..");
+const REPO_ROOT = path.resolve(PROJECT_ROOT, "..");
 const DEFAULT_USER_DATA_ROOT = path.join(PROJECT_ROOT, "data", "default");
 // ROOT_FOLDER overrides the user-scoped data root only.
 const ROOT_DIR = envStr(process.env.ROOT_FOLDER, DEFAULT_USER_DATA_ROOT);
@@ -1091,6 +1134,33 @@ function parseRealtimeStreamParams(url) {
     bars,
     pollMs,
     endTimeSec: Number.isFinite(endTimeSec) && endTimeSec > 0 ? endTimeSec : null,
+  };
+}
+
+const LEGACY_TRADES_TEMP_DISABLED = true;
+
+function isLegacyTradesApiPath(pathname = "") {
+  const normalized = String(pathname || "").trim();
+  if (/^\/api\/trades(?:\/|$)/.test(normalized)) {
+    return false;
+  }
+  return /^\/v2\/trades(?:\/|$)/.test(normalized);
+}
+
+function isLegacyTradesSyncPath(pathname = "") {
+  const normalized = String(pathname || "").trim();
+  return (
+    normalized === "/mt5/ea/sync" ||
+    normalized === "/mt5/ea/bulk-sync"
+  );
+}
+
+function legacyTradesDisabledPayload() {
+  return {
+    ok: false,
+    error:
+      "Legacy trades is temporarily disabled. Use Trades (/api/trades) only.",
+    code: "LEGACY_TRADES_DISABLED",
   };
 }
 
@@ -2722,7 +2792,7 @@ async function ingestBrokerBarsPayload(payload = {}) {
 
 // Search all trade category dirs for existing {sid}-* folder
 function findExistingTradeDir(safeSid) {
-  for (const cat of ["active", "closed", "files"]) {
+  for (const cat of ["draft", "active", "closed", "files"]) {
     const baseDir = TRADE_CATEGORY_DIRS[cat];
     if (!fs.existsSync(baseDir)) continue;
     try {
@@ -2756,7 +2826,7 @@ function findTradeFolderCategory(safeSid) {
     .trim()
     .replace(/[^A-Za-z0-9_.-]/g, "_");
   if (!sid) return null;
-  for (const cat of ["active", "closed", "files"]) {
+  for (const cat of ["draft", "active", "closed", "files"]) {
     const baseDir = TRADE_CATEGORY_DIRS[cat];
     if (!fs.existsSync(baseDir)) continue;
     try {
@@ -4757,7 +4827,7 @@ const CFG = {
   mt5StorageBackend: envStr(process.env.MT5_STORAGE, "sqlite"),
   mt5SqlitePath: envStr(
     process.env.MT5_SQLITE_PATH,
-    "data/users/default/data.db",
+    "data/database.db",
   ),
   redisEnabled: asBool(process.env.REDIS_ENABLED, true),
   redisUrl: envStr(process.env.REDIS_URL, "redis://127.0.0.1:6379"),
@@ -5156,6 +5226,28 @@ async function tfCacheGet(symbol, tf) {
   } catch (_) {}
   return null;
 }
+
+function getTfCacheTtlMs(entry = {}, key = "") {
+  return tfToMs(entry?.tf || String(key || "").split("_").pop() || "4H");
+}
+
+function isTfCacheEntryExpired(entry = {}, key = "", now = Date.now()) {
+  const createdAt = Number(entry?.created_at || 0);
+  if (!Number.isFinite(createdAt) || createdAt <= 0) return false;
+  return now - createdAt > getTfCacheTtlMs(entry, key);
+}
+
+function pruneExpiredTfCacheEntry(key = "", now = Date.now()) {
+  const entry = MARKET_DATA_TF_CACHE.get(key);
+  if (!entry) return null;
+  if (isTfCacheEntryExpired(entry, key, now)) {
+    MARKET_DATA_TF_CACHE.delete(key);
+    MARKET_DATA_MEMORY_CACHE.delete(key);
+    return null;
+  }
+  return entry;
+}
+
 async function tfCacheSet(symbol, tf, data) {
   const key = tfCacheKey(symbol, tf);
   const entry = { ...data, created_at: Date.now() };
@@ -5707,9 +5799,16 @@ function normalizeMarketDataUiConfig(rawConfig = {}) {
     !Array.isArray(input.timeframes)
       ? input.timeframes
       : {};
+  const rawArtifactEventVisibility =
+    input.artifactEventVisibility &&
+    typeof input.artifactEventVisibility === "object" &&
+    !Array.isArray(input.artifactEventVisibility)
+      ? input.artifactEventVisibility
+      : {};
   const barsCount = Number(input.barsCount);
   const gridCols = Number(input.gridCols);
   const timeframes = {};
+  const artifactEventVisibility = {};
   for (const [tfRaw, tfConfigRaw] of Object.entries(rawTimeframes)) {
     const tf = String(tfRaw || "").trim().toLowerCase();
     if (!tf) continue;
@@ -5736,12 +5835,20 @@ function normalizeMarketDataUiConfig(rawConfig = {}) {
       timeframes[tf] = normalized;
     }
   }
+  for (const [eventKeyRaw, visibleRaw] of Object.entries(rawArtifactEventVisibility)) {
+    const eventKey = String(eventKeyRaw || "").trim();
+    if (!eventKey || typeof visibleRaw !== "boolean") continue;
+    artifactEventVisibility[eventKey] = visibleRaw;
+  }
   const updatedAt = Number(input.updatedAt);
   const normalized = {
     updatedAt: Number.isFinite(updatedAt) ? Math.round(updatedAt) : Date.now(),
     strategyIds,
     timeframes,
   };
+  if (Object.keys(artifactEventVisibility).length > 0) {
+    normalized.artifactEventVisibility = artifactEventVisibility;
+  }
   if (Number.isFinite(barsCount) && barsCount > 0) {
     normalized.barsCount = Math.max(2, Math.round(barsCount));
   }
@@ -5914,10 +6021,19 @@ function canonicalizeTfList(tfList) {
   );
 }
 
-function estimateRequestedBarsRange({ tfNorm, bars, nowSec = nowUnixSec() }) {
+function estimateRequestedBarsRange({
+  tfNorm,
+  bars,
+  nowSec = nowUnixSec(),
+  endTimeSec = null,
+}) {
   const sec = Math.max(60, parseTfTokenToSeconds(tfNorm));
   const count = Math.max(1, Number(bars) || 300);
-  const alignedEnd = Math.floor(Math.max(1, nowSec) / sec) * sec;
+  const anchorSec =
+    Number.isFinite(Number(endTimeSec)) && Number(endTimeSec) > 0
+      ? Number(endTimeSec)
+      : nowSec;
+  const alignedEnd = Math.floor(Math.max(1, anchorSec) / sec) * sec;
   const start = alignedEnd - (count - 1) * sec;
   return { start, end: alignedEnd, sec };
 }
@@ -6306,12 +6422,16 @@ function marketDataMemoryRead(symbolNorm, tfNorm, reqStart, reqEnd) {
 }
 
 function marketDataFileRead(symbolNorm, tfNorm, reqStart, reqEnd) {
-  const bars = readBrokerBarsFromCsv(symbolNorm, tfNorm, 1000);
+  const tfSec = Math.max(60, parseTfTokenToSeconds(tfNorm));
+  const requestedBars = Math.max(
+    1,
+    Math.ceil((Number(reqEnd || 0) - Number(reqStart || 0)) / tfSec) + 1,
+  );
+  const bars = readBrokerBarsFromCsv(symbolNorm, tfNorm, requestedBars, reqEnd);
   if (!bars.length) return null;
   const barStart = bars[0].time;
   const barEnd = bars[bars.length - 1].time;
   if (barStart > reqEnd || barEnd < reqStart) return null;
-  const tfSec = Math.max(60, parseTfTokenToSeconds(tfNorm));
   const metadata = buildBrokerStorageMetadata(
     symbolNorm,
     tfNorm,
@@ -6865,6 +6985,13 @@ function primaryUserRoleId(user = null, fallback = UI_USER_ROLE_ID) {
   return normalizeUserRoles(user?.roles, [fallback])[0] || fallback;
 }
 
+function canUseCodexForRole(roleRaw = "", isAdmin = false, user = null) {
+  if (isAdmin) return true;
+  if (hasPermission(user, "pages.system.users")) return true;
+  const roleId = String(roleRaw || "").trim().toLowerCase();
+  return roleId === "system" || roleId === "admin";
+}
+
 function normalizeUserActive(activeRaw, fallback = true) {
   if (typeof activeRaw === "boolean") return activeRaw;
   if (
@@ -7009,19 +7136,37 @@ function decryptData(cipherText) {
  * Encrypt/Decrypt object values (for JSONB data containing multiple keys)
  */
 function encryptObject(obj) {
-  if (!obj || typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) {
+    return obj.map((item) => encryptObject(item));
+  }
+  if (!obj || typeof obj !== "object") {
+    return encryptData(String(obj ?? ""));
+  }
   const out = {};
   for (const [k, v] of Object.entries(obj)) {
-    out[k] = encryptData(String(v || ""));
+    if (Array.isArray(v) || (v && typeof v === "object")) {
+      out[k] = encryptObject(v);
+    } else {
+      out[k] = encryptData(String(v ?? ""));
+    }
   }
   return out;
 }
 
 function decryptObject(obj) {
-  if (!obj || typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) {
+    return obj.map((item) => decryptObject(item));
+  }
+  if (!obj || typeof obj !== "object") {
+    return decryptData(String(obj ?? ""));
+  }
   const out = {};
   for (const [k, v] of Object.entries(obj)) {
-    out[k] = decryptData(String(v || ""));
+    if (Array.isArray(v) || (v && typeof v === "object")) {
+      out[k] = decryptObject(v);
+    } else {
+      out[k] = decryptData(String(v ?? ""));
+    }
   }
   return out;
 }
@@ -7050,6 +7195,144 @@ function isMaskedSecretLike(value) {
 function isMaskedApiKeyLike(value) {
   const v = String(value || "").trim();
   return v.includes("****");
+}
+
+function splitApiKeyCandidates(value) {
+  return String(value || "")
+    .split(/[\n,]/)
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+}
+
+function apiKeyFingerprint(value = "") {
+  const normalized = String(value || "").trim();
+  if (!normalized) return "";
+  return crypto
+    .createHash("sha256")
+    .update(normalized)
+    .digest("hex")
+    .slice(0, 16);
+}
+
+function maskApiKeyEntry(entry = {}) {
+  const value = String(
+    entry?.api_key ?? entry?.value ?? entry?.key ?? "",
+  ).trim();
+  return {
+    ...entry,
+    api_key: value ? maskApiKeyForDisplay(value) : "",
+    value: undefined,
+    key: undefined,
+  };
+}
+
+function normalizeApiKeyEntries(raw = {}) {
+  const data = raw && typeof raw === "object" ? raw : {};
+  const out = [];
+  const seen = new Set();
+  const push = (entry = {}, fallbackIndex = 0) => {
+    const apiKey = sanitizeRuntimeApiKey(
+      entry?.api_key ?? entry?.value ?? entry?.key ?? "",
+    );
+    if (!apiKey) return;
+    const fingerprint = apiKeyFingerprint(apiKey);
+    if (!fingerprint || seen.has(fingerprint)) return;
+    seen.add(fingerprint);
+    const statusRaw = String(
+      entry?.status || (entry?.invalid === true ? "invalid" : "active"),
+    )
+      .trim()
+      .toLowerCase();
+    const status =
+      statusRaw === "invalid"
+        ? "invalid"
+        : statusRaw === "inactive"
+          ? "inactive"
+          : "active";
+    out.push({
+      id:
+        String(entry?.id || "").trim() ||
+        `key_${fallbackIndex + 1}_${fingerprint.slice(0, 6)}`,
+      api_key: apiKey,
+      status,
+      invalid: status === "invalid",
+      invalid_reason: String(entry?.invalid_reason || entry?.reason || "").trim() || null,
+      invalid_at: String(entry?.invalid_at || "").trim() || null,
+      last_checked_at: String(entry?.last_checked_at || "").trim() || null,
+      last_error: String(entry?.last_error || "").trim() || null,
+      last_success_at: String(entry?.last_success_at || "").trim() || null,
+      fingerprint,
+    });
+  };
+
+  if (Array.isArray(data.key_entries) && data.key_entries.length) {
+    data.key_entries.forEach((entry, index) => push(entry, index));
+  }
+  if (Array.isArray(data.api_keys) && data.api_keys.length) {
+    data.api_keys.forEach((value, index) => push({ api_key: value }, out.length + index));
+  }
+  if (!out.length) {
+    const single = sanitizeRuntimeApiKey(data.api_key || data.value || "");
+    if (single) push({ api_key: single }, 0);
+  }
+  return out;
+}
+
+function buildApiKeySettingPayload(raw = {}, { fallbackEntries = [] } = {}) {
+  const data = raw && typeof raw === "object" ? raw : {};
+  let entries = normalizeApiKeyEntries(data);
+  if (!entries.length && Array.isArray(fallbackEntries) && fallbackEntries.length) {
+    entries = normalizeApiKeyEntries({ key_entries: fallbackEntries });
+  }
+  const firstActiveEntry =
+    entries.find((entry) => entry.status === "active") ||
+    entries.find((entry) => entry.status !== "invalid") ||
+    entries[0] ||
+    null;
+  return {
+    ...(data && typeof data === "object" ? data : {}),
+    api_key: firstActiveEntry?.api_key || "",
+    value: firstActiveEntry?.api_key || "",
+    api_keys: entries.map((entry) => entry.api_key),
+    key_entries: entries.map((entry) => ({
+      id: entry.id,
+      api_key: entry.api_key,
+      status: entry.status,
+      invalid: entry.invalid === true,
+      invalid_reason: entry.invalid_reason || null,
+      invalid_at: entry.invalid_at || null,
+      last_checked_at: entry.last_checked_at || null,
+      last_error: entry.last_error || null,
+      last_success_at: entry.last_success_at || null,
+      fingerprint: entry.fingerprint,
+    })),
+  };
+}
+
+function isLikelyInvalidProviderKeyError(errorLike = null) {
+  if (!errorLike) return false;
+  const status = Number(errorLike?.status || errorLike?.statusCode || 0);
+  const text = String(
+    errorLike?.message || errorLike?.body || errorLike?.error || errorLike || "",
+  )
+    .trim()
+    .toLowerCase();
+  if (status === 401 || status === 403) return true;
+  return (
+    text.includes("invalid api key") ||
+    text.includes("invalid apikey") ||
+    text.includes("invalid_api_key") ||
+    text.includes("api key is invalid") ||
+    text.includes("incorrect api key") ||
+    text.includes("unauthorized") ||
+    text.includes("forbidden") ||
+    text.includes("authentication failed") ||
+    text.includes("invalid x-api-key") ||
+    text.includes("permission denied") ||
+    text.includes("access denied") ||
+    text.includes("key is invalid") ||
+    text.includes("api_key_invalid")
+  );
 }
 
 function hashPassword(passwordRaw, saltHex) {
@@ -7245,7 +7528,9 @@ function uiDefaultAuthState(emailOverride = "") {
 }
 
 let UI_USER_REPO = null;
-let PAY42_REPO = null;
+let PAY42_SERVICE = null;
+let TRADES_SERVICE = null;
+let UNIVERSAL_STORE_SERVICE = null;
 let PAY42_SEED_PROMISE = null;
 function authUserRepo() {
   if (UI_USER_REPO) return UI_USER_REPO;
@@ -7258,8 +7543,20 @@ function authUserRepo() {
   return UI_USER_REPO;
 }
 
-function pay42Repo() {
-  if (PAY42_REPO) return PAY42_REPO;
+function universalStoreService() {
+  if (UNIVERSAL_STORE_SERVICE) return UNIVERSAL_STORE_SERVICE;
+  UNIVERSAL_STORE_SERVICE = createUniversalStoreService({
+    provider: String(CFG.mt5StorageBackend || "postgres")
+      .trim()
+      .toLowerCase() || "postgres",
+    sqlitePath: resolveConfiguredSqlitePath(),
+    postgresUrl: CFG.mt5PostgresUrl,
+  });
+  return UNIVERSAL_STORE_SERVICE;
+}
+
+function pay42Service() {
+  if (PAY42_SERVICE) return PAY42_SERVICE;
   async function upsertWalletAccountFallback(account = {}) {
     const store = getUserAccountObjectStore();
     const split = store.splitLegacyUserAccount(account);
@@ -7287,13 +7584,14 @@ function pay42Repo() {
     );
     return store.getUnifiedObject(split.userId, "user_accounts", split.accountId);
   }
-  PAY42_REPO = create42PayRepo({
+  PAY42_SERVICE = create42PayService({
     projectRoot: PROJECT_ROOT,
     objectStore: {
       provider: String(CFG.mt5StorageBackend || "postgres")
         .trim()
         .toLowerCase() || "postgres",
       dataRoot: USER_DATA_ROOT,
+      sqlitePath: resolveConfiguredSqlitePath(),
       postgresUrl: CFG.mt5PostgresUrl,
     },
     accounts: {
@@ -7370,19 +7668,47 @@ function pay42Repo() {
       },
     },
   });
-  return PAY42_REPO;
+  return PAY42_SERVICE;
+}
+
+function tradesService() {
+  if (TRADES_SERVICE) return TRADES_SERVICE;
+  TRADES_SERVICE = createTradesService({
+    projectRoot: PROJECT_ROOT,
+    sourceStorageBackend: String(CFG.mt5StorageBackend || "sqlite")
+      .trim()
+      .toLowerCase() || "sqlite",
+    sourcePostgresPool: null,
+    objectStore: {
+      provider: String(CFG.mt5StorageBackend || "postgres")
+        .trim()
+        .toLowerCase() || "postgres",
+      sqlitePath: resolveConfiguredSqlitePath(),
+      postgresUrl: CFG.mt5PostgresUrl,
+    },
+    sqlitePath: resolveConfiguredSqlitePath(),
+    postgresUrl: CFG.mt5PostgresUrl,
+    defaultUserId: CFG.mt5DefaultUserId,
+  });
+  return TRADES_SERVICE;
 }
 
 async function ensure42PaySeeded() {
   if (!PAY42_SEED_PROMISE) {
-    PAY42_SEED_PROMISE = pay42Repo()
-      .migrateLegacySqliteToProvider()
-      .then(() => pay42Repo().migrateLegacyActorIds())
-      .then(() => pay42Repo().seedInitialData())
-      .catch((error) => {
-        PAY42_SEED_PROMISE = null;
-        throw error;
-      });
+    const shouldRunLegacyMigration = asBool(
+      process.env.PAY42_RUN_LEGACY_MIGRATION,
+      false,
+    );
+    PAY42_SEED_PROMISE = (async () => {
+      if (shouldRunLegacyMigration) {
+        await pay42Service().migrateLegacySqliteToProvider();
+        await pay42Service().migrateLegacyActorIds();
+      }
+      return pay42Service().seedInitialData();
+    })().catch((error) => {
+      PAY42_SEED_PROMISE = null;
+      throw error;
+    });
   }
   return PAY42_SEED_PROMISE;
 }
@@ -7563,9 +7889,17 @@ async function uiAuthUpdateProfile(sess, patch = {}) {
 }
 
 async function uiListUsers() {
-  await uiEnsureDemoUsers();
-  const rows = await authUserRepo().listUsers();
-  return (Array.isArray(rows) ? rows : []).map(uiPublicUserView);
+  try {
+    await uiEnsureDemoUsers();
+    const rows = await authUserRepo().listUsers();
+    return (Array.isArray(rows) ? rows : []).map(uiPublicUserView);
+  } catch (error) {
+    console.warn(
+      "[auth] uiListUsers fallback:",
+      error instanceof Error ? error.message : String(error),
+    );
+    return [];
+  }
 }
 
 function uiUserSelectOptionView(user) {
@@ -7578,8 +7912,7 @@ function uiUserSelectOptionView(user) {
 }
 
 async function uiListUserSelectOptions() {
-  await uiEnsureDemoUsers();
-  const rows = await authUserRepo().listUsers();
+  const rows = await uiListUsers();
   return (Array.isArray(rows) ? rows : [])
     .map(uiUserSelectOptionView)
     .filter((user) => user.is_active);
@@ -8320,6 +8653,22 @@ function tradeSnapshotDir(sid, symbol = "") {
   return dir;
 }
 
+function resolveTradeSnapshotDirSafe(sid, symbol = "") {
+  const safeSid = safeTradeFolderSid(sid, symbol);
+  if (!safeSid) return "";
+  const existingTradeDir = findExistingTradeDir(safeSid);
+  if (existingTradeDir) {
+    const snapshotDir = path.join(existingTradeDir, "snapshots");
+    if (!fs.existsSync(snapshotDir)) fs.mkdirSync(snapshotDir, { recursive: true });
+    return snapshotDir;
+  }
+  const safeSymbol = normalizeTradeFolderSymbol(
+    symbol || inferSymbolFromTradeFolder(safeSid),
+  );
+  if (!safeSymbol) return "";
+  return tradeSnapshotDir(safeSid, safeSymbol);
+}
+
 function readTradeSymbolFromPayloadFileSync(tradeDir) {
   const payloadPath = path.join(tradeDir, "logs", "payload.json");
   if (!fs.existsSync(payloadPath)) return "";
@@ -8386,7 +8735,7 @@ function resolveTradeDir(sid, symbol = "") {
     .trim()
     .toUpperCase()
     .replace(/[^A-Za-z0-9]/g, "");
-  for (const cat of ["active", "closed", "files"]) {
+  for (const cat of ["draft", "active", "closed", "files"]) {
     const baseDir = TRADE_CATEGORY_DIRS[cat];
     if (!fs.existsSync(baseDir)) continue;
     try {
@@ -8427,38 +8776,66 @@ function resolveTradeDir(sid, symbol = "") {
 // Move trade folder between categories
 // Copy bars + snapshots from market_data into trade folder before archival
 // Read bars for a trade: priority closed > active > market_data
-function readTradeBars(safeSid, tf, symbol = "") {
+function readTradeBars(safeSid, tf, symbol = "", options = {}) {
   const tfKey = normalizeCsvTfKey(tf);
+  const limit = Math.max(1, Number(options?.limit) || 5000);
+  const endTimeSec =
+    Number.isFinite(Number(options?.endTimeSec)) && Number(options.endTimeSec) > 0
+      ? Number(options.endTimeSec)
+      : null;
   const preferredExt = barsStorage.getPrimaryBarsExtension(
     barsStorage.getBarsStorageProvider(),
   );
   const extensionOrder =
     preferredExt === ".parquet" ? [".parquet", ".csv"] : [".csv", ".parquet"];
   const dirs = [];
+  const seenDirs = new Set();
+  const pushBarsDir = (dir = "") => {
+    const normalized = String(dir || "").trim();
+    if (!normalized || seenDirs.has(normalized)) return;
+    seenDirs.add(normalized);
+    dirs.push(normalized);
+  };
   // Try resolved trade dir (any category)
   const resolvedSymbol = symbol || inferSymbolFromTradeFolder(safeSid);
   const resolved = resolvedSymbol
     ? resolveTradeDir(safeSid, resolvedSymbol)
     : findExistingTradeDir(safeSid);
-  if (resolved) dirs.push(path.join(resolved, "bars"));
+  if (resolved) pushBarsDir(path.join(resolved, "bars"));
+  for (const baseDir of [TRADE_DRAFT_DIR, TRADE_ACTIVE_DIR, TRADE_CLOSED_DIR]) {
+    if (!fs.existsSync(baseDir)) continue;
+    try {
+      const entries = fs.readdirSync(baseDir);
+      const safeSidPrefix = String(safeSid || "")
+        .trim()
+        .replace(/[^A-Za-z0-9_.-]/g, "_");
+      for (const entry of entries) {
+        if (!entry.startsWith(`${safeSidPrefix}-`) && entry !== safeSidPrefix) continue;
+        const fullPath = path.join(baseDir, entry);
+        if (!fs.statSync(fullPath).isDirectory()) continue;
+        pushBarsDir(path.join(fullPath, "bars"));
+      }
+    } catch {}
+  }
   // Fallbacks
-  dirs.push(path.join(TRADE_CLOSED_DIR, "trade-" + safeSid, "bars"));
-  dirs.push(path.join(TRADE_DRAFT_DIR, "trade-" + safeSid, "bars"));
+  pushBarsDir(path.join(TRADE_CLOSED_DIR, "trade-" + safeSid, "bars"));
+  pushBarsDir(path.join(TRADE_DRAFT_DIR, "trade-" + safeSid, "bars"));
 
   for (const dir of dirs) {
     if (tfKey === "15") {
       for (const ext of extensionOrder) {
         const sourcePath = path.join(dir, "5" + ext);
         if (!fs.existsSync(sourcePath)) continue;
-        const sourceBars = barsStorage.readBarsFile(sourcePath, "5", 5000, {
+        const sourceBars = barsStorage.readBarsFile(sourcePath, "5", limit, {
           dataRoot: GLOBAL_DATA_DIR,
           duckdbPath: process.env.BARS_DUCKDB_PATH,
+          endTimeSec,
         });
         const derived = barsStorage.aggregateBarsFromLowerTimeframe(
           sourceBars,
           15 * 60,
           5 * 60,
-          5000,
+          limit,
         );
         if (derived.length) return derived;
       }
@@ -8466,9 +8843,10 @@ function readTradeBars(safeSid, tf, symbol = "") {
     for (const ext of extensionOrder) {
       const barsPath = path.join(dir, tfKey + ext);
       if (!fs.existsSync(barsPath)) continue;
-      const bars = barsStorage.readBarsFile(barsPath, tf, 5000, {
+      const bars = barsStorage.readBarsFile(barsPath, tf, limit, {
         dataRoot: GLOBAL_DATA_DIR,
         duckdbPath: process.env.BARS_DUCKDB_PATH,
+        endTimeSec,
       });
       if (bars.length) return bars;
     }
@@ -8482,9 +8860,10 @@ function readTradeBars(safeSid, tf, symbol = "") {
       for (const ext of extensionOrder) {
         const barsPath = path.join(marketPath, sym, "bars", tfKey + ext);
         if (!fs.existsSync(barsPath)) continue;
-        const bars = barsStorage.readBarsFile(barsPath, tf, 5000, {
+        const bars = barsStorage.readBarsFile(barsPath, tf, limit, {
           dataRoot: GLOBAL_DATA_DIR,
           duckdbPath: process.env.BARS_DUCKDB_PATH,
+          endTimeSec,
         });
         if (bars.length) return bars;
       }
@@ -9360,6 +9739,43 @@ function normalizePublicSidBase(raw, fallbackPrefix = "ID") {
   return mt5GenerateTimeSid();
 }
 
+function firstTradePlanItem(value) {
+  if (Array.isArray(value)) {
+    return value.find((item) => item && typeof item === "object") || {};
+  }
+  return value && typeof value === "object" ? value : {};
+}
+
+function plannedLotsFromTradeTask(trade = {}, normalizedMetadata = {}) {
+  const rawJson =
+    trade?.raw_json && typeof trade.raw_json === "object" ? trade.raw_json : {};
+  const metadataPlan = firstTradePlanItem(normalizedMetadata.trade_plan);
+  const rawPlan = firstTradePlanItem(rawJson.trade_plan);
+  return (
+    asNum(normalizedMetadata.volume_basis_lots) ??
+    asNum(metadataPlan.lots ?? metadataPlan.volume_basis_lots) ??
+    asNum(rawPlan.lots ?? rawPlan.volume_basis_lots) ??
+    asNum(rawJson.lots ?? rawJson.volume_basis_lots) ??
+    null
+  );
+}
+
+function plannedVolumeFromTradeTask(trade = {}, normalizedMetadata = {}) {
+  const rawJson =
+    trade?.raw_json && typeof trade.raw_json === "object" ? trade.raw_json : {};
+  const metadataPlan = firstTradePlanItem(normalizedMetadata.trade_plan);
+  const rawPlan = firstTradePlanItem(rawJson.trade_plan);
+  const directVolume = asNum(trade.volume);
+  if (Number.isFinite(directVolume) && directVolume > 0) return directVolume;
+  return (
+    asNum(metadataPlan.volume) ??
+    asNum(rawPlan.volume) ??
+    asNum(normalizedMetadata.volume) ??
+    asNum(rawJson.volume) ??
+    null
+  );
+}
+
 function snapshotTimestampToken(dateLike = Date.now()) {
   const d = new Date(dateLike);
   const yyyy = d.getUTCFullYear();
@@ -10009,19 +10425,9 @@ async function anthropicListFiles(apiKey) {
 }
 
 async function loadClaudeApiKeyForUser(userId) {
-  const uid =
-    String(userId || CFG.mt5DefaultUserId).trim() || CFG.mt5DefaultUserId;
-  const rows = await settingsStore.listUserSettingsByType(uid, "api_key");
-  for (const row of rows || []) {
-    const name = normalizeAiApiKeyName(row?.name);
-    if (name !== "CLAUDE_API_KEY") continue;
-    const dec = decryptObject(
-      row?.data && typeof row.data === "object" ? row.data : {},
-    );
-    const value = String(dec?.value || dec?.api_key || "").trim();
-    if (value) return value;
-  }
-  return "";
+  const pool = await resolveApiKeyPool(userId, "CLAUDE_API_KEY");
+  const ordered = rotateApiKeyEntries(pool);
+  return sanitizeRuntimeApiKey(ordered[0]?.api_key || "");
 }
 
 async function anthropicFilesRequest({
@@ -11201,6 +11607,94 @@ function extractJsonFromAiText(rawText) {
   return { parsed, clean };
 }
 
+function isBalancedJsonText(rawText = "") {
+  const text = String(rawText || "").trim();
+  if (!text) return false;
+  let objectDepth = 0;
+  let arrayDepth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") {
+      objectDepth += 1;
+      continue;
+    }
+    if (ch === "}") {
+      objectDepth -= 1;
+      if (objectDepth < 0) return false;
+      continue;
+    }
+    if (ch === "[") {
+      arrayDepth += 1;
+      continue;
+    }
+    if (ch === "]") {
+      arrayDepth -= 1;
+      if (arrayDepth < 0) return false;
+    }
+  }
+  return !inString && objectDepth === 0 && arrayDepth === 0;
+}
+
+function isEmptyParsedAnalyzePayload(parsed) {
+  if (parsed == null) return true;
+  if (Array.isArray(parsed)) return parsed.length === 0;
+  if (typeof parsed === "object") return Object.keys(parsed).length === 0;
+  return false;
+}
+
+function assertAiJsonPayloadComplete({
+  provider = "",
+  rawText = "",
+  parsed = null,
+  stopReason = "",
+}) {
+  const responseText = String(rawText || "").trim();
+  if (!responseText) {
+    throw new Error(
+      `${provider || "AI"} returned an empty response while analysis expected JSON.`,
+    );
+  }
+  const stop = String(stopReason || "")
+    .trim()
+    .toLowerCase();
+  const balanced = isBalancedJsonText(responseText);
+  const parsedEmpty = isEmptyParsedAnalyzePayload(parsed);
+  if (!parsedEmpty && balanced) return;
+  if (stop === "max_tokens") {
+    throw new Error(
+      `${provider || "AI"} returned incomplete JSON because the response hit the token limit. Reduce prompt size or increase output tokens.`,
+    );
+  }
+  if (!balanced) {
+    throw new Error(
+      `${provider || "AI"} returned incomplete JSON. The analysis response was truncated before the trade plan finished.`,
+    );
+  }
+  if (parsedEmpty) {
+    throw new Error(
+      `${provider || "AI"} returned JSON text, but it could not be parsed into a usable analysis payload.`,
+    );
+  }
+}
+
 function recoverTradePlansFromRawAiText(rawText) {
   const raw = String(rawText || "");
   let clean = raw.trim();
@@ -11464,8 +11958,9 @@ async function loadAiConfig(userId = "") {
     const dec = decryptObject(
       row?.data && typeof row.data === "object" ? row.data : {},
     );
-    // New provider schema: { models, api_key, remain_credits }
-    cfg[name] = sanitizeRuntimeApiKey(dec?.api_key || dec?.value || "");
+    cfg[name] = sanitizeRuntimeApiKey(
+      buildApiKeySettingPayload(dec).api_key || "",
+    );
   }
   // Fallback to env vars for providers not yet saved in UI settings
   if (!cfg.OPENROUTER_API_KEY)
@@ -11648,9 +12143,8 @@ async function callAiProvider({
       },
     });
     try {
-      const claudeKey =
-        callerApiKey || (await loadClaudeApiKeyForUser(CFG.mt5DefaultUserId));
-      if (!claudeKey) {
+      const explicitClaudeKey = sanitizeRuntimeApiKey(callerApiKey || "");
+      if (!explicitClaudeKey && !sanitizeRuntimeApiKey(await loadClaudeApiKeyForUser(userId))) {
         await logProviderActivity({
           userId,
           provider,
@@ -11662,13 +12156,39 @@ async function callAiProvider({
         });
         throw new Error("CLAUDE_API_KEY is missing in Settings.");
       }
-      const out = await anthropicMessagesWithFallback({
-        apiKey: claudeKey,
-        model: resolvedModel,
-        messages,
-        maxTokens,
-        timeoutMs,
-      });
+      const out = explicitClaudeKey
+        ? await anthropicMessagesWithFallback({
+            apiKey: explicitClaudeKey,
+            model: resolvedModel,
+            messages,
+            maxTokens,
+            timeoutMs,
+          })
+        : await withRotatingApiKeys(userId, "CLAUDE_API_KEY", async (entry) => {
+            const response = await anthropicMessagesWithFallback({
+              apiKey: entry.api_key,
+              model: resolvedModel,
+              messages,
+              maxTokens,
+              timeoutMs,
+            });
+            if (
+              response?.response &&
+              !response.response.ok &&
+              isLikelyInvalidProviderKeyError({
+                status: response.response.status,
+                message: await response.response.clone().text().catch(() => ""),
+              })
+            ) {
+              const invalidBody = await response.response.clone().text().catch(() => "");
+              const invalidError = new Error(
+                invalidBody || `Claude API Error (${response.response.status})`,
+              );
+              invalidError.status = response.response.status;
+              throw invalidError;
+            }
+            return response;
+          });
       if (!out.response.ok) {
         const errText = await out.response.text();
         await logProviderActivity({
@@ -11697,6 +12217,13 @@ async function callAiProvider({
             .map((x) => String(x?.text || ""))
             .join("")
         : String(json?.content || "");
+      const extracted = extractJsonFromAiText(rawText);
+      assertAiJsonPayloadComplete({
+        provider: "Claude",
+        rawText,
+        parsed: extracted.parsed,
+        stopReason: json?.stop_reason,
+      });
       await logProviderActivity({
         userId,
         provider,
@@ -11712,6 +12239,7 @@ async function callAiProvider({
         rawText,
         modelUsed: out.modelUsed || resolvedModel,
         provider,
+        stopReason: String(json?.stop_reason || "").trim(),
       };
     } catch (err) {
       if (!String(err?.message || "").includes("API Error (")) {
@@ -11867,21 +12395,56 @@ async function callAiProvider({
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetch(endpoint, {
-      method: "POST",
-      signal: ctrl.signal,
-      headers: {
-        "Content-Type": "application/json",
-        ...(provider === "ollama" ? {} : { Authorization: `Bearer ${apiKey}` }),
-        ...(provider === "openrouter"
-          ? {
-              "HTTP-Referer": "https://trade.mozasolution.com",
-              "X-Title": "Trading Bot",
+    const providerSettingName =
+      provider === "deepseek"
+        ? "DEEPSEEK_API_KEY"
+        : provider === "openrouter"
+          ? "OPENROUTER_API_KEY"
+          : provider === "openai"
+            ? "OPENAI_API_KEY"
+            : provider === "gemini"
+              ? "GEMINI_API_KEY"
+              : "";
+    const requestWithKey = async (resolvedApiKey) =>
+      fetch(endpoint, {
+        method: "POST",
+        signal: ctrl.signal,
+        headers: {
+          "Content-Type": "application/json",
+          ...(provider === "ollama"
+            ? {}
+            : { Authorization: `Bearer ${resolvedApiKey}` }),
+          ...(provider === "openrouter"
+            ? {
+                "HTTP-Referer": "https://trade.mozasolution.com",
+                "X-Title": "Trading Bot",
+              }
+            : {}),
+        },
+        body,
+      });
+    const res =
+      provider === "ollama" || sanitizeRuntimeApiKey(callerApiKey || "")
+        ? await requestWithKey(apiKey)
+        : await withRotatingApiKeys(userId, providerSettingName, async (entry) => {
+            const response = await requestWithKey(entry.api_key);
+            if (!response.ok) {
+              const errorBody = await response.clone().text().catch(() => "");
+              if (
+                isLikelyInvalidProviderKeyError({
+                  status: response.status,
+                  message: errorBody,
+                })
+              ) {
+                const invalidError = new Error(
+                  errorBody || `${provider} API Error (${response.status})`,
+                );
+                invalidError.status = response.status;
+                throw invalidError;
+              }
             }
-          : {}),
-      },
-      body,
-    });
+            return response;
+          });
     if (!res.ok) {
       const errText = await res.text();
       await logProviderActivity({
@@ -12356,6 +12919,207 @@ function resolveAiChatModelForProvider(
   return providerDefault;
 }
 
+function parseDataUrlPayload(value = "") {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^data:([^;,]+)?(?:;charset=([^;,]+))?(;base64)?,(.*)$/i);
+  if (!match) return null;
+  return {
+    mediaType: String(match[1] || "application/octet-stream").trim().toLowerCase(),
+    isBase64: Boolean(match[3]),
+    data: String(match[4] || ""),
+  };
+}
+
+function decodeDataUrlUtf8(value = "") {
+  const parsed = parseDataUrlPayload(value);
+  if (!parsed) return "";
+  try {
+    if (parsed.isBase64) {
+      return Buffer.from(parsed.data, "base64").toString("utf8");
+    }
+    return decodeURIComponent(parsed.data);
+  } catch {
+    return "";
+  }
+}
+
+function isTextLikeChatMediaType(mediaType = "", filename = "") {
+  const normalizedMediaType = String(mediaType || "").trim().toLowerCase();
+  const normalizedFilename = String(filename || "").trim().toLowerCase();
+  return (
+    normalizedMediaType.startsWith("text/") ||
+    normalizedMediaType === "application/json" ||
+    normalizedMediaType === "application/xml" ||
+    normalizedMediaType === "text/csv" ||
+    normalizedFilename.endsWith(".md") ||
+    normalizedFilename.endsWith(".markdown") ||
+    normalizedFilename.endsWith(".html") ||
+    normalizedFilename.endsWith(".htm") ||
+    normalizedFilename.endsWith(".txt") ||
+    normalizedFilename.endsWith(".json") ||
+    normalizedFilename.endsWith(".csv")
+  );
+}
+
+function materializeChatImagePart(part = {}, dirPath = "", messageIndex = 0, partIndex = 0) {
+  const parsed = parseDataUrlPayload(part?.url || "");
+  if (!parsed || !parsed.isBase64 || !parsed.mediaType.startsWith("image/")) return "";
+  const ext =
+    parsed.mediaType === "image/jpeg" || parsed.mediaType === "image/jpg"
+      ? ".jpg"
+      : parsed.mediaType === "image/webp"
+        ? ".webp"
+        : parsed.mediaType === "image/gif"
+          ? ".gif"
+          : ".png";
+  const filePath = path.join(dirPath, `chat_${messageIndex}_${partIndex}${ext}`);
+  try {
+    fs.writeFileSync(filePath, Buffer.from(parsed.data, "base64"));
+    return filePath;
+  } catch {
+    return "";
+  }
+}
+
+function buildChatAttachmentPromptText(part = {}) {
+  const filename = String(part?.filename || "attachment").trim() || "attachment";
+  const mediaType = String(part?.mediaType || "application/octet-stream")
+    .trim()
+    .toLowerCase();
+  if (isTextLikeChatMediaType(mediaType, filename)) {
+    const body = decodeDataUrlUtf8(part?.url || "").trim();
+    if (body) {
+      return `Attached file (${filename}, ${mediaType}):\n${body}`;
+    }
+  }
+  return `Attached file: ${filename} (${mediaType || "unknown"})`;
+}
+
+function buildAiChatMessageContent(message = {}, provider = "ollama") {
+  const role =
+    String(message?.role || "user").trim().toLowerCase() === "assistant"
+      ? "assistant"
+      : "user";
+  const parts = Array.isArray(message?.parts)
+    ? message.parts
+    : Array.isArray(message?.content)
+      ? message.content
+      : typeof message?.content === "string"
+        ? [{ type: "text", text: String(message.content || "") }]
+        : [];
+  if (!parts.length) {
+    return {
+      role,
+      content: String(message?.content || "").trim(),
+    };
+  }
+
+  if (provider === "codex") {
+    const blocks = [];
+    for (const part of parts) {
+      if (!part || typeof part !== "object") continue;
+      if (part.type === "text" || part.type === "reasoning") {
+        const text = String(part.text || "").trim();
+        if (text) blocks.push({ type: "text", text });
+        continue;
+      }
+      if (part.type === "file") {
+        const parsed = parseDataUrlPayload(part.url || "");
+        if (
+          parsed &&
+          parsed.isBase64 &&
+          String(parsed.mediaType || "").startsWith("image/")
+        ) {
+          blocks.push({
+            type: "text",
+            text: `Attached image: ${String(part?.filename || "image").trim() || "image"} (${parsed.mediaType})`,
+          });
+          blocks.push({
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: parsed.mediaType,
+              data: parsed.data,
+            },
+          });
+          continue;
+        }
+        blocks.push({
+          type: "text",
+          text: buildChatAttachmentPromptText(part),
+        });
+      }
+    }
+    return {
+      role,
+      content: blocks,
+    };
+  }
+
+  const content = parts
+    .map((part) => {
+      if (!part || typeof part !== "object") return "";
+      if (part.type === "text" || part.type === "reasoning") {
+        return String(part.text || "").trim();
+      }
+      if (part.type === "file") {
+        return buildChatAttachmentPromptText(part);
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+
+  return { role, content };
+}
+
+function prepareCodexChatMessages(messages = []) {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "payhub-chat-codex-"));
+  const imagePaths = [];
+  const normalizedMessages = [];
+  for (const [messageIndex, message] of (Array.isArray(messages) ? messages : []).entries()) {
+    const normalized = buildAiChatMessageContent(message, "codex");
+    const blocks = Array.isArray(normalized.content) ? normalized.content : [];
+    const textParts = [];
+    for (const [partIndex, block] of blocks.entries()) {
+      if (block?.type === "text") {
+        const text = String(block.text || "").trim();
+        if (text) textParts.push(text);
+        continue;
+      }
+      if (block?.type === "image" && block?.source?.type === "base64") {
+        const sourcePart = {
+          url: `data:${block.source.media_type};base64,${block.source.data}`,
+        };
+        const filePath = materializeChatImagePart(
+          sourcePart,
+          tempDir,
+          messageIndex,
+          partIndex,
+        );
+        if (filePath) imagePaths.push(filePath);
+      }
+    }
+    const content = textParts.join("\n\n").trim();
+    if (content) {
+      normalizedMessages.push({
+        role: normalized.role,
+        content,
+      });
+    }
+  }
+  return {
+    messages: normalizedMessages,
+    imagePaths,
+    cleanup() {
+      try {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch {}
+    },
+  };
+}
+
 async function generateAiChatReplyWithFallback({
   aiConfig = {},
   systemPrompt = "",
@@ -12377,25 +13141,12 @@ async function generateAiChatReplyWithFallback({
         requestedModel,
         preferredProvider,
       );
-      if (provider === "openai") {
-        const reply = await generateAiChatReply({
-          apiKey: aiConfig.OPENAI_API_KEY,
-          model: modelForProvider,
-          systemPrompt,
-          messages,
-        });
-        return { reply, provider, modelUsed: modelForProvider };
-      }
-
       const out = await callAiProvider({
         provider,
         model: modelForProvider,
         messages: [
           { role: "system", content: systemPrompt },
-          ...messages.map((message) => ({
-            role: message.role,
-            content: message.content,
-          })),
+          ...messages.map((message) => buildAiChatMessageContent(message, provider)),
         ],
         maxTokens: 4000,
         timeoutMs: 45000,
@@ -12438,10 +13189,7 @@ function buildAiChatModelMessages({
 
   return [
     { role: "system", content: systemPrompt },
-    ...messages.map((message) => ({
-      role: message.role,
-      content: message.content,
-    })),
+    ...messages.map((message) => buildAiChatMessageContent(message, "ollama")),
   ];
 }
 
@@ -12565,6 +13313,7 @@ async function streamCodexUiChat({
   });
 
   let result = null;
+  const preparedCodexInput = prepareCodexChatMessages(messages);
   try {
     result = await streamCodexChat({
       repoRoot,
@@ -12572,7 +13321,8 @@ async function streamCodexUiChat({
       userRole,
       tradeContext,
       routeContext,
-      messages,
+      messages: preparedCodexInput.messages,
+      imagePaths: preparedCodexInput.imagePaths,
       codexThreadId,
       timeoutMs,
       onSpawn: (controller) => {
@@ -12633,6 +13383,7 @@ async function streamCodexUiChat({
     );
     return;
   } finally {
+    preparedCodexInput.cleanup();
     ACTIVE_CODEX_RUNS.delete(conversationId);
   }
 
@@ -12983,7 +13734,7 @@ function listHealthDbConnections() {
     note: "Webhook default DB",
   });
 
-  const activeSqlitePath = resolveAbsoluteIfRelative(PROJECT_ROOT, CFG.mt5SqlitePath);
+  const activeSqlitePath = resolveConfiguredSqlitePath();
   if (activeSqlitePath && fs.existsSync(activeSqlitePath)) {
     add({
       id: "sqlite-active",
@@ -13079,6 +13830,246 @@ function probeTcpPort(host, port, timeoutMs = 800) {
       done(false, error instanceof Error ? error.message : String(error)),
     );
   });
+}
+
+const DEFAULT_HEALTH_NODES = Object.freeze({
+  nodes: [
+    {
+      id: "local-api",
+      label: "Local API",
+      url: "http://127.0.0.1:3001/health",
+      port: 3001,
+      type: "api",
+      timeout_ms: 2000,
+      output_format: { mode: "json_path_equals", path: "ok", equals: true },
+    },
+  ],
+});
+
+function normalizeHealthOutputFormat(raw = {}, type = "api") {
+  const input =
+    raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const modeRaw = String(input.mode || "").trim().toLowerCase();
+  const defaultMode =
+    type === "sqlite"
+      ? "file_exists"
+      : type === "postgres" || type === "redis"
+        ? "tcp_connect"
+        : "http_status";
+  const mode = modeRaw || defaultMode;
+  return {
+    mode,
+    path: String(input.path || "").trim(),
+    equals: input.equals,
+    includes: String(input.includes || "").trim(),
+  };
+}
+
+function normalizeHealthNode(node = {}, index = 0) {
+  const type = String(node.type || "api").trim().toLowerCase() || "api";
+  const label = String(node.label || `Health Node ${index + 1}`).trim();
+  const id =
+    String(node.id || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "-") ||
+    `health-node-${index + 1}`;
+  return {
+    id,
+    label,
+    url: String(node.url || "").trim(),
+    port: parsePortNumber(node.port, 0) || 0,
+    type,
+    timeout_ms: Math.max(100, parsePortNumber(node.timeout_ms, 1500) || 1500),
+    output_format: normalizeHealthOutputFormat(node.output_format, type),
+  };
+}
+
+function normalizeHealthConfig(raw = {}) {
+  const nodes = Array.isArray(raw?.nodes) ? raw.nodes : [];
+  const normalized = [];
+  const seen = new Set();
+  for (const [index, node] of nodes.entries()) {
+    const next = normalizeHealthNode(node, index);
+    if (seen.has(next.id)) continue;
+    seen.add(next.id);
+    normalized.push(next);
+  }
+  return { nodes: normalized };
+}
+
+function healthNodeHost(node = {}) {
+  try {
+    if (String(node.url || "").startsWith("sqlite:")) return "127.0.0.1";
+    return new URL(String(node.url || "")).hostname || "127.0.0.1";
+  } catch {
+    return "127.0.0.1";
+  }
+}
+
+function healthNodePort(node = {}) {
+  if (parsePortNumber(node.port, 0)) return parsePortNumber(node.port, 0);
+  try {
+    const parsed = new URL(String(node.url || ""));
+    if (parsed.port) return parsePortNumber(parsed.port, 0);
+    if (parsed.protocol === "https:") return 443;
+    if (parsed.protocol === "http:") return 80;
+    if (parsed.protocol === "redis:") return 6379;
+    if (parsed.protocol === "postgres:" || parsed.protocol === "postgresql:")
+      return 5432;
+  } catch {}
+  return 0;
+}
+
+function getValueAtPath(input, dottedPath = "") {
+  if (!dottedPath) return input;
+  return String(dottedPath)
+    .split(".")
+    .filter(Boolean)
+    .reduce((acc, key) => (acc && typeof acc === "object" ? acc[key] : undefined), input);
+}
+
+function resolveHealthNodeFilePath(node = {}) {
+  const rawUrl = String(node.url || "").trim();
+  const configuredSqlitePath = resolveConfiguredSqlitePath();
+  if (String(node.type || "").trim().toLowerCase() === "sqlite") {
+    if (
+      configuredSqlitePath &&
+      (
+        !rawUrl ||
+        rawUrl === "sqlite:data/database.db" ||
+        rawUrl === "data/database.db"
+      )
+    ) {
+      return configuredSqlitePath;
+    }
+  }
+  if (rawUrl.startsWith("sqlite:")) {
+    const relative = rawUrl.slice("sqlite:".length).trim();
+    return path.isAbsolute(relative)
+      ? relative
+      : path.join(PROJECT_ROOT, relative);
+  }
+  return path.isAbsolute(rawUrl) ? rawUrl : path.join(PROJECT_ROOT, rawUrl);
+}
+
+function evaluateHealthOutput({
+  outputFormat,
+  httpStatus = 0,
+  json = null,
+  text = "",
+  tcpReachable = false,
+  fileExists = false,
+}) {
+  const mode = String(outputFormat?.mode || "http_status").trim().toLowerCase();
+  if (mode === "tcp_connect") return Boolean(tcpReachable);
+  if (mode === "file_exists") return Boolean(fileExists);
+  if (mode === "text_includes") {
+    return Boolean(outputFormat?.includes) && String(text || "").includes(outputFormat.includes);
+  }
+  if (mode === "json_path_truthy") {
+    return Boolean(getValueAtPath(json, outputFormat?.path || ""));
+  }
+  if (mode === "json_path_equals") {
+    return (
+      getValueAtPath(json, outputFormat?.path || "") === outputFormat?.equals
+    );
+  }
+  const expectedStatus = parsePortNumber(outputFormat?.equals, 200) || 200;
+  return Number(httpStatus || 0) === expectedStatus;
+}
+
+async function readHealthConfig(options = {}) {
+  try {
+    const value = await systemConfigStore.getHealth(options);
+    return normalizeHealthConfig(value);
+  } catch {
+    return normalizeHealthConfig(DEFAULT_HEALTH_NODES);
+  }
+}
+
+async function saveHealthConfig(value) {
+  const normalized = normalizeHealthConfig(value);
+  await systemConfigStore.saveHealth(normalized);
+  return normalized;
+}
+
+async function runHealthNodeCheck(node = {}) {
+  const startedAt = Date.now();
+  const outputFormat = normalizeHealthOutputFormat(node.output_format, node.type);
+  const result = {
+    id: node.id,
+    label: node.label,
+    type: node.type,
+    url: node.url,
+    port: healthNodePort(node),
+    status: "error",
+    healthy: false,
+    details: "",
+    checked_at: new Date(startedAt).toISOString(),
+    latency_ms: null,
+    response: null,
+  };
+  try {
+    if (node.type === "sqlite") {
+      const filePath = resolveHealthNodeFilePath(node);
+      const exists = fs.existsSync(filePath);
+      result.healthy = evaluateHealthOutput({
+        outputFormat,
+        fileExists: exists,
+      });
+      result.status = result.healthy ? "ok" : "error";
+      result.details = exists ? filePath : `missing: ${filePath}`;
+      result.response = { file_path: filePath, exists };
+    } else if (node.type === "postgres" || node.type === "redis") {
+      const port = healthNodePort(node);
+      const probe = await probeTcpPort(
+        healthNodeHost(node),
+        port,
+        node.timeout_ms,
+      );
+      result.healthy = evaluateHealthOutput({
+        outputFormat,
+        tcpReachable: probe.reachable,
+      });
+      result.status = result.healthy ? "ok" : "error";
+      result.details = probe.reachable
+        ? `tcp connected on :${port}`
+        : probe.error || `tcp failed on :${port}`;
+      result.response = probe;
+    } else {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), node.timeout_ms);
+      try {
+        const res = await fetch(node.url, {
+          method: "GET",
+          signal: ctrl.signal,
+        });
+        const text = await res.text().catch(() => "");
+        let json = null;
+        try {
+          json = text ? JSON.parse(text) : null;
+        } catch {}
+        result.healthy = evaluateHealthOutput({
+          outputFormat,
+          httpStatus: res.status,
+          json,
+          text,
+        });
+        result.status = result.healthy ? "ok" : "error";
+        result.details = `${res.status} ${res.statusText}`.trim();
+        result.response = json ?? text;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+  } catch (error) {
+    result.status = "error";
+    result.healthy = false;
+    result.details = error instanceof Error ? error.message : String(error);
+  }
+  result.latency_ms = Date.now() - startedAt;
+  return result;
 }
 
 async function checkDbManagerHealth() {
@@ -13319,6 +14310,24 @@ function mt5DeriveEntryModelAndNote(payload = {}, opts = {}) {
   return { entryModel, note, entryModelRaw: rawEntryModel || null };
 }
 
+function mt5LooksLikeBrokerStrategyLabel(value = "", sid = "", comment = "") {
+  const text = String(value || "").trim();
+  if (!text) return false;
+  const sidText = String(sid || "").trim();
+  const commentText = String(comment || "").trim();
+  if (sidText && text === sidText) return false;
+  if (commentText && text === commentText) return false;
+  if (/^\d+$/.test(text)) return false;
+  if (/^SID:/i.test(text)) return false;
+  return true;
+}
+
+function mt5ExtractBrokerCommentSid(value = "") {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  return text.split("|")[0].trim();
+}
+
 function normalizeSignal(payload) {
   const strategy = String(
     payload.strategy || payload.source || payload.system || "UnknownStrategy",
@@ -13528,6 +14537,7 @@ async function healthCronConfigDiagnostics() {
   const empty = {
     market_data_active: 0,
     analysis_active: 0,
+    strategy_scan_active: 0,
     snapshots_active: 0,
     db_error: null,
   };
@@ -13535,6 +14545,7 @@ async function healthCronConfigDiagnostics() {
     const rows = await settingsStore.listUserSettingsByType(null, "cron");
     let md = 0,
       ai = 0,
+      strategy = 0,
       snap = 0;
     for (const r of rows) {
       const d = typeof r.data === "string" ? JSON.parse(r.data) : r.data || {};
@@ -13542,11 +14553,13 @@ async function healthCronConfigDiagnostics() {
       if (String(r.status || "").toUpperCase() !== "ACTIVE") continue;
       if (ct === "MARKET_DATA_CRON") md++;
       else if (ct === "ANALYSIS_CRON") ai++;
+      else if (ct === "STRATEGY_SCAN_CRON") strategy++;
       else if (ct === "SNAPSHOTS_CRON" || ct === "SNAPSHOT_CRON") snap++;
     }
     return {
       market_data_active: md,
       analysis_active: ai,
+      strategy_scan_active: strategy,
       snapshots_active: snap,
       db_error: null,
     };
@@ -13578,7 +14591,16 @@ async function healthCronStatusesByName() {
 }
 
 function mt5ParsePriceOrNull(v) {
-  const n = Number(v);
+  if (v == null) return null;
+  const raw = String(v).trim();
+  if (!raw) return null;
+  const normalized =
+    raw.includes(",") && raw.includes(".")
+      ? raw.replace(/,/g, "")
+      : raw.includes(",")
+        ? raw.replace(",", ".")
+        : raw;
+  const n = Number(normalized);
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
@@ -13714,37 +14736,49 @@ function mt5ValidateTradeLevels({
   if (!["BUY", "SELL"].includes(normalizedSide)) {
     return "Direction must be BUY or SELL.";
   }
+  const parseOptionalLevel = (value) => {
+    if (value == null) return null;
+    if (typeof value === "string" && !value.trim()) return null;
+    return mt5ParsePriceOrNull(value);
+  };
+  const entryNum = mt5ParsePriceOrNull(entry);
+  const slNum = mt5ParsePriceOrNull(sl);
+  const tp1Num = parseOptionalLevel(tp1);
+  const tp2Num = parseOptionalLevel(tp2);
+  const tp3Num = parseOptionalLevel(tp3);
   if (
-    !Number.isFinite(Number(entry)) ||
-    !Number.isFinite(Number(sl)) ||
-    !Number.isFinite(Number(tp1))
+    !Number.isFinite(entryNum) ||
+    !Number.isFinite(slNum) ||
+    !Number.isFinite(tp1Num)
   ) {
-    return "Entry/SL/TP1 must be numeric values.";
+    return `Entry/SL/TP1 must be numeric values. Parsed: entry=${entryNum ?? "NaN"}, sl=${slNum ?? "NaN"}, tp1=${tp1Num ?? "NaN"}.`;
   }
-  const entryNum = Number(entry);
-  const slNum = Number(sl);
-  const targets = [tp1, tp2, tp3]
-    .map((value) => (Number.isFinite(Number(value)) ? Number(value) : null))
-    .filter((value) => value != null);
+  const debugSuffix = () =>
+    ` Parsed: side=${normalizedSide || "n/a"}, entry=${Number.isFinite(entryNum) ? entryNum : "NaN"}, sl=${Number.isFinite(slNum) ? slNum : "NaN"}, tp1=${tp1Num ?? "null"}, tp2=${tp2Num ?? "null"}, tp3=${tp3Num ?? "null"}.`;
+  const targets = [tp1Num];
+  if (tp2Num != null) targets.push(tp2Num);
+  if (tp2Num != null && tp3Num != null) targets.push(tp3Num);
   if (normalizedSide === "BUY") {
-    if (!(slNum < entryNum)) return "For BUY, SL must be lower than Entry.";
+    if (!(slNum < entryNum))
+      return `For BUY, SL must be lower than Entry.${debugSuffix()}`;
     if (targets.some((value) => !(value > entryNum))) {
-      return "For BUY, all TP levels must be greater than Entry.";
+      return `For BUY, all TP levels must be greater than Entry.${debugSuffix()}`;
     }
     for (let index = 1; index < targets.length; index += 1) {
       if (!(targets[index] > targets[index - 1])) {
-        return `For BUY, TP${index + 1} must be greater than TP${index}.`;
+        return `For BUY, TP${index + 1} must be greater than TP${index}.${debugSuffix()}`;
       }
     }
     return "";
   }
-  if (!(slNum > entryNum)) return "For SELL, SL must be greater than Entry.";
+  if (!(slNum > entryNum))
+    return `For SELL, SL must be greater than Entry.${debugSuffix()}`;
   if (targets.some((value) => !(value < entryNum))) {
-    return "For SELL, all TP levels must be lower than Entry.";
+    return `For SELL, all TP levels must be lower than Entry.${debugSuffix()}`;
   }
   for (let index = 1; index < targets.length; index += 1) {
     if (!(targets[index] < targets[index - 1])) {
-      return `For SELL, TP${index + 1} must be lower than TP${index}.`;
+      return `For SELL, TP${index + 1} must be lower than TP${index}.${debugSuffix()}`;
     }
   }
   return "";
@@ -14491,8 +15525,8 @@ function describeDbSourceLabel(source = {}) {
 }
 
 function resolveConfiguredSqlitePath() {
-  const raw = envStr(CFG.mt5SqlitePath, "data/users/default/data.db");
-  return path.isAbsolute(raw) ? raw : path.resolve(PROJECT_ROOT, raw);
+  const raw = envStr(CFG.mt5SqlitePath, "data/database.db");
+  return path.isAbsolute(raw) ? raw : path.resolve(REPO_ROOT, raw);
 }
 
 function dbSourceBackend(source = null) {
@@ -14505,6 +15539,9 @@ function dbSourceBackend(source = null) {
 }
 
 function mt5DbSources() {
+  const storageBackend = String(CFG.mt5StorageBackend || "")
+    .trim()
+    .toLowerCase();
   const out = [];
   const add = (id, name, url, note = "") => {
     const cleanId = envStr(id).toLowerCase();
@@ -14527,8 +15564,19 @@ function mt5DbSources() {
     process.env.MT5_POSTGRES_URL_REMOTE,
     "VPS Postgres via local tunnel",
   );
-  add("active", "Active DB", CFG.mt5PostgresUrl, "Webhook default DB");
   const activeSqlitePath = resolveConfiguredSqlitePath();
+  const activeConnectionUrl =
+    storageBackend === "sqlite"
+      ? activeSqlitePath
+        ? `sqlite:${activeSqlitePath}`
+        : ""
+      : CFG.mt5PostgresUrl;
+  add(
+    "active",
+    "Active DB",
+    activeConnectionUrl,
+    storageBackend === "sqlite" ? "Webhook active SQLite DB" : "Webhook default DB",
+  );
   if (activeSqlitePath && fs.existsSync(activeSqlitePath)) {
     add(
       "sqlite-active",
@@ -14556,24 +15604,15 @@ function mt5DbSources() {
       );
     }
   }
-  if (fs.existsSync(USER_DATA_ROOT)) {
-    for (const uid of fs.readdirSync(USER_DATA_ROOT)) {
-      const dbPath = path.join(USER_DATA_ROOT, uid, "data.db");
-      if (!fs.existsSync(dbPath)) continue;
-      add(
-        `sqlite-${uid}`,
-        `User ${uid}`,
-        `sqlite:${dbPath}`,
-        `SQLite data/users/${uid}/data.db`,
-      );
-    }
-  }
   return out;
 }
 
 function resolveMt5DbSource(sourceId = "") {
   const sources = mt5DbSources();
   const id = envStr(sourceId).toLowerCase();
+  const storageBackend = String(CFG.mt5StorageBackend || "")
+    .trim()
+    .toLowerCase();
   // Runtime DB switching is intentionally disabled.
   // `sourceId` is kept only for internal/backend initialization and
   // read-only diagnostics; UI/API requests do not override the active DB.
@@ -14585,13 +15624,18 @@ function resolveMt5DbSource(sourceId = "") {
       sources.map((s) => s.id),
     );
   }
-  const found = sources.find((s) => s.id === id);
-  if (found) return found;
-  if (String(CFG.mt5StorageBackend || "").trim().toLowerCase() === "sqlite") {
+  if (storageBackend === "sqlite") {
+    const sqliteActive = sources.find((s) => s.id === "sqlite-active");
+    if (sqliteActive) return sqliteActive;
+    const foundSqlite =
+      id && sources.find((s) => s.id === id && dbSourceBackend(s) === "sqlite");
+    if (foundSqlite) return foundSqlite;
     return (
       sources.find((s) => dbSourceBackend(s) === "sqlite") || sources[0] || null
     );
   }
+  const found = sources.find((s) => s.id === id);
+  if (found) return found;
   const active =
     sources.find((s) => sameDbTarget(s.url, CFG.mt5PostgresUrl)) || sources[0];
   if (active) return active;
@@ -16505,9 +17549,10 @@ async function _mt5InitBackendInternal(source = null) {
       const now = Date.now();
 
       // 1. Memory Cache (Market Data)
-      for (const [key, entry] of MARKET_DATA_TF_CACHE.entries()) {
-        const ttlMs = tfToMs(entry.tf || key.split("_").pop() || "4H");
-        const expired = now - entry.created_at > ttlMs;
+      for (const [key, rawEntry] of MARKET_DATA_TF_CACHE.entries()) {
+        const entry = pruneExpiredTfCacheEntry(key, now);
+        if (!entry) continue;
+        const ttlMs = getTfCacheTtlMs(entry, key);
         items.push({
           key,
           source: "memory",
@@ -16520,7 +17565,7 @@ async function _mt5InitBackendInternal(source = null) {
               : null,
           },
           ttl_ms: ttlMs,
-          expired,
+          expired: false,
         });
       }
 
@@ -16567,7 +17612,10 @@ async function _mt5InitBackendInternal(source = null) {
     async uiGetCacheDetail(key, source) {
       if (source === "memory") {
         const val =
-          MARKET_DATA_TF_CACHE.get(key) || MARKET_DATA_MEMORY_CACHE.get(key);
+          pruneExpiredTfCacheEntry(key) || MARKET_DATA_MEMORY_CACHE.get(key);
+        if (!val) {
+          return { ok: false, error: "cache entry not found" };
+        }
         return { ok: true, data: val };
       }
       if (source === "redis" && CFG.redisEnabled) {
@@ -18393,19 +19441,184 @@ async function loadUserApiKeysMap(userId) {
       row?.data && typeof row.data === "object" ? row.data : {},
     );
     if (ALLOWED_AI_API_KEY_NAMES.has(name)) {
-      // New provider schema: { models, api_key, remain_credits }
-      if (dec?.api_key) {
-        out[name] = String(dec.api_key || "");
-      } else if (dec?.value) {
-        // Legacy format: { value: "sk-xxx" }
-        out[name] = String(dec.value || "");
-      }
+      const normalized = buildApiKeySettingPayload(dec);
+      out[name] = sanitizeRuntimeApiKey(normalized.api_key || "");
     }
     if (dec && typeof dec === "object") {
       Object.assign(out, dec);
     }
   }
   return out;
+}
+
+const API_KEY_ROTATION_CURSOR = new Map();
+
+async function loadApiKeySettingRecord(userId, settingName) {
+  const uid =
+    String(userId || CFG.mt5DefaultUserId).trim() || CFG.mt5DefaultUserId;
+  const normalizedName = normalizeAiApiKeyName(settingName);
+  const row = await settingsStore.getUserSetting(uid, "api_key", normalizedName);
+  const enc = row?.data && typeof row.data === "object" ? row.data : {};
+  const dec = decryptObject(enc);
+  const normalized = buildApiKeySettingPayload(dec);
+  return {
+    userId: uid,
+    settingName: normalizedName,
+    row,
+    encryptedData: enc,
+    decryptedData: dec,
+    normalizedData: normalized,
+    entries: normalizeApiKeyEntries(normalized),
+  };
+}
+
+function envApiKeyCandidates(settingName = "") {
+  const normalizedName = normalizeAiApiKeyName(settingName);
+  const envNames = [normalizedName];
+  if (normalizedName === "CLAUDE_API_KEY") envNames.unshift("ANTHROPIC_API_KEY");
+  if (normalizedName === "ANTHROPIC_API_KEY") envNames.unshift("CLAUDE_API_KEY");
+  const out = [];
+  const seen = new Set();
+  for (const envName of envNames) {
+    const raw = sanitizeRuntimeApiKey(envStr(process.env[envName] || ""));
+    if (!raw) continue;
+    const fingerprint = apiKeyFingerprint(raw);
+    if (!fingerprint || seen.has(fingerprint)) continue;
+    seen.add(fingerprint);
+    out.push({
+      id: `env_${envName.toLowerCase()}`,
+      api_key: raw,
+      status: "active",
+      invalid: false,
+      invalid_reason: null,
+      invalid_at: null,
+      last_checked_at: null,
+      last_error: null,
+      last_success_at: null,
+      fingerprint,
+      source: "env",
+    });
+  }
+  return out;
+}
+
+async function resolveApiKeyPool(userId, settingName) {
+  const record = await loadApiKeySettingRecord(userId, settingName);
+  const envEntries = envApiKeyCandidates(record.settingName);
+  const entryMap = new Map();
+  for (const entry of [...record.entries, ...envEntries]) {
+    const fingerprint = String(entry?.fingerprint || apiKeyFingerprint(entry?.api_key || ""));
+    if (!fingerprint || entryMap.has(fingerprint)) continue;
+    entryMap.set(fingerprint, entry);
+  }
+  const entries = [...entryMap.values()];
+  return {
+    ...record,
+    entries,
+    availableEntries: entries.filter((entry) => entry.status === "active"),
+  };
+}
+
+function rotateApiKeyEntries(pool = {}) {
+  const available = Array.isArray(pool?.availableEntries) ? pool.availableEntries : [];
+  if (!available.length) return [];
+  const rotationKey = `${pool.userId || CFG.mt5DefaultUserId}:${pool.settingName || "API_KEY"}`;
+  const cursor = Number(API_KEY_ROTATION_CURSOR.get(rotationKey) || 0);
+  const start = cursor % available.length;
+  API_KEY_ROTATION_CURSOR.set(rotationKey, cursor + 1);
+  return [...available.slice(start), ...available.slice(0, start)];
+}
+
+async function persistApiKeyEntryState(
+  userId,
+  settingName,
+  fingerprint,
+  update = {},
+) {
+  const record = await loadApiKeySettingRecord(userId, settingName);
+  if (!record.row) return false;
+  let changed = false;
+  const nextEntries = record.entries.map((entry) => {
+    if (entry.fingerprint !== fingerprint) return entry;
+    changed = true;
+    return {
+      ...entry,
+      ...update,
+    };
+  });
+  if (!changed) return false;
+  const nextData = buildApiKeySettingPayload(
+    {
+      ...(record.decryptedData && typeof record.decryptedData === "object"
+        ? record.decryptedData
+        : {}),
+      key_entries: nextEntries,
+    },
+    { fallbackEntries: nextEntries },
+  );
+  await settingsStore.upsertUserSetting(
+    record.userId,
+    "api_key",
+    record.settingName,
+    encryptObject(nextData),
+    record.row?.status || "ACTIVE",
+  );
+  return true;
+}
+
+async function markApiKeyEntryInvalid(userId, settingName, entry = {}, reason = "") {
+  const fingerprint = String(entry?.fingerprint || apiKeyFingerprint(entry?.api_key || "")).trim();
+  if (!fingerprint) return false;
+  const nowIso = new Date().toISOString();
+  return persistApiKeyEntryState(userId, settingName, fingerprint, {
+    status: "invalid",
+    invalid: true,
+    invalid_reason: String(reason || "invalid_api_key").trim() || "invalid_api_key",
+    invalid_at: nowIso,
+    last_checked_at: nowIso,
+    last_error: String(reason || "invalid_api_key").trim() || "invalid_api_key",
+  });
+}
+
+async function markApiKeyEntrySuccess(userId, settingName, entry = {}) {
+  const fingerprint = String(entry?.fingerprint || apiKeyFingerprint(entry?.api_key || "")).trim();
+  if (!fingerprint || entry?.source === "env") return false;
+  const nowIso = new Date().toISOString();
+  return persistApiKeyEntryState(userId, settingName, fingerprint, {
+    status: "active",
+    invalid: false,
+    invalid_reason: null,
+    invalid_at: null,
+    last_checked_at: nowIso,
+    last_error: null,
+    last_success_at: nowIso,
+  });
+}
+
+async function withRotatingApiKeys(userId, settingName, task) {
+  const pool = await resolveApiKeyPool(userId, settingName);
+  const orderedEntries = rotateApiKeyEntries(pool);
+  if (!orderedEntries.length) {
+    throw new Error(`${normalizeAiApiKeyName(settingName)} is missing in Settings.`);
+  }
+  const errors = [];
+  for (const entry of orderedEntries) {
+    try {
+      const result = await task(entry);
+      await markApiKeyEntrySuccess(userId, settingName, entry).catch(() => {});
+      return result;
+    } catch (error) {
+      const reason = String(error?.message || error || "provider request failed").trim();
+      if (isLikelyInvalidProviderKeyError(error)) {
+        await markApiKeyEntryInvalid(userId, settingName, entry, reason).catch(() => {});
+      }
+      errors.push(reason);
+      if (!isLikelyInvalidProviderKeyError(error)) {
+        throw error;
+      }
+    }
+  }
+  throw new Error(errors.filter(Boolean).join(" | ") || `${normalizeAiApiKeyName(settingName)} failed`);
 }
 
 // ── Provider schema migration ──
@@ -18423,7 +19636,7 @@ async function migrateProviderSchema() {
       const oldKey = String(dec?.value || dec?.api_key || "").trim();
       const newData = {
         models: Array.isArray(dec?.models) ? dec.models : [],
-        api_key: oldKey,
+        ...buildApiKeySettingPayload({ api_key: oldKey }),
         remain_credits: Number.isFinite(Number(dec?.remain_credits))
           ? Number(dec.remain_credits)
           : 0,
@@ -18979,11 +20192,10 @@ async function refreshSelectedTimeframeBars({
           provider_max_bars_per_call: providerMaxBarsPerCall(provider),
         };
     } else {
-      const keys = await loadUserApiKeysMap(userId).catch(() => ({}));
-      const twelveKey = String(
-        keys.TWELVE_DATA_API_KEY || CFG.twelveDataApiKey || "",
-      ).trim();
-      if (!twelveKey) {
+      const twelvePool = await resolveApiKeyPool(userId, "TWELVE_DATA_API_KEY").catch(
+        () => ({ availableEntries: [] }),
+      );
+      if (!twelvePool.availableEntries?.length) {
         return { ok: false, reason: "TWELVE_DATA_API_KEY missing" };
       }
       const barsToFetch = Math.max(
@@ -19004,16 +20216,34 @@ async function refreshSelectedTimeframeBars({
               : "",
         },
       );
-      const fetched = await fetchTwelveBarsPaged(
-        symbol,
-        timeframeToTwelve(selectedTfNorm),
-        barsToFetch,
-        twelveKey,
-        {
-          endDate:
-            Number.isFinite(remoteHistoryCursorSec) && remoteHistoryCursorSec > 0
-              ? formatUnixSecForProvider(remoteHistoryCursorSec - 1)
-              : "",
+      const fetched = await withRotatingApiKeys(
+        userId,
+        "TWELVE_DATA_API_KEY",
+        async (entry) => {
+          const response = await fetchTwelveBarsPaged(
+            symbol,
+            timeframeToTwelve(selectedTfNorm),
+            barsToFetch,
+            entry.api_key,
+            {
+              endDate:
+                Number.isFinite(remoteHistoryCursorSec) && remoteHistoryCursorSec > 0
+                  ? formatUnixSecForProvider(remoteHistoryCursorSec - 1)
+                  : "",
+            },
+          );
+          if (
+            !Array.isArray(response?.bars) ||
+            !response.bars.length
+          ) {
+            const lastError = String(response?.lastError || "").trim();
+            if (isLikelyInvalidProviderKeyError(lastError)) {
+              const invalidError = new Error(lastError);
+              invalidError.status = 401;
+              throw invalidError;
+            }
+          }
+          return response;
         },
       );
       sourceBars = fetched.bars;
@@ -19132,16 +20362,20 @@ async function refreshSelectedTimeframeBars({
 
     let comparison = null;
     if (!isCryptoPair(symbolNorm) && selectedTfNorm === "1min") {
-      const keys = await loadUserApiKeysMap(userId).catch(() => ({}));
-      const twelveKey = String(
-        keys.TWELVE_DATA_API_KEY || CFG.twelveDataApiKey || "",
-      ).trim();
-      if (twelveKey) {
-        const direct5m = await fetchTwelveBarsPaged(
-          symbol,
-          timeframeToTwelve("5m"),
-          Math.min(1000, Math.ceil(fullSourceBars.length / 5)),
-          twelveKey,
+      const twelvePool = await resolveApiKeyPool(userId, "TWELVE_DATA_API_KEY").catch(
+        () => ({ availableEntries: [] }),
+      );
+      if (twelvePool.availableEntries?.length) {
+        const direct5m = await withRotatingApiKeys(
+          userId,
+          "TWELVE_DATA_API_KEY",
+          async (entry) =>
+            fetchTwelveBarsPaged(
+              symbol,
+              timeframeToTwelve("5m"),
+              Math.min(1000, Math.ceil(fullSourceBars.length / 5)),
+              entry.api_key,
+            ),
         );
         const derived5m = deriveBarsFromOneMinute(fullSourceBars, "5m", 0);
         comparison = compareBarSeries(
@@ -19438,11 +20672,10 @@ async function fetchRemoteBarsForTimeframe({
     };
   }
 
-  const keys = await loadUserApiKeysMap(userId).catch(() => ({}));
-  const twelveKey = String(
-    keys.TWELVE_DATA_API_KEY || CFG.twelveDataApiKey || "",
-  ).trim();
-  if (!twelveKey) {
+  const twelvePool = await resolveApiKeyPool(userId, "TWELVE_DATA_API_KEY").catch(
+    () => ({ availableEntries: [] }),
+  );
+  if (!twelvePool.availableEntries?.length) {
     return {
       provider: "twelvedata",
       bars: [],
@@ -19469,18 +20702,26 @@ async function fetchRemoteBarsForTimeframe({
   let fetched = null;
   let lastError = null;
   try {
-    fetched = await fetchTwelveBarsPaged(
-      symbol,
-      timeframeToTwelve(tfKey),
-      requested,
-      twelveKey,
-        {
-          endDate:
-            Number.isFinite(Number(endTimeSec)) && Number(endTimeSec) > 0
-            ? formatUnixSecForProvider(Math.floor(Number(endTimeSec) - 1))
-            : "",
-        },
-      );
+    fetched = await withRotatingApiKeys(userId, "TWELVE_DATA_API_KEY", async (entry) => {
+      const response = await fetchTwelveBarsPaged(
+        symbol,
+        timeframeToTwelve(tfKey),
+        requested,
+        entry.api_key,
+          {
+            endDate:
+              Number.isFinite(Number(endTimeSec)) && Number(endTimeSec) > 0
+              ? formatUnixSecForProvider(Math.floor(Number(endTimeSec) - 1))
+              : "",
+          },
+        );
+      if ((!Array.isArray(response?.bars) || !response.bars.length) && isLikelyInvalidProviderKeyError(response?.lastError || "")) {
+        const invalidError = new Error(String(response?.lastError || "invalid api key"));
+        invalidError.status = 401;
+        throw invalidError;
+      }
+      return response;
+    });
   } catch (error) {
     lastError =
       error instanceof Error
@@ -19957,7 +21198,45 @@ async function buildAnalysisSnapshotFromTwelve({
   const realtimeSnapshotsBefore = realtimeSnapshotTfs.length
     ? captureChartRealtimeSnapshots(symbolNorm, realtimeSnapshotTfs)
     : null;
-  const reqRange = estimateRequestedBarsRange({ tfNorm, bars: outputsize });
+  const reqRange = estimateRequestedBarsRange({
+    tfNorm,
+    bars: outputsize,
+    endTimeSec: requestedEndTimeSec,
+  });
+  const tradeSid = String(payload?.trade_sid ?? payload?.tradeSid ?? "").trim();
+
+  const scopedTradeBars = (() => {
+    if (!tradeSid) return [];
+    const rawBars = readTradeBars(tradeSid, timeframe, symbolNorm, {
+      limit: outputsize,
+      endTimeSec: requestedEndTimeSec,
+    });
+    if (!Array.isArray(rawBars) || !rawBars.length) return [];
+    const filteredBars = rawBars
+      .filter((bar) => {
+        const time = Number(bar?.time || 0);
+        if (!Number.isFinite(time) || time <= 0) return false;
+        if (Number.isFinite(requestedEndTimeSec) && requestedEndTimeSec > 0) {
+          return time <= requestedEndTimeSec;
+        }
+        return true;
+      })
+      .sort((a, b) => Number(a?.time || 0) - Number(b?.time || 0));
+    if (!filteredBars.length) return [];
+    return outputsize > 0 ? filteredBars.slice(-outputsize) : filteredBars;
+  })();
+
+  if (scopedTradeBars.length) {
+    return mergeLastPriceIntoBars(
+      buildBrokerSnapshotFromBars(symbol, timeframe, tfNorm, scopedTradeBars, {
+        metadata: {
+          source_kind: "trade_bars",
+          trade_sid: tradeSid,
+          scoped_to_trade: true,
+        },
+      }),
+    );
+  }
 
   // Prefer locally persisted broker bars whenever available.
   // Even on "refresh", broker-fed local bars remain the source of truth for
@@ -19971,18 +21250,24 @@ async function buildAnalysisSnapshotFromTwelve({
   );
   const brokerGapCandidates = detectMarketDataGapCandidates(brokerBars, tfNorm);
   const brokerBarsSynthetic = brokerBarsLookSynthetic(brokerBars, tfNorm);
-  if (!forceRefresh && brokerBars.length && !brokerBarsSynthetic) {
-    const brokerSnapshot = buildBrokerSnapshotFromBars(
-      symbol,
-      timeframe,
-      tfNorm,
-      brokerBars,
-    );
-    tfCacheSet(symbolNorm, tfNorm, brokerSnapshot);
-    await marketDataFileUpsert(symbolNorm, tfNorm, brokerSnapshot).catch(
+  const brokerSnapshotForRequest =
+    brokerBars.length && !brokerBarsSynthetic
+      ? buildBrokerSnapshotFromBars(symbol, timeframe, tfNorm, brokerBars)
+      : null;
+  const hasAnchoredHistoricalRequest = Number.isFinite(requestedEndTimeSec) && requestedEndTimeSec > 0;
+  if (hasAnchoredHistoricalRequest && brokerSnapshotForRequest) {
+    tfCacheSet(symbolNorm, tfNorm, brokerSnapshotForRequest);
+    await marketDataFileUpsert(symbolNorm, tfNorm, brokerSnapshotForRequest).catch(
       () => {},
     );
-    return mergeLastPriceIntoBars(brokerSnapshot);
+    return mergeLastPriceIntoBars(brokerSnapshotForRequest);
+  }
+  if (!forceRefresh && brokerBars.length && !brokerBarsSynthetic) {
+    tfCacheSet(symbolNorm, tfNorm, brokerSnapshotForRequest);
+    await marketDataFileUpsert(symbolNorm, tfNorm, brokerSnapshotForRequest).catch(
+      () => {},
+    );
+    return mergeLastPriceIntoBars(brokerSnapshotForRequest);
   }
   if (brokerBars.length && brokerBarsSynthetic) {
     console.warn(
@@ -20083,22 +21368,27 @@ async function buildAnalysisSnapshotFromTwelve({
     }
     // Fallback to CSV files
     console.log(`[twelve] FILE_READ sym=${symbolNorm} tf=${tfNorm}`);
-    const dbHit = await marketDataFileRead(
-      symbolNorm,
-      tfNorm,
-      reqRange.start,
-      reqRange.end,
-    ).catch((e) => {
+    let dbHit = null;
+    try {
+      dbHit = await marketDataFileRead(
+        symbolNorm,
+        tfNorm,
+        reqRange.start,
+        reqRange.end,
+      );
+    } catch (e) {
       console.error(`[twelve] FILE_ERROR: ${e.message}`);
-      return null;
-    });
+      dbHit = null;
+    }
 
     if (dbHit && Array.isArray(dbHit.bars) && dbHit.bars.length) {
       const enrichedDbHit = attachIndicatorDataToMarketSnapshot(dbHit);
       tfCacheSet(symbolNorm, tfNorm, enrichedDbHit);
       return mergeLastPriceIntoBars({
         ...enrichedDbHit,
+        status: "ok",
         cache_source: "db",
+        provider: enrichedDbHit.provider || brokerBarsCacheSourceLabel(),
         symbol_norm: symbolNorm,
         tf_norm: tfNorm,
       });
@@ -20138,11 +21428,10 @@ async function buildAnalysisSnapshotFromTwelve({
     return mergeLastPriceIntoBars(enrichedBinanceResult);
   }
 
-  const keys = await loadUserApiKeysMap(userId).catch(() => ({}));
-  const twelveKey = String(
-    keys.TWELVE_DATA_API_KEY || CFG.twelveDataApiKey || "",
-  ).trim();
-  if (!twelveKey)
+  const twelvePool = await resolveApiKeyPool(userId, "TWELVE_DATA_API_KEY").catch(
+    () => ({ availableEntries: [] }),
+  );
+  if (!twelvePool.availableEntries?.length)
     return {
       provider: "twelvedata",
       status: "skipped",
@@ -20151,13 +21440,6 @@ async function buildAnalysisSnapshotFromTwelve({
 
   trackApiCall("TwelveData");
 
-  const tvCandidates = await resolveTwelveSymbol(symbol, twelveKey);
-  if (!tvCandidates || !tvCandidates.length)
-    return {
-      provider: "twelvedata",
-      status: "skipped",
-      reason: "invalid symbol",
-    };
   const fetchTfNorm = tfNorm === "15m" ? "5m" : tfNorm;
   const fetchTimeframe = tfNorm === "15m" ? "5m" : timeframe;
   const fetchOutputsize =
@@ -20168,7 +21450,6 @@ async function buildAnalysisSnapshotFromTwelve({
         )
       : outputsize;
   const interval = timeframeToTwelve(fetchTimeframe);
-  const primaryCandidates = [...tvCandidates];
   const rawNoProvider = String(symbol || "")
     .trim()
     .toUpperCase()
@@ -20185,66 +21466,92 @@ async function buildAnalysisSnapshotFromTwelve({
         .trim()
         .toUpperCase();
   const normalizedFallback = normalizeSymbolForTwelve(rawNoProvider);
-  if (normalizedFallback && !primaryCandidates.includes(normalizedFallback))
-    primaryCandidates.push(normalizedFallback);
   const compactFallback = rawNoProvider.replace(/[^A-Z0-9]/g, "");
-  if (compactFallback && !primaryCandidates.includes(compactFallback))
-    primaryCandidates.push(compactFallback);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 14000);
   try {
-    let data = {};
-    let usedSymbol = symbol;
-    let lastError = "";
-    console.log(
-      `[twelve-fetch] symbol=${symbol} candidates=${primaryCandidates.join(",")} interval=${interval} bars=${fetchOutputsize} requested_tf=${tfNorm} fetch_tf=${fetchTfNorm}`,
-    );
-
     const t0 = Date.now();
-    for (const candidate of primaryCandidates) {
-      const endpoint = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(candidate)}&interval=${encodeURIComponent(interval)}&outputsize=${fetchOutputsize}&timezone=UTC&order=ASC&apikey=${encodeURIComponent(twelveKey)}`;
-      const res = await fetch(endpoint, { signal: ctrl.signal });
-      const txt = await res.text();
-      let parsed = {};
-      try {
-        parsed = JSON.parse(txt);
-      } catch {}
+    const { data, usedSymbol, lastError, primaryCandidates } =
+      await withRotatingApiKeys(userId, "TWELVE_DATA_API_KEY", async (entry) => {
+        const tvCandidates = await resolveTwelveSymbol(symbol, entry.api_key);
+        if (!tvCandidates || !tvCandidates.length) {
+          return {
+            data: {},
+            usedSymbol: symbol,
+            lastError: "invalid symbol",
+            primaryCandidates: [],
+          };
+        }
+        const primaryCandidates = [...tvCandidates];
+        if (normalizedFallback && !primaryCandidates.includes(normalizedFallback)) {
+          primaryCandidates.push(normalizedFallback);
+        }
+        if (compactFallback && !primaryCandidates.includes(compactFallback)) {
+          primaryCandidates.push(compactFallback);
+        }
+        console.log(
+          `[twelve-fetch] symbol=${symbol} candidates=${primaryCandidates.join(",")} interval=${interval} bars=${fetchOutputsize} requested_tf=${tfNorm} fetch_tf=${fetchTfNorm}`,
+        );
 
-      if (!res.ok) {
-        lastError = `http_${res.status}: ${txt.slice(0, 100)}`;
-        console.warn(
-          `[twelve-candidate-fail] candidate=${candidate} error=${lastError}`,
-        );
-        continue;
-      }
-      if (String(parsed?.status || "").toLowerCase() === "error") {
-        lastError = String(parsed?.message || "provider error");
-        console.warn(
-          `[twelve-candidate-error] candidate=${candidate} msg=${lastError}`,
-        );
-        continue;
-      }
-      const vals = Array.isArray(parsed?.values) ? parsed.values : [];
-      if (!vals.length) {
-        lastError = "empty values";
-        console.warn(`[twelve-candidate-empty] candidate=${candidate}`);
-        continue;
-      }
-      data = parsed;
-      usedSymbol = candidate;
-      lastError = "";
-      console.log(`[twelve-success] candidate=${candidate}`);
-      if (notificationManager) {
-        notificationManager.handle("REMOTE_API_CALL", "twelve_success", {
-          message: `TwelveData OK ${symbolNorm} ${tfNorm} ${vals.length} bars`,
-          api: "TwelveData",
-          symbol: symbolNorm,
-          tf: tfNorm,
-          bars_count: vals.length,
-        });
-      }
-      break;
-    }
+        let data = {};
+        let usedSymbol = symbol;
+        let lastError = "";
+        for (const candidate of primaryCandidates) {
+          const endpoint = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(candidate)}&interval=${encodeURIComponent(interval)}&outputsize=${fetchOutputsize}&timezone=UTC&order=ASC&apikey=${encodeURIComponent(entry.api_key)}`;
+          const res = await fetch(endpoint, { signal: ctrl.signal });
+          const txt = await res.text();
+          let parsed = {};
+          try {
+            parsed = JSON.parse(txt);
+          } catch {}
+
+          if (!res.ok) {
+            lastError = `http_${res.status}: ${txt.slice(0, 100)}`;
+            console.warn(
+              `[twelve-candidate-fail] candidate=${candidate} error=${lastError}`,
+            );
+            if (isLikelyInvalidProviderKeyError({ status: res.status, message: txt })) {
+              const invalidError = new Error(lastError);
+              invalidError.status = res.status;
+              throw invalidError;
+            }
+            continue;
+          }
+          if (String(parsed?.status || "").toLowerCase() === "error") {
+            lastError = String(parsed?.message || "provider error");
+            console.warn(
+              `[twelve-candidate-error] candidate=${candidate} msg=${lastError}`,
+            );
+            if (isLikelyInvalidProviderKeyError(lastError)) {
+              const invalidError = new Error(lastError);
+              invalidError.status = 401;
+              throw invalidError;
+            }
+            continue;
+          }
+          const vals = Array.isArray(parsed?.values) ? parsed.values : [];
+          if (!vals.length) {
+            lastError = "empty values";
+            console.warn(`[twelve-candidate-empty] candidate=${candidate}`);
+            continue;
+          }
+          data = parsed;
+          usedSymbol = candidate;
+          lastError = "";
+          console.log(`[twelve-success] candidate=${candidate}`);
+          if (notificationManager) {
+            notificationManager.handle("REMOTE_API_CALL", "twelve_success", {
+              message: `TwelveData OK ${symbolNorm} ${tfNorm} ${vals.length} bars`,
+              api: "TwelveData",
+              symbol: symbolNorm,
+              tf: tfNorm,
+              bars_count: vals.length,
+            });
+          }
+          break;
+        }
+        return { data, usedSymbol, lastError, primaryCandidates };
+      });
     if (!data || !Array.isArray(data?.values) || !data.values.length) {
       if (notificationManager) {
         notificationManager.handle("REMOTE_API_CALL", "twelve_error", {
@@ -20483,7 +21790,8 @@ async function mt5EnqueueSignalFromPayload(payload, opts = {}) {
 
   const plannedEntry = asNum(payload.entry ?? payload.price, NaN);
   const plannedSl = asNum(payload.sl, NaN);
-  const plannedTp = asNum(payload.tp, NaN);
+  const tpNorm = mt5NormalizeTpFields(payload, mt5MapActionToSide(action));
+  const plannedTp = asNum(tpNorm.tp ?? payload.tp, NaN);
   const duplicate = await mt5FindDuplicateSignal({
     user_id: userId,
     symbol,
@@ -20567,7 +21875,11 @@ async function mt5EnqueueSignalFromPayload(payload, opts = {}) {
     entry:
       Number.isFinite(plannedEntry) && plannedEntry > 0 ? plannedEntry : null,
     sl: payload.sl ?? null,
-    tp: payload.tp ?? null,
+    tp: Number.isFinite(tpNorm.tp) ? tpNorm.tp : payload.tp ?? null,
+    tp1: Number.isFinite(tpNorm.tp1) ? tpNorm.tp1 : null,
+    tp2: Number.isFinite(tpNorm.tp2) ? tpNorm.tp2 : null,
+    tp3: Number.isFinite(tpNorm.tp3) ? tpNorm.tp3 : null,
+    tp_targets: Array.isArray(tpNorm.tp_targets) ? tpNorm.tp_targets : [],
     volume: volume ?? null,
     rr_planned: Number.isFinite(rrPlanned) ? rrPlanned : null,
     risk_money_planned: Number.isFinite(riskMoneyPlanned)
@@ -20926,8 +22238,24 @@ function mt5BuildBrokerSyncItems(payload = {}) {
           Boolean(closedAt) ||
           Boolean(closeReason),
       });
-      const note = String(raw.comment || raw.label || "").trim();
-      const sidText = String(raw.label || raw.comment || signalId || "");
+      const channel = String(
+        raw.source_id ??
+          raw.source ??
+          raw.channel ??
+          raw.Channel ??
+          raw.channel_name ??
+          raw.channelName ??
+          "",
+      ).trim();
+      const label = String(raw.label ?? raw.Label ?? "").trim();
+      const comment = String(raw.comment ?? raw.Comment ?? "").trim();
+      const commentSid = mt5ExtractBrokerCommentSid(comment);
+      const note = comment || label;
+      const strategy =
+        String(raw.strategy ?? raw.Strategy ?? "").trim() ||
+        (mt5LooksLikeBrokerStrategyLabel(label, signalId, comment) ? label : "") ||
+        "manual";
+      const sidText = String(signalId || commentSid || "");
       const brokerSidCandidate = sidText
         .replace(/[^a-zA-Z0-9]/g, "")
         .toUpperCase();
@@ -20968,6 +22296,12 @@ function mt5BuildBrokerSyncItems(payload = {}) {
         tp2: Number.isFinite(Number(raw.tp2)) ? Number(raw.tp2) : null,
         tp3: Number.isFinite(Number(raw.tp3)) ? Number(raw.tp3) : null,
         note,
+        comment: comment || null,
+        label: label || null,
+        channel: channel || null,
+        source_id: channel || null,
+        source: channel || null,
+        strategy,
         status_raw: statusRaw || "UNKNOWN",
         execution_status: executionStatus,
         close_reason: closeReason,
@@ -21231,6 +22565,19 @@ async function mt5AckTrade(tradeId, status, ticket, error, extra = {}) {
     opened_at: extra.opened_at || null,
     closed_at: extra.closed_at || null,
     exit_price: extra.exit_price ?? null,
+    entry_price_exec: extra.entry_price_exec ?? null,
+    entry_exec: extra.entry_price_exec ?? null,
+    sl_exec: extra.sl_exec ?? extra.used_sl ?? null,
+    tp_exec: extra.tp_exec ?? extra.used_tp ?? null,
+    requested_sl: extra.requested_sl ?? null,
+    requested_tp: extra.requested_tp ?? null,
+    used_sl: extra.used_sl ?? extra.sl_exec ?? null,
+    used_tp: extra.used_tp ?? extra.tp_exec ?? null,
+    sl_pips: extra.sl_pips ?? null,
+    tp_pips: extra.tp_pips ?? null,
+    pip_value_per_lot: extra.pip_value_per_lot ?? null,
+    risk_money_actual: extra.risk_money_actual ?? null,
+    reward_money_planned: extra.reward_money_planned ?? null,
     metadata: {
       sl_pips: extra.sl_pips ?? null,
       tp_pips: extra.tp_pips ?? null,
@@ -21239,8 +22586,12 @@ async function mt5AckTrade(tradeId, status, ticket, error, extra = {}) {
       reward_money_planned: extra.reward_money_planned ?? null,
       entry_price_exec: extra.entry_price_exec ?? null,
       exit_price: extra.exit_price ?? null,
-      sl_exec: extra.sl_exec ?? null,
-      tp_exec: extra.tp_exec ?? null,
+      sl_exec: extra.sl_exec ?? extra.used_sl ?? null,
+      tp_exec: extra.tp_exec ?? extra.used_tp ?? null,
+      requested_sl: extra.requested_sl ?? null,
+      requested_tp: extra.requested_tp ?? null,
+      used_sl: extra.used_sl ?? extra.sl_exec ?? null,
+      used_tp: extra.used_tp ?? extra.tp_exec ?? null,
       ack_error: error || null,
       last_ack_telemetry_at: new Date().toISOString(),
     },
@@ -21428,9 +22779,26 @@ async function mt5PullLeasedTradesV2(
   sourceId = null,
   userId = null,
 ) {
+  return mt5TradesPullLeasedTrades(
+    accountId,
+    maxItems,
+    leaseSeconds,
+    taskTypeFilter,
+    sourceId,
+    userId,
+  );
+}
+
+async function mt5TradesPullLeasedTrades(
+  accountId,
+  maxItems = 1,
+  leaseSeconds = 30,
+  taskTypeFilter = null,
+  sourceId = null,
+  userId = null,
+) {
   const resolvedUserId = await mt5ResolveBrokerUserId(accountId, userId);
-  const repo = await mt5TradeRepo(resolvedUserId);
-  return repo.pullLeasedTrades(
+  return tradesService().pullLeasedTrades(
     resolvedUserId,
     accountId,
     maxItems,
@@ -21446,12 +22814,20 @@ async function mt5PullLeasedTradesV2(
 }
 
 async function mt5AckTradeV2(accountId, payload, userId = null) {
+  return mt5TradesAckTrade(accountId, payload, userId);
+}
+
+async function mt5TradesAckTrade(accountId, payload, userId = null) {
   const resolvedUserId = await mt5ResolveBrokerUserId(
     accountId,
     userId || payload?.user_id || null,
   );
-  const repo = await mt5TradeRepo(resolvedUserId);
-  return repo.ackTrade(resolvedUserId, accountId, payload);
+  return tradesService().ackTrade(
+    resolvedUserId,
+    accountId,
+    payload,
+    {},
+  );
 }
 
 async function mt5RotateAccountApiKeyV2(accountId) {
@@ -21766,8 +23142,50 @@ async function mt5BrokerSyncSqlite(accountId, payload = {}) {
   };
 }
 
+async function mt5TradesBrokerSync(accountId, payload = {}, userId = null) {
+  const resolvedUserId = await mt5ResolveBrokerUserId(
+    accountId,
+    userId || payload?.user_id || null,
+  );
+  const { items, seenTickets, snapshotComplete } = mt5BuildBrokerSyncItems(
+    payload,
+  );
+  const result = await tradesService().brokerSyncTrades(
+    resolvedUserId,
+    accountId,
+    items,
+    {
+      now: mt5NowIso(),
+      snapshotComplete,
+      brokerName: payload.broker_name || "",
+      providerCode: String(payload.provider_code || "").trim(),
+      sourceId:
+        String(payload.broker_name || "BROKER")
+          .trim()
+          .toUpperCase()
+          .replace(/\s+/g, "_") || "BROKER",
+      generateSid: mt5GenerateTimeSid,
+    },
+  );
+  return {
+    ok: true,
+    matched: result.matched || 0,
+    synced: result.synced || 0,
+    received: items.length,
+    seen_tickets: [...seenTickets],
+    snapshot_complete: Boolean(snapshotComplete),
+    results: result.results || [],
+    tradeUpdates: result.tradeUpdates || [],
+    closedRows: result.closedRows || [],
+  };
+}
+
 async function mt5BrokerSyncV2(accountId, payload) {
-  return mt5BrokerSyncSqlite(accountId, payload);
+  return mt5TradesBrokerSync(
+    accountId,
+    payload,
+    payload?.user_id || null,
+  );
 }
 
 async function mt5CreateBrokerTradeV2(accountId, payload) {
@@ -21967,6 +23385,39 @@ async function mt5CreateTradeFanoutViaRepo(payload = {}) {
   if (levelValidationError) {
     throw new Error(`Invalid trade levels: ${levelValidationError}`);
   }
+  const resolvedStrategy = (() => {
+    const direct = String(payload.strategy || "").trim();
+    if (direct) return direct;
+    const planCandidates = [
+      ...(Array.isArray(payload.trade_plan) ? payload.trade_plan : []),
+      ...(Array.isArray(payload.trade_plans) ? payload.trade_plans : []),
+      ...(Array.isArray(payload?.metadata?.trade_plan)
+        ? payload.metadata.trade_plan
+        : []),
+      ...(Array.isArray(payload?.metadata?.trade_plans)
+        ? payload.metadata.trade_plans
+        : []),
+    ];
+    for (const plan of planCandidates) {
+      const value = String(
+        plan?.strategy_name || plan?.strategy || plan?.strategy_id || "",
+      ).trim();
+      if (value) return value;
+    }
+    const metadataValue = String(
+      payload?.metadata?.strategy_name ||
+        payload?.metadata?.strategy ||
+        payload?.metadata?.strategy_id ||
+        payload?.raw_json?.strategy_name ||
+        payload?.raw_json?.strategy ||
+        payload?.raw_json?.strategy_id ||
+        payload?.metadata?.raw_json?.strategy_name ||
+        payload?.metadata?.raw_json?.strategy ||
+        payload?.metadata?.raw_json?.strategy_id ||
+        "",
+    ).trim();
+    return metadataValue || null;
+  })();
   const store = getUserAccountObjectStore();
   const accounts = (await store.listUnifiedObjects(userId, "user_accounts"))
     .filter((row) => String(row?.status || "").toUpperCase() !== "ARCHIVED")
@@ -22020,7 +23471,7 @@ async function mt5CreateTradeFanoutViaRepo(payload = {}) {
       user_id: userId,
       trade_id: tradeId || tradeSid,
       source_id: sourceId,
-      strategy: payload.strategy || null,
+      strategy: resolvedStrategy,
       entry_model: payload.entry_model || null,
       trade_tf:
         payload.trade_tf ??
@@ -22267,6 +23718,14 @@ async function mt5ChangeTradeStatusV2(tradeId, userId = null, payload = {}) {
         payload,
         side || currentRow.action || "",
       );
+      const hasExplicitTpPayload = [
+        "tp",
+        "tp1",
+        "tp2",
+        "tp3",
+        "take_profit",
+        "tp_targets",
+      ].some((key) => Object.prototype.hasOwnProperty.call(payload, key));
       const nextMetadata = {
         ...(currentRow.metadata && typeof currentRow.metadata === "object"
           ? currentRow.metadata
@@ -22299,8 +23758,18 @@ async function mt5ChangeTradeStatusV2(tradeId, userId = null, payload = {}) {
           sl: payload.sl,
           tp: payload.tp,
           tp1: payload.tp1 !== undefined ? payload.tp1 : tpNorm.tp1,
-          tp2: payload.tp2 !== undefined ? payload.tp2 : tpNorm.tp2,
-          tp3: payload.tp3 !== undefined ? payload.tp3 : tpNorm.tp3,
+          tp2:
+            payload.tp2 !== undefined
+              ? payload.tp2
+              : hasExplicitTpPayload
+                ? null
+                : tpNorm.tp2,
+          tp3:
+            payload.tp3 !== undefined
+              ? payload.tp3
+              : hasExplicitTpPayload
+                ? null
+                : tpNorm.tp3,
           note: payload.note,
           metadata: nextMetadata,
           confidence_pct: payload.confidence_pct,
@@ -22607,6 +24076,36 @@ async function mt5GetActiveExecutionProfileV2(userId) {
   return active ? mt5NormalizeExecutionProfileRow(active) : null;
 }
 
+async function resolvePreferredTrades2AccountId(userId, sourceId = null) {
+  const uid =
+    String(userId || CFG.mt5DefaultUserId).trim() || CFG.mt5DefaultUserId;
+  const activeProfile = await mt5GetActiveExecutionProfileV2(uid).catch(
+    () => null,
+  );
+  const profileAccountId = String(activeProfile?.account_id || "").trim();
+  if (profileAccountId) return profileAccountId;
+
+  const store = getUserAccountObjectStore();
+  const wantedSourceId = String(sourceId || "").trim();
+  const accounts = (await store.listUnifiedObjects(uid, "user_accounts"))
+    .filter((row) => String(row?.status || "").toUpperCase() !== "ARCHIVED")
+    .map((row) => ({
+      account_id: String(row?.account_id || row?.object_id || "").trim(),
+      source_ids: normalizeAccountSourceIdsCache(
+        row?.source_ids_cache ?? row?.metadata?.source_ids_cache ?? [],
+      ),
+    }))
+    .filter((row) => row.account_id);
+
+  if (wantedSourceId) {
+    const matching = accounts.filter((row) => row.source_ids.includes(wantedSourceId));
+    if (matching.length) return matching[0].account_id;
+  }
+
+  if (accounts.length === 1) return accounts[0].account_id;
+  return accounts[0]?.account_id || null;
+}
+
 function mt5NormalizeExecutionProfileRow(row = {}) {
   const data = dbQueries.parseJsonField(row?.data) || {};
   return {
@@ -22654,7 +24153,7 @@ async function mt5SaveExecutionProfileV2(payload = {}) {
   const routeRaw = String(payload.route || "")
     .trim()
     .toLowerCase();
-  const route = ["ea", "v2026.05.09 19:31 - 728f356", "ctrader"].includes(
+  const route = ["ea", "v2026.05.09 19:31 - 728f356", "ctrader", "ctrader2"].includes(
     routeRaw,
   )
     ? routeRaw
@@ -22838,6 +24337,11 @@ async function mt5DeleteAllEvents() {
 }
 
 async function mt5PruneSignals(days) {
+  // Legacy `trades` storage is temporarily disabled while Trades2 is being
+  // validated, so prune should not touch the renamed fallback table.
+  if (LEGACY_TRADES_TEMP_DISABLED) {
+    return { removed: 0, remaining: 0 };
+  }
   const safeDays = Math.max(
     1,
     Math.min(3650, Number.isFinite(days) ? days : 14),
@@ -23439,16 +24943,15 @@ function mt5EntryModelFromRow(row) {
 }
 
 function mt5StrategyFromRow(row) {
-  const sourceId = envStr(row?.source_id || row?.source);
-  if (sourceId) return sourceId;
   const raw = row?.raw_json || {};
-  return envStr(
-    raw.source ||
-      raw.source_id ||
-      raw.strategy ||
-      raw.model ||
-      raw.entry_model ||
-      raw.entryModel,
+  return (
+    envStr(
+      row?.strategy ||
+        raw.strategy ||
+        raw.model ||
+        raw.entry_model ||
+        raw.entryModel,
+    ) || "manual"
   );
 }
 
@@ -24131,11 +25634,35 @@ const appHandler = async (req, res) => {
     notifyPulse(null, "api");
   }
   const url = incomingUrl;
+  const originalPathname = (() => {
+    try {
+      return new URL(req.url || "/", "http://localhost").pathname;
+    } catch {
+      return String(req.url || "").split("?")[0] || "/";
+    }
+  })();
   const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
   if (ENABLE_REQUEST_LOGS) {
     console.log(
       `[REQUEST] ${req.method} ${req.url} -> ${url.pathname} (IP: ${ip}, trace: ${req._traceId})`,
     );
+  }
+
+  if (
+    ["GET", "HEAD"].includes(String(req.method || "").toUpperCase()) &&
+    (originalPathname === "/api" || originalPathname === "/api/")
+  ) {
+    res.writeHead(307, { Location: "/api/trades" });
+    res.end();
+    return;
+  }
+
+  if (
+    LEGACY_TRADES_TEMP_DISABLED &&
+    (isLegacyTradesApiPath(originalPathname) ||
+      isLegacyTradesSyncPath(originalPathname))
+  ) {
+    return json(res, 410, legacyTradesDisabledPayload());
   }
 
   if (req.method === "GET" && url.pathname === "/v2/notifications/stream") {
@@ -24167,7 +25694,11 @@ const appHandler = async (req, res) => {
     return; // do not call json() — SSE is raw
   }
 
-  if (req.method === "GET" && url.pathname === "/v2/realtime/chart/bootstrap") {
+  if (
+    req.method === "GET" &&
+    (url.pathname === "/v2/realtime/chart/bootstrap" ||
+      url.pathname === "/api/realtime/chart/bootstrap")
+  ) {
     const sess = getUiSessionFromReq(req);
     const isAdmin =
       (req.headers["x-api-key"] || url.searchParams.get("key")) ===
@@ -25017,10 +26548,32 @@ const appHandler = async (req, res) => {
         },
       });
     } catch (err) {
-      console.error("[authMe] fatal error:", err);
-      return json(res, 500, {
-        ok: false,
-        error: "Internal Server Error during hydration",
+      console.error("[authMe] degraded response:", err);
+      const sess = getUiSessionFromReq(req);
+      return json(res, 200, {
+        ok: true,
+        degraded: true,
+        eager_data: {
+          system_settings: {},
+          user_accounts: [],
+          pending_signals: [],
+        },
+        user: {
+          user_id: sess.user_id,
+          name: sess.name,
+          email: sess.email,
+          roles: normalizeUserRoles(sess.roles, [UI_USER_ROLE_ID]),
+          permissions: resolveUserPermissions(sess),
+          is_active: normalizeUserActive(sess.is_active, true),
+          metadata: {
+            ...(sess.metadata || {}),
+            watchlist: Array.isArray(sess.metadata?.watchlist)
+              ? sess.metadata.watchlist
+              : [],
+            default_provider_code:
+              sess.metadata?.default_provider_code || "ICMARKETS",
+          },
+        },
       });
     }
   }
@@ -25287,7 +26840,8 @@ const appHandler = async (req, res) => {
       const sess = getUiSessionFromReq(req);
       const actor = await getUiDataActor(req, url);
       const users = isAdminUser(sess) ? await uiListUsers() : [];
-      const out = await pay42Repo().getDashboardSummary({
+      const out = await handle42PayDashboard({
+        service: pay42Service(),
         actor,
         users,
       });
@@ -25306,11 +26860,10 @@ const appHandler = async (req, res) => {
     try {
       await ensure42PaySeeded();
       const actor = await getUiDataActor(req, url);
-      const out = await pay42Repo().listProducts({
+      const out = await handle42PayProductsList({
+        url,
+        service: pay42Service(),
         actor,
-        status: url.searchParams.get("status") || "",
-        query: url.searchParams.get("query") || "",
-        seller_id: url.searchParams.get("seller_id") || "",
       });
       return json(res, 200, out);
     } catch (error) {
@@ -25328,7 +26881,9 @@ const appHandler = async (req, res) => {
       await ensure42PaySeeded();
       const payload = await readJson(req);
       const actor = await getUiDataActor(req, url, payload);
-      const out = await pay42Repo().upsertProduct(payload || {}, {
+      const out = await handle42PayProductUpsert({
+        payload,
+        service: pay42Service(),
         actor,
       });
       return json(res, 200, out);
@@ -25351,13 +26906,12 @@ const appHandler = async (req, res) => {
       );
       const payload = await readJson(req);
       const actor = await getUiDataActor(req, url, payload);
-      const out = await pay42Repo().upsertProduct(
-        {
-          ...(payload || {}),
-          sid,
-        },
-        { actor },
-      );
+      const out = await handle42PayProductUpsert({
+        payload,
+        service: pay42Service(),
+        actor,
+        route: { sid },
+      });
       return json(res, 200, out);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
@@ -25373,15 +26927,10 @@ const appHandler = async (req, res) => {
     try {
       await ensure42PaySeeded();
       const actor = await getUiDataActor(req, url);
-      const out = await pay42Repo().listOffers({
+      const out = await handle42PayOffersList({
+        url,
+        service: pay42Service(),
         actor,
-        status: url.searchParams.get("status") || "",
-        query: url.searchParams.get("query") || "",
-        seller_id: url.searchParams.get("seller_id") || "",
-        product_id: url.searchParams.get("product_id") || "",
-        include_inactive: String(url.searchParams.get("include_inactive") || "")
-          .trim()
-          .toLowerCase() === "true",
       });
       return json(res, 200, out);
     } catch (error) {
@@ -25399,7 +26948,9 @@ const appHandler = async (req, res) => {
       await ensure42PaySeeded();
       const payload = await readJson(req);
       const actor = await getUiDataActor(req, url, payload);
-      const out = await pay42Repo().upsertOffer(payload || {}, {
+      const out = await handle42PayOfferUpsert({
+        payload,
+        service: pay42Service(),
         actor,
       });
       return json(res, 200, out);
@@ -25422,13 +26973,12 @@ const appHandler = async (req, res) => {
       );
       const payload = await readJson(req);
       const actor = await getUiDataActor(req, url, payload);
-      const out = await pay42Repo().upsertOffer(
-        {
-          ...(payload || {}),
-          sid,
-        },
-        { actor },
-      );
+      const out = await handle42PayOfferUpsert({
+        payload,
+        service: pay42Service(),
+        actor,
+        route: { sid },
+      });
       return json(res, 200, out);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
@@ -25444,12 +26994,10 @@ const appHandler = async (req, res) => {
     try {
       await ensure42PaySeeded();
       const actor = await getUiDataActor(req, url);
-      const out = await pay42Repo().listOrders({
+      const out = await handle42PayOrdersList({
+        url,
+        service: pay42Service(),
         actor,
-        status: url.searchParams.get("status") || "",
-        query: url.searchParams.get("query") || "",
-        buyer_id: url.searchParams.get("buyer_id") || "",
-        seller_id: url.searchParams.get("seller_id") || "",
       });
       return json(res, 200, out);
     } catch (error) {
@@ -25466,7 +27014,8 @@ const appHandler = async (req, res) => {
     try {
       await ensure42PaySeeded();
       const actor = await getUiDataActor(req, url);
-      const out = await pay42Repo().getWalletSummary({
+      const out = await handle42PayWalletSummary({
+        service: pay42Service(),
         actor,
       });
       return json(res, 200, out);
@@ -25484,9 +27033,10 @@ const appHandler = async (req, res) => {
     try {
       await ensure42PaySeeded();
       const actor = await getUiDataActor(req, url);
-      const out = await pay42Repo().listWalletTopups({
+      const out = await handle42PayWalletTopupsList({
+        url,
+        service: pay42Service(),
         actor,
-        limit: Number(url.searchParams.get("limit") || 50),
       });
       return json(res, 200, out);
     } catch (error) {
@@ -25504,7 +27054,9 @@ const appHandler = async (req, res) => {
       await ensure42PaySeeded();
       const payload = await readJson(req);
       const actor = await getUiDataActor(req, url, payload);
-      const out = await pay42Repo().topupWallet(payload || {}, {
+      const out = await handle42PayWalletTopup({
+        payload,
+        service: pay42Service(),
         actor,
       });
       return json(res, 200, out);
@@ -25523,7 +27075,9 @@ const appHandler = async (req, res) => {
       await ensure42PaySeeded();
       const payload = await readJson(req);
       const actor = await getUiDataActor(req, url, payload);
-      const out = await pay42Repo().createOrderFromQrCode(payload || {}, {
+      const out = await handle42PayOrderCreate({
+        payload,
+        service: pay42Service(),
         actor,
       });
       return json(res, 200, out);
@@ -25542,7 +27096,9 @@ const appHandler = async (req, res) => {
       await ensure42PaySeeded();
       const payload = await readJson(req);
       const actor = await getUiDataActor(req, url, payload);
-      const out = await pay42Repo().previewOrderFromQrCode(payload || {}, {
+      const out = await handle42PayScanPreview({
+        payload,
+        service: pay42Service(),
         actor,
       });
       return json(res, 200, out);
@@ -25561,7 +27117,9 @@ const appHandler = async (req, res) => {
       await ensure42PaySeeded();
       const payload = await readJson(req);
       const actor = await getUiDataActor(req, url, payload);
-      const out = await pay42Repo().createOrderFromQrCode(payload || {}, {
+      const out = await handle42PayOrderCreate({
+        payload,
+        service: pay42Service(),
         actor,
       });
       return json(res, 200, out);
@@ -25581,11 +27139,320 @@ const appHandler = async (req, res) => {
       await ensure42PaySeeded();
       const sess = getUiSessionFromReq(req);
       const users = await uiListUsers();
-      const out = await pay42Repo().listAdminUsers({
+      const out = await handle42PayAdminUsers({
+        service: pay42Service(),
         actor: sess,
         users,
       });
       return json(res, 200, out);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    (url.pathname === "/v2/universal-store/entities" ||
+      url.pathname === "/api/v2/universal-store/entities")
+  ) {
+    if (!requireUiPermission(req, res, "apis.auth.users.read")) return;
+    try {
+      return json(
+        res,
+        200,
+        await handleUniversalEntitiesList({
+          url,
+          service: universalStoreService(),
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    (url.pathname === "/v2/universal-store/entities" ||
+      url.pathname === "/api/v2/universal-store/entities")
+  ) {
+    if (!requireUiPermission(req, res, "apis.auth.users.write")) return;
+    try {
+      const payload = await readJson(req);
+      return json(
+        res,
+        200,
+        await handleUniversalEntityUpsert({
+          payload,
+          service: universalStoreService(),
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (
+    (/^\/v2\/universal-store\/entities\/[^/]+\/[^/]+\/[^/]+$/.test(url.pathname) ||
+      /^\/api\/v2\/universal-store\/entities\/[^/]+\/[^/]+\/[^/]+$/.test(url.pathname))
+  ) {
+    const routePath = url.pathname.replace(/^\/api/, "");
+    const [, , , tenantIdRaw, entityTypeRaw, entityKeyRaw] = routePath.split("/");
+    const tenantId = decodeURIComponent(tenantIdRaw || "default");
+    const entityType = decodeURIComponent(entityTypeRaw || "");
+    const entityKey = decodeURIComponent(entityKeyRaw || "");
+
+    if (req.method === "GET") {
+      if (!requireUiPermission(req, res, "apis.auth.users.read")) return;
+      try {
+        return json(
+          res,
+          200,
+          await handleUniversalEntityGet({
+            url,
+            service: universalStoreService(),
+            route: { tenantId, entityType, entityKey },
+          }),
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        return json(res, 400, { ok: false, error: message });
+      }
+    }
+
+    if (req.method === "PUT") {
+      if (!requireUiPermission(req, res, "apis.auth.users.write")) return;
+      try {
+        const payload = await readJson(req);
+        return json(
+          res,
+          200,
+          await handleUniversalEntityUpsert({
+            payload,
+            service: universalStoreService(),
+            route: { tenantId, entityType, entityKey },
+          }),
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        return json(res, 400, { ok: false, error: message });
+      }
+    }
+
+    if (req.method === "DELETE") {
+      if (!requireUiPermission(req, res, "apis.auth.users.write")) return;
+      try {
+        return json(
+          res,
+          200,
+          await handleUniversalEntityDelete({
+            url,
+            service: universalStoreService(),
+            route: { tenantId, entityType, entityKey },
+          }),
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        return json(res, 400, { ok: false, error: message });
+      }
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    (url.pathname === "/v2/universal-store/links" ||
+      url.pathname === "/api/v2/universal-store/links")
+  ) {
+    if (!requireUiPermission(req, res, "apis.auth.users.read")) return;
+    try {
+      return json(
+        res,
+        200,
+        await handleUniversalLinksList({
+          url,
+          service: universalStoreService(),
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    (url.pathname === "/v2/universal-store/links" ||
+      url.pathname === "/api/v2/universal-store/links")
+  ) {
+    if (!requireUiPermission(req, res, "apis.auth.users.write")) return;
+    try {
+      const payload = await readJson(req);
+      return json(
+        res,
+        200,
+        await handleUniversalLinkUpsert({
+          payload,
+          service: universalStoreService(),
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (
+    req.method === "DELETE" &&
+    (/^\/v2\/universal-store\/links\/[^/]+$/.test(url.pathname) ||
+      /^\/api\/v2\/universal-store\/links\/[^/]+$/.test(url.pathname))
+  ) {
+    if (!requireUiPermission(req, res, "apis.auth.users.write")) return;
+    try {
+      const id = decodeURIComponent(url.pathname.replace(/^\/api/, "").slice("/v2/universal-store/links/".length));
+      return json(
+        res,
+        200,
+        await handleUniversalLinkDelete({
+          service: universalStoreService(),
+          route: { id },
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    (url.pathname === "/v2/universal-store/journal" ||
+      url.pathname === "/api/v2/universal-store/journal")
+  ) {
+    if (!requireUiPermission(req, res, "apis.auth.users.read")) return;
+    try {
+      return json(
+        res,
+        200,
+        await handleUniversalJournalList({
+          url,
+          service: universalStoreService(),
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    (url.pathname === "/v2/universal-store/journal" ||
+      url.pathname === "/api/v2/universal-store/journal")
+  ) {
+    if (!requireUiPermission(req, res, "apis.auth.users.write")) return;
+    try {
+      const payload = await readJson(req);
+      return json(
+        res,
+        200,
+        await handleUniversalJournalAppend({
+          payload,
+          service: universalStoreService(),
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    (url.pathname === "/v2/universal-store/processes" ||
+      url.pathname === "/api/v2/universal-store/processes")
+  ) {
+    if (!requireUiPermission(req, res, "apis.auth.users.read")) return;
+    try {
+      return json(
+        res,
+        200,
+        await handleUniversalProcessesList({
+          url,
+          service: universalStoreService(),
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    (url.pathname === "/v2/universal-store/processes" ||
+      url.pathname === "/api/v2/universal-store/processes")
+  ) {
+    if (!requireUiPermission(req, res, "apis.auth.users.write")) return;
+    try {
+      const payload = await readJson(req);
+      return json(
+        res,
+        200,
+        await handleUniversalProcessUpsert({
+          payload,
+          service: universalStoreService(),
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    (/^\/v2\/universal-store\/users\/[^/]+\/links$/.test(url.pathname) ||
+      /^\/api\/v2\/universal-store\/users\/[^/]+\/links$/.test(url.pathname))
+  ) {
+    if (!requireUiPermission(req, res, "apis.auth.users.read")) return;
+    try {
+      const routePath = url.pathname.replace(/^\/api/, "");
+      const userId = decodeURIComponent(routePath.split("/")[4] || "");
+      return json(
+        res,
+        200,
+        await handleUniversalUserLinks({
+          url,
+          service: universalStoreService(),
+          route: { userId },
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    (/^\/v2\/universal-store\/users\/[^/]+\/journal$/.test(url.pathname) ||
+      /^\/api\/v2\/universal-store\/users\/[^/]+\/journal$/.test(url.pathname))
+  ) {
+    if (!requireUiPermission(req, res, "apis.auth.users.read")) return;
+    try {
+      const routePath = url.pathname.replace(/^\/api/, "");
+      const userId = decodeURIComponent(routePath.split("/")[4] || "");
+      return json(
+        res,
+        200,
+        await handleUniversalUserJournal({
+          url,
+          service: universalStoreService(),
+          route: { userId },
+        }),
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
       return json(res, 400, { ok: false, error: message });
@@ -26181,6 +28048,8 @@ const appHandler = async (req, res) => {
         market_data_keys: Object.keys(CRON_STATE.lastMarketDataRun || {})
           .length,
         analysis_keys: Object.keys(CRON_STATE.lastAiAnalysisRun || {}).length,
+        strategy_scan_keys: Object.keys(CRON_STATE.lastStrategyScanRun || {})
+          .length,
         snapshots_keys: Object.keys(CRON_STATE.lastSnapshotsRun || {}).length,
       },
       configs: cronConfigs,
@@ -26322,6 +28191,7 @@ const appHandler = async (req, res) => {
       const cronType = String(data.cron_type || "").toUpperCase();
       const isLongRunning =
         cronType === "ANALYSIS_CRON" ||
+        cronType === "STRATEGY_SCAN_CRON" ||
         cronType === "SNAPSHOT_CRON" ||
         cronType === "SNAPSHOTS_CRON";
       if (isLongRunning) {
@@ -26337,6 +28207,8 @@ const appHandler = async (req, res) => {
               event:
                 cronType === "ANALYSIS_CRON"
                   ? "CRON_AI_ANALYSIS"
+                  : cronType === "STRATEGY_SCAN_CRON"
+                    ? "CRON_STRATEGY_SCAN"
                   : "CRON_SNAPSHOT",
               level: "ERROR",
               message: `Manual execute failed to start: ${errMsg}`,
@@ -26555,7 +28427,9 @@ const appHandler = async (req, res) => {
       const parts = suffix.split("/").filter(Boolean);
       const options = {
         activePostgresUrl: CFG.mt5PostgresUrl,
-        activeSqlitePath: CFG.mt5SqlitePath,
+        activeStorageBackend: CFG.mt5StorageBackend,
+        activeSqlitePath: resolveConfiguredSqlitePath(),
+        universalSqlitePath: resolveConfiguredSqlitePath(),
       };
 
       if (req.method === "GET" && parts.length === 1 && parts[0] === "connections") {
@@ -26581,7 +28455,22 @@ const appHandler = async (req, res) => {
       }
 
       if (req.method === "GET" && parts[1] === "schema" && parts[2] && parts[3]) {
+        const pool = dbManagerSystem.getPool(PROJECT_ROOT, connId, options);
         const rows = await dbManagerSystem.getTableSchema(
+          pool,
+          decodeURIComponent(parts[2]),
+          decodeURIComponent(parts[3]),
+        );
+        const indexes = await dbManagerSystem.getTableIndexes(
+          pool,
+          decodeURIComponent(parts[2]),
+          decodeURIComponent(parts[3]),
+        );
+        return json(res, 200, { ok: true, rows, indexes });
+      }
+
+      if (req.method === "GET" && parts[1] === "indexes" && parts[2] && parts[3]) {
+        const rows = await dbManagerSystem.getTableIndexes(
           dbManagerSystem.getPool(PROJECT_ROOT, connId, options),
           decodeURIComponent(parts[2]),
           decodeURIComponent(parts[3]),
@@ -26654,6 +28543,23 @@ const appHandler = async (req, res) => {
         const body = await readJson(req);
         const pool = dbManagerSystem.getPool(PROJECT_ROOT, connId, options);
         const result = await dbManagerSystem.applyTableAction(
+          pool,
+          decodeURIComponent(parts[2]),
+          decodeURIComponent(parts[3]),
+          body,
+        );
+        return json(res, 200, { ok: true, result });
+      }
+
+      if (
+        req.method === "POST" &&
+        parts[1] === "index-action" &&
+        parts[2] &&
+        parts[3]
+      ) {
+        const body = await readJson(req);
+        const pool = dbManagerSystem.getPool(PROJECT_ROOT, connId, options);
+        const result = await dbManagerSystem.applyIndexAction(
           pool,
           decodeURIComponent(parts[2]),
           decodeURIComponent(parts[3]),
@@ -26894,228 +28800,24 @@ const appHandler = async (req, res) => {
       ).toLowerCase();
       const range = envStr(url.searchParams.get("range"), "all").toLowerCase();
 
-      // Use V2 trades ledger for authoritative dashboard stats.
-      // listTradesV2 is capped at 200/page; page through results to avoid dropping older losses.
-      const baseTradeFilter = {
+      // Use the universal-store backed trades service for authoritative dashboard stats.
+      // The legacy `trades` table has been retired/renamed during migration.
+      const dashboard = await tradesService().dashboard({
         user_id: userId,
         account_id: accountId,
         symbol: symbol,
         source_id: sourceId,
         side: direction === "BUY" ? "BUY" : direction === "SELL" ? "SELL" : "",
         pnl_state: ["win", "lose"].includes(pnlState) ? pnlState : "",
-      };
-      const fetchLimit = Math.max(500, Math.min(limit, 200000));
-      const pageSize = 200;
-      const allRows = [];
-      let page = 1;
-      while (allRows.length < fetchLimit) {
-        const tradesRes = await mt5ListTradesV2(
-          baseTradeFilter,
-          page,
-          pageSize,
-        );
-        const items = Array.isArray(tradesRes?.items) ? tradesRes.items : [];
-        if (!items.length) break;
-        allRows.push(...items);
-        if (items.length < pageSize) break;
-        if (allRows.length >= Number(tradesRes?.total || 0)) break;
-        page += 1;
-      }
-      const rowsByDimension = allRows.filter((r) => {
-        const m = r.metadata || {};
-        const rowModel = String(r.entry_model || r.metadata?.entry_model || "");
-        if (model && rowModel !== model) return false;
-        const rowChartTf = String(r.chart_tf || r.metadata?.chart_tf || "");
-        if (chartTf && rowChartTf !== chartTf) return false;
-        const rowSignalTf = String(r.trade_tf || r.metadata?.trade_tf || "");
-        if (signalTf && rowSignalTf !== signalTf) return false;
-        return true;
+        entry_model: model,
+        chart_tf: chartTf,
+        trade_tf: signalTf,
+        range,
       });
-
-      const period = mt5LocalPeriodRange(range);
-      const selectedRows = mt5FilterRows(rowsByDimension, {
-        from: period.start,
-        to: period.end,
-      });
-
-      const periods = [
-        "all",
-        "today",
-        "yesterday",
-        "last_week",
-        "last_month",
-        "week",
-        "month",
-        "year",
-      ];
-      const periodTotals = {};
-      for (const p of periods) {
-        const pr = mt5LocalPeriodRange(p);
-        const scopedRows = mt5FilterRows(rowsByDimension, {
-          from: pr.start,
-          to: pr.end,
-        });
-        const metrics = mt5ComputeTradeMetrics(scopedRows);
-        periodTotals[p] = {
-          total_pnl: metrics.total_pnl,
-          total_rr: metrics.total_rr,
-          total_trades: metrics.total_trades,
-          total_wins: metrics.wins,
-          total_losses: metrics.losses,
-          win_sum_pnl: metrics.win_sum_pnl,
-          lose_sum_pnl: metrics.lose_sum_pnl,
-        };
-      }
-
-      const seriesBucket = range === "today" ? "hour" : "day";
-      const seriesMap = new Map();
-      for (const r of selectedRows) {
-        const s = mt5CanonicalStoredStatus(
-          r.execution_status || r.status || r.close_reason,
-        );
-        const res = String(r?.close_reason || r?.reason || "").toUpperCase();
-        // Use unified PnL field (pnl_realized for trades, pnl_money_realized for signals)
-        const pnl = Number(r.pnl_realized ?? r.pnl_money_realized);
-        if (
-          !["CLOSED", "TP", "SL"].includes(s) &&
-          res !== "TP" &&
-          res !== "SL" &&
-          !(s === "CANCEL" && Number.isFinite(pnl))
-        )
-          continue;
-        if (!Number.isFinite(pnl)) continue;
-        const d = new Date(r.closed_at || r.ack_at || r.created_at);
-        if (!Number.isFinite(d.getTime())) continue;
-        const key =
-          seriesBucket === "hour"
-            ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:00`
-            : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-        seriesMap.set(key, (seriesMap.get(key) || 0) + pnl);
-      }
-      const pnlSeries = [...seriesMap.entries()]
-        .sort((a, b) => (a[0] < b[0] ? -1 : 1))
-        .map(([x, y]) => ({ x, y }));
-
-      const symbols = [
-        ...new Set(
-          rowsByDimension
-            .map((r) => String(r.symbol || "").toUpperCase())
-            .filter(Boolean),
-        ),
-      ].sort();
-      const accounts = [
-        ...new Set(allRows.map((r) => envStr(r.account_id)).filter(Boolean)),
-      ].sort();
-
-      const accountsSummary = await mt5ListAccountsV2(userId);
-
       return json(res, 200, {
-        ok: true,
+        ...(dashboard || {}),
+        ok: dashboard?.ok !== false,
         version: SERVER_VERSION,
-        accounts_summary: accountsSummary || [],
-        filters: {
-          user_id: userId || "",
-          symbol,
-          source: sourceId,
-          entry_model: model,
-          chart_tf: chartTf,
-          trade_tf: signalTf,
-          direction,
-          pnl_state: ["win", "lose"].includes(pnlState) ? pnlState : "",
-          range,
-          accounts,
-          symbols,
-          sources: [
-            ...new Set(
-              allRows.map((r) => mt5SourceIdFromRow(r)).filter(Boolean),
-            ),
-          ].sort(),
-          strategies: [
-            ...new Set(
-              allRows.map((r) => mt5StrategyLabelFromRow(r)).filter(Boolean),
-            ),
-          ].sort(),
-          entry_models: [
-            ...new Set(
-              allRows.map((r) => mt5EntryModelLabelFromRow(r)).filter(Boolean),
-            ),
-          ].sort(),
-          chart_tfs: [
-            ...new Set(
-              allRows
-                .map((r) =>
-                  String(
-                    r.chart_tf ||
-                      r.raw_json?.chart_tf ||
-                      r.raw_json?.chartTf ||
-                      r.raw_json?.chartTimeframe ||
-                      r.trade_tf ||
-                      r.raw_json?.trade_tf ||
-                      r.raw_json?.sourceTf ||
-                      r.raw_json?.timeframe ||
-                      "",
-                  ),
-                )
-                .filter(Boolean),
-            ),
-          ].sort(),
-          trade_tfs: [
-            ...new Set(
-              allRows
-                .map((r) =>
-                  String(
-                    r.trade_tf ||
-                      r.raw_json?.trade_tf ||
-                      r.raw_json?.sourceTf ||
-                      r.raw_json?.timeframe ||
-                      "",
-                  ),
-                )
-                .filter(Boolean),
-            ),
-          ].sort(),
-        },
-        metrics: mt5ComputeTradeMetrics(selectedRows),
-        period_totals: periodTotals,
-        top_winrate: {
-          symbols: mt5ComputeTopWinrateRows(
-            selectedRows,
-            (r) => String(r.symbol || "").toUpperCase(),
-            { limit: 100, includeDirection: false },
-          ),
-          entry_models: mt5ComputeTopWinrateRows(
-            selectedRows,
-            (r) => mt5EntryModelLabelFromRow(r),
-            { limit: 100, includeDirection: false },
-          ),
-          strategies: mt5ComputeTopWinrateRows(
-            selectedRows,
-            (r) => mt5StrategyLabelFromRow(r),
-            { limit: 100, includeDirection: false },
-          ),
-          accounts: mt5ComputeTopWinrateRows(
-            selectedRows,
-            (r) => envStr(r.account_id),
-            { limit: 100, includeDirection: false },
-          ),
-          sources: mt5ComputeTopWinrateRows(
-            selectedRows,
-            (r) => mt5SourceIdFromRow(r),
-            { limit: 100, includeDirection: false },
-          ),
-          directional: mt5ComputeTopWinrateRows(
-            selectedRows,
-            (r) => {
-              const dir = String(r.action || r.side || "BUY").toLowerCase();
-              const typeRaw = mt5OrderTypeFromRow(r);
-              const capitalize = (s) =>
-                s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
-              return `${capitalize(dir)} ${capitalize(typeRaw)}`;
-            },
-            { limit: 100, includeDirection: false },
-          ),
-        },
-        pnl_series: pnlSeries,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
@@ -27385,7 +29087,7 @@ const appHandler = async (req, res) => {
     }
   }
 
-  if (req.method === "POST" && url.pathname === "/v2/trades/create") {
+  if (req.method === "POST" && url.pathname === "/api/trades0/create") {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     const sess = getUiSessionFromReq(req);
@@ -27808,6 +29510,62 @@ const appHandler = async (req, res) => {
 
   if (
     req.method === "GET" &&
+    (url.pathname === "/v2/system/health/nodes" ||
+      url.pathname === "/system/health/nodes")
+  ) {
+    if (!requireSystemRoleForUi(req, res)) return;
+    try {
+      const config = await readHealthConfig({ refresh: true });
+      const results = await Promise.all(
+        (config.nodes || []).map((node) => runHealthNodeCheck(node)),
+      );
+      let storage = null;
+      try {
+        const b = await mt5Backend();
+        if (b?.getStorageStats) {
+          const userId = uiEffectiveUserId(req, url);
+          storage = await b.getStorageStats(userId).catch(() => null);
+        }
+      } catch {}
+      return json(res, 200, {
+        ok: true,
+        config,
+        nodes: config.nodes || [],
+        results,
+        storage,
+      });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  }
+
+  if (
+    req.method === "PUT" &&
+    (url.pathname === "/v2/system/health/nodes" ||
+      url.pathname === "/system/health/nodes")
+  ) {
+    if (!requireSystemRoleForUi(req, res)) return;
+    try {
+      const payload = await readJson(req);
+      const saved = await saveHealthConfig(payload || {});
+      return json(res, 200, {
+        ok: true,
+        config: saved,
+        nodes: saved.nodes || [],
+      });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
     (url.pathname === "/v2/system/cache" || url.pathname === "/system/cache")
   ) {
     // API only — static UI serving removed, use nginx/Vite for frontend
@@ -27818,11 +29576,99 @@ const appHandler = async (req, res) => {
       const source = url.searchParams.get("source") || "memory";
 
       if (key) {
-        const detail = await b.uiGetCacheDetail(key, source);
+        const detail =
+          typeof b?.uiGetCacheDetail === "function"
+            ? await b.uiGetCacheDetail(key, source)
+            : source === "memory"
+              ? (() => {
+                  const data =
+                    pruneExpiredTfCacheEntry(key) ||
+                    MARKET_DATA_MEMORY_CACHE.get(key);
+                  if (!data) {
+                    return { ok: false, error: "cache entry not found" };
+                  }
+                  return { ok: true, data };
+                })()
+              : source === "redis" && CFG.redisEnabled
+                ? await (async () => {
+                    const client = await getRedisClient();
+                    if (!client) {
+                      return {
+                        ok: false,
+                        error: "source not found or disabled",
+                      };
+                    }
+                    const val = await client.get(key).catch(() => null);
+                    try {
+                      return { ok: true, data: JSON.parse(val) };
+                    } catch {
+                      return { ok: true, data: val };
+                    }
+                  })()
+                : { ok: false, error: "source not found or disabled" };
         return json(res, detail.ok ? 200 : 400, detail);
       }
 
-      const items = await b.uiListCache();
+      const items =
+        typeof b?.uiListCache === "function"
+          ? await b.uiListCache()
+          : await (async () => {
+              const out = [];
+              const now = Date.now();
+              for (const [cacheKey, rawEntry] of MARKET_DATA_TF_CACHE.entries()) {
+                const entry = pruneExpiredTfCacheEntry(cacheKey, now);
+                if (!entry) continue;
+                const ttlMs = getTfCacheTtlMs(entry, cacheKey);
+                out.push({
+                  key: cacheKey,
+                  source: "memory",
+                  data: {
+                    symbol: cacheKey.split("_")[0] || cacheKey,
+                    tf: entry.tf || cacheKey.split("_").pop() || "?",
+                    bars: entry.bars?.length || 0,
+                    updated_at: entry.created_at
+                      ? new Date(entry.created_at).toISOString()
+                      : null,
+                  },
+                  ttl_ms: ttlMs,
+                  expired: false,
+                });
+              }
+              if (CFG.redisEnabled) {
+                try {
+                  const client = await getRedisClient();
+                  if (client) {
+                    const redisKeys = [
+                      ...(await client.keys("tf:*")),
+                      ...(await client.keys("market_data:*")),
+                    ];
+                    for (const redisKey of redisKeys) {
+                      if (out.some((item) => item.key === redisKey)) continue;
+                      const isTfKey = redisKey.startsWith("tf:");
+                      const parts = isTfKey
+                        ? redisKey.replace("tf:", "").split("_")
+                        : [];
+                      out.push({
+                        key: redisKey,
+                        source: "redis",
+                        data: {
+                          symbol: isTfKey
+                            ? parts[0] || "?"
+                            : redisKey.replace("market_data:", ""),
+                          tf: isTfKey ? parts[1] || "?" : "MULTI",
+                          bars: "?",
+                        },
+                        ttl_ms: null,
+                        expired: false,
+                      });
+                    }
+                  }
+                } catch (e) {
+                  console.warn("[Cache] Failed to list redis keys:", e.message);
+                }
+              }
+              return out;
+            })();
       return json(res, 200, { ok: true, items });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
@@ -27840,7 +29686,28 @@ const appHandler = async (req, res) => {
       const key = url.searchParams.get("key");
       const source = url.searchParams.get("source") || "memory";
       if (key) {
-        const out = await b.uiDeleteCacheKey(key, source);
+        const out =
+          typeof b?.uiDeleteCacheKey === "function"
+            ? await b.uiDeleteCacheKey(key, source)
+            : source === "memory"
+              ? (() => {
+                  MARKET_DATA_TF_CACHE.delete(key);
+                  MARKET_DATA_MEMORY_CACHE.delete(key);
+                  return { ok: true };
+                })()
+              : source === "redis" && CFG.redisEnabled
+                ? await (async () => {
+                    const client = await getRedisClient();
+                    if (!client) {
+                      return {
+                        ok: false,
+                        error: "source not found or disabled",
+                      };
+                    }
+                    await client.del(key).catch(() => {});
+                    return { ok: true };
+                  })()
+                : { ok: false, error: "source not found or disabled" };
         return json(res, 200, out);
       } else {
         const out = await b.storageCleanup("cache");
@@ -28835,11 +30702,11 @@ const appHandler = async (req, res) => {
       );
 
       if (mode === "codex") {
-        const canUseCodex = Boolean(isAdmin || userRole === "system");
+        const canUseCodex = canUseCodexForRole(userRole, isAdmin, sess);
         if (!canUseCodex) {
           return json(res, 403, {
             ok: false,
-            error: "Codex mode requires system role.",
+            error: "Codex mode requires admin/system access.",
           });
         }
 
@@ -28979,11 +30846,11 @@ const appHandler = async (req, res) => {
         String(body?.context?.userRole || primaryUserRoleId(sess) || "")
           .trim()
           .toLowerCase() || "user";
-      const canUseCodex = Boolean(isAdmin || userRole === "system");
+      const canUseCodex = canUseCodexForRole(userRole, isAdmin, sess);
       if (!canUseCodex) {
         return json(res, 403, {
           ok: false,
-          error: "Codex mode requires system role.",
+          error: "Codex mode requires admin/system access.",
         });
       }
       const conversationId = String(body?.conversation_id || "").trim();
@@ -29070,11 +30937,11 @@ const appHandler = async (req, res) => {
       await emitChatRealtimeSync(userId, conversationId);
 
       if (mode === "codex") {
-        const canUseCodex = Boolean(isAdmin || userRole === "system");
+        const canUseCodex = canUseCodexForRole(userRole, isAdmin, sess);
         if (!canUseCodex) {
           return json(res, 403, {
             ok: false,
-            error: "Codex mode requires system role.",
+            error: "Codex mode requires admin/system access.",
           });
         }
         return streamCodexUiChat({
@@ -29222,11 +31089,11 @@ const appHandler = async (req, res) => {
         );
       }
 
-      const canUseCodex = Boolean(isAdmin || userRole === "system");
+      const canUseCodex = canUseCodexForRole(userRole, isAdmin, sess);
       if (!canUseCodex) {
         return json(res, 403, {
           error: {
-            message: "Codex mode requires system role.",
+            message: "Codex mode requires admin/system access.",
             type: "permission_error",
           },
         });
@@ -29308,13 +31175,23 @@ const appHandler = async (req, res) => {
         if (r.type === "api_key" && d && typeof d === "object") {
           const decrypted = decryptObject(d);
           // Only mask the api_key field; models and remain_credits shown as-is
-          const masked = { ...decrypted };
+          const normalized = buildApiKeySettingPayload(decrypted);
+          const masked = { ...normalized };
           if (masked.api_key) {
             masked.api_key = maskApiKeyForDisplay(String(masked.api_key || ""));
           }
-          // Legacy: mask value field if present
           if (masked.value) {
             masked.value = maskApiKeyForDisplay(String(masked.value || ""));
+          }
+          if (Array.isArray(masked.api_keys)) {
+            masked.api_keys = masked.api_keys.map((value) =>
+              maskApiKeyForDisplay(String(value || "")),
+            );
+          }
+          if (Array.isArray(masked.key_entries)) {
+            masked.key_entries = masked.key_entries.map((entry) =>
+              maskApiKeyEntry(entry),
+            );
           }
           return { ...r, data: masked };
         }
@@ -29365,6 +31242,22 @@ const appHandler = async (req, res) => {
       const dec = decryptObject(
         typeof enc === "string" ? JSON.parse(enc) : enc,
       );
+      const normalized = buildApiKeySettingPayload(dec);
+      if (field === "api_keys" || field === "api_key_list") {
+        return json(res, 200, {
+          ok: true,
+          value: normalized.api_keys.join("\n"),
+        });
+      }
+      if (field === "api_key") {
+        return json(res, 200, {
+          ok: true,
+          value:
+            normalized.api_keys.length > 1
+              ? normalized.api_keys.join("\n")
+              : String(normalized.api_key || ""),
+        });
+      }
       return json(res, 200, { ok: true, value: String(dec?.[field] || "") });
     } catch (e) {
       return json(res, 500, { ok: false, error: e.message });
@@ -29435,29 +31328,73 @@ const appHandler = async (req, res) => {
         const incomingValue = String(
           payloadData.api_key ?? payloadData.value ?? "",
         ).trim();
-        let rawValue = incomingValue;
-        if (!rawValue || isMaskedApiKeyLike(rawValue)) {
-          const existingData = await settingsStore.getUserSettingData(
-            userId,
-            "api_key",
-            settingName,
-          );
-          if (existingData) {
-            const dec = decryptObject(
-              typeof existingData === "string"
-                ? JSON.parse(existingData)
-                : existingData || {},
-            );
-            rawValue = String(dec?.api_key || dec?.value || "").trim();
-          }
+        let nextKeyEntries = [];
+        const incomingKeys =
+          Array.isArray(payloadData.api_keys) && payloadData.api_keys.length
+            ? payloadData.api_keys
+            : splitApiKeyCandidates(incomingValue);
+        const existingData = await settingsStore.getUserSettingData(
+          userId,
+          "api_key",
+          settingName,
+        );
+        const existingEntries = existingData
+          ? normalizeApiKeyEntries(
+              decryptObject(
+                typeof existingData === "string"
+                  ? JSON.parse(existingData)
+                  : existingData || {},
+              ),
+            )
+          : [];
+        const containsMaskedIncoming = incomingKeys.some((value) =>
+          isMaskedApiKeyLike(value),
+        );
+        const rawIncomingKeys = incomingKeys.filter(
+          (value) => !isMaskedApiKeyLike(value),
+        );
+        if (containsMaskedIncoming) {
+          nextKeyEntries = normalizeApiKeyEntries({
+            key_entries: [
+              ...existingEntries,
+              ...normalizeApiKeyEntries({
+                key_entries: Array.isArray(payloadData.key_entries)
+                  ? payloadData.key_entries
+                  : [],
+                api_keys: rawIncomingKeys,
+              }),
+            ],
+          });
+        } else {
+          nextKeyEntries = normalizeApiKeyEntries({
+            key_entries: Array.isArray(payloadData.key_entries)
+              ? payloadData.key_entries
+              : [],
+            api_keys: incomingKeys,
+            api_key: incomingValue,
+          });
         }
-        data = encryptObject({ value: rawValue, api_key: rawValue });
+        if (!nextKeyEntries.length && existingEntries.length) {
+          nextKeyEntries = existingEntries;
+        }
+        const normalizedPayload = buildApiKeySettingPayload(
+          {
+            ...(payloadData && typeof payloadData === "object" ? payloadData : {}),
+            key_entries: nextKeyEntries,
+          },
+          { fallbackEntries: nextKeyEntries },
+        );
+        data = encryptObject(normalizedPayload);
       }
 
       if (body.type === "cron") {
-        const defaultCadenceSeconds =
+      const defaultCadenceSeconds =
           data?.cron_type === "ANALYSIS_CRON"
             ? 3600
+            : data?.cron_type === "STRATEGY_SCAN_CRON" &&
+                Array.isArray(data?.timeframes) &&
+                data.timeframes.length
+              ? parseTfTokenToSeconds(data.timeframes[0])
             : data?.cron_type === "MARKET_DATA_CRON" &&
                 Array.isArray(data?.timeframes) &&
                 data.timeframes.length
@@ -31391,6 +33328,7 @@ const appHandler = async (req, res) => {
                 bars,
                 force_refresh: forceRefresh,
                 direction,
+                trade_sid: tradeSid || null,
                 end_time_sec:
                   Number.isFinite(endTimeSec) && endTimeSec > 0 ? endTimeSec : null,
               },
@@ -31475,6 +33413,7 @@ const appHandler = async (req, res) => {
           bars,
           force_refresh: forceRefresh,
           direction,
+          trade_sid: tradeSid || null,
           end_time_sec:
             Number.isFinite(endTimeSec) && endTimeSec > 0 ? endTimeSec : null,
         },
@@ -31589,13 +33528,14 @@ const appHandler = async (req, res) => {
           try {
             const snapshot = await buildAnalysisSnapshotFromTwelve({
               userId,
-              payload: {
-                bars,
-                force_refresh: forceRefresh,
-                direction,
-                end_time_sec:
-                  Number.isFinite(endTimeSec) && endTimeSec > 0 ? endTimeSec : null,
-              },
+                payload: {
+                  bars,
+                  force_refresh: forceRefresh,
+                  direction,
+                  trade_sid: tradeSid || null,
+                  end_time_sec:
+                    Number.isFinite(endTimeSec) && endTimeSec > 0 ? endTimeSec : null,
+                },
               symbol,
               timeframe,
             });
@@ -32147,6 +34087,13 @@ const appHandler = async (req, res) => {
                 })),
                 source: rows.length ? barsStorage.getBarsStorageProvider() : "cache",
                 metadata: { ...metadata, updated_bars: 0 },
+                artifacts: [],
+                trade_plans: [],
+                coverage: {
+                  timeframe: requestedTf,
+                  start_bar: rows[0]?.time || null,
+                  end_bar: rows[rows.length - 1]?.time || null,
+                },
               });
             } catch (error) {
               items.push({
@@ -32183,6 +34130,13 @@ const appHandler = async (req, res) => {
           bars: [],
           source: "cache",
           metadata: { ...metadata, updated_bars: 0 },
+          artifacts: [],
+          trade_plans: [],
+          coverage: {
+            timeframe: tf,
+            start_bar: null,
+            end_bar: null,
+          },
         });
       }
       return json(res, 200, {
@@ -32199,6 +34153,13 @@ const appHandler = async (req, res) => {
         })),
         source: barsStorage.getBarsStorageProvider(),
         metadata: { ...metadata, updated_bars: 0 },
+        artifacts: [],
+        trade_plans: [],
+        coverage: {
+          timeframe: tf,
+          start_bar: rows[0]?.time || null,
+          end_bar: rows[rows.length - 1]?.time || null,
+        },
       });
     } catch (error) {
       return json(res, 500, {
@@ -32281,6 +34242,13 @@ const appHandler = async (req, res) => {
             metadata: { ...metadata, updated_bars: 0 },
             end_time_unix:
               Number.isFinite(endTimeSec) && endTimeSec > 0 ? endTimeSec : null,
+            artifacts: [],
+            trade_plans: [],
+            coverage: {
+              timeframe: tf,
+              start_bar: rows[0]?.time || null,
+              end_bar: rows[rows.length - 1]?.time || null,
+            },
           };
         } catch (error) {
           return {
@@ -32503,6 +34471,8 @@ const appHandler = async (req, res) => {
     if (!sess.ok && !isAdmin)
       return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
     let isLocalAnalyzeProvider = false;
+    let aiProviderRaw = "";
+    let requestModel = "claude-sonnet-4-0";
     try {
       const body = await readJson(req);
       const reqPrompt = String(body?.prompt || "");
@@ -32680,19 +34650,17 @@ const appHandler = async (req, res) => {
         body?.auto_save === undefined || body?.auto_save === null
           ? ""
           : String(body.auto_save).trim().toLowerCase();
-      const autoSave =
-        autoSaveInput === "signals" || autoSaveInput === "trades"
-          ? autoSaveInput
-          : "";
+      const autoSave = normalizeAnalyzeAutoSave(body?.auto_save);
       if (
         body?.auto_save !== undefined &&
         body?.auto_save !== null &&
         autoSaveInput !== "null" &&
-        !autoSave
+        autoSaveInput !== "none" &&
+        autoSave === null
       ) {
         return json(res, 400, {
           ok: false,
-          error: "auto_save must be null, 'signals', or 'trades'",
+          error: "auto_save must be null, 'signals' or 'trades'",
         });
       }
       const normalizeDirectionToAction = (value) => {
@@ -32932,6 +34900,7 @@ const appHandler = async (req, res) => {
             analysis_result: parsedJson,
             trade_plan: picks.map((x) => x.plan),
           };
+          const sourceId = mt5SlugId(source, "tradingview");
           if (mode === "signals") {
             // Create one saved order per analyzed plan.
             const savedTrades = [];
@@ -32950,7 +34919,6 @@ const appHandler = async (req, res) => {
                 ...perPlanPayload,
                 raw_json: plan && typeof plan === "object" ? { ...plan } : {},
               });
-              const sourceId = mt5SlugId(source, "tradingview");
               const fanout = await mt5FanoutSignalTradeV2({
                 signal_id: null,
                 source_id: sourceId,
@@ -33009,7 +34977,99 @@ const appHandler = async (req, res) => {
               trades: savedTrades,
             };
           }
-          const sourceId = mt5SlugId(source, "tradingview");
+          if (mode === "trades") {
+            const savedTrades = [];
+            for (const [index, pick] of picks.entries()) {
+              const plan = pick.plan || {};
+              const planSymbol = String(pick.symbol || symbol)
+                .trim()
+                .toUpperCase();
+              if (!planSymbol) continue;
+              const perPlanPayload = {
+                ...sharedRawJson,
+                symbol: planSymbol,
+                trade_plan: [plan],
+              };
+              const skipDirective = mt5ResolveSkipTradeDirective({
+                ...perPlanPayload,
+                raw_json: plan && typeof plan === "object" ? { ...plan } : {},
+              });
+              const tradeSid = normalizePublicSidBase(
+                `${sessionId}_${planSymbol}_${index + 1}`,
+                "TRD",
+              );
+              const savedTrade = await createTrades2PendingTrade(
+                {
+                  sid: tradeSid,
+                  user_id: userId,
+                  account_id: String(body?.account_id || body?.accountId || "").trim() || null,
+                  source_id: sourceId,
+                  entry_model: String(plan?.entry_model || "").trim() || null,
+                  trade_tf: mt5TfToMinutes(body?.timeframe || body?.tf) || null,
+                  chart_tf: mt5TfToMinutes(body?.timeframe || body?.tf) || null,
+                  symbol: planSymbol,
+                  action: normalizeDirectionToAction(plan?.direction),
+                  order_type: mt5NormalizeOrderTypeValue(plan?.type, "limit"),
+                  entry: pick.entry,
+                  sl: pick.sl,
+                  tp: pick.tp,
+                  volume: asNum(body?.volume ?? body?.lots, null),
+                  rr_planned: asNum(plan?.rr, null),
+                  risk_pct_planned: asNum(plan?.risk_pct, null),
+                  confidence_pct: asNum(plan?.confidence_pct, null),
+                  estimated_bars: asNum(plan?.estimated_bars, null),
+                  be_trigger: asNum(plan?.be_trigger, null),
+                  profile: body?.profile || null,
+                  note: String(
+                    plan?.note || parsedJson?.final_verdict?.note || "",
+                  ).trim(),
+                  dispatch_status: skipDirective.cancelled ? "CONSUMED" : "NEW",
+                  execution_status: skipDirective.cancelled ? "CANCELLED" : "PENDING",
+                  close_reason: skipDirective.cancelled ? "SKIP" : null,
+                  metadata: {
+                    event_type: skipDirective.cancelled
+                      ? "AI_ANALYZE_AUTO_SAVE_CANCELLED"
+                      : "AI_ANALYZE_AUTO_SAVE_TRADE2",
+                    order_type: mt5NormalizeOrderTypeValue(plan?.type, "limit"),
+                    session_prefix: reqSessionPrefix || null,
+                    analyze_session_id: sessionId,
+                    raw_json: plan && typeof plan === "object" ? { ...plan } : {},
+                    ...perPlanPayload,
+                  },
+                  raw_json: plan && typeof plan === "object" ? { ...plan } : {},
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                },
+                {
+                  entryType: "trade.ai_auto_save_trades",
+                  reason: "ai_analyze_auto_save",
+                },
+              );
+              copyAnalyzeSnapshotToTradeSession(tradeSid, planSymbol);
+              savedTrades.push({
+                sid: savedTrade.sid || tradeSid,
+                symbol: planSymbol,
+                execution_status: skipDirective.cancelled ? "CANCELLED" : "PENDING",
+              });
+            }
+            if (!savedTrades.length) {
+              return {
+                enabled: true,
+                mode,
+                saved: false,
+                error: "No valid trade plan for trades",
+              };
+            }
+            return {
+              enabled: true,
+              mode,
+              saved: true,
+              created: savedTrades.length,
+              created_ids: savedTrades.map((trade) => trade.sid).filter(Boolean),
+              trade_sid: savedTrades[0]?.sid || "",
+              trades: savedTrades,
+            };
+          }
           await mt5UpsertSourceV2({
             source_id: sourceId,
             name: source,
@@ -33114,7 +35174,7 @@ const appHandler = async (req, res) => {
         await mt5Backend()
       ).log(sessionId, "ai", analyzeReqSummary, userId);
       // Determine AI provider from request (default to claude for backward compat)
-      const aiProviderRaw = String(body.ai_provider || "")
+      aiProviderRaw = String(body.ai_provider || "")
         .replace(/^ai_/i, "")
         .trim()
         .toLowerCase();
@@ -33382,6 +35442,12 @@ const appHandler = async (req, res) => {
           extracted.parsed && typeof extracted.parsed === "object"
             ? extracted.parsed
             : {};
+        assertAiJsonPayloadComplete({
+          provider: "Claude",
+          rawText: rawResponse,
+          parsed: parsedJson,
+          stopReason: aiJson?.stop_reason,
+        });
         // AI returns [{trade_plan}]. Take first element as the plan.
         if (Array.isArray(parsedJson) && parsedJson.length > 0) {
           parsedJson = parsedJson[0];
@@ -33719,7 +35785,7 @@ const appHandler = async (req, res) => {
       );
       if (!files.length) {
         console.warn("[snapshot-analyze] No snapshots found for analysis.");
-        return json(res, 200, {
+        return json(res, 400, {
           ok: false,
           error: "No snapshots found for analysis.",
         });
@@ -33762,7 +35828,7 @@ const appHandler = async (req, res) => {
           "[snapshot-analyze] No valid snapshot images available. Input files:",
           files,
         );
-        return json(res, 200, {
+        return json(res, 400, {
           ok: false,
           error: "No valid snapshot images available.",
         });
@@ -33803,7 +35869,7 @@ const appHandler = async (req, res) => {
       })}`;
 
       // For text-only models (DeepSeek), inject bar data as text since they can't see images
-      const requestModel =
+      requestModel =
         String(
           body.model ||
             (aiProviderRaw === "codex" ? "codex-42trade" : "claude-sonnet-4-0"),
@@ -34167,6 +36233,14 @@ const appHandler = async (req, res) => {
         extracted.parsed && typeof extracted.parsed === "object"
           ? extracted.parsed
           : {};
+      if ((aiResult.provider || "").toLowerCase() === "claude") {
+        assertAiJsonPayloadComplete({
+          provider: "Claude",
+          rawText: rawResponse,
+          parsed: parsedJson,
+          stopReason: aiResult.stopReason,
+        });
+      }
       // AI returns [{trade_plan}]. Take first element as the plan.
       if (Array.isArray(parsedJson) && parsedJson.length > 0) {
         parsedJson = parsedJson[0];
@@ -34367,6 +36441,18 @@ const appHandler = async (req, res) => {
           ok: false,
           error:
             "Local Ollama runner crashed during analysis. The backend already retried with fewer images and a lighter local prompt, but the local model still stopped.",
+        });
+      }
+      if (
+        resolveAiProvider(aiProviderRaw, requestModel) === "codex" &&
+        /spawn .*ENOENT|not found|command not found/i.test(
+          String(error?.message || ""),
+        )
+      ) {
+        return json(res, 503, {
+          ok: false,
+          error:
+            "Codex local runner is not available on this machine. Verify the Codex CLI is installed and reachable from the API process.",
         });
       }
       if (
@@ -35120,7 +37206,7 @@ const appHandler = async (req, res) => {
       const items = readNotificationsFromFile(limit);
       return json(res, 200, { ok: true, items, total: items.length });
     } catch (e) {
-      return json(res, 400, { ok: false, error: e.message });
+      return json(res, 200, { ok: true, items: [], total: 0, degraded: true });
     }
   }
 
@@ -35157,7 +37243,7 @@ const appHandler = async (req, res) => {
         ),
       });
     } catch (error) {
-      return json(res, 500, { ok: false, error: error.message });
+      return json(res, 200, { ok: true, events: [], degraded: true });
     }
   }
 
@@ -35388,12 +37474,12 @@ const appHandler = async (req, res) => {
     }
   }
 
-  // GET /v2/trades/:sid/response — load saved AI analysis response
+  // GET /api/trades0/:sid/response — load saved AI analysis response
   if (
     req.method === "GET" &&
-    url.pathname.match(/^\/v2\/trades\/([^/]+)\/response$/)
+    url.pathname.match(/^\/api\/trades0\/([^/]+)\/response$/)
   ) {
-    const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/response$/);
+    const m = url.pathname.match(/^\/api\/trades0\/([^/]+)\/response$/);
     const respRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
     try {
       // Resolve symbol from DB to prevent bare {sid} folder
@@ -35526,8 +37612,8 @@ const appHandler = async (req, res) => {
     }
   }
 
-  // GET /v2/trades/temp — list unsaved trade_draft folders (order by time DESC)
-  if (req.method === "GET" && url.pathname === "/v2/trades/temp") {
+  // GET /api/trades0/temp — list unsaved trade_draft folders (order by time DESC)
+  if (req.method === "GET" && url.pathname === "/api/trades0/temp") {
     try {
       const entries = [];
       if (fs.existsSync(TRADE_DRAFT_DIR)) {
@@ -35948,6 +38034,70 @@ const appHandler = async (req, res) => {
 
   if (
     req.method === "POST" &&
+    (url.pathname === "/v2/backtests/run-batch" ||
+      url.pathname === "/api/backtests/run-batch")
+  ) {
+    const sess = getUiSessionFromReq(req);
+    if (!sess.ok) return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const body = await readJson(req);
+      const userId = uiEffectiveUserId(req, url, body) || CFG.mt5DefaultUserId;
+      const requestedSymbols = Array.isArray(body?.symbols)
+        ? body.symbols
+        : Array.isArray(body?.effective_symbols)
+          ? body.effective_symbols
+          : [];
+      const resolvedSymbols = requestedSymbols.length
+        ? requestedSymbols
+        : await getUserWatchlistSymbols(userId).catch(() => []);
+      const result = await backtestService.runBacktestBatch(userId, {
+        ...(body || {}),
+        symbols: resolvedSymbols,
+        timeframes:
+          Array.isArray(body?.timeframes) && body.timeframes.length
+            ? body.timeframes
+            : ["1440", "240", "15", "5"],
+      });
+      notifyMutationResult({
+        eventType: "BACKTEST_RUN",
+        subType: "batch",
+        ok: Boolean(result?.ok !== false),
+        message: result?.ok === false ? "Batch backtest failed" : "Batch backtest completed",
+        sourceType: "backtest",
+        sourceId: "batch",
+        userId,
+        payload: {
+          action: "batch",
+          page: "/backtests",
+          notification: true,
+        },
+        data: result,
+      });
+      return json(res, 200, result);
+    } catch (error) {
+      notifyMutationResult({
+        eventType: "BACKTEST_RUN",
+        subType: "batch",
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+        sourceType: "backtest",
+        sourceId: "batch",
+        userId: sess.user_id || CFG.mt5DefaultUserId,
+        payload: {
+          action: "batch",
+          page: "/backtests",
+          notification: true,
+        },
+      });
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
     (url.pathname === "/v2/backtests/save" ||
       url.pathname === "/api/backtests/save")
   ) {
@@ -36037,7 +38187,7 @@ const appHandler = async (req, res) => {
 
   if (
     req.method === "GET" &&
-    /^\/v2\/trades\/[^/]+\/snapshots$/.test(url.pathname)
+    /^\/(?:api\/trades|v2\/trades)\/[^/]+\/snapshots$/.test(url.pathname)
   ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
@@ -36048,7 +38198,7 @@ const appHandler = async (req, res) => {
     if (!sess.ok && !isAdmin)
       return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
     try {
-      const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/snapshots$/);
+      const m = url.pathname.match(/^\/(?:api\/trades|v2\/trades)\/([^/]+)\/snapshots$/);
       const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
       if (!tradeRef)
         return json(res, 400, { ok: false, error: "trade sid is required" });
@@ -36059,7 +38209,16 @@ const appHandler = async (req, res) => {
       const symbolHint = String(resolvedTrade?.symbol || "").trim();
       migrateLegacyTradeSnapshots(sid, symbolHint);
       const ensuredAnalyze = copyAnalyzeSnapshotToTradeSession(sid, symbolHint);
-      const dir = tradeSnapshotDir(sid, symbolHint);
+      const dir = resolveTradeSnapshotDirSafe(sid, symbolHint);
+      if (!dir) {
+        return json(res, 200, {
+          ok: true,
+          trade_sid: sid,
+          ensured_analyze_snapshot: ensuredAnalyze || null,
+          items: [],
+          files: [],
+        });
+      }
       const files = fs
         .readdirSync(dir)
         .map((entry) => {
@@ -36104,7 +38263,7 @@ const appHandler = async (req, res) => {
 
   if (
     req.method === "GET" &&
-    /^\/v2\/trades\/[^/]+\/snapshots\/.+\/content$/.test(url.pathname)
+    /^\/(?:api\/trades|v2\/trades)\/[^/]+\/snapshots\/.+\/content$/.test(url.pathname)
   ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
@@ -36116,7 +38275,7 @@ const appHandler = async (req, res) => {
       return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
     try {
       const m = url.pathname.match(
-        /^\/v2\/trades\/([^/]+)\/snapshots\/(.+)\/content$/,
+        /^\/(?:api\/trades|v2\/trades)\/([^/]+)\/snapshots\/(.+)\/content$/,
       );
       const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
       const fileName = String(m?.[2] ? decodeURIComponent(m[2]) : "").trim();
@@ -36136,10 +38295,13 @@ const appHandler = async (req, res) => {
         sid,
         String(resolvedTrade?.symbol || "").trim(),
       );
-      const abs = path.join(
-        tradeSnapshotDir(sid, String(resolvedTrade?.symbol || "").trim()),
-        safeName,
+      const snapshotDir = resolveTradeSnapshotDirSafe(
+        sid,
+        String(resolvedTrade?.symbol || "").trim(),
       );
+      if (!snapshotDir)
+        return json(res, 404, { ok: false, error: "file not found" });
+      const abs = path.join(snapshotDir, safeName);
       if (!fs.existsSync(abs) || !fs.statSync(abs).isFile())
         return json(res, 404, { ok: false, error: "file not found" });
       const absPath = abs;
@@ -36170,13 +38332,13 @@ const appHandler = async (req, res) => {
 
   if (
     req.method === "GET" &&
-    /^\/v2\/trades\/[^/]+\/logs$/.test(url.pathname)
+    /^\/(?:api\/trades|v2\/trades)\/[^/]+\/logs$/.test(url.pathname)
   ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!requireAdminKey(req, res, url, null)) return;
     try {
-      const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/logs$/);
+      const m = url.pathname.match(/^\/(?:api\/trades|v2\/trades)\/([^/]+)\/logs$/);
       const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
       if (!tradeRef)
         return json(res, 400, { ok: false, error: "trade sid is required" });
@@ -36222,14 +38384,14 @@ const appHandler = async (req, res) => {
 
   if (
     req.method === "GET" &&
-    /^\/v2\/trades\/[^/]+\/logs\/.+\/content$/.test(url.pathname)
+    /^\/(?:api\/trades|v2\/trades)\/[^/]+\/logs\/.+\/content$/.test(url.pathname)
   ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!requireAdminKey(req, res, url, null)) return;
     try {
       const m = url.pathname.match(
-        /^\/v2\/trades\/([^/]+)\/logs\/(.+)\/content$/,
+        /^\/(?:api\/trades|v2\/trades)\/([^/]+)\/logs\/(.+)\/content$/,
       );
       const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
       const fileName = String(m?.[2] ? decodeURIComponent(m[2]) : "").trim();
@@ -36323,10 +38485,10 @@ const appHandler = async (req, res) => {
       const route = String(payload?.route || "")
         .trim()
         .toLowerCase();
-      if (!["ea", "v2026.05.09 19:31 - 728f356", "ctrader"].includes(route)) {
+      if (!["ea", "v2026.05.09 19:31 - 728f356", "ctrader", "ctrader2"].includes(route)) {
         return json(res, 400, {
           ok: false,
-          error: "route must be one of: ea, v2, ctrader",
+          error: "route must be one of: ea, v2, ctrader, ctrader2",
         });
       }
       const accountId = String(payload?.account_id || "").trim();
@@ -36389,10 +38551,10 @@ const appHandler = async (req, res) => {
       const route = String(payload?.route || "")
         .trim()
         .toLowerCase();
-      if (!["ea", "v2026.05.09 19:31 - 728f356", "ctrader"].includes(route)) {
+      if (!["ea", "v2026.05.09 19:31 - 728f356", "ctrader", "ctrader2"].includes(route)) {
         return json(res, 400, {
           ok: false,
-          error: "route must be one of: ea, v2, ctrader",
+          error: "route must be one of: ea, v2, ctrader, ctrader2",
         });
       }
       const accountId = String(payload?.account_id || "").trim();
@@ -36485,20 +38647,46 @@ const appHandler = async (req, res) => {
 
   if (
     req.method === "GET" &&
-    (url.pathname === "/v2/trades/counts" ||
-      url.pathname === "/api/trades/counts")
+    (url.pathname === "/api/trades/dashboard" ||
+      url.pathname === "/v2/trades/dashboard" ||
+      url.pathname === "/api/v2/trades2/dashboard" ||
+      url.pathname === "/v2/trades2/dashboard")
   ) {
-    if (!CFG.mt5Enabled)
-      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!requireAdminKey(req, res, url)) return;
     try {
-      const userId = uiEffectiveUserId(req, url);
-      const repo = await mt5TradeRepo(userId || null);
-      const counts = await repo.countTradesByExecutionStatus(
-        userId || CFG.mt5DefaultUserId,
-        { user_id: userId || CFG.mt5DefaultUserId },
+      const userId = uiEffectiveUserId(req, url) || CFG.mt5DefaultUserId;
+      const result = await handleTradesDashboard({
+        url,
+        service: tradesService(),
+        defaults: { user_id: userId },
+      });
+      return json(res, 200, result);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    (url.pathname === "/api/trades/counts" ||
+      url.pathname === "/v2/trades/counts" ||
+      url.pathname === "/api/v2/trades2/counts" ||
+      url.pathname === "/v2/trades2/counts")
+  ) {
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const userId = uiEffectiveUserId(req, url) || CFG.mt5DefaultUserId;
+      return json(
+        res,
+        200,
+        await handleTradesCounts({
+          url,
+          service: tradesService(),
+          defaults: { user_id: userId },
+        }),
       );
-      return json(res, 200, { ok: true, counts });
     } catch (error) {
       return json(res, 400, {
         ok: false,
@@ -36509,232 +38697,23 @@ const appHandler = async (req, res) => {
 
   if (
     req.method === "GET" &&
-    (url.pathname === "/v2/trades" || url.pathname === "/api/trades")
+    (url.pathname === "/api/trades" ||
+      url.pathname === "/v2/trades" ||
+      url.pathname === "/api/v2/trades2" ||
+      url.pathname === "/v2/trades2")
   ) {
-    if (!CFG.mt5Enabled)
-      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!requireAdminKey(req, res, url)) return;
     try {
-      const pageRaw = Number(url.searchParams.get("page") || 1);
-      const pageSizeRaw = Number(
-        url.searchParams.get("pageSize") || url.searchParams.get("limit") || 50,
+      const userId = uiEffectiveUserId(req, url) || CFG.mt5DefaultUserId;
+      return json(
+        res,
+        200,
+        await handleTradesList({
+          url,
+          service: tradesService(),
+          defaults: { user_id: userId },
+        }),
       );
-      const page = Math.max(1, Number.isFinite(pageRaw) ? pageRaw : 1);
-      const pageSize = Math.max(
-        1,
-        Math.min(200, Number.isFinite(pageSizeRaw) ? pageSizeRaw : 50),
-      );
-      const userId = uiEffectiveUserId(req, url);
-      const filters = {
-        user_id: userId,
-        account_id: url.searchParams.get("account_id") || "",
-        source_id: url.searchParams.get("source_id") || "",
-        dispatch_status: url.searchParams.get("dispatch_status") || "",
-        execution_status: url.searchParams.get("execution_status") || "",
-        pnl_state:
-          url.searchParams.get("pnl_state") ||
-          url.searchParams.get("profit_state") ||
-          url.searchParams.get("win_lose") ||
-          "",
-        created_from: url.searchParams.get("created_from") || "",
-        created_to: url.searchParams.get("created_to") || "",
-        symbol: url.searchParams.get("symbol") || "",
-        action:
-          url.searchParams.get("action") || url.searchParams.get("side") || "",
-        entry_model: url.searchParams.get("entry_model") || "",
-        chart_tf: url.searchParams.get("chart_tf") || "",
-        q: url.searchParams.get("q") || "",
-      };
-
-      // Only cache when there are no meaningful filters (just user_id + page/pageSize).
-      // Filters beyond user_id would poison the cache with stale scoped results.
-      const filterKeys = [
-        "account_id",
-        "source_id",
-        "dispatch_status",
-        "execution_status",
-        "pnl_state",
-        "created_from",
-        "created_to",
-        "symbol",
-        "action",
-        "entry_model",
-        "chart_tf",
-        "q",
-      ];
-      const hasFilters = filterKeys.some((k) => filters[k]);
-
-      const cacheKey = hasFilters
-        ? null
-        : JSON.stringify({
-            src: currentMt5DbSourceId(),
-            userId,
-            filters,
-            page,
-            pageSize,
-          });
-
-      const buildResponse = async () => {
-        const out = await withRequestDbTiming(req, "list_trades", () =>
-          mt5ListTradesV2(filters, page, pageSize),
-        );
-        const total = Number(out?.total || 0);
-        // Enrich trades with account broker_name (one batch query, not per-trade)
-        const rawItems = Array.isArray(out?.items) ? out.items : [];
-        const accountIds = [
-          ...new Set(
-            rawItems
-              .map((t) => String(t.account_id || "").trim())
-              .filter(Boolean),
-          ),
-        ];
-        const accountMap = new Map(); // account_id -> { broker_name, provider_code, metadata }
-        if (accountIds.length) {
-          try {
-            const accounts = await withRequestDbTiming(
-              req,
-              "load_trade_accounts",
-              () =>
-                Promise.all(
-                  accountIds.map((accountId) =>
-                    findUnifiedUserAccountById(accountId),
-                  ),
-                ),
-            );
-            for (const account of accounts.filter(Boolean)) {
-              const meta =
-                account?.metadata && typeof account.metadata === "object"
-                  ? account.metadata
-                  : {};
-              const accountId = String(
-                account.account_id || account.object_id || "",
-              ).trim();
-              if (!accountId) continue;
-              accountMap.set(accountId, {
-                broker_name:
-                  account.broker_name ||
-                  meta.broker_name ||
-                  account.name ||
-                  accountId ||
-                  null,
-                provider_code:
-                  String(
-                    account.provider_code ||
-                      meta.provider_code ||
-                      resolveProviderCode(
-                        account.broker_name ||
-                          meta.broker_name ||
-                          account.name ||
-                          "",
-                      ) ||
-                      "",
-                  ).trim() || null,
-                metadata: meta,
-              });
-            }
-          } catch (_) {}
-        }
-        const items = rawItems.map((item) => {
-          const acc = accountMap.get(String(item.account_id || "").trim());
-          const metadata =
-            item?.metadata && typeof item.metadata === "object"
-              ? item.metadata
-              : {};
-          const rawEntryModel =
-            item?.entry_model ||
-            metadata?.entry_model ||
-            metadata?.entry_model_raw ||
-            "";
-          const symbolMetric = mt5FindSymbolMetric(
-            acc?.metadata || {},
-            item?.symbol,
-          );
-          const plannedPnlFallback = mt5ComputePlannedPnlFromMetrics(
-            item,
-            symbolMetric,
-          );
-          const plannedTpPnl = mt5ResolveStoredPlannedPnlValue(
-            item?.planned_tp_pnl,
-            plannedPnlFallback.tpPnl,
-          );
-          const plannedSlPnl = mt5ResolveStoredPlannedPnlValue(
-            item?.planned_sl_pnl,
-            plannedPnlFallback.slPnl,
-          );
-          return {
-            ...item,
-            account_broker_name: acc?.broker_name || null,
-            account_provider_code: acc?.provider_code || null,
-            account_metadata: acc?.metadata || {},
-            planned_tp_pnl: Number.isFinite(plannedTpPnl) ? plannedTpPnl : 0,
-            planned_sl_pnl: Number.isFinite(plannedSlPnl) ? plannedSlPnl : 0,
-            metadata: {
-              ...metadata,
-              provider_code:
-                acc?.provider_code || metadata?.provider_code || null,
-              broker_name: acc?.broker_name || metadata?.broker_name || null,
-              order_type: mt5NormalizeOrderTypeValue(
-                item?.order_type || metadata?.order_type,
-                "limit",
-              ),
-            },
-            entry_model: mt5NormalizeEntryModel(rawEntryModel, {
-              fallback: item?.source_id || "manual",
-            }),
-          };
-        });
-        const result = {
-          ok: true,
-          items,
-          page: Number(out?.page || page),
-          pageSize: Number(out?.page_size || pageSize),
-          total,
-          pages: Math.max(
-            1,
-            Math.ceil(total / Math.max(1, Number(out?.page_size || pageSize))),
-          ),
-        };
-        // Populate Redis cache for PENDING/OPEN lists
-        const execStatus = String(filters.execution_status || "").toUpperCase();
-        if (
-          (execStatus === "PENDING" || execStatus === "FILLED") &&
-          !hasFilters
-        ) {
-          setTradeListCache(
-            execStatus === "PENDING" ? "PENDING" : "FILLED",
-            items,
-          ).catch(() => {});
-        }
-        return result;
-      };
-
-      // Fast path: try Redis cache first for unfiltered PENDING/OPEN lists
-      const execStatus = String(filters.execution_status || "").toUpperCase();
-      if (
-        (execStatus === "PENDING" || execStatus === "FILLED") &&
-        !hasFilters &&
-        page === 1
-      ) {
-        const cached = await getTradeListFromCache(
-          execStatus === "PENDING" ? "PENDING" : "FILLED",
-        );
-        if (cached && Array.isArray(cached)) {
-          return json(res, 200, {
-            ok: true,
-            items: cached,
-            page: 1,
-            pageSize: cached.length,
-            total: cached.length,
-            pages: 1,
-          });
-        }
-      }
-
-      const result = cacheKey
-        ? await StateRepo.get("TRADE_LIST", cacheKey, buildResponse)
-        : await buildResponse();
-
-      return json(res, 200, result);
     } catch (error) {
       return json(res, 400, {
         ok: false,
@@ -36745,8 +38724,398 @@ const appHandler = async (req, res) => {
 
   if (
     req.method === "POST" &&
-    (url.pathname === "/v2/trades/bulk-action" ||
-      url.pathname === "/api/trades/bulk-action")
+    (url.pathname === "/api/trades" ||
+      url.pathname === "/v2/trades" ||
+      url.pathname === "/api/v2/trades2" ||
+      url.pathname === "/v2/trades2")
+  ) {
+    let payload = {};
+    try {
+      payload = await readJson(req);
+    } catch {}
+    if (!requireAdminKey(req, res, url, payload)) return;
+    try {
+      const userId = uiEffectiveUserId(req, url, payload) || CFG.mt5DefaultUserId;
+      return json(
+        res,
+        200,
+        await handleTradesUpsert({
+          payload,
+          service: tradesService(),
+          defaults: { user_id: userId },
+        }),
+      );
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    (url.pathname === "/api/trades/clone" ||
+      url.pathname === "/v2/trades/clone" ||
+      url.pathname === "/api/v2/trades2/clone" ||
+      url.pathname === "/v2/trades2/clone")
+  ) {
+    let payload = {};
+    try {
+      payload = await readJson(req);
+    } catch {}
+    if (!requireAdminKey(req, res, url, payload)) return;
+    try {
+      const b = await backend();
+      const service = createTradesService({
+        projectRoot: PROJECT_ROOT,
+        sourceStorageBackend: String(CFG.mt5StorageBackend || "sqlite")
+          .trim()
+          .toLowerCase() || "sqlite",
+        sourcePostgresPool: b?.pool || null,
+        objectStore: {
+          provider: String(CFG.mt5StorageBackend || "postgres")
+            .trim()
+            .toLowerCase() || "postgres",
+          sqlitePath: resolveConfiguredSqlitePath(),
+          postgresUrl: CFG.mt5PostgresUrl,
+        },
+        sqlitePath: resolveConfiguredSqlitePath(),
+        postgresUrl: CFG.mt5PostgresUrl,
+        defaultUserId: CFG.mt5DefaultUserId,
+      });
+      return json(
+        res,
+        200,
+        await handleTradesClone({
+          payload,
+          url,
+          service,
+        }),
+      );
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    (req.method === "POST" || req.method === "GET") &&
+    /^\/api\/trades\/(broker\/pull|ea\/pull)$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!CFG.mt5V2BrokerApiEnabled)
+      return json(res, 404, {
+        ok: false,
+        error: "v2026.05.09 19:31 - 728f356",
+      });
+    try {
+      const payload = req.method === "POST" ? await readJson(req) : null;
+      const account = await requireV2BrokerAccount(req, res, url, payload);
+      if (!account) return;
+      const maxItemsRaw = Number(
+        payload?.max_items ??
+          payload?.maxItems ??
+          url.searchParams.get("max_items") ??
+          url.searchParams.get("maxItems") ??
+          1,
+      );
+      const maxItems = Math.max(
+        1,
+        Math.min(100, Number.isFinite(maxItemsRaw) ? maxItemsRaw : 1),
+      );
+      const leaseSeconds = Math.max(
+        5,
+        Math.min(
+          300,
+          Number.isFinite(CFG.mt5V2LeaseSeconds) ? CFG.mt5V2LeaseSeconds : 30,
+        ),
+      );
+      const taskTypeFilter =
+        payload?.task_type || url.searchParams.get("task_type") || "";
+      let sourceId = null;
+      try {
+        const cache = account.source_ids_cache || account.metadata;
+        if (cache) {
+          const parsed = typeof cache === "string" ? JSON.parse(cache) : cache;
+          sourceId = Array.isArray(parsed)
+            ? parsed[0]
+            : parsed?.source_id || null;
+        }
+      } catch {}
+      const items = await mt5TradesPullLeasedTrades(
+        account.account_id,
+        maxItems,
+        leaseSeconds,
+        String(taskTypeFilter).trim() || null,
+        sourceId,
+        account.user_id || account.userId || null,
+      );
+      return json(res, 200, {
+        ok: true,
+        items: (items || []).map((t) => ({
+          sid: t.sid,
+          type: syncGuards.brokerTaskTypeForTrade(t),
+          ticket: t.broker_trade_id ?? null,
+          lease_token: t.lease_token,
+          lease_expires_at: t.lease_expires_at,
+          account_id: t.account_id,
+          trade_id: t.trade_id ?? t.sid ?? null,
+          signal_id: t.signal_id ?? t.sid ?? null,
+          source_id: t.source_id ?? null,
+          symbol: t.symbol,
+          action: t.action ?? null,
+          entry: t.entry ?? null,
+          order_type: mt5NormalizeOrderTypeValue(t.order_type, "limit"),
+          sl: t.sl ?? null,
+          tp: t.tp ?? null,
+          tp1: t.tp1 ?? null,
+          tp2: t.tp2 ?? null,
+          tp3: t.tp3 ?? null,
+          tp_targets: [t.tp1, t.tp2, t.tp3]
+            .map((x) => mt5ParsePriceOrNull(x))
+            .filter((x) => x != null),
+          volume: t.volume ?? null,
+          lots: t.volume ?? null,
+          risk_money: t.risk_money_planned ?? null,
+          risk_pct: t.risk_pct_planned ?? null,
+          note: t.note ?? null,
+          metadata: syncGuards.normalizeTradeMetadata(t.metadata),
+        })),
+      });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    /^\/api\/trades\/(broker\/ack|ea\/ack)$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!CFG.mt5V2BrokerApiEnabled)
+      return json(res, 404, {
+        ok: false,
+        error: "v2026.05.09 19:31 - 728f356",
+      });
+    try {
+      const payload = await readJson(req);
+      const account = await requireV2BrokerAccount(req, res, url, payload);
+      if (!account) return;
+      const tradeId = String(payload.trade_id || payload.sid || "").trim();
+      const leaseToken = String(payload.lease_token || "").trim();
+      if (!tradeId || !leaseToken) {
+        return json(res, 400, {
+          ok: false,
+          error: "trade_id and lease_token are required",
+        });
+      }
+      const result = await mt5TradesAckTrade(
+        account.account_id,
+        payload,
+        account.user_id || account.userId || null,
+      );
+      if (!result?.ok) {
+        return json(res, 409, {
+          ok: false,
+          error: result?.error || "ack failed",
+        });
+      }
+      return json(res, 200, {
+        ok: true,
+        duplicate: Boolean(result.duplicate),
+        dispatch_status: result.dispatch_status,
+        execution_status: result.execution_status,
+      });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    /^\/api\/trades\/(broker\/sync|ea\/trades\/sync-bulk)$/.test(
+      url.pathname,
+    )
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!CFG.mt5V2BrokerApiEnabled)
+      return json(res, 404, {
+        ok: false,
+        error: "v2026.05.09 19:31 - 728f356",
+      });
+    try {
+      const payload = await readJson(req);
+      const account = await requireV2BrokerAccount(req, res, url, payload);
+      if (!account) return;
+      const result = await mt5TradesBrokerSync(
+        account.account_id,
+        payload || {},
+        account.user_id || account.userId || null,
+      );
+      return json(res, result?.ok ? 200 : 400, result);
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: formatBrokerSyncError(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    /^\/(?:api\/trades|v2\/trades|api\/v2\/trades2|v2\/trades2)\/[^/]+\/events$/.test(url.pathname)
+  ) {
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const routePath = url.pathname.replace(/^\/api/, "");
+      const sid = decodeURIComponent(routePath.split("/")[3] || "");
+      const limitRaw = Number(url.searchParams.get("limit") || 200);
+      const limit = Math.max(
+        1,
+        Math.min(1000, Number.isFinite(limitRaw) ? limitRaw : 200),
+      );
+      return json(
+        res,
+        200,
+        await tradesService().listTradeEvents({ sid, limit }),
+      );
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    /^\/(?:api\/trades|v2\/trades|api\/v2\/trades2|v2\/trades2)\/[^/]+\/(?:files|chart-objects|chart-artifacts|bars|snapshots|logs)(?:\/|$)/.test(
+      url.pathname,
+    )
+  ) {
+    url.pathname = url.pathname
+      .replace(/^\/api\/v2\/trades2\//, "/api/trades/")
+      .replace(/^\/v2\/trades2\//, "/api/trades/")
+      .replace(/^\/v2\/trades\//, "/api/trades/");
+  }
+
+  if (
+    /^\/(?:api\/trades|v2\/trades|api\/v2\/trades2|v2\/trades2)\/[^/]+$/.test(url.pathname)
+  ) {
+    const routePath = url.pathname.replace(/^\/api/, "");
+    const sid = decodeURIComponent(routePath.split("/")[3] || "");
+
+    if (req.method === "GET") {
+      if (!requireAdminKey(req, res, url)) return;
+      try {
+        const userId = uiEffectiveUserId(req, url) || CFG.mt5DefaultUserId;
+        return json(
+          res,
+          200,
+          await handleTradesGet({
+            url,
+            service: tradesService(),
+            route: { sid },
+            defaults: { user_id: userId },
+          }),
+        );
+      } catch (error) {
+        return json(res, 400, {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    if (req.method === "PUT") {
+      let payload = {};
+      try {
+        payload = await readJson(req);
+      } catch {}
+      if (!requireAdminKey(req, res, url, payload)) return;
+      try {
+        const userId = uiEffectiveUserId(req, url, payload) || CFG.mt5DefaultUserId;
+        return json(
+          res,
+          200,
+          await handleTradesUpsert({
+            payload,
+            service: tradesService(),
+            route: { sid },
+            defaults: { user_id: userId },
+          }),
+        );
+      } catch (error) {
+        return json(res, 400, {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    url.pathname === "/api/trades/counts"
+  ) {
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const userId = uiEffectiveUserId(req, url) || CFG.mt5DefaultUserId;
+      return json(
+        res,
+        200,
+        await handleTradesCounts({
+          url,
+          service: tradesService(),
+          defaults: { user_id: userId },
+        }),
+      );
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    url.pathname === "/api/trades"
+  ) {
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const userId = uiEffectiveUserId(req, url) || CFG.mt5DefaultUserId;
+      return json(
+        res,
+        200,
+        await handleTradesList({
+          url,
+          service: tradesService(),
+          defaults: { user_id: userId },
+        }),
+      );
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    url.pathname === "/api/trades/bulk-action"
   ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
@@ -36781,7 +39150,7 @@ const appHandler = async (req, res) => {
 
   if (
     req.method === "GET" &&
-    /^\/v2\/trades\/[^/]+\/events$/.test(url.pathname)
+    /^\/api\/trades\/[^/]+\/events$/.test(url.pathname)
   ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
@@ -36827,7 +39196,7 @@ const appHandler = async (req, res) => {
 
   if (
     req.method === "POST" &&
-    /^\/v2\/trades\/[^/]+\/update$/.test(url.pathname)
+    /^\/api\/trades\/[^/]+\/update$/.test(url.pathname)
   ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
@@ -37230,7 +39599,7 @@ const appHandler = async (req, res) => {
 
   if (
     req.method === "POST" &&
-    /^\/v2\/trades\/[^/]+\/trade-plan\/save$/.test(url.pathname)
+    /^\/api\/trades0\/[^/]+\/trade-plan\/save$/.test(url.pathname)
   ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
@@ -37305,6 +39674,14 @@ const appHandler = async (req, res) => {
       const editableRr = lockAll ? NaN : rr;
       const editableRiskMoneyPlanned = lockAll ? NaN : riskMoneyPlanned;
       const editableVolume = lockAll ? NaN : volume;
+      const hasExplicitTpPayload = [
+        "tp",
+        "tp1",
+        "tp2",
+        "tp3",
+        "take_profit",
+        "tp_targets",
+      ].some((key) => Object.prototype.hasOwnProperty.call(payload, key));
       const effectiveLevelSide =
         editableSide ||
         String(resolvedTrade.action || resolvedTrade.side || "")
@@ -37320,13 +39697,19 @@ const appHandler = async (req, res) => {
         ? editableTp1
         : Number.isFinite(editableTp)
           ? editableTp
-          : asNum(resolvedTrade.tp1 ?? resolvedTrade.tp, NaN);
+          : hasExplicitTpPayload
+            ? NaN
+            : asNum(resolvedTrade.tp1 ?? resolvedTrade.tp, NaN);
       const effectiveLevelTp2 = Number.isFinite(editableTp2)
         ? editableTp2
-        : asNum(resolvedTrade.tp2, NaN);
+        : hasExplicitTpPayload
+          ? NaN
+          : asNum(resolvedTrade.tp2, NaN);
       const effectiveLevelTp3 = Number.isFinite(editableTp3)
         ? editableTp3
-        : asNum(resolvedTrade.tp3, NaN);
+        : hasExplicitTpPayload
+          ? NaN
+          : asNum(resolvedTrade.tp3, NaN);
       const levelValidationError = mt5ValidateTradeLevels({
         side: effectiveLevelSide,
         entry: effectiveLevelEntry,
@@ -37565,7 +39948,7 @@ const appHandler = async (req, res) => {
 
   if (
     req.method === "POST" &&
-    /^\/v2\/trades\/[^/]+\/promote$/.test(url.pathname)
+    /^\/api\/trades0\/[^/]+\/promote$/.test(url.pathname)
   ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
@@ -37651,13 +40034,13 @@ const appHandler = async (req, res) => {
 
   if (
     req.method === "POST" &&
-    /^\/v2\/trades\/[^/]+\/files\/upload$/.test(url.pathname)
+    /^\/api\/trades\/[^/]+\/files\/upload$/.test(url.pathname)
   ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!requireAdminKey(req, res, url, null)) return;
     try {
-      const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/files\/upload$/);
+      const m = url.pathname.match(/^\/(?:api\/trades|v2\/trades)\/([^/]+)\/files\/upload$/);
       const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
       if (!tradeRef)
         return json(res, 400, { ok: false, error: "trade sid is required" });
@@ -37696,13 +40079,13 @@ const appHandler = async (req, res) => {
 
   if (
     req.method === "GET" &&
-    /^\/v2\/trades\/[^/]+\/files$/.test(url.pathname)
+    /^\/api\/trades\/[^/]+\/files$/.test(url.pathname)
   ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!requireAdminKey(req, res, url, null)) return;
     try {
-      const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/files$/);
+      const m = url.pathname.match(/^\/(?:api\/trades|v2\/trades)\/([^/]+)\/files$/);
       const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
       if (!tradeRef)
         return json(res, 400, { ok: false, error: "trade sid is required" });
@@ -37736,13 +40119,13 @@ const appHandler = async (req, res) => {
 
   if (
     req.method === "DELETE" &&
-    /^\/v2\/trades\/[^/]+\/files\/.+$/.test(url.pathname)
+    /^\/api\/trades\/[^/]+\/files\/.+$/.test(url.pathname)
   ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!requireAdminKey(req, res, url, null)) return;
     try {
-      const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/files\/(.+)$/);
+      const m = url.pathname.match(/^\/(?:api\/trades|v2\/trades)\/([^/]+)\/files\/(.+)$/);
       const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
       const fileName = String(m?.[2] ? decodeURIComponent(m[2]) : "").trim();
       if (!tradeRef || !fileName)
@@ -37776,13 +40159,13 @@ const appHandler = async (req, res) => {
   // Serve file content for preview/download
   if (
     req.method === "GET" &&
-    /^\/v2\/trades\/[^/]+\/files\/.+\/content$/.test(url.pathname)
+    /^\/(?:api\/trades|v2\/trades)\/[^/]+\/files\/.+\/content$/.test(url.pathname)
   ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     try {
       const m = url.pathname.match(
-        /^\/v2\/trades\/([^/]+)\/files\/(.+)\/content$/,
+        /^\/(?:api\/trades|v2\/trades)\/([^/]+)\/files\/(.+)\/content$/,
       );
       const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
       const fileName = String(m?.[2] ? decodeURIComponent(m[2]) : "").trim();
@@ -37835,7 +40218,7 @@ const appHandler = async (req, res) => {
   // Chart-object persistence: save/load chart objects as JSON files in trade folder
   if (
     req.method === "POST" &&
-    /^\/v2\/trades\/[^/]+\/chart-objects$/.test(url.pathname)
+    /^\/api\/trades\/[^/]+\/chart-objects$/.test(url.pathname)
   ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
@@ -37845,7 +40228,7 @@ const appHandler = async (req, res) => {
     } catch {}
     if (!requireAdminKey(req, res, url, payload)) return;
     try {
-      const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/chart-objects$/);
+      const m = url.pathname.match(/^\/(?:api\/trades|v2\/trades)\/([^/]+)\/chart-objects$/);
       const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
       if (!tradeRef)
         return json(res, 400, {
@@ -37855,7 +40238,7 @@ const appHandler = async (req, res) => {
       const resolvedTrade = await mt5ResolveTradeRefV2(tradeRef, null).catch(
         () => null,
       );
-      if (!resolvedTrade?.sid && !/^[A-Za-z0-9]{9}$/.test(tradeRef)) {
+      if (!resolvedTrade?.sid && !/^[A-Za-z0-9_.-]+$/.test(tradeRef)) {
         return json(res, 404, { ok: false, error: "trade not found" });
       }
       const sid = String(resolvedTrade?.sid || tradeRef).trim();
@@ -37894,12 +40277,12 @@ const appHandler = async (req, res) => {
   // Trade bars — priority: closed > active > market_data
   if (
     req.method === "GET" &&
-    /^\/v2\/trades\/[^/]+\/bars$/.test(url.pathname)
+    /^\/api\/trades\/[^/]+\/bars$/.test(url.pathname)
   ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     try {
-      const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/bars$/);
+      const m = url.pathname.match(/^\/(?:api\/trades|v2\/trades)\/([^/]+)\/bars$/);
       const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
       const tf = String(url.searchParams.get("tf") || "15");
       if (!tradeRef)
@@ -37923,24 +40306,28 @@ const appHandler = async (req, res) => {
 
   if (
     req.method === "GET" &&
-    /^\/v2\/trades\/[^/]+\/chart-objects$/.test(url.pathname)
+    /^\/api\/trades\/[^/]+\/chart-objects$/.test(url.pathname)
   ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     try {
-      const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/chart-objects$/);
+      const m = url.pathname.match(/^\/(?:api\/trades|v2\/trades)\/([^/]+)\/chart-objects$/);
       const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
       if (!tradeRef)
         return json(res, 400, { ok: false, error: "sid is required" });
       const resolvedTrade = await mt5ResolveTradeRefV2(tradeRef, null).catch(
         () => null,
       );
-      if (!resolvedTrade?.sid && !/^[A-Za-z0-9]{9}$/.test(tradeRef)) {
+      if (!resolvedTrade?.sid && !/^[A-Za-z0-9_.-]+$/.test(tradeRef)) {
         return json(res, 200, { ok: true, sid: tradeRef, objects: [] });
       }
       const sid = String(resolvedTrade?.sid || tradeRef).trim();
       const sym = String(resolvedTrade?.symbol || "").trim();
-      const tradeDir = path.dirname(chartObjectsPath(sid, sym));
+      const existingTradeDir = findExistingTradeDir(safeTradeFolderSid(sid, sym));
+      if (!existingTradeDir && !sym) {
+        return json(res, 200, { ok: true, sid, chart_objects: [], objects: [], artifacts: null });
+      }
+      const tradeDir = existingTradeDir || path.dirname(chartObjectsPath(sid, sym));
       const artifacts = chartArtifactService.readTradeArtifacts({
         tradeDir,
         tradeSid: sid,
@@ -37967,24 +40354,28 @@ const appHandler = async (req, res) => {
 
   if (
     req.method === "GET" &&
-    /^\/v2\/trades\/[^/]+\/chart-artifacts$/.test(url.pathname)
+    /^\/api\/trades\/[^/]+\/chart-artifacts$/.test(url.pathname)
   ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     try {
-      const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/chart-artifacts$/);
+      const m = url.pathname.match(/^\/(?:api\/trades|v2\/trades)\/([^/]+)\/chart-artifacts$/);
       const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
       if (!tradeRef)
         return json(res, 400, { ok: false, error: "sid is required" });
       const resolvedTrade = await mt5ResolveTradeRefV2(tradeRef, null).catch(
         () => null,
       );
-      if (!resolvedTrade?.sid && !/^[A-Za-z0-9]{9}$/.test(tradeRef)) {
+      if (!resolvedTrade?.sid && !/^[A-Za-z0-9_.-]+$/.test(tradeRef)) {
         return json(res, 200, { ok: true, sid: tradeRef, artifacts: null });
       }
       const sid = String(resolvedTrade?.sid || tradeRef).trim();
       const sym = String(resolvedTrade?.symbol || "").trim();
-      const tradeDir = path.dirname(chartObjectsPath(sid, sym));
+      const existingTradeDir = findExistingTradeDir(safeTradeFolderSid(sid, sym));
+      if (!existingTradeDir && !sym) {
+        return json(res, 200, { ok: true, sid, artifacts: null });
+      }
+      const tradeDir = existingTradeDir || path.dirname(chartObjectsPath(sid, sym));
       const artifacts =
         chartArtifactService.readTradeArtifacts({
           tradeDir,
@@ -38003,7 +40394,7 @@ const appHandler = async (req, res) => {
 
   if (
     req.method === "POST" &&
-    /^\/v2\/trades\/[^/]+\/chart-artifacts$/.test(url.pathname)
+    /^\/api\/trades\/[^/]+\/chart-artifacts$/.test(url.pathname)
   ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
@@ -38013,7 +40404,7 @@ const appHandler = async (req, res) => {
     } catch {}
     if (!requireAdminKey(req, res, url, payload)) return;
     try {
-      const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/chart-artifacts$/);
+      const m = url.pathname.match(/^\/(?:api\/trades|v2\/trades)\/([^/]+)\/chart-artifacts$/);
       const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
       if (!tradeRef)
         return json(res, 400, {
@@ -38023,7 +40414,7 @@ const appHandler = async (req, res) => {
       const resolvedTrade = await mt5ResolveTradeRefV2(tradeRef, null).catch(
         () => null,
       );
-      if (!resolvedTrade?.sid && !/^[A-Za-z0-9]{9}$/.test(tradeRef)) {
+      if (!resolvedTrade?.sid && !/^[A-Za-z0-9_.-]+$/.test(tradeRef)) {
         return json(res, 404, { ok: false, error: "trade not found" });
       }
       const sid = String(resolvedTrade?.sid || tradeRef).trim();
@@ -38427,11 +40818,8 @@ const appHandler = async (req, res) => {
             t.metadata,
           );
           const type = syncGuards.brokerTaskTypeForTrade(t);
-          const plannedLots =
-            asNum(normalizedMetadata.volume_basis_lots) ??
-            asNum(normalizedMetadata.trade_plan?.lots) ??
-            asNum(normalizedMetadata.trade_plan?.volume) ??
-            null;
+          const plannedLots = plannedLotsFromTradeTask(t, normalizedMetadata);
+          const plannedVolume = plannedVolumeFromTradeTask(t, normalizedMetadata);
           const brokerLots =
             asNum(t.broker_lots) ??
             asNum(normalizedMetadata.broker_lots) ??
@@ -38439,8 +40827,8 @@ const appHandler = async (req, res) => {
             null;
           const taskLots =
             type === "MODIFY"
-              ? (plannedLots ?? asNum(t.volume) ?? brokerLots)
-              : (asNum(t.volume) ?? plannedLots ?? brokerLots);
+              ? (plannedLots ?? plannedVolume ?? brokerLots)
+              : (plannedVolume ?? plannedLots ?? brokerLots);
           return {
             sid: t.sid,
             type,
@@ -38466,10 +40854,16 @@ const appHandler = async (req, res) => {
             tp_targets: [t.tp1, t.tp2, t.tp3]
               .map((x) => mt5ParsePriceOrNull(x))
               .filter((x) => x != null),
-            volume: taskLots ?? t.intent_volume ?? null,
+            volume: taskLots ?? plannedVolume ?? t.intent_volume ?? null,
             lots: taskLots ?? null,
             risk_money: t.risk_money_planned ?? null,
             risk_pct: t.risk_pct_planned ?? null,
+            strategy:
+              t.strategy ??
+              normalizedMetadata.strategy ??
+              normalizedMetadata.strategy_name ??
+              normalizedMetadata.trade_plan?.strategy ??
+              null,
             note: t.note ?? t.intent_note ?? null,
             metadata: normalizedMetadata,
           };
@@ -38587,7 +40981,10 @@ const appHandler = async (req, res) => {
   // --- Ticket 1: Coverage API (GET /v2|/api/broker/symbols) ---
   if (
     req.method === "GET" &&
-    /^\/(webhook\/)?(v2|api)\/broker\/symbols$/.test(url.pathname)
+    (
+      /^\/(webhook\/)?(v2|api)\/broker\/symbols$/.test(url.pathname) ||
+      /^\/api\/trades\/broker\/symbols$/.test(url.pathname)
+    )
   ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
@@ -38732,7 +41129,10 @@ const appHandler = async (req, res) => {
   // --- Ticket 2: Incremental prices sync (POST /v2|/api/broker/prices-sync) ---
   if (
     req.method === "POST" &&
-    /^\/(webhook\/)?(v2|api)\/broker\/prices-sync$/.test(url.pathname)
+    (
+      /^\/(webhook\/)?(v2|api)\/broker\/prices-sync$/.test(url.pathname) ||
+      /^\/api\/trades\/broker\/prices-sync$/.test(url.pathname)
+    )
   ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
@@ -38890,7 +41290,10 @@ const appHandler = async (req, res) => {
 
   if (
     req.method === "POST" &&
-    /^\/(webhook\/)?(v2|api)\/broker\/bars$/.test(url.pathname)
+    (
+      /^\/(webhook\/)?(v2|api)\/broker\/bars$/.test(url.pathname) ||
+      /^\/api\/trades\/broker\/bars$/.test(url.pathname)
+    )
   ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
@@ -40084,6 +42487,7 @@ const CRON_STATE = {
   lastMarketDataRun: {}, // { [userId_name]: timestamp }
   lastDownloadBarsRun: {}, // { [userId_name]: timestamp }
   lastAiAnalysisRun: {}, // { [userId_name]: timestamp }
+  lastStrategyScanRun: {}, // { [userId_name]: timestamp }
   lastSnapshotsRun: {}, // { [userId_name]: timestamp }
   lastTradesBulkActionRun: {}, // { [userId_name]: timestamp }
   isRunning: false,
@@ -40927,6 +43331,11 @@ async function mt5CronLoop(runtime) {
         (r) => `${r.triggered || 0} trig`,
       ),
       runOne(
+        "strategyScan",
+        mt5RunStrategyScanCron,
+        (r) => `${r.created || 0} created`,
+      ),
+      runOne(
         "tradesBulkAction",
         mt5RunTradesBulkActionCron,
         (r) => `${r.updated || 0} updated`,
@@ -41462,6 +43871,612 @@ async function runDownloadBarsCronConfigNow(conf) {
   return summary;
 }
 
+function normalizeStrategyScanAutoSave(value) {
+  const normalized = String(value || "trades")
+    .trim()
+    .toLowerCase();
+  if (
+    normalized === "none" ||
+    normalized === "signals" ||
+    normalized === "trades" ||
+    normalized === "trades"
+  ) {
+    return normalized;
+  }
+  return "trades";
+}
+
+function normalizeAnalyzeAutoSave(value, options = {}) {
+  const defaultToTrades = options.defaultToTrades === true;
+  if (value === undefined) return defaultToTrades ? "trades" : null;
+  if (value === null) return null;
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (normalized === "signals" || normalized === "trades") return normalized;
+  if (normalized === "" || normalized === "none" || normalized === "null") {
+    return null;
+  }
+  return defaultToTrades ? "trades" : null;
+}
+
+async function createTrades2PendingTrade(input = {}, options = {}) {
+  const nowIso = new Date().toISOString();
+  const sid = String(
+    input.sid || input.trade_id || input.signal_id || mt5GenerateTimeSid(),
+  ).trim();
+  if (!sid) throw new Error("sid is required");
+  const metadataInput =
+    input.metadata && typeof input.metadata === "object" ? { ...input.metadata } : {};
+  const rawJsonInput =
+    input.raw_json && typeof input.raw_json === "object" ? { ...input.raw_json } : {};
+  const planInput = firstTradePlanItem(
+    metadataInput.trade_plan || rawJsonInput.trade_plan || input.trade_plan,
+  );
+  const resolvedUserId =
+    String(input.user_id || CFG.mt5DefaultUserId || "default").trim() || "default";
+  const resolvedAccountId =
+    String(input.account_id || "").trim() ||
+    (await resolvePreferredTrades2AccountId(resolvedUserId, input.source_id || null));
+  const derivedLots = asNum(
+    input.lots ??
+      input.volume_basis_lots ??
+      metadataInput.volume_basis_lots ??
+      planInput.lots ??
+      planInput.volume_basis_lots ??
+      rawJsonInput.lots ??
+      rawJsonInput.volume_basis_lots,
+    null,
+  );
+  const directVolume = asNum(input.volume, null);
+  const fallbackVolume = asNum(
+    planInput.volume ?? rawJsonInput.volume,
+    null,
+  );
+  const resolvedVolume =
+    Number.isFinite(directVolume) && directVolume > 0
+      ? directVolume
+      : Number.isFinite(fallbackVolume) && fallbackVolume > 0
+        ? fallbackVolume
+        : null;
+  const payloadMetadata = {
+    ...metadataInput,
+    ...(Number.isFinite(derivedLots) ? { volume_basis_lots: derivedLots } : {}),
+  };
+  const payload = {
+    sid,
+    user_id: resolvedUserId,
+    account_id: resolvedAccountId || null,
+    source_id: String(input.source_id || "").trim() || null,
+    strategy: String(input.strategy || "").trim() || null,
+    entry_model: String(input.entry_model || "").trim() || null,
+    trade_tf: input.trade_tf ?? null,
+    chart_tf: input.chart_tf ?? null,
+    symbol: String(input.symbol || "").trim().toUpperCase(),
+    action: String(input.action || input.side || "").trim().toUpperCase(),
+    order_type: mt5NormalizeOrderTypeValue(input.order_type, "limit"),
+    volume: resolvedVolume,
+    entry: asNum(input.entry, null),
+    sl: asNum(input.sl, null),
+    tp: asNum(input.tp, null),
+    tp1: asNum(input.tp1, null),
+    tp2: asNum(input.tp2, null),
+    tp3: asNum(input.tp3, null),
+    rr_planned: asNum(input.rr_planned, null),
+    risk_pct_planned: asNum(input.risk_pct_planned, null),
+    confidence_pct: asNum(input.confidence_pct, null),
+    estimated_bars: asNum(input.estimated_bars, null),
+    be_trigger: asNum(input.be_trigger, null),
+    profile: input.profile ?? null,
+    note: String(input.note || "").trim() || null,
+    dispatch_status: String(input.dispatch_status || "NEW").trim().toUpperCase(),
+    execution_status: String(input.execution_status || "PENDING").trim().toUpperCase(),
+    close_reason: String(input.close_reason || "").trim() || null,
+    rejection_reason: String(input.rejection_reason || "").trim() || null,
+    broker_trade_id: String(input.broker_trade_id || "").trim() || null,
+    opened_at: input.opened_at || null,
+    closed_at: input.closed_at || null,
+    metadata: payloadMetadata,
+    raw_json: Object.keys(rawJsonInput).length ? rawJsonInput : null,
+    created_at: input.created_at || nowIso,
+    updated_at: input.updated_at || nowIso,
+  };
+  const result = await tradesService().upsertTrade(payload, {
+    entryType: options.entryType || "trade.ai_create",
+    reason: options.reason || "manual_analysis",
+  });
+  return result?.trade || payload;
+}
+
+function normalizeStrategyPlanDirectionToAction(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (["buy", "bull", "bullish", "long"].includes(normalized)) return "buy";
+  if (["sell", "bear", "bearish", "short"].includes(normalized)) return "sell";
+  return normalized;
+}
+
+function resolveStrategyScanCronIds(data = {}) {
+  return [
+    ...new Set(
+      (Array.isArray(data?.strategy_ids)
+        ? data.strategy_ids
+        : Array.isArray(data?.strategies)
+          ? data.strategies
+          : []
+      )
+        .map((item) => String(item || "").trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+async function resolveStrategyScanCronStrategies(userId, data = {}) {
+  const selectedIds = resolveStrategyScanCronIds(data);
+  if (!selectedIds.length) return [];
+  const available = await backtestService.listAvailableStrategies(userId).catch(() => []);
+  const byId = new Map(
+    (Array.isArray(available) ? available : []).map((strategy) => [
+      String(strategy?.id || strategy?.key || "").trim(),
+      strategy,
+    ]),
+  );
+  return selectedIds.map((strategyId) => byId.get(strategyId)).filter(Boolean);
+}
+
+async function loadStrategyScanBarsByTf({
+  userId,
+  symbol,
+  timeframes = [],
+  barsCount = 300,
+}) {
+  const barsByTf = {};
+  const errors = [];
+  for (const timeframe of Array.isArray(timeframes) ? timeframes : []) {
+    const tf = String(timeframe || "").trim();
+    if (!tf) continue;
+    try {
+      const snapshot = await buildAnalysisSnapshotFromTwelve({
+        userId,
+        payload: {
+          bars: Math.max(50, Math.min(Number(barsCount || 300) || 300, CHART_HISTORY_MAX_BARS)),
+          force_refresh: false,
+          direction: "latest",
+        },
+        symbol,
+        timeframe: tf,
+      });
+      if (String(snapshot?.status || "").toLowerCase() !== "ok") {
+        errors.push({
+          timeframe: tf,
+          error: snapshot?.reason || "market_data_failed",
+        });
+        continue;
+      }
+      const bars = normalizeMarketDataBars(snapshot?.bars);
+      if (bars.length < 2) {
+        errors.push({
+          timeframe: tf,
+          error: "not_enough_bars",
+        });
+        continue;
+      }
+      barsByTf[tf] = bars;
+    } catch (error) {
+      errors.push({
+        timeframe: tf,
+        error: error instanceof Error ? error.message : String(error || "market_data_failed"),
+      });
+    }
+  }
+  return { barsByTf, errors };
+}
+
+async function executeStrategyScanCronConfig(conf, options = {}) {
+  const userId = conf.userId || conf.user_id || CFG.mt5DefaultUserId;
+  const data = settingsStore.parseJsonField(conf.data) || {};
+  const cronName = String(conf.name || "STRATEGY_SCAN_CRON").trim() || "STRATEGY_SCAN_CRON";
+  const summary = {
+    cron_name: cronName,
+    cron_type: "STRATEGY_SCAN_CRON",
+    triggered: 0,
+    created: 0,
+    matched: 0,
+    symbols: [],
+    results: [],
+  };
+  const symbols = await resolveCronSymbols(data, userId);
+  const strategyRows = await resolveStrategyScanCronStrategies(userId, data);
+  const timeframes = Array.isArray(data?.timeframes)
+    ? [...new Set(data.timeframes.map((item) => String(item || "").trim()).filter(Boolean))]
+    : [];
+  const barsCount = Math.max(50, Math.min(Number(data?.bars_count || 300) || 300, CHART_HISTORY_MAX_BARS));
+  const autoSave = normalizeStrategyScanAutoSave(data?.auto_save);
+
+  async function finalizeSummary(level = null, message = "") {
+    const finalLevel =
+      level ||
+      (summary.error ? "ERROR" : summary.results.some((item) => item?.ok === false) ? "WARN" : "INFO");
+    const finalMessage =
+      message ||
+      (summary.error
+        ? `Strategy scan cron failed: ${summary.error}`
+        : `Strategy scan cron completed: ${summary.created} trades from ${summary.matched} matches`);
+    await writeObjectLog(userId, "cron", cronName, {
+      event: "CRON_STRATEGY_SCAN",
+      level: finalLevel,
+      message: finalMessage,
+      cron_name: cronName,
+      cron_type: "STRATEGY_SCAN_CRON",
+      manual_run: options.manualRun === true,
+      auto_save: autoSave,
+      bars_count: barsCount,
+      timeframes,
+      strategy_ids: strategyRows.map((item) => String(item?.id || item?.key || "").trim()).filter(Boolean),
+      symbols: summary.symbols,
+      created: summary.created,
+      matched: summary.matched,
+      triggered: summary.triggered,
+      results: summary.results,
+      error: summary.error || null,
+    }).catch(() => {});
+    notificationManager.handle("SYSTEM_EVENT", "cron_strategy_scan", {
+      message: finalMessage,
+      type: summary.error ? "error" : summary.created > 0 ? "success" : "info",
+      notification: true,
+      cron_name: cronName,
+      cron_type: "STRATEGY_SCAN_CRON",
+      manual_run: options.manualRun === true,
+      created: summary.created,
+      matched: summary.matched,
+      triggered: summary.triggered,
+      results: summary.results,
+    });
+    return summary;
+  }
+
+  if (!symbols.length) {
+    summary.error = "No symbols selected";
+    return finalizeSummary("WARN", "Strategy scan skipped: no symbols selected");
+  }
+  if (!timeframes.length) {
+    summary.error = "No timeframes selected";
+    return finalizeSummary("WARN", "Strategy scan skipped: no timeframes selected");
+  }
+  if (!strategyRows.length) {
+    summary.error = "No strategies selected";
+    return finalizeSummary("WARN", "Strategy scan skipped: no strategies selected");
+  }
+
+  const pickupMode = String(data.pickup_mode || "all").trim().toLowerCase();
+  const runSymbols =
+    pickupMode === "random"
+      ? [symbols[Math.floor(Math.random() * symbols.length)]]
+      : symbols;
+  const sourceName = mt5NormalizeUiSource(`strategy_scan_${cronName}`, "strategy_scan_cron");
+  const sourceId = mt5SlugId(sourceName, "scan");
+  await mt5UpsertSourceV2({
+    source_id: sourceId,
+    name: sourceName,
+    kind: "api",
+    auth_mode: "token",
+    is_active: true,
+    metadata: {
+      signal_source: sourceName,
+      cron_name: cronName,
+      cron_type: "STRATEGY_SCAN_CRON",
+    },
+  }).catch(() => null);
+
+  for (const symbolRaw of runSymbols) {
+    const symbol = normalizeMarketDataSymbol(symbolRaw);
+    const symbolResult = {
+      symbol,
+      ok: true,
+      created: 0,
+      matched: 0,
+      timeframes: [],
+      errors: [],
+    };
+    try {
+      const newsEvents =
+        data?.avoid_news === true
+          ? await StateRepo.get("NEWS_CALENDAR", "week").catch(() => [])
+          : [];
+      const { barsByTf, errors } = await loadStrategyScanBarsByTf({
+        userId,
+        symbol,
+        timeframes,
+        barsCount,
+      });
+      if (errors.length) {
+        symbolResult.errors.push(...errors);
+      }
+      const plansToCreate = [];
+      for (const timeframe of timeframes) {
+        const tf = String(timeframe || "").trim();
+        const bars = Array.isArray(barsByTf?.[tf]) ? barsByTf[tf] : [];
+        if (bars.length < 2) continue;
+        const evaluation = evaluateChartStrategies({
+          bars,
+          strategies: strategyRows,
+          lookbackBars: 1,
+          symbol,
+          tf,
+          multiTfBars: barsByTf,
+          scanMode: "live",
+          skipConditions: true,
+          newsEvents,
+        });
+        const matches = Array.isArray(evaluation?.latestMatches)
+          ? evaluation.latestMatches
+          : [];
+        const latestBarTimeUnix = Number(bars[bars.length - 1]?.time || 0);
+        const currentBarMatches = matches.filter(
+          (hit) => Number(hit?.barTimeUnix || 0) === latestBarTimeUnix,
+        );
+        const tfPlans = currentBarMatches.flatMap((hit) =>
+          (Array.isArray(hit?.tradePlans) ? hit.tradePlans : []).map((plan) => ({
+            hit,
+            plan,
+          })),
+        );
+        if (!tfPlans.length) continue;
+        symbolResult.timeframes.push({
+          timeframe: tf,
+          matched: tfPlans.length,
+          strategies: currentBarMatches.map((hit) => hit?.strategyId).filter(Boolean),
+        });
+        plansToCreate.push(...tfPlans);
+      }
+
+      symbolResult.matched = plansToCreate.length;
+      summary.matched += plansToCreate.length;
+      summary.triggered += 1;
+      summary.symbols.push(symbol);
+
+      if (autoSave === "none" || !plansToCreate.length) {
+        summary.results.push(symbolResult);
+        continue;
+      }
+
+      for (const [index, item] of plansToCreate.entries()) {
+        const plan = item?.plan || {};
+        const hit = item?.hit || {};
+        const action = normalizeStrategyPlanDirectionToAction(plan?.direction);
+        if (action !== "buy" && action !== "sell") continue;
+        const skipDirective = mt5ResolveSkipTradeDirective({
+          symbol,
+          raw_json: plan && typeof plan === "object" ? { ...plan } : {},
+          trade_plan: [plan],
+        });
+        if (autoSave === "trades") {
+          const tradeSid = normalizePublicSidBase(
+            `${mt5GenerateTimeSid()}_${cronName}_${symbol}_${hit?.strategyId || index + 1}`,
+            "TRD",
+          );
+          const savedTrade = await createTrades2PendingTrade(
+            {
+              sid: tradeSid,
+              user_id: userId,
+              account_id: null,
+              source_id: sourceId,
+              strategy:
+                String(plan?.strategy || hit?.strategyName || hit?.strategyId || "").trim() ||
+                null,
+              entry_model: String(plan?.entry_model || "").trim() || null,
+              trade_tf: mt5TfToMinutes(plan?.tf || hit?.sourceTf || hit?.tf || "") || null,
+              chart_tf: mt5TfToMinutes(hit?.tf || plan?.tf || "") || null,
+              symbol,
+              action,
+              order_type: mt5NormalizeOrderTypeValue(plan?.type, "limit"),
+              volume: asNum(plan?.volume ?? plan?.lots, null),
+              entry: asNum(plan?.entry, null),
+              sl: asNum(plan?.sl, null),
+              tp: asNum(plan?.tp, null),
+              tp1: asNum(plan?.tp1, null),
+              tp2: asNum(plan?.tp2, null),
+              tp3: asNum(plan?.tp3, null),
+              rr_planned: asNum(plan?.rr, null),
+              risk_pct_planned: asNum(plan?.risk_pct, null),
+              confidence_pct: asNum(plan?.confidence_pct, null),
+              estimated_bars: asNum(plan?.estimated_bars, null),
+              be_trigger: asNum(plan?.be_trigger, null),
+              note: String(plan?.note || hit?.displayText || "").trim(),
+              dispatch_status: skipDirective.cancelled ? "CONSUMED" : "NEW",
+              execution_status: skipDirective.cancelled ? "CANCELLED" : "PENDING",
+              close_reason: skipDirective.cancelled ? "SKIP" : null,
+              metadata: {
+                event_type: skipDirective.cancelled
+                  ? "STRATEGY_SCAN_CRON_CANCELLED"
+                  : "STRATEGY_SCAN_CRON_TRADE2",
+                cron_name: cronName,
+                cron_type: "STRATEGY_SCAN_CRON",
+                strategy_id: String(hit?.strategyId || "").trim() || null,
+                strategy_name: String(hit?.strategyName || "").trim() || null,
+                event_id: String(hit?.eventId || "").trim() || null,
+                event_name: String(hit?.eventName || "").trim() || null,
+                hit_time_unix: Number(hit?.barTimeUnix || 0) || null,
+                hit_time_iso:
+                  Number(hit?.barTimeUnix || 0) > 0
+                    ? new Date(Number(hit.barTimeUnix) * 1000).toISOString()
+                    : null,
+                volume_basis_lots: asNum(
+                  plan?.lots ?? plan?.volume_basis_lots,
+                  null,
+                ),
+                raw_json: plan && typeof plan === "object" ? { ...plan } : {},
+                trade_plan: [plan],
+                strategy_hit: hit,
+              },
+              raw_json: plan && typeof plan === "object" ? { ...plan } : {},
+            },
+            {
+              entryType: "trade.strategy_scan_trades",
+              reason: "strategy_scan_cron",
+            },
+          );
+          symbolResult.created += savedTrade?.sid ? 1 : 0;
+          summary.created += savedTrade?.sid ? 1 : 0;
+          continue;
+        }
+        const fanout = await mt5FanoutSignalTradeV2({
+          signal_id: null,
+          source_id: sourceId,
+          user_id: userId,
+          strategy:
+            String(plan?.strategy || hit?.strategyName || hit?.strategyId || "").trim() || null,
+          entry_model: String(plan?.entry_model || "").trim() || null,
+          trade_tf: mt5TfToMinutes(plan?.tf || hit?.sourceTf || hit?.tf || "") || null,
+          chart_tf: mt5TfToMinutes(hit?.tf || plan?.tf || "") || null,
+          symbol,
+          action,
+          order_type: mt5NormalizeOrderTypeValue(plan?.type, "limit"),
+          entry: asNum(plan?.entry, null),
+          sl: asNum(plan?.sl, null),
+          tp: asNum(plan?.tp, null),
+          tp2: asNum(plan?.tp2, null),
+          tp3: asNum(plan?.tp3, null),
+          rr_planned: asNum(plan?.rr, null),
+          risk_pct_planned: asNum(plan?.risk_pct, null),
+          confidence_pct: asNum(plan?.confidence_pct, null),
+          estimated_bars: asNum(plan?.estimated_bars, null),
+          be_trigger: asNum(plan?.be_trigger, null),
+          note: String(plan?.note || hit?.displayText || "").trim(),
+          sid: normalizePublicSidBase(
+            `${mt5GenerateTimeSid()}_${cronName}_${symbol}_${hit?.strategyId || index + 1}`,
+            "TRD",
+          ),
+          execution_status:
+            autoSave === "signals"
+              ? "DRAFT"
+              : skipDirective.cancelled
+                ? "CANCELLED"
+                : "PENDING",
+          metadata: {
+            event_type:
+              autoSave === "signals"
+                ? "STRATEGY_SCAN_CRON_DRAFT"
+                : skipDirective.cancelled
+                  ? "STRATEGY_SCAN_CRON_CANCELLED"
+                  : "STRATEGY_SCAN_CRON_TRADE",
+            cron_name: cronName,
+            cron_type: "STRATEGY_SCAN_CRON",
+            strategy_id: String(hit?.strategyId || "").trim() || null,
+            strategy_name: String(hit?.strategyName || "").trim() || null,
+            event_id: String(hit?.eventId || "").trim() || null,
+            event_name: String(hit?.eventName || "").trim() || null,
+            hit_time_unix: Number(hit?.barTimeUnix || 0) || null,
+            hit_time_iso:
+              Number(hit?.barTimeUnix || 0) > 0
+                ? new Date(Number(hit.barTimeUnix) * 1000).toISOString()
+                : null,
+            raw_json: plan && typeof plan === "object" ? { ...plan } : {},
+            trade_plan: [plan],
+            strategy_hit: hit,
+          },
+        });
+        symbolResult.created += Number(fanout?.created || 0);
+        summary.created += Number(fanout?.created || 0);
+      }
+      summary.results.push(symbolResult);
+      fileLog(
+        symbol,
+        "cron",
+        {
+          event: "CRON_STRATEGY_SCAN",
+          level: symbolResult.errors.length ? "WARN" : "INFO",
+          message: `${symbol}: ${symbolResult.created} trades from ${symbolResult.matched} matches`,
+          cron_name: cronName,
+          symbol,
+          created_trades: symbolResult.created,
+          matched_trades: symbolResult.matched,
+          errors: symbolResult.errors,
+        },
+        userId,
+      );
+    } catch (error) {
+      symbolResult.ok = false;
+      symbolResult.errors.push({
+        error: error instanceof Error ? error.message : String(error || "strategy_scan_failed"),
+      });
+      summary.results.push(symbolResult);
+      fileLog(
+        symbol,
+        "cron",
+        {
+          event: "CRON_STRATEGY_SCAN",
+          level: "ERROR",
+          message: `${symbol} ERROR: ${symbolResult.errors[0]?.error || "strategy_scan_failed"}`,
+          cron_name: cronName,
+          symbol,
+          error: symbolResult.errors[0]?.error || "strategy_scan_failed",
+        },
+        userId,
+      );
+    }
+  }
+
+  return finalizeSummary();
+}
+
+async function mt5RunStrategyScanCron() {
+  const rows = await settingsStore.listUserSettingsByType(null, "cron");
+  const configs = (rows || []).filter((r) => {
+    const d = settingsStore.parseJsonField(r.data) || {};
+    return (
+      d.cron_type === "STRATEGY_SCAN_CRON" &&
+      String(r.status || "").toUpperCase() === "ACTIVE"
+    );
+  });
+  if (!configs.length) return { triggered: 0, created: 0, matched: 0 };
+
+  const now = Date.now();
+  let triggered = 0;
+  let created = 0;
+  let matched = 0;
+  for (const conf of configs) {
+    const userId = conf.userId || conf.user_id || CFG.mt5DefaultUserId;
+    let data = settingsStore.parseJsonField(conf.data) || {};
+    const confName = String(conf.name || "STRATEGY_SCAN_CRON");
+    const stateKey = `${userId}_${conf.name}`;
+    const hydratedLastRunMs = readCronObjectLogTimestampMs(
+      userId,
+      confName,
+      "strategy_scan",
+    );
+    const lastRunMs = Math.max(
+      Number(CRON_STATE.lastStrategyScanRun[stateKey] || 0),
+      Number(hydratedLastRunMs || 0),
+    );
+    if (!CRON_STATE.lastStrategyScanRun[stateKey] && hydratedLastRunMs > 0) {
+      CRON_STATE.lastStrategyScanRun[stateKey] = hydratedLastRunMs;
+    }
+    const defaultCadence =
+      Array.isArray(data.timeframes) && data.timeframes.length
+        ? parseTfTokenToSeconds(data.timeframes[0])
+        : 60;
+    const decision = await cronConfigShouldRunNow(data, now, lastRunMs, defaultCadence);
+    data = decision.normalized;
+    if (!decision.shouldRun) continue;
+    CRON_STATE.lastStrategyScanRun[stateKey] = now;
+    const out = await executeStrategyScanCronConfig({ ...conf, data }, {
+      manualRun: false,
+    });
+    triggered += Number(out?.triggered || 0);
+    created += Number(out?.created || 0);
+    matched += Number(out?.matched || 0);
+  }
+  return { triggered, created, matched };
+}
+
+async function runStrategyScanCronConfigNow(conf) {
+  return executeStrategyScanCronConfig(conf, {
+    manualRun: true,
+  });
+}
+
 async function mt5RunAiAnalysisCronInline() {
   const rows = await settingsStore.listUserSettingsByType(null, "cron");
   const configs = (rows || []).filter((r) => {
@@ -41550,7 +44565,9 @@ async function mt5RunAiAnalysisCronInline() {
             symbol,
             timeframes: runTimeframes,
             model: data.model || "claude-sonnet-4-0",
-            auto_save: data.auto_save || "trades",
+            auto_save: normalizeAnalyzeAutoSave(data.auto_save, {
+              defaultToTrades: true,
+            }),
             prompt: data.prompt || "",
             profile: data.profile || "",
             provider: data.broker || "ICMARKETS",
@@ -41736,7 +44753,9 @@ async function runAiAnalysisCronConfigNow(conf) {
         symbol,
         timeframes: runTimeframes,
         model: data.model || "claude-sonnet-4-0",
-        auto_save: data.auto_save || "trades",
+        auto_save: normalizeAnalyzeAutoSave(data.auto_save, {
+          defaultToTrades: true,
+        }),
         prompt: data.prompt || "",
         profile: data.profile || "",
         provider: data.broker || "ICMARKETS",
@@ -41974,6 +44993,9 @@ async function runCronSettingNow(conf) {
   }
   if (cronType === "ANALYSIS_CRON") {
     return runAiAnalysisCronConfigNow(conf);
+  }
+  if (cronType === "STRATEGY_SCAN_CRON") {
+    return runStrategyScanCronConfigNow(conf);
   }
   if (cronType === "SNAPSHOT_CRON" || cronType === "SNAPSHOTS_CRON") {
     return runSnapshotsCronConfigNow(conf);

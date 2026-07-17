@@ -1,5 +1,6 @@
 import React from "react";
 import { BrokerTicketBadge } from "./BrokerTicketBadge";
+import TradePriceInline from "./TradePriceInline";
 
 function num(v) {
   const n = Number(v);
@@ -74,7 +75,7 @@ export function SymbolEntryCell({
         style={{ display: "flex", justifyContent: "space-between", gap: 8 }}
       >
         <span>
-          {entry} → <span className="status-accent">{tp}</span> / {sl}
+          <TradePriceInline entry={entry} tp={tp} sl={sl} symbol={symbol} />
         </span>
         {showRightPnl && (
           <span style={{ whiteSpace: "nowrap", textAlign: "right" }}>

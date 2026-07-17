@@ -10,7 +10,7 @@ import {
   normalizeSymbol,
   normalizeSymbolList,
   normalizeCronSymbolGroupValue,
-} from "../../../shared/utils/symbolGroups";
+} from "../../../../config/symbolGroups.js";
 
 function groupLabel(value, customGroups) {
   if (value === "ALL") return "All";

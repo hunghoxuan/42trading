@@ -6,8 +6,7 @@
   "engine_version": "42trade.strategy.v2",
   "status": "active",
   "market": {
-    "symbol": "XAUUSD",
-    "tf": "15"
+    "symbol": ""
   },
   "params": {
     "min_confidence": 0.7
@@ -48,15 +47,9 @@
           "trade_plan": {
             "direction": "buy",
             "type": "market",
-            "entry": {
-              "var": "ai.entry"
-            },
-            "tp": {
-              "var": "ai.tp"
-            },
-            "sl": {
-              "var": "ai.sl"
-            }
+            "entry": "ai.entry",
+            "tp": "ai.tp",
+            "sl": "ai.sl"
           }
         }
       ]
@@ -95,15 +88,9 @@
           "trade_plan": {
             "direction": "sell",
             "type": "market",
-            "entry": {
-              "var": "ai.entry"
-            },
-            "tp": {
-              "var": "ai.tp"
-            },
-            "sl": {
-              "var": "ai.sl"
-            }
+            "entry": "ai.entry",
+            "tp": "ai.tp",
+            "sl": "ai.sl"
           }
         }
       ]
@@ -127,5 +114,9 @@
       "ai.tp"
     ]
   },
-  "min_bars": 20
+  "min_bars": 20,
+  "conditions": {
+    "skip_news": true,
+    "news_window_minutes": 120
+  }
 }

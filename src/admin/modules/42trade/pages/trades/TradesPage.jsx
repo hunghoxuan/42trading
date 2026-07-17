@@ -3,6 +3,7 @@ import { NotificationHub } from "../../services/NotificationHub";
 import { useState, useMemo, useRef, useEffect, Suspense } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import TradeDetailCard from "../../components/TradeDetailCard";
+import TradePriceInline from "../../components/TradePriceInline";
 import {
   PositionAuditCell,
   StatusPnlCell,
@@ -405,6 +406,10 @@ export default function TradesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const { tradeId, status: routeStatus } = useParams();
+  const tradeRouteBase = "/trades";
+  const loadTradesApi = api.v2Trades;
+  const loadTradeByIdApi = api.v2TradesGet;
+  const tradeApiScope = "trades";
   const defaultDetailHash = (statusRaw) => {
     const status = String(statusRaw || "")
       .trim()
@@ -427,7 +432,7 @@ export default function TradesPage() {
       : String(st || "").toLowerCase();
   const tradePath = (t) => {
     const tradeKey = tradeKeyOf(t);
-    const path = `/trades/${statusToPath(t?.execution_status || "pending")}/${tradeKey}`;
+    const path = `${tradeRouteBase}/${statusToPath(t?.execution_status || "pending")}/${tradeKey}`;
     const currentHash = window.location.hash || "";
     return (
       path +
@@ -437,6 +442,8 @@ export default function TradesPage() {
     );
   };
   const [rows, setRows] = useState([]);
+  const [accountCatalog, setAccountCatalog] = useState([]);
+  const [sourceCatalog, setSourceCatalog] = useState([]);
   const [selectedTrade, setSelectedTrade] = useState(null);
   const [settings, setSettings] = useState([]);
   const [selectedCronName, setSelectedCronName] = useState("");
@@ -537,6 +544,7 @@ export default function TradesPage() {
       source_id: String(
         searchParams.get("source_id") || searchParams.get("source") || "",
       ),
+      strategy: String(searchParams.get("strategy") || "").trim(),
       symbol: String(searchParams.get("symbol") || "").toUpperCase(),
       side: String(
         searchParams.get("side") || searchParams.get("direction") || "",
@@ -600,6 +608,29 @@ export default function TradesPage() {
       } catch {}
     }
     loadSettings();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadFilterCatalogs() {
+      try {
+        const [accountsRes, sourcesRes] = await Promise.all([
+          api.v2Accounts().catch(() => ({ items: [] })),
+          api.v2Sources().catch(() => ({ items: [] })),
+        ]);
+        if (cancelled) return;
+        setAccountCatalog(Array.isArray(accountsRes?.items) ? accountsRes.items : []);
+        setSourceCatalog(Array.isArray(sourcesRes?.items) ? sourcesRes.items : []);
+      } catch {
+        if (cancelled) return;
+        setAccountCatalog([]);
+        setSourceCatalog([]);
+      }
+    }
+    loadFilterCatalogs();
     return () => {
       cancelled = true;
     };
@@ -685,6 +716,11 @@ export default function TradesPage() {
 
   const accounts = useMemo(() => {
     const map = new Map();
+    (accountCatalog || []).forEach((row) => {
+      const option = resolveAccountOption(row);
+      if (!option) return;
+      if (!map.has(option.account_id)) map.set(option.account_id, option);
+    });
     (rows || []).forEach((row) => {
       const option = resolveAccountOption(row);
       if (!option) return;
@@ -695,10 +731,15 @@ export default function TradesPage() {
         String(b.name || b.account_id),
       ),
     );
-  }, [rows]);
+  }, [accountCatalog, rows]);
 
   const sources = useMemo(() => {
     const map = new Map();
+    (sourceCatalog || []).forEach((row) => {
+      const option = resolveSourceOption(row);
+      if (!option) return;
+      if (!map.has(option.source_id)) map.set(option.source_id, option);
+    });
     (rows || []).forEach((row) => {
       const option = resolveSourceOption(row);
       if (!option) return;
@@ -709,7 +750,7 @@ export default function TradesPage() {
         String(b.name || b.source_id),
       ),
     );
-  }, [rows]);
+  }, [rows, sourceCatalog]);
 
   const accountById = useMemo(() => {
     const map = new Map();
@@ -719,15 +760,19 @@ export default function TradesPage() {
 
   const uniqueOptions = useMemo(() => {
     const symbols = new Set();
+    const strategies = new Set();
     const models = new Set();
     const tfs = new Set();
     (rows || []).forEach((r) => {
       if (r.symbol) symbols.add(r.symbol);
+      const strategy = compactStrategy(r);
+      if (strategy && strategy !== "-") strategies.add(strategy);
       if (r.entry_model) models.add(r.entry_model);
       if (r.chart_tf) tfs.add(r.chart_tf);
     });
     return {
       symbols: Array.from(symbols).sort(),
+      strategies: Array.from(strategies).sort((a, b) => a.localeCompare(b)),
       models: Array.from(models).sort(),
       tfs: Array.from(tfs).sort(),
     };
@@ -742,7 +787,7 @@ export default function TradesPage() {
       const b = rangeBounds(queryApi.range, queryApi.time);
       queryApi.created_from = b.from || "";
       queryApi.created_to = b.to || "";
-      const data = await api.v2Trades(queryApi);
+      const data = await loadTradesApi(queryApi);
       const itemsRaw = data.items || [];
       const items = [...itemsRaw].sort(compareTradesDefault);
       setRows(items);
@@ -780,7 +825,9 @@ export default function TradesPage() {
     if (tradeEventsInFlightRef.current) return;
     tradeEventsInFlightRef.current = true;
     try {
-      const out = await api.v2TradeEvents(tradeRef, 100);
+      const out = await api.v2TradeEvents(tradeRef, 100, {
+        scope: tradeApiScope,
+      });
       const items = Array.isArray(out?.items) ? out.items : [];
       setTradeEvents(items);
     } catch {
@@ -887,11 +934,13 @@ export default function TradesPage() {
     setNotFound(false);
     const requestSeq = ++tradeDetailRequestSeqRef.current;
     let cancelled = false;
-    api
-      .v2Trades({ q: tradeId })
+    const request = loadTradeByIdApi
+      ? loadTradeByIdApi(tradeId)
+      : loadTradesApi({ q: tradeId });
+    request
       .then((data) => {
         if (cancelled || requestSeq !== tradeDetailRequestSeqRef.current) return;
-        const t = findTradeByRef(data?.items, tradeId);
+        const t = data?.trade || findTradeByRef(data?.items, tradeId);
         if (t) {
           setSelectedTrade(t);
           selectedTradeIdRef.current = tradeId;
@@ -1197,7 +1246,7 @@ export default function TradesPage() {
     try {
       setEditBusy(true);
       await api.promoteDraftTrade(selectedTrade.sid || selectedTrade.id);
-      navigate(`/trades/pending/${selectedTrade.sid || selectedTrade.id}`, {
+      navigate(`${tradeRouteBase}/pending/${selectedTrade.sid || selectedTrade.id}`, {
         replace: true,
       });
       setSelectedTrade(null);
@@ -1228,7 +1277,7 @@ export default function TradesPage() {
         execution_status: "CANCELLED",
         close_reason: reason || "CANCEL",
       });
-      navigate(`/trades/cancelled/${selectedTrade.sid || selectedTrade.id}`, {
+      navigate(`${tradeRouteBase}/cancelled/${selectedTrade.sid || selectedTrade.id}`, {
         replace: true,
       });
       setSelectedTrade(null);
@@ -1242,6 +1291,14 @@ export default function TradesPage() {
 
   const allSelected =
     rows.length > 0 && rows.every((r) => selectedIds.has(tradeKeyOf(r)));
+  const filteredRows = useMemo(() => {
+    const selectedStrategy = String(filter.strategy || "").trim();
+    if (!selectedStrategy) return rows;
+    return (rows || []).filter(
+      (row) => compactStrategy(row) === selectedStrategy,
+    );
+  }, [rows, filter.strategy]);
+
   const sortedRows = useMemo(() => {
     const statusRankAsc = (v) => {
       const s = String(v || "").toUpperCase();
@@ -1258,7 +1315,7 @@ export default function TradesPage() {
       return 3;
     };
     const valueOfAudit = (x) => new Date(auditTimestampRaw(x) || 0).getTime();
-    const out = [...rows];
+    const out = [...filteredRows];
     out.sort((a, b) => {
       if (!sorting?.key || !sorting?.dir) {
         return compareTradesDefault(a, b);
@@ -1306,7 +1363,7 @@ export default function TradesPage() {
       return compareTradesDefault(a, b);
     });
     return out;
-  }, [rows, sorting]);
+  }, [filteredRows, sorting]);
 
   const columns = useMemo(() => {
     const valueOfAudit = (x) => new Date(auditTimestampRaw(x) || 0).getTime();
@@ -1382,9 +1439,9 @@ export default function TradesPage() {
               side={action}
               symbol={t.symbol}
               orderType={t.order_type || t.metadata?.order_type || "limit"}
-              entry={t.entry || "-"}
-              tp={t.tp || "-"}
-              sl={t.sl || "-"}
+              entry={t.entry}
+              tp={t.tp1 ?? t.tp}
+              sl={t.sl}
               status={t.execution_status}
               pnl={pnl}
               tpPnl={
@@ -1664,6 +1721,25 @@ export default function TradesPage() {
                   {sources.map((s, i) => (
                     <option key={s.source_id || `src-${i}`} value={s.source_id}>
                       {s.name || s.source_id}
+                    </option>
+                  ))}
+                </InputComboSelect>
+                <InputComboSelect
+                  id="trades-filter-strategy"
+                  aria-label="Strategy"
+                  value={filter.strategy || ""}
+                  onChange={(e) =>
+                    setFilter((f) => ({
+                      ...f,
+                      strategy: String(e.target.value || "").trim(),
+                      page: 1,
+                    }))
+                  }
+                >
+                  <option value="">ALL STRATEGIES</option>
+                  {uniqueOptions.strategies.map((strategy) => (
+                    <option key={strategy} value={strategy}>
+                      {strategy}
                     </option>
                   ))}
                 </InputComboSelect>
@@ -1993,7 +2069,12 @@ export default function TradesPage() {
                         }}
                       >
                         <span style={{ color: "var(--muted)", fontSize: 9 }}>
-                          {t.entry || "-"} → {t.tp || "-"}
+                          <TradePriceInline
+                            entry={t.entry}
+                            tp={t.tp1 ?? t.tp}
+                            sl={t.sl}
+                            symbol={t.symbol}
+                          />
                         </span>
                         <span style={{ color: "var(--muted)", fontSize: 9 }}>
                           {showCompactPnl && rr != null
@@ -2123,6 +2204,7 @@ export default function TradesPage() {
                   }}
                   tradePlan={{
                     enabled: true,
+                    apiScope: tradeApiScope,
                     hideEditor: false,
                     mode: "trade",
                     tradeId: selectedTrade.sid || selectedTrade.id,
@@ -2412,7 +2494,14 @@ export default function TradesPage() {
                       side: action,
                       symbol: selectedTrade.symbol || "-",
                       sideClass: actionCls,
-                      positionText: `${selectedTrade.entry || "-"} → ${selectedTrade.tp || "-"} / ${selectedTrade.sl || "-"}`,
+                      positionText: (
+                        <TradePriceInline
+                          entry={selectedTrade.entry}
+                          tp={selectedTrade.tp1 ?? selectedTrade.tp}
+                          sl={selectedTrade.sl}
+                          symbol={selectedTrade.symbol}
+                        />
+                      ),
                       ...headerMeta,
                       statusNode: (
                         <div
@@ -2521,6 +2610,7 @@ export default function TradesPage() {
                   })()}
                   chart={{
                     enabled: true,
+                    apiScope: tradeApiScope,
                     tradeId: selectedTrade.sid || selectedTrade.id || "",
                     detailTfTab,
                     onDetailTfTabChange: setDetailTfTab,

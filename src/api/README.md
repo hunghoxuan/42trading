@@ -115,6 +115,18 @@ Recommended production safety shape:
   - leader-lock status and owner
   - duplicate `server.js` process detection
 
+## DB setup and migrations
+
+Database setup is part of normal API startup. The server initializes the configured backend with `initDb()` and then runs `migrateDb()` from `src/db/provider.js`.
+
+For the universal-store tables this means:
+
+- SQLite applies `src/db/migrations/sqlite/0002_universal_store.sql`
+- Postgres applies `src/db/migrations/postgres/0002_universal_store.sql`
+- older existing databases also get missing universal-store indexes through the adapter bootstrap via `CREATE INDEX IF NOT EXISTS ...`
+
+So universal-store performance indexes now apply in both SQLite and Postgres setups without a separate manual SQL step.
+
 ### cTrader bridge service (separate executor)
 
 If you run cTrader through an external bridge (`CTRADER_EXECUTOR_URL`), use:
@@ -394,7 +406,7 @@ EA key behavior:
   - `MT5_V2_LEASE_SECONDS=30` (lease ttl for `/api/broker/pull`)
 
 MT5 storage options:
-- `MT5_STORAGE=sqlite` (default): uses `MT5_SQLITE_PATH` (default: `data/users/default/data.db`)
+- `MT5_STORAGE=sqlite` (default): uses `MT5_SQLITE_PATH` (default: `data/database.db`)
 - `MT5_STORAGE=json`: uses JSON/file-based storage where applicable
 - `MT5_STORAGE=postgres`: uses `MT5_POSTGRES_URL` (or `POSTGRES_URL` / `POSTGRE_URL`)
 
@@ -540,7 +552,7 @@ Accounts note:
 ## Notes
 
 - Telegram is optional. If token/chat id is missing, signal still executes.
-- `MT5_SQLITE_PATH=data/users/default/data.db` is the current local SQLite path used for MT5 storage by default.
+- `MT5_SQLITE_PATH=data/database.db` is the current local SQLite path used for MT5, Trades2, 42Pay, universal-store, and object-store SQLite data.
 - For production with higher throughput, move queue storage to Redis/Postgres if you need horizontal scaling.
 - If you use Postgres backend, install workspace dependencies once with `pnpm install` (includes `pg`).
 

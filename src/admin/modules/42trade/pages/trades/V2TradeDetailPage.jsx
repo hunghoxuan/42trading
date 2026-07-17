@@ -3,6 +3,7 @@ import { Link, useParams, useNavigate } from "react-router-dom";
 import { api } from "../../../../app/api";
 import { NotificationHub } from "../../services/NotificationHub";
 import TradeDetailCard from "../../components/TradeDetailCard";
+import TradePriceInline from "../../components/TradePriceInline";
 import { buildDetailHeader } from "../../components/TradeDetailHeaderBuilder";
 import {
   asNum,
@@ -298,7 +299,7 @@ export default function TradeDetailPage() {
         setTrade(null);
         setDetailPlan(EMPTY_DETAIL_PLAN);
         const [evs, data] = await Promise.all([
-          api.v2TradeEvents(requestTradeId),
+          api.v2TradeEvents(requestTradeId, 200, { scope: "trades" }),
           api.v2Trades({ q: requestTradeId }),
         ]);
         if (cancelled) return;
@@ -399,7 +400,14 @@ export default function TradeDetailPage() {
       side: action,
       symbol: trade.symbol || "-",
       sideClass: action === "BUY" ? "side-buy" : "side-sell",
-      positionText: `${trade.entry_price_exec || trade.entry || "-"} → ${trade.tp || "-"} / ${trade.sl || "-"}`,
+      positionText: (
+        <TradePriceInline
+          entry={trade.entry_price_exec || trade.entry}
+          tp={trade.tp1 ?? trade.tp}
+          sl={trade.sl}
+          symbol={trade.symbol}
+        />
+      ),
       aiBadges: (
         <div
           style={{
@@ -631,7 +639,7 @@ export default function TradeDetailPage() {
       }
       // Reload trade events and trade data (but keep user-edited plan intact)
       const [evs, data] = await Promise.all([
-        api.v2TradeEvents(tradeId),
+        api.v2TradeEvents(tradeId, 200, { scope: "trades" }),
         api.v2Trades({ q: tradeId }),
       ]);
       setEvents(Array.isArray(evs?.items) ? evs.items : []);
@@ -920,6 +928,7 @@ export default function TradeDetailPage() {
             response={trade}
             tradePlan={{
               enabled: true,
+              apiScope: "trades",
               hideEditor: false,
               mode: "trade",
               tradeId: trade.sid || trade.id,
@@ -953,6 +962,7 @@ export default function TradeDetailPage() {
             }}
             chart={{
               enabled: true,
+              apiScope: "trades",
               detailTfTab,
               onDetailTfTabChange: setDetailTfTab,
               iframeTitle: `trade-detail-tv-${detailTfTab}`,

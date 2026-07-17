@@ -8,6 +8,8 @@ import RuleBuilder, {
 } from "./RuleBuilder.jsx";
 import ResponsivePanel from "../../../shared/components/ResponsivePanel";
 import TabBar from "../../../shared/components/TabBar";
+import ToggleButton from "../../../shared/components/ToggleButton";
+import TimeframeSelector from "../../system/components/TimeframeSelector.jsx";
 import strategyFunctions from "../../../../config/strategyFunctions.json";
 import { buildRuleVariableValues } from "../../../shared/utils/ruleVariableOptions";
 import {
@@ -60,24 +62,8 @@ const CONDITION_MODE_OPTIONS = [
   { value: "draw", label: "DRAW" },
 ];
 
-const STATUS_OPTIONS = [
-  { value: "draft", label: "Draft" },
-  { value: "active", label: "Active" },
-  { value: "archived", label: "Archived" },
-];
-
-const STRATEGY_TYPE_OPTIONS = [
-  { value: "price_action", label: "Price Action" },
-  { value: "ai", label: "AI Strategy" },
-];
-
-const SIGNAL_SOURCE_OPTIONS = [
-  { value: "rules", label: "Rules Only" },
-  { value: "context_rows", label: "Context Rows" },
-  { value: "ai_snapshot", label: "AI Snapshot" },
-];
-
 const TIMEFRAME_OPTIONS = [
+  { value: "", label: "Null" },
   { value: "1", label: "1m" },
   { value: "5", label: "5m" },
   { value: "15", label: "15m" },
@@ -151,10 +137,41 @@ const INDICATOR_FIELD_OPTIONS = {
 
 const RISK_FIELDS = [
   { key: "rr_target", label: "RR target" },
+  { key: "min_rr", label: "Min RR" },
   { key: "stop_lookback", label: "Stop lookback" },
   { key: "max_open_trades", label: "Max open trades" },
   { key: "fallback_stop_pct", label: "Fallback stop %" },
   { key: "fallback_tp_pct", label: "Fallback TP %" },
+];
+
+const STRATEGY_CONDITION_FIELDS = [
+  {
+    key: "skip_news",
+    label: "Skip News",
+    type: "select",
+    options: [
+      { value: "", label: "Null" },
+      { value: "true", label: "True" },
+      { value: "false", label: "False" },
+    ],
+  },
+  { key: "news_window_minutes", label: "News Window Min", type: "number", placeholder: "120" },
+  { key: "sessions", label: "Sessions", type: "csv", placeholder: "London,New York" },
+  { key: "max_spread", label: "Max Spread", type: "number", placeholder: "null" },
+  { key: "min_atr", label: "Min ATR", type: "number", placeholder: "null" },
+  { key: "cooldown_bars", label: "Cooldown Bars", type: "number", placeholder: "null" },
+  {
+    key: "max_signals_per_session",
+    label: "Max Signals / Session",
+    type: "number",
+    placeholder: "null",
+  },
+  {
+    key: "regime_tags",
+    label: "Regime Tags",
+    type: "csv",
+    placeholder: "trend,range,breakout",
+  },
 ];
 
 const PARAM_KEY_OPTIONS = [
@@ -252,6 +269,25 @@ const ACTION_ROW_CONTROL_STYLE = {
   height: 36,
 };
 
+const DEFAULT_BATCH_TIMEFRAMES = ["1440", "240", "15", "5"];
+
+function formatBatchTimeframeLabel(tfRaw) {
+  const tf = String(tfRaw || "").trim().toLowerCase();
+  if (tf === "1") return "1m";
+  if (tf === "5") return "5m";
+  if (tf === "15") return "15m";
+  if (tf === "60") return "1h";
+  if (tf === "240") return "4h";
+  if (tf === "1440") return "1d";
+  return String(tfRaw || "-");
+}
+
+function formatBatchMetric(value, digits = 0) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  return num.toFixed(digits);
+}
+
 const ACTION_ROW_INPUT_STYLE = {
   width: "100%",
   minWidth: 0,
@@ -271,6 +307,12 @@ function normalizeEditorStrategy(value) {
       nextValue.risk && typeof nextValue.risk === "object" && !Array.isArray(nextValue.risk)
         ? { ...nextValue.risk }
         : {};
+    const nextConditions =
+      nextValue.conditions &&
+      typeof nextValue.conditions === "object" &&
+      !Array.isArray(nextValue.conditions)
+        ? { ...nextValue.conditions }
+        : {};
 
     ["rr_target", "stop_lookback"].forEach((key) => {
       if (!Object.prototype.hasOwnProperty.call(nextParams, key)) return;
@@ -282,6 +324,7 @@ function normalizeEditorStrategy(value) {
 
     nextValue.params = nextParams;
     nextValue.risk = nextRisk;
+    nextValue.conditions = nextConditions;
     nextValue.metadata =
       nextValue.metadata && typeof nextValue.metadata === "object" && !Array.isArray(nextValue.metadata)
         ? {
@@ -316,22 +359,60 @@ function parseLiteralInput(rawValue = "") {
   return rawValue;
 }
 
+function parseCommaSeparatedInput(rawValue = "") {
+  return String(rawValue || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function formatCommaSeparatedInput(value) {
+  return Array.isArray(value) ? value.join(", ") : "";
+}
+
+function parseNullableNumberInput(rawValue = "") {
+  const raw = String(rawValue ?? "").trim();
+  if (!raw) return null;
+  const numeric = Number(raw);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function parseNullableBooleanInput(rawValue = "") {
+  const raw = String(rawValue ?? "").trim().toLowerCase();
+  if (!raw) return null;
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return null;
+}
+
+function conditionFieldValue(draft, key) {
+  if (key === "news_window_minutes") {
+    return (
+      draft?.conditions?.news_window_minutes ??
+      draft?.conditions?.news_before_minutes ??
+      draft?.conditions?.news_after_minutes ??
+      ""
+    );
+  }
+  return draft?.conditions?.[key] ?? "";
+}
+
 function parsePlanFieldInput(value) {
-  if (
-    value &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    Object.keys(value).length === 1 &&
-    Object.prototype.hasOwnProperty.call(value, "var")
-  ) {
-    const variablePath = String(value.var || "").trim();
-    return variablePath ? { var: variablePath } : null;
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    if (typeof value.fn === "string") {
+      return formatPlanFunctionExpression(value);
+    }
+    if (
+      Object.keys(value).length === 1 &&
+      Object.prototype.hasOwnProperty.call(value, "var")
+    ) {
+      const variablePath = String(value.var || "").trim();
+      return variablePath || null;
+    }
   }
   const raw = String(value ?? "").trim();
   if (!raw) return null;
-  const normalized = Number(raw.replace(",", "."));
-  if (Number.isFinite(normalized)) return normalized;
-  return { var: raw };
+  return raw;
 }
 
 function formatPlanFieldInput(value) {
@@ -345,7 +426,40 @@ function formatPlanFieldInput(value) {
   ) {
     return String(value.var || "");
   }
+  if (value && typeof value === "object" && !Array.isArray(value) && typeof value.fn === "string") {
+    return formatPlanFunctionExpression(value);
+  }
   return typeof value === "object" ? prettyJson(value) : String(value);
+}
+
+function formatPlanFunctionArgument(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    if (typeof value.fn === "string") return formatPlanFunctionExpression(value);
+    if (Object.prototype.hasOwnProperty.call(value, "var")) {
+      return String(value.var || "").trim();
+    }
+  }
+  if (typeof value === "string") {
+    const raw = value.trim();
+    return /^[a-zA-Z_][a-zA-Z0-9._-]*$/.test(raw) ? raw : JSON.stringify(raw);
+  }
+  if (value === null) return "null";
+  if (value === undefined) return "";
+  return String(value);
+}
+
+function formatPlanFunctionExpression(node = {}) {
+  const fnName = String(node?.fn || "").trim();
+  const args = Array.isArray(node?.args) ? node.args : [];
+  return `${fnName}(${args.map((arg) => formatPlanFunctionArgument(arg)).join(", ")})`;
+}
+
+function isPlanFieldParamType(value) {
+  const raw = formatPlanFieldInput(value).trim();
+  if (!raw) return false;
+  if (/^-?\d+(\.\d+)?$/.test(raw)) return false;
+  if (/^[a-zA-Z_][a-zA-Z0-9._-]*\s*\(/.test(raw)) return false;
+  return true;
 }
 
 function formatLiteralInput(value) {
@@ -858,6 +972,10 @@ function buildDefaultDraft(exampleStrategy, defaults = {}) {
     base.kind && base.kind !== "custom"
       ? sanitizeStrategyId(`${baseId || "custom_strategy"}_custom`)
       : baseId;
+  const baseConditions =
+    base.conditions && typeof base.conditions === "object" && !Array.isArray(base.conditions)
+      ? base.conditions
+      : {};
   return {
     id: editableId || `custom_strategy_${timestamp}`,
     name: base.name || "New Custom Strategy",
@@ -866,12 +984,8 @@ function buildDefaultDraft(exampleStrategy, defaults = {}) {
     kind: "custom",
     status: "draft",
     market: {
-      symbol:
-        String(base.market?.symbol ?? "").trim() ||
-        String(defaults.symbol ?? "").trim(),
-      tf:
-        String(base.market?.tf ?? "").trim() ||
-        String(defaults.tf ?? "").trim(),
+      symbol: String(base.market?.symbol ?? "").trim(),
+      tf: String(base.market?.tf ?? "").trim(),
     },
     params:
       base.params && typeof base.params === "object" && !Array.isArray(base.params)
@@ -883,6 +997,25 @@ function buildDefaultDraft(exampleStrategy, defaults = {}) {
       base.risk && typeof base.risk === "object" && !Array.isArray(base.risk)
         ? base.risk
         : {},
+    conditions: {
+      skip_news:
+        typeof baseConditions.skip_news === "boolean" ? baseConditions.skip_news : true,
+      news_window_minutes:
+        Number.isFinite(
+          Number(
+            baseConditions.news_window_minutes ??
+              baseConditions.news_before_minutes ??
+              baseConditions.news_after_minutes,
+          ),
+        )
+          ? Number(
+              baseConditions.news_window_minutes ??
+                baseConditions.news_before_minutes ??
+                baseConditions.news_after_minutes,
+            )
+          : 120,
+      ...baseConditions,
+    },
     metadata:
       base.metadata && typeof base.metadata === "object" && !Array.isArray(base.metadata)
         ? base.metadata
@@ -1817,24 +1950,14 @@ function StrategyEventActionRow({
                 key={fieldKey}
                 text={formatPlanFieldInput(action?.trade_plan?.[fieldKey])}
                 items={variableOptions}
-                type={
-                  action?.trade_plan?.[fieldKey] &&
-                  typeof action.trade_plan[fieldKey] === "object" &&
-                  !Array.isArray(action.trade_plan[fieldKey]) &&
-                  Object.keys(action.trade_plan[fieldKey]).length === 1 &&
-                  Object.prototype.hasOwnProperty.call(action.trade_plan[fieldKey], "var")
-                    ? "param"
-                    : "value"
-                }
+                type={isPlanFieldParamType(action?.trade_plan?.[fieldKey]) ? "param" : "value"}
                 onChange={({ text, type }) =>
                   onChange(
                     normalizeEventAction({
                       ...action,
                       trade_plan: {
                         ...action?.trade_plan,
-                        [fieldKey]: type === "param"
-                          ? { var: String(text || "").trim() }
-                          : parsePlanFieldInput(text),
+                        [fieldKey]: parsePlanFieldInput(text),
                       },
                     }),
                   )
@@ -2053,12 +2176,14 @@ export default function StrategyEditorPanel({
   defaultSymbol = "EURAUD",
   defaultTf = "15",
   isNewDraft = false,
+  hideBatchControls = false,
   onCreateNew,
   onSave,
   onSaveAs,
   onArchive,
   onDelete,
   onOpenBacktest,
+  onRunBatch,
 }) {
   const [activeTab, setActiveTab] = useState("json");
   const [draft, setDraft] = useState(null);
@@ -2067,9 +2192,18 @@ export default function StrategyEditorPanel({
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState("info");
   const [descriptionVisible, setDescriptionVisible] = useState(false);
+  const [batchSymbolsInput, setBatchSymbolsInput] = useState("");
+  const [batchTimeframes, setBatchTimeframes] = useState(DEFAULT_BATCH_TIMEFRAMES);
+  const [batchRunning, setBatchRunning] = useState(false);
+  const [batchReport, setBatchReport] = useState(null);
+  const [batchError, setBatchError] = useState("");
   const isPreset = String(draft?.kind || "").trim() !== "custom";
-  const statusOptions = useMemo(() => withNullOption(STATUS_OPTIONS), []);
   const timeframeOptions = useMemo(() => withNullOption(TIMEFRAME_OPTIONS), []);
+  const batchTimeframeOptions = useMemo(
+    () => TIMEFRAME_OPTIONS.filter((item) => item.value).map((item) => ({ ...item })),
+    [],
+  );
+  const isStrategyEnabled = String(draft?.status || "").trim().toLowerCase() === "active";
 
   useEffect(() => {
     const defaultTab = "edit";
@@ -2101,6 +2235,10 @@ export default function StrategyEditorPanel({
     setDescriptionVisible(hasDataValue(nextDraft?.description));
     setMessage("");
     setMessageType("info");
+    setBatchSymbolsInput("");
+    setBatchTimeframes(DEFAULT_BATCH_TIMEFRAMES);
+    setBatchReport(null);
+    setBatchError("");
   }, [defaultSymbol, defaultTf, exampleStrategy, isNewDraft, selectionKey, strategy]);
 
   useEffect(() => {
@@ -2129,9 +2267,6 @@ export default function StrategyEditorPanel({
     [draft?.params],
   );
   const hasIndicators = Array.isArray(draft?.indicators) && draft.indicators.length > 0;
-  const hasRiskValues = Object.values(draft?.risk || {}).some(
-    (value) => value !== undefined && value !== null && value !== "",
-  );
   const hasRuleValues = Array.isArray(draft?.rules) && draft.rules.length > 0;
   const hasParams = Object.keys(draft?.params || {}).length > 0;
   const hasDescription = hasDataValue(draft?.description);
@@ -2244,6 +2379,26 @@ export default function StrategyEditorPanel({
     }
   }
 
+  async function handleRunBatch() {
+    setBatchRunning(true);
+    setBatchError("");
+    try {
+      const result = await onRunBatch?.({
+        strategy: draft,
+        symbols: parseCommaSeparatedInput(batchSymbolsInput),
+        timeframes: Array.isArray(batchTimeframes) && batchTimeframes.length
+          ? batchTimeframes
+          : DEFAULT_BATCH_TIMEFRAMES,
+      });
+      setBatchReport(result?.report || null);
+    } catch (error) {
+      setBatchError(String(error?.message || error || "Batch run failed"));
+      setBatchReport(null);
+    } finally {
+      setBatchRunning(false);
+    }
+  }
+
   async function handleArchive() {
     if (!draft?.id || isPreset) return;
     setBusy(true);
@@ -2292,8 +2447,36 @@ export default function StrategyEditorPanel({
             }}
           >
             <div className="stack-layout" style={{ gap: 6, minWidth: 0, flex: "1 1 320px" }}>
-              <div style={{ fontSize: 16, fontWeight: 800 }}>
-                {draft?.name || draft?.id || "Strategy"}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  flexWrap: "wrap",
+                }}
+              >
+                <div style={{ fontSize: 16, fontWeight: 800 }}>
+                  {draft?.name || draft?.id || "Strategy"}
+                </div>
+                <ToggleButton
+                  active={isStrategyEnabled}
+                  classActive="secondary-button"
+                  classInActive="secondary-button"
+                  labelActive="Enabled"
+                  labelInActive="Disabled"
+                  colorActive="#22c55e"
+                  colorInActive="#94a3b8"
+                  disabled={isPreset || busy || batchRunning}
+                  onClick={() =>
+                    updateDraft((base) => ({
+                      ...base,
+                      status:
+                        String(base?.status || "").trim().toLowerCase() === "active"
+                          ? "draft"
+                          : "active",
+                    }))
+                  }
+                />
               </div>
               {draft?.description ? (
                 <div
@@ -2318,46 +2501,24 @@ export default function StrategyEditorPanel({
               }}
             >
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                {isPreset ? (
-                  <div
-                    className="secondary-button"
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      minHeight: 32,
-                      padding: "0 12px",
-                      color: "#22c55e",
-                      fontSize: 12,
-                      fontWeight: 700,
-                    }}
-                  >
-                    {String(draft?.status || "preset").replace(/_/g, " ")}
-                  </div>
-                ) : (
-                  <div style={{ minWidth: 132 }}>
-                    <InputComboSelect
-                      value={resolveSelectValue(draft?.status, statusOptions)}
-                      searchable
-                      readOnly={isPreset}
-                      onChange={(event) =>
-                        updateDraft((base) => ({
-                          ...base,
-                          status: event.target.value,
-                        }))
-                      }
-                    >
-                      {toFlatOptions(statusOptions)}
-                    </InputComboSelect>
-                  </div>
-                )}
                 <button
                   type="button"
                   className="primary-button"
                   onClick={() => onOpenBacktest?.(draft)}
-                  disabled={busy}
+                  disabled={busy || batchRunning}
                 >
                   Run Backtest
                 </button>
+                {hideBatchControls ? null : (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={handleRunBatch}
+                    disabled={busy || batchRunning}
+                  >
+                    {batchRunning ? "Running Batch..." : "Run Batch"}
+                  </button>
+                )}
                 <TabBar
                   value={activeTab}
                   options={EDITOR_TABS}
@@ -2366,6 +2527,40 @@ export default function StrategyEditorPanel({
                   ariaLabel="Strategy editor tabs"
                 />
               </div>
+              {hideBatchControls ? null : (
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 10,
+                    flexWrap: "wrap",
+                    justifyContent: "flex-end",
+                    width: "100%",
+                  }}
+                >
+                  <input
+                    className="input"
+                    value={batchSymbolsInput}
+                    onChange={(event) => setBatchSymbolsInput(event.target.value.toUpperCase())}
+                    placeholder="Batch symbols blank = watchlist"
+                    style={{ minWidth: 240, flex: "1 1 260px" }}
+                  />
+                  <TimeframeSelector
+                    value={batchTimeframes}
+                    onChange={(nextValue) =>
+                      setBatchTimeframes(
+                        Array.isArray(nextValue) && nextValue.length
+                          ? nextValue
+                          : DEFAULT_BATCH_TIMEFRAMES,
+                      )
+                    }
+                    options={batchTimeframeOptions}
+                    multiple
+                    allowEmpty={false}
+                    size="sm"
+                    ariaLabel="Batch timeframes"
+                  />
+                </div>
+              )}
               {backtestSummary ? (
                 <BacktestSummaryMetaRow
                   leadLabel={`${Math.round(Number(backtestSummary?.total_trades || 0))} trades`}
@@ -2400,6 +2595,115 @@ export default function StrategyEditorPanel({
             >
               {message}
             </div>
+          ) : null}
+          {batchError ? (
+            <div className="minor-text" style={{ color: "#f87171", fontSize: 11 }}>
+              {batchError}
+            </div>
+          ) : null}
+          {batchReport ? (
+            <ResponsivePanel showToggle={false} border="always" bodyClassName="stack-layout">
+              <div className="panel-label">Batch Report</div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
+                  gap: 10,
+                }}
+              >
+                {[
+                  { label: "Strategies", value: batchReport?.totals?.strategies },
+                  { label: "Symbols", value: batchReport?.totals?.symbols },
+                  { label: "TFs", value: batchReport?.totals?.timeframes },
+                  { label: "Trades", value: batchReport?.totals?.total_trades },
+                  { label: "WR %", value: formatBatchMetric(batchReport?.totals?.weighted_win_rate_pct, 1) },
+                  { label: "RR", value: formatBatchMetric(batchReport?.totals?.total_r, 1) },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: 10,
+                      border: "1px solid rgba(148,163,184,0.18)",
+                      background: "rgba(15,23,42,0.32)",
+                    }}
+                  >
+                    <div className="minor-text" style={{ fontSize: 10 }}>
+                      {item.label}
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 700, marginTop: 4 }}>
+                      {item.value ?? "-"}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="minor-text" style={{ fontSize: 11 }}>
+                Scope: {(batchReport?.selection?.symbols || []).join(", ") || "watchlist"} ·{" "}
+                {(batchReport?.selection?.timeframes || [])
+                  .map((item) => formatBatchTimeframeLabel(item))
+                  .join(", ")}
+              </div>
+              <div className="stack-layout" style={{ gap: 8 }}>
+                {(Array.isArray(batchReport?.rows) ? batchReport.rows : []).slice(0, 18).map((row, index) => (
+                  <div
+                    key={`${row?.strategy_id || row?.strategy_name || "strategy"}:${row?.symbol || "symbol"}:${row?.tf || index}:${index}`}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "2.2fr 0.85fr 0.7fr 0.75fr 0.75fr 2fr",
+                      gap: 10,
+                      alignItems: "center",
+                      padding: "8px 10px",
+                      borderRadius: 10,
+                      border: "1px solid rgba(148,163,184,0.14)",
+                      background: "rgba(15,23,42,0.24)",
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700 }}>
+                        {row?.strategy_name || row?.strategy_id || "Strategy"}
+                      </div>
+                      {row?.error ? (
+                        <div className="minor-text" style={{ color: "#fca5a5", fontSize: 10 }}>
+                          {row.error}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="minor-text" style={{ fontSize: 11 }}>
+                      {row?.symbol || "-"}
+                    </div>
+                    <div className="minor-text" style={{ fontSize: 11 }}>
+                      {formatBatchTimeframeLabel(row?.tf)}
+                    </div>
+                    <div className="minor-text" style={{ fontSize: 11 }}>
+                      {row?.status === "failed"
+                        ? "Fail"
+                        : formatBatchMetric(row?.total_trades, 0)}
+                    </div>
+                    <div className="minor-text" style={{ fontSize: 11 }}>
+                      {row?.status === "failed"
+                        ? "-"
+                        : `${formatBatchMetric(row?.win_rate_pct, 1)}%`}
+                    </div>
+                    <div
+                      className="minor-text"
+                      style={{
+                        fontSize: 11,
+                        color:
+                          Number(row?.total_r || 0) > 0
+                            ? "#34d399"
+                            : Number(row?.total_r || 0) < 0
+                              ? "#f87171"
+                              : "var(--text-muted, #94a3b8)",
+                      }}
+                    >
+                      {row?.status === "failed"
+                        ? "-"
+                        : `R ${formatBatchMetric(row?.total_r, 1)} · PnL ${formatBatchMetric(row?.total_pnl, 2)}`}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </ResponsivePanel>
           ) : null}
         </div>
       </ResponsivePanel>
@@ -2471,7 +2775,7 @@ export default function StrategyEditorPanel({
                 <div
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                    gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
                     gap: 12,
                   }}
                 >
@@ -2540,59 +2844,53 @@ export default function StrategyEditorPanel({
                     </InputComboSelect>
                   </label>
                   <label className="stack-layout" style={{ gap: 6 }}>
-                    <span className="minor-text">Strategy Type</span>
+                    <span className="minor-text">Skip News</span>
                     <InputComboSelect
-                      value={resolveSelectValue(draft?.metadata?.strategy_type, STRATEGY_TYPE_OPTIONS)}
-                      searchable
-                      readOnly={isPreset}
+                      value={
+                        draft?.conditions?.skip_news === true
+                          ? "true"
+                          : draft?.conditions?.skip_news === false
+                            ? "false"
+                            : ""
+                      }
                       onChange={(event) =>
                         updateDraft((base) => ({
                           ...base,
-                          metadata: {
-                            ...(base.metadata || {}),
-                            strategy_type: event.target.value,
+                          conditions: {
+                            ...(base.conditions || {}),
+                            skip_news: parseNullableBooleanInput(event.target.value),
                           },
                         }))
                       }
                     >
-                      {toFlatOptions(STRATEGY_TYPE_OPTIONS)}
+                      {toFlatOptions(
+                        STRATEGY_CONDITION_FIELDS.find((field) => field.key === "skip_news")
+                          ?.options || [],
+                      )}
                     </InputComboSelect>
                   </label>
                   <label className="stack-layout" style={{ gap: 6 }}>
-                    <span className="minor-text">Signal Source</span>
-                    <InputComboSelect
-                      value={resolveSelectValue(draft?.metadata?.signal_source, SIGNAL_SOURCE_OPTIONS)}
-                      searchable
-                      readOnly={isPreset}
+                    <span className="minor-text">News Window Min</span>
+                    <input
+                      className="input"
+                      value={conditionFieldValue(draft, "news_window_minutes")}
+                      placeholder="120"
                       onChange={(event) =>
                         updateDraft((base) => ({
                           ...base,
-                          metadata: {
-                            ...(base.metadata || {}),
-                            signal_source: event.target.value,
+                          conditions: {
+                            ...(base.conditions || {}),
+                            news_window_minutes: parseNullableNumberInput(event.target.value),
+                            news_before_minutes: null,
+                            news_after_minutes: null,
                           },
                         }))
                       }
-                    >
-                      {toFlatOptions(SIGNAL_SOURCE_OPTIONS)}
-                    </InputComboSelect>
+                    />
                   </label>
-                </div>
-                {draft?.metadata?.signal_source === "ai_snapshot" ? (
-                  <div className="minor-text" style={{ fontSize: 11 }}>
-                    Backtests should provide `ai_context_rows` with per-bar `ai.*` values such as
-                    direction, confidence, entry, sl, and tp.
-                  </div>
-                ) : draft?.metadata?.signal_source === "context_rows" ? (
-                  <div className="minor-text" style={{ fontSize: 11 }}>
-                    Backtests can provide `context_rows` with per-bar namespaces like
-                    `artifacts.*`, `levels.*`, or `structure.*`.
-                  </div>
-                ) : null}
-                {hasDescription || descriptionVisible ? (
                   <label className="stack-layout" style={{ gap: 6 }}>
                     <span className="minor-text">Description</span>
-                    <textarea
+                    <input
                       className="input"
                       value={draft?.description || ""}
                       readOnly={isPreset}
@@ -2602,19 +2900,113 @@ export default function StrategyEditorPanel({
                           description: event.target.value,
                         }))
                       }
-                      style={{
-                        width: "100%",
-                        minHeight: 84,
-                        resize: "vertical",
-                      }}
                     />
                   </label>
-                ) : (
-                  <EmptySectionButton
-                    label="Description"
-                    onClick={() => setDescriptionVisible(true)}
-                  />
-                )}
+                </div>
+                <div className="stack-layout" style={{ gap: 10 }}>
+                  <div className="minor-text" style={{ fontSize: 11 }}>
+                    Risk
+                  </div>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
+                      gap: 10,
+                    }}
+                  >
+                    {RISK_FIELDS.map((field) => (
+                      <label key={field.key} className="stack-layout" style={{ gap: 6 }}>
+                        <span className="minor-text">{field.label}</span>
+                        <input
+                          className="input"
+                          value={draft?.risk?.[field.key] ?? ""}
+                          placeholder="null"
+                          onChange={(event) =>
+                            updateDraft((base) => ({
+                              ...base,
+                              risk: {
+                                ...(base.risk || {}),
+                                [field.key]: parseNullableNumberInput(event.target.value),
+                              },
+                            }))
+                          }
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="stack-layout" style={{ gap: 10 }}>
+                  <div className="minor-text" style={{ fontSize: 11 }}>
+                    Conditions
+                  </div>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
+                      gap: 10,
+                    }}
+                  >
+                    {STRATEGY_CONDITION_FIELDS.filter(
+                      (field) => !["skip_news", "news_window_minutes"].includes(field.key),
+                    ).map((field) => (
+                      <label key={field.key} className="stack-layout" style={{ gap: 6 }}>
+                        <span className="minor-text">{field.label}</span>
+                        {field.type === "select" ? (
+                          <InputComboSelect
+                            value={
+                              draft?.conditions?.[field.key] === true
+                                ? "true"
+                                : draft?.conditions?.[field.key] === false
+                                  ? "false"
+                                  : ""
+                            }
+                            onChange={(event) =>
+                              updateDraft((base) => ({
+                                ...base,
+                                conditions: {
+                                  ...(base.conditions || {}),
+                                  [field.key]: parseNullableBooleanInput(event.target.value),
+                                },
+                              }))
+                            }
+                          >
+                            {toFlatOptions(field.options || [])}
+                          </InputComboSelect>
+                        ) : (
+                          <input
+                            className="input"
+                            value={
+                              field.type === "csv"
+                                ? formatCommaSeparatedInput(conditionFieldValue(draft, field.key))
+                                : conditionFieldValue(draft, field.key)
+                            }
+                            placeholder={field.placeholder || "null"}
+                            onChange={(event) =>
+                              updateDraft((base) => ({
+                                ...base,
+                                conditions: {
+                                  ...(base.conditions || {}),
+                                  ...(field.key === "news_window_minutes"
+                                    ? {
+                                        news_window_minutes: parseNullableNumberInput(event.target.value),
+                                        news_before_minutes: null,
+                                        news_after_minutes: null,
+                                      }
+                                    : {
+                                        [field.key]:
+                                          field.type === "csv"
+                                            ? parseCommaSeparatedInput(event.target.value)
+                                            : parseNullableNumberInput(event.target.value),
+                                      }),
+                                },
+                              }))
+                            }
+                          />
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                </div>
               </ResponsivePanel>
 
               <ResponsivePanel
@@ -2820,63 +3212,6 @@ export default function StrategyEditorPanel({
                     ))}
                   </div>
                 ) : null}
-              </ResponsivePanel>
-
-              <ResponsivePanel
-                title="Risk"
-                subtitle={hasRiskValues ? "" : "No risk config yet."}
-                defaultOpen={hasRiskValues}
-                collapseDirection="top-down"
-                border="always"
-                bodyClassName="stack-layout"
-              >
-                {hasRiskValues ? (
-                  <div className="stack-layout" style={{ gap: 8 }}>
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-                        gap: 10,
-                        alignItems: "center",
-                      }}
-                    >
-                      {RISK_FIELDS.map((field) => (
-                        <span key={field.key} className="minor-text" style={{ fontSize: 11 }}>
-                          {field.label}
-                        </span>
-                      ))}
-                    </div>
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-                        gap: 10,
-                        alignItems: "center",
-                      }}
-                    >
-                      {RISK_FIELDS.map((field) => (
-                        <input
-                          key={field.key}
-                          className="input"
-                          value={draft?.risk?.[field.key] ?? ""}
-                          onChange={(event) =>
-                            updateDraft((base) => ({
-                              ...base,
-                              risk: {
-                                ...(base.risk || {}),
-                                [field.key]: Number(event.target.value || 0),
-                              },
-                            }))
-                          }
-                        />
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  <HintText title="Add risk values when you want shared stop or target helpers.">
-                    Add risk values when you want reusable stop, target, or trade limit settings.
-                  </HintText>
-                )}
               </ResponsivePanel>
 
               <ResponsivePanel

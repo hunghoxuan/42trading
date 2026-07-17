@@ -6,8 +6,7 @@
   "engine_version": "42trade.strategy.v2",
   "status": "active",
   "market": {
-    "symbol": "XAUUSD",
-    "tf": "15"
+    "symbol": ""
   },
   "params": {
     "min_gap_size": 0
@@ -72,12 +71,8 @@
             "direction": "buy",
             "type": "market",
             "entry": null,
-            "tp": {
-              "var": "levels.session_high"
-            },
-            "sl": {
-              "var": "artifacts.fvg.low"
-            }
+            "tp": "levels.session_high",
+            "sl": "artifacts.fvg.low"
           }
         }
       ]
@@ -140,12 +135,8 @@
             "direction": "sell",
             "type": "market",
             "entry": null,
-            "tp": {
-              "var": "levels.session_low"
-            },
-            "sl": {
-              "var": "artifacts.fvg.high"
-            }
+            "tp": "levels.session_low",
+            "sl": "artifacts.fvg.high"
           }
         }
       ]
@@ -170,5 +161,9 @@
       "levels.session_low"
     ]
   },
-  "min_bars": 20
+  "min_bars": 20,
+  "conditions": {
+    "skip_news": true,
+    "news_window_minutes": 120
+  }
 }

@@ -5,9 +5,13 @@ const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
 
-const DEFAULT_CODEX_BIN = String(
-  process.env.CODEX_BIN || "/Applications/Codex.app/Contents/Resources/codex",
-).trim();
+const DEFAULT_CODEX_BIN = String(process.env.CODEX_BIN || "").trim();
+const DEFAULT_CODEX_BIN_CANDIDATES = [
+  DEFAULT_CODEX_BIN,
+  "/Applications/Codex.app/Contents/Resources/codex",
+  "/Applications/ChatGPT.app/Contents/Resources/codex",
+  "codex",
+].filter(Boolean);
 const DEFAULT_TIMEOUT_MS = 240000;
 const MAX_OUTPUT_CHARS = 12000;
 
@@ -196,8 +200,16 @@ function buildCodexChatPrompt({
 }
 
 function resolveCodexBin(explicitBin = "") {
-  const candidate = String(explicitBin || DEFAULT_CODEX_BIN).trim();
-  return candidate || "codex";
+  const explicit = String(explicitBin || "").trim();
+  const candidates = explicit
+    ? [explicit, ...DEFAULT_CODEX_BIN_CANDIDATES]
+    : DEFAULT_CODEX_BIN_CANDIDATES;
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (!path.isAbsolute(candidate)) return candidate;
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return "codex";
 }
 
 function createJsonLineSplitter(onLine) {

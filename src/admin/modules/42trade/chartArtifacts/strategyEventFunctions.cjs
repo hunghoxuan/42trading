@@ -2,6 +2,10 @@
 
 const artifactDetection = require("./detectArtifacts.cjs");
 const { buildTfAnalysis } = require("./realtimeAnalysis.cjs");
+const {
+  buildSuggestedTradeLevels,
+  resolveSuggestedTradeTimeframes,
+} = require("../../../shared/utils/suggestedTradeLevels.cjs");
 
 function normalizeTfKey(tfRaw = "") {
   const raw = String(tfRaw || "").trim().toLowerCase();
@@ -209,6 +213,61 @@ function resolveBars(ctx = {}) {
   return Array.isArray(ctx?.bars) ? ctx.bars : [];
 }
 
+function parseSuggestedTfSelection(value, ctx = {}) {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeTfKey(item)).filter(Boolean);
+  }
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw || raw === "all" || raw === "all_tfs") {
+    return availableRequestedTimeframesForAll(ctx);
+  }
+  return raw
+    .split(/[,\s|]+/)
+    .map((item) => normalizeTfKey(item))
+    .filter(Boolean);
+}
+
+function buildArtifactItemsByTfForSuggestedLevels(ctx = {}) {
+  const artifactItemsByTf = {};
+  const currentTf = currentTimeframe(ctx);
+  if (currentTf && Array.isArray(ctx?.derivedArtifacts)) {
+    artifactItemsByTf[currentTf] = ctx.derivedArtifacts;
+  }
+  const multiTf = ctx?.multiTf && typeof ctx.multiTf === "object" ? ctx.multiTf : {};
+  Object.entries(multiTf).forEach(([tfRaw, entry]) => {
+    const tfKey = normalizeTfKey(tfRaw);
+    if (!tfKey) return;
+    const items = Array.isArray(entry?.derivedArtifacts) ? entry.derivedArtifacts : [];
+    if (items.length) artifactItemsByTf[tfKey] = items;
+  });
+  return artifactItemsByTf;
+}
+
+function resolveSuggestedTradeLevelsForContext(
+  direction = "buy",
+  tfSelection = "all",
+  minRr = 1.5,
+  ctx = {},
+) {
+  const entry = resolvePriceActionEntry(ctx);
+  if (!Number.isFinite(entry) || entry <= 0) return { sl: null, tp: null };
+  const artifactItemsByTf = buildArtifactItemsByTfForSuggestedLevels(ctx);
+  const selectedTfs = resolveSuggestedTradeTimeframes(
+    currentTimeframe(ctx),
+    parseSuggestedTfSelection(tfSelection, ctx),
+    artifactItemsByTf,
+  );
+  return buildSuggestedTradeLevels({
+    side: String(direction || "").trim().toUpperCase() === "SELL" ? "SELL" : "BUY",
+    entryPrice: entry,
+    referencePrice: entry,
+    activeTf: currentTimeframe(ctx),
+    selectedTfs,
+    artifactItemsByTf,
+    minRr,
+  });
+}
+
 function matchArtifactBias(item = {}, requestedBias = "") {
   const wanted = String(requestedBias || "").trim().toLowerCase();
   if (!wanted) return true;
@@ -294,6 +353,136 @@ function normalizeLevel(value) {
   if (value === null || value === undefined || value === "") return null;
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
+}
+
+function toFiniteNumber(value, fallback = null) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+function normalizePlanDirection(value = "", fallback = "buy") {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (["sell", "short", "bear", "bearish"].includes(normalized)) return "sell";
+  if (["buy", "long", "bull", "bullish"].includes(normalized)) return "buy";
+  return String(fallback || "buy").trim().toLowerCase() === "sell" ? "sell" : "buy";
+}
+
+function resolvePriceActionEntry(ctx = {}) {
+  const bar = resolveCurrentBar(ctx);
+  return toFiniteNumber(bar?.close) ?? toFiniteNumber(bar?.open);
+}
+
+function inferPipSize(entry = null, explicitPipSize = null) {
+  const pipSize = toFiniteNumber(explicitPipSize);
+  if (Number.isFinite(pipSize) && pipSize > 0) return pipSize;
+  const price = Math.abs(toFiniteNumber(entry));
+  if (!Number.isFinite(price) || price <= 0) return null;
+  if (price >= 1000) return 1;
+  if (price >= 10) return 0.01;
+  return 0.0001;
+}
+
+function enforceMinimumStopDistance(
+  entry = null,
+  stop = null,
+  direction = "buy",
+  minStopPips = 0,
+  pipSize = null,
+) {
+  const entryNum = toFiniteNumber(entry);
+  const stopNum = toFiniteNumber(stop);
+  const minPips = Math.max(0, Number(minStopPips) || 0);
+  const resolvedPipSize = inferPipSize(entryNum, pipSize);
+  if (
+    !Number.isFinite(entryNum) ||
+    !Number.isFinite(stopNum) ||
+    !(minPips > 0) ||
+    !Number.isFinite(resolvedPipSize) ||
+    !(resolvedPipSize > 0)
+  ) {
+    return stopNum;
+  }
+  const minimumDistance = minPips * resolvedPipSize;
+  if (!(minimumDistance > 0)) return stopNum;
+  if (Math.abs(entryNum - stopNum) >= minimumDistance) return stopNum;
+  const normalizedDirection = normalizePlanDirection(direction, "buy");
+  return normalizedDirection === "sell"
+    ? entryNum + minimumDistance
+    : entryNum - minimumDistance;
+}
+
+function resolvePriceActionStop(
+  direction = "buy",
+  lookbackBars = 3,
+  bufferPct = 0,
+  minStopPips = 0,
+  pipSize = null,
+  ctx = {},
+) {
+  const bars = resolveBars(ctx);
+  const currentIndex = resolveCurrentIndex(ctx);
+  if (!bars.length || currentIndex < 0) return null;
+  const windowSize = Math.max(1, Math.round(Number(lookbackBars) || 3));
+  const startIndex = Math.max(0, currentIndex - windowSize + 1);
+  const slice = bars.slice(startIndex, currentIndex + 1).filter(Boolean);
+  if (!slice.length) return null;
+  const normalizedDirection = normalizePlanDirection(direction, "buy");
+  const pct = Math.max(0, Number(bufferPct) || 0);
+  const entry = resolvePriceActionEntry(ctx);
+  if (normalizedDirection === "sell") {
+    const swingHigh = slice.reduce((max, bar) => {
+      const value = toFiniteNumber(bar?.high);
+      return Number.isFinite(value) ? Math.max(max, value) : max;
+    }, Number.NEGATIVE_INFINITY);
+    if (!Number.isFinite(swingHigh)) return null;
+    return enforceMinimumStopDistance(
+      entry,
+      swingHigh + swingHigh * pct,
+      normalizedDirection,
+      minStopPips,
+      pipSize,
+    );
+  }
+  const swingLow = slice.reduce((min, bar) => {
+    const value = toFiniteNumber(bar?.low);
+    return Number.isFinite(value) ? Math.min(min, value) : min;
+  }, Number.POSITIVE_INFINITY);
+  if (!Number.isFinite(swingLow)) return null;
+  return enforceMinimumStopDistance(
+    entry,
+    swingLow - swingLow * pct,
+    normalizedDirection,
+    minStopPips,
+    pipSize,
+  );
+}
+
+function resolvePriceActionTarget(
+  direction = "buy",
+  lookbackBars = 3,
+  rrMultiple = 2,
+  bufferPct = 0,
+  minStopPips = 0,
+  pipSize = null,
+  ctx = {},
+) {
+  const entry = resolvePriceActionEntry(ctx);
+  const stop = resolvePriceActionStop(
+    direction,
+    lookbackBars,
+    bufferPct,
+    minStopPips,
+    pipSize,
+    ctx,
+  );
+  if (!Number.isFinite(entry) || !Number.isFinite(stop)) return null;
+  const risk = Math.abs(entry - stop);
+  const rr = Math.max(0.1, Number(rrMultiple) || 2);
+  if (!Number.isFinite(risk) || risk <= 0) return null;
+  const normalizedDirection = normalizePlanDirection(direction, "buy");
+  return normalizedDirection === "sell"
+    ? entry - risk * rr
+    : entry + risk * rr;
 }
 
 function roundLevelKey(value) {
@@ -702,6 +891,47 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
   if (lowerName === "is_true") {
     const result = rawArgs.length ? resolve(rawArgs[0]) : false;
     return ruleResultTruthy(result);
+  }
+  if (lowerName === "price_action_sl") {
+    const evaluatedArgs = (Array.isArray(rawArgs) ? rawArgs : []).map((arg) => resolve(arg));
+    return resolvePriceActionStop(
+      evaluatedArgs[0],
+      evaluatedArgs[1],
+      evaluatedArgs[2],
+      evaluatedArgs[3],
+      evaluatedArgs[4],
+      ctx,
+    );
+  }
+  if (lowerName === "price_action_tp") {
+    const evaluatedArgs = (Array.isArray(rawArgs) ? rawArgs : []).map((arg) => resolve(arg));
+    return resolvePriceActionTarget(
+      evaluatedArgs[0],
+      evaluatedArgs[1],
+      evaluatedArgs[2],
+      evaluatedArgs[3],
+      evaluatedArgs[4],
+      evaluatedArgs[5],
+      ctx,
+    );
+  }
+  if (lowerName === "suggested_trade_sl") {
+    const evaluatedArgs = (Array.isArray(rawArgs) ? rawArgs : []).map((arg) => resolve(arg));
+    return resolveSuggestedTradeLevelsForContext(
+      evaluatedArgs[0],
+      evaluatedArgs[1],
+      evaluatedArgs[2],
+      ctx,
+    ).sl;
+  }
+  if (lowerName === "suggested_trade_tp") {
+    const evaluatedArgs = (Array.isArray(rawArgs) ? rawArgs : []).map((arg) => resolve(arg));
+    return resolveSuggestedTradeLevelsForContext(
+      evaluatedArgs[0],
+      evaluatedArgs[1],
+      evaluatedArgs[2],
+      ctx,
+    ).tp;
   }
 
   const evaluatedArgs = (Array.isArray(rawArgs) ? rawArgs : []).map((arg) => resolve(arg));

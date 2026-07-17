@@ -1,0 +1,383 @@
+function normalizeTfKey(tfRaw = "") {
+  const raw = String(tfRaw || "").trim().toLowerCase();
+  if (!raw) return "";
+  if (raw === "1m" || raw === "1min" || raw === "m1" || raw === "1") return "1m";
+  if (raw === "5m" || raw === "5min" || raw === "m5" || raw === "5") return "5m";
+  if (raw === "15m" || raw === "15min" || raw === "m15" || raw === "15") return "15m";
+  if (raw === "1h" || raw === "60" || raw === "h1") return "1h";
+  if (raw === "4h" || raw === "240" || raw === "h4") return "4h";
+  if (raw === "1d" || raw === "d" || raw === "day") return "1d";
+  if (raw === "1w" || raw === "w" || raw === "week") return "1w";
+  return raw;
+}
+
+function normalizeScanMode(value = "live") {
+  return String(value || "").trim().toLowerCase() === "backtest"
+    ? "backtest"
+    : "live";
+}
+
+function toFiniteNumber(value, fallback = null) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function normalizeStringList(values = []) {
+  return [...new Set((Array.isArray(values) ? values : [])
+    .map((item) => String(item || "").trim())
+    .filter(Boolean))];
+}
+
+function normalizeNullableNumber(value) {
+  if (value === "" || value === null || value === undefined) return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function normalizeTimeframeList(values = []) {
+  return [...new Set((Array.isArray(values) ? values : [])
+    .map((item) => normalizeTfKey(item))
+    .filter(Boolean))];
+}
+
+function normalizeSymbol(value = "") {
+  return String(value || "").trim().toUpperCase();
+}
+
+function normalizeStrategyStatus(strategy = {}) {
+  const status = String(strategy?.status || "").trim().toLowerCase();
+  if (status === "active" || status === "draft" || status === "archived") return status;
+  return String(strategy?.kind || "").trim().toLowerCase() === "preset"
+    ? "active"
+    : "active";
+}
+
+function normalizeStrategyConditions(strategy = {}) {
+  const raw =
+    strategy?.conditions && typeof strategy.conditions === "object" && !Array.isArray(strategy.conditions)
+      ? strategy.conditions
+      : strategy?.metadata?.conditions &&
+          typeof strategy.metadata.conditions === "object" &&
+          !Array.isArray(strategy.metadata.conditions)
+        ? strategy.metadata.conditions
+        : {};
+  const marketTf = normalizeTfKey(strategy?.market?.tf || "");
+  const timeframeCandidates = normalizeTimeframeList([
+    ...(Array.isArray(raw?.timeframes) ? raw.timeframes : []),
+    ...(Array.isArray(raw?.tfs) ? raw.tfs : []),
+    raw?.tf,
+    ...(Array.isArray(strategy?.market?.timeframes) ? strategy.market.timeframes : []),
+    marketTf,
+  ]);
+  const sharedNewsWindow = toFiniteNumber(
+    raw?.news_window_minutes ?? raw?.skip_news_window_minutes,
+    null,
+  );
+  const beforeMinutes = toFiniteNumber(
+    raw?.news_before_minutes ?? raw?.skip_news_before_minutes ?? sharedNewsWindow,
+    null,
+  );
+  const afterMinutes = toFiniteNumber(
+    raw?.news_after_minutes ?? raw?.skip_news_after_minutes ?? sharedNewsWindow,
+    null,
+  );
+  const minRr = toFiniteNumber(
+    raw?.min_rr ?? strategy?.risk?.min_rr ?? strategy?.params?.min_rr,
+    null,
+  );
+  const maxSpread = normalizeNullableNumber(raw?.max_spread);
+  const minAtr = normalizeNullableNumber(raw?.min_atr);
+  const cooldownBars = normalizeNullableNumber(raw?.cooldown_bars);
+  const maxSignalsPerSession = normalizeNullableNumber(raw?.max_signals_per_session);
+  const rrTarget = toFiniteNumber(
+    strategy?.risk?.rr_target ?? strategy?.params?.rr_target,
+    null,
+  );
+  return {
+    status: normalizeStrategyStatus(strategy),
+    timeframes: timeframeCandidates,
+    symbols: normalizeStringList(raw?.symbols),
+    skip_news: raw?.skip_news === true || raw?.avoid_news === true,
+    news_window_minutes: Number.isFinite(sharedNewsWindow) ? sharedNewsWindow : null,
+    news_before_minutes: beforeMinutes,
+    news_after_minutes: afterMinutes,
+    min_rr: Number.isFinite(minRr) ? minRr : null,
+    max_spread: Number.isFinite(maxSpread) ? maxSpread : null,
+    min_atr: Number.isFinite(minAtr) ? minAtr : null,
+    cooldown_bars: Number.isFinite(cooldownBars) ? cooldownBars : null,
+    max_signals_per_session: Number.isFinite(maxSignalsPerSession)
+      ? maxSignalsPerSession
+      : null,
+    rr_target: Number.isFinite(rrTarget) ? rrTarget : null,
+    sessions: normalizeStringList(raw?.sessions),
+    tags: normalizeStringList(raw?.tags),
+    regime_tags: normalizeStringList(raw?.regime_tags ?? raw?.tags),
+  };
+}
+
+function normalizeSessionName(value = "", fallback = "Any") {
+  const normalized = String(value || "").trim();
+  if (!normalized) return String(fallback || "Any");
+  const aliases = {
+    any: "Any",
+    london: "London",
+    "new york": "New York",
+    newyork: "New York",
+    ny: "New York",
+    asian: "Asian",
+    asia: "Asian",
+    "london+ny": "London+NY",
+    "london + ny": "London+NY",
+  };
+  return aliases[normalized.toLowerCase()] || normalized;
+}
+
+function getUtcHourFraction(unixSeconds) {
+  const date = new Date(Number(unixSeconds || 0) * 1000);
+  return (
+    date.getUTCHours() +
+    date.getUTCMinutes() / 60 +
+    date.getUTCSeconds() / 3600
+  );
+}
+
+function inferSessionNameFromUnixSeconds(unixSeconds) {
+  const hour = getUtcHourFraction(unixSeconds);
+  if (!Number.isFinite(hour)) return "Any";
+  if (hour >= 0 && hour < 9) return "Asian";
+  if (hour >= 8 && hour < 17) return "London";
+  if (hour >= 13 && hour < 22) return "New York";
+  return "Any";
+}
+
+function isSessionAllowed(unixSeconds, allowedSessions = []) {
+  const normalizedAllowed = normalizeStringList(allowedSessions).map((value) =>
+    normalizeSessionName(value, "Any"),
+  );
+  if (!normalizedAllowed.length || normalizedAllowed.includes("Any")) return true;
+  const currentSession = inferSessionNameFromUnixSeconds(unixSeconds);
+  if (normalizedAllowed.includes(currentSession)) return true;
+  if (
+    normalizedAllowed.includes("London+NY") &&
+    (currentSession === "London" || currentSession === "New York")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function resolvePlanDirection(value = "", fallback = "buy") {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (["buy", "bull", "bullish", "long"].includes(normalized)) return "buy";
+  if (["sell", "bear", "bearish", "short"].includes(normalized)) return "sell";
+  return fallback === "sell" ? "sell" : "buy";
+}
+
+function computeTradePlanRiskReward(plan = {}) {
+  const entry = toFiniteNumber(plan?.entry);
+  const tp = toFiniteNumber(plan?.tp);
+  const sl = toFiniteNumber(plan?.sl);
+  if (!Number.isFinite(entry) || !Number.isFinite(tp) || !Number.isFinite(sl)) return null;
+  const direction = resolvePlanDirection(plan?.direction, tp >= entry ? "buy" : "sell");
+  const risk = direction === "sell" ? sl - entry : entry - sl;
+  const reward = direction === "sell" ? entry - tp : tp - entry;
+  if (!Number.isFinite(risk) || !Number.isFinite(reward) || risk <= 0 || reward <= 0) {
+    return null;
+  }
+  return reward / risk;
+}
+
+function resolveNewsWindowForEvent(event = {}, conditions = {}) {
+  const eventBefore = toFiniteNumber(event?.effective_duration?.before_minutes, null);
+  const eventAfter = toFiniteNumber(event?.effective_duration?.during_minutes, null);
+  const beforeMinutes = Number.isFinite(conditions.news_before_minutes)
+    ? conditions.news_before_minutes
+    : eventBefore;
+  const afterMinutes = Number.isFinite(conditions.news_after_minutes)
+    ? conditions.news_after_minutes
+    : eventAfter;
+  return {
+    before_minutes: Math.max(0, Number(beforeMinutes || 0)),
+    after_minutes: Math.max(0, Number(afterMinutes || 0)),
+  };
+}
+
+function doesNewsEventBlockSymbol({
+  event = {},
+  symbol = "",
+  timeMs = Date.now(),
+  conditions = {},
+} = {}) {
+  const normalizedSymbol = normalizeSymbol(symbol);
+  const eventSymbols = normalizeStringList(event?.effective_symbols);
+  if (normalizedSymbol && eventSymbols.length && !eventSymbols.includes(normalizedSymbol)) {
+    return false;
+  }
+  const startMs = toFiniteNumber(event?.start_ts, null);
+  if (!Number.isFinite(startMs)) return false;
+  const { before_minutes, after_minutes } = resolveNewsWindowForEvent(event, conditions);
+  const fromMs = startMs - before_minutes * 60 * 1000;
+  const toMs = startMs + after_minutes * 60 * 1000;
+  return Number(timeMs) >= fromMs && Number(timeMs) <= toMs;
+}
+
+function createStrategyScanEngine({
+  strategy = {},
+  scanMode = "live",
+  skipConditions = true,
+  tf = "",
+  symbol = "",
+  newsEvents = [],
+} = {}) {
+  const normalizedMode = normalizeScanMode(scanMode);
+  const normalizedTf = normalizeTfKey(tf);
+  const normalizedSymbol = normalizeSymbol(symbol);
+  const conditions = normalizeStrategyConditions(strategy);
+  const activeTimeframes = conditions.timeframes;
+  const shouldRespectConditions = skipConditions !== false;
+
+  function isStatusAllowed() {
+    if (!shouldRespectConditions) return true;
+    if (normalizedMode === "backtest") return true;
+    return conditions.status === "active";
+  }
+
+  function isTimeframeAllowed() {
+    if (!shouldRespectConditions) return true;
+    if (!normalizedTf || !activeTimeframes.length) return true;
+    return activeTimeframes.includes(normalizedTf);
+  }
+
+  function isSymbolAllowed() {
+    if (!shouldRespectConditions) return true;
+    if (!normalizedSymbol || !conditions.symbols.length) return true;
+    return conditions.symbols.includes(normalizedSymbol);
+  }
+
+  function getStaticBlockReason() {
+    if (!isStatusAllowed()) return "inactive";
+    if (!isTimeframeAllowed()) return "timeframe";
+    if (!isSymbolAllowed()) return "symbol";
+    return "";
+  }
+
+  function isAllowedAtTime(timeMs = Date.now(), runtimeState = {}) {
+    const staticReason = getStaticBlockReason();
+    if (staticReason) {
+      return { allowed: false, reason: staticReason, conditions };
+    }
+    const timeSec = Math.floor(Number(timeMs || Date.now()) / 1000);
+    if (
+      shouldRespectConditions &&
+      conditions.sessions.length &&
+      !isSessionAllowed(timeSec, conditions.sessions)
+    ) {
+      return { allowed: false, reason: "session", conditions };
+    }
+    if (
+      shouldRespectConditions &&
+      Number.isFinite(conditions.max_spread) &&
+      Number.isFinite(Number(runtimeState?.spread)) &&
+      Number(runtimeState.spread) > conditions.max_spread
+    ) {
+      return { allowed: false, reason: "spread", conditions };
+    }
+    if (
+      shouldRespectConditions &&
+      Number.isFinite(conditions.min_atr) &&
+      Number.isFinite(Number(runtimeState?.atr)) &&
+      Number(runtimeState.atr) < conditions.min_atr
+    ) {
+      return { allowed: false, reason: "atr", conditions };
+    }
+    if (
+      shouldRespectConditions &&
+      Number.isFinite(conditions.cooldown_bars) &&
+      Number.isFinite(Number(runtimeState?.barsSinceLastSignal)) &&
+      Number(runtimeState.barsSinceLastSignal) < conditions.cooldown_bars
+    ) {
+      return { allowed: false, reason: "cooldown_bars", conditions };
+    }
+    if (
+      shouldRespectConditions &&
+      Number.isFinite(conditions.max_signals_per_session) &&
+      Number.isFinite(Number(runtimeState?.signalsInSession)) &&
+      Number(runtimeState.signalsInSession) >= conditions.max_signals_per_session
+    ) {
+      return { allowed: false, reason: "max_signals_per_session", conditions };
+    }
+    if (shouldRespectConditions && conditions.regime_tags.length) {
+      const runtimeTags = normalizeStringList(runtimeState?.regimeTags).map((item) =>
+        item.toLowerCase(),
+      );
+      const requiredTags = conditions.regime_tags.map((item) => item.toLowerCase());
+      if (runtimeTags.length && !requiredTags.some((tag) => runtimeTags.includes(tag))) {
+        return { allowed: false, reason: "regime_tags", conditions };
+      }
+    }
+    if (shouldRespectConditions && normalizedMode === "live" && conditions.skip_news) {
+      const blockedEvent = (Array.isArray(newsEvents) ? newsEvents : []).find((event) =>
+        doesNewsEventBlockSymbol({
+          event,
+          symbol: normalizedSymbol,
+          timeMs,
+          conditions,
+        }),
+      );
+      if (blockedEvent) {
+        return {
+          allowed: false,
+          reason: "news",
+          conditions,
+          blocked_by_news: blockedEvent,
+        };
+      }
+    }
+    return { allowed: true, reason: "", conditions };
+  }
+
+  function filterTradePlan(plan = {}, { timeMs = Date.now(), runtimeState = {} } = {}) {
+    const gate = isAllowedAtTime(timeMs, runtimeState);
+    if (!gate.allowed) return null;
+    const rr = computeTradePlanRiskReward(plan);
+    const minimumRr =
+      Number.isFinite(conditions.min_rr) ? conditions.min_rr :
+      Number.isFinite(conditions.rr_target) ? conditions.rr_target :
+      null;
+    if (
+      shouldRespectConditions &&
+      Number.isFinite(minimumRr) &&
+      Number.isFinite(rr) &&
+      rr < minimumRr
+    ) {
+      return null;
+    }
+    return {
+      ...plan,
+      risk_reward: Number.isFinite(rr) ? rr : plan?.risk_reward ?? null,
+      rr: Number.isFinite(rr) ? rr : plan?.rr ?? null,
+      _strategy_conditions: conditions,
+    };
+  }
+
+  return {
+    strategy,
+    scanMode: normalizedMode,
+    skipConditions: shouldRespectConditions,
+    conditions,
+    isAllowedAtTime,
+    isStrategyAllowed() {
+      return isAllowedAtTime(Date.now());
+    },
+    filterTradePlan,
+  };
+}
+
+export {
+  computeTradePlanRiskReward,
+  createStrategyScanEngine,
+  doesNewsEventBlockSymbol,
+  normalizeScanMode,
+  normalizeStrategyConditions,
+  normalizeTfKey,
+};

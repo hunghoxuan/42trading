@@ -126,10 +126,76 @@ function buildSupportedValueSet(items = []) {
   );
 }
 
+function normalizeStrategyConditions(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return {};
+  const timeframes = [...new Set(
+    [
+      ...(Array.isArray(input?.timeframes) ? input.timeframes : []),
+      ...(Array.isArray(input?.tfs) ? input.tfs : []),
+      input?.tf,
+    ]
+      .map((item) => String(item || "").trim())
+      .filter(Boolean),
+  )];
+  const symbols = [...new Set(
+    (Array.isArray(input?.symbols) ? input.symbols : [])
+      .map((item) => String(item || "").trim().toUpperCase())
+      .filter(Boolean),
+  )];
+  const sessions = [...new Set(
+    (Array.isArray(input?.sessions) ? input.sessions : [])
+      .map((item) => String(item || "").trim())
+      .filter(Boolean),
+  )];
+  const tags = [...new Set(
+    (Array.isArray(input?.tags) ? input.tags : [])
+      .map((item) => String(item || "").trim())
+      .filter(Boolean),
+  )];
+  const regimeTags = [...new Set(
+    (Array.isArray(input?.regime_tags) ? input.regime_tags : [])
+      .map((item) => String(item || "").trim())
+      .filter(Boolean),
+  )];
+  const out = {
+    ...(timeframes.length ? { timeframes } : {}),
+    ...(symbols.length ? { symbols } : {}),
+    ...(sessions.length ? { sessions } : {}),
+    ...(tags.length ? { tags } : {}),
+    ...(regimeTags.length ? { regime_tags: regimeTags } : {}),
+  };
+  if (typeof input?.skip_news === "boolean") out.skip_news = input.skip_news;
+  if (Number.isFinite(Number(input?.news_window_minutes))) {
+    out.news_window_minutes = Math.max(0, Number(input.news_window_minutes));
+  }
+  if (Number.isFinite(Number(input?.news_before_minutes))) {
+    out.news_before_minutes = Math.max(0, Number(input.news_before_minutes));
+  }
+  if (Number.isFinite(Number(input?.news_after_minutes))) {
+    out.news_after_minutes = Math.max(0, Number(input.news_after_minutes));
+  }
+  if (Number.isFinite(Number(input?.min_rr))) {
+    out.min_rr = Number(input.min_rr);
+  }
+  if (Number.isFinite(Number(input?.max_spread))) {
+    out.max_spread = Number(input.max_spread);
+  }
+  if (Number.isFinite(Number(input?.min_atr))) {
+    out.min_atr = Number(input.min_atr);
+  }
+  if (Number.isFinite(Number(input?.cooldown_bars))) {
+    out.cooldown_bars = Math.max(0, Number(input.cooldown_bars));
+  }
+  if (Number.isFinite(Number(input?.max_signals_per_session))) {
+    out.max_signals_per_session = Math.max(0, Number(input.max_signals_per_session));
+  }
+  return out;
+}
+
 async function loadStrategyAssets(configStore = defaultConfigStore) {
   const [schema, strategyFunctions] = await Promise.all([
-    configStore.getSchema("strategy"),
-    configStore.getStrategyFunctions(),
+    configStore.getSchema("strategy", { refresh: true }),
+    configStore.getStrategyFunctions({ refresh: true }),
   ]);
   return {
     schema: schema && typeof schema === "object" ? schema : {},
@@ -166,7 +232,7 @@ function normalizeTradePlanField(value) {
     if (!trimmed) return null;
     const numeric = Number(trimmed);
     if (Number.isFinite(numeric)) return numeric;
-    return { var: trimmed };
+    return trimmed;
   }
   if (typeof value === "object" && !Array.isArray(value)) {
     return value;
@@ -438,6 +504,14 @@ async function validateStrategyPayload(
   if (!strategy.risk || typeof strategy.risk !== "object" || Array.isArray(strategy.risk)) {
     errors.push("risk must be an object");
   }
+  if (
+    strategy.conditions !== undefined &&
+    (typeof strategy.conditions !== "object" ||
+      strategy.conditions === null ||
+      Array.isArray(strategy.conditions))
+  ) {
+    errors.push("conditions must be an object when provided");
+  }
 
   return {
     ok: errors.length === 0,
@@ -482,6 +556,7 @@ async function validateStrategyPayload(
         strategy.risk && typeof strategy.risk === "object" && !Array.isArray(strategy.risk)
           ? strategy.risk
           : {},
+      conditions: normalizeStrategyConditions(strategy.conditions),
       metadata:
         strategy.metadata && typeof strategy.metadata === "object" && !Array.isArray(strategy.metadata)
           ? strategy.metadata
@@ -643,10 +718,24 @@ function buildExampleStrategy() {
     },
     risk: {
       rr_target: 1.5,
+      min_rr: 1.5,
       stop_lookback: 3,
       max_open_trades: 1,
       fallback_stop_pct: 0.001,
       fallback_tp_pct: 0.0015
+    },
+    conditions: {
+      timeframes: ["15m"],
+      skip_news: true,
+      news_window_minutes: 120,
+      min_rr: 1.5,
+      max_spread: null,
+      min_atr: null,
+      cooldown_bars: null,
+      max_signals_per_session: null,
+      sessions: [],
+      regime_tags: [],
+      symbols: [],
     },
     metadata: {
       author: "42trade"

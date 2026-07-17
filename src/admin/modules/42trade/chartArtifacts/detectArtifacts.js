@@ -51,6 +51,362 @@ function normalizeBars(bars = []) {
     .sort((a, b) => a.time - b.time);
 }
 
+function createBarIndexLookup(bars = []) {
+  const lookup = new Map();
+  (Array.isArray(bars) ? bars : []).forEach((bar, index) => {
+    const time = Number(bar?.time);
+    if (Number.isFinite(time)) lookup.set(time, index);
+  });
+  return lookup;
+}
+
+function barIndexForTime(barIndexLookup = null, time = null) {
+  if (!(barIndexLookup instanceof Map)) return null;
+  const normalized = Number(time);
+  if (!Number.isFinite(normalized) || !barIndexLookup.has(normalized)) return null;
+  return barIndexLookup.get(normalized);
+}
+
+function resolveBarsWidth({
+  barIndexLookup = null,
+  barStart = null,
+  barEnd = null,
+  anchorTime = null,
+  explicitBarsWidth = null,
+  extensionBars = null,
+} = {}) {
+  const direct = Number(explicitBarsWidth);
+  if (Number.isFinite(direct) && direct > 0) {
+    return Math.max(1, Math.round(direct));
+  }
+  const start = Number(barStart);
+  const end = Number(barEnd);
+  const lookup = barIndexLookup instanceof Map ? barIndexLookup : null;
+  if (
+    lookup &&
+    Number.isFinite(start) &&
+    Number.isFinite(end) &&
+    lookup.has(start) &&
+    lookup.has(end)
+  ) {
+    return Math.max(1, Math.abs(lookup.get(end) - lookup.get(start)) + 1);
+  }
+  const extension = Number(extensionBars);
+  if (Number.isFinite(extension) && extension > 0) {
+    return Math.max(1, Math.round(extension));
+  }
+  if (Number.isFinite(start) && Number.isFinite(end) && start !== end) {
+    return 2;
+  }
+  if (Number.isFinite(Number(anchorTime)) || Number.isFinite(start) || Number.isFinite(end)) {
+    return 1;
+  }
+  return null;
+}
+
+function zoneTouchesBar(bar = {}, low = null, high = null) {
+  const barLow = Number(bar?.low);
+  const barHigh = Number(bar?.high);
+  const zoneLow = Number(low);
+  const zoneHigh = Number(high);
+  if (
+    !Number.isFinite(barLow) ||
+    !Number.isFinite(barHigh) ||
+    !Number.isFinite(zoneLow) ||
+    !Number.isFinite(zoneHigh)
+  ) {
+    return false;
+  }
+  return barHigh >= zoneLow && barLow <= zoneHigh;
+}
+
+function zoneBreaksThrough(bar = {}, low = null, high = null, bias = "bullish") {
+  const close = Number(bar?.close);
+  const zoneLow = Number(low);
+  const zoneHigh = Number(high);
+  if (!Number.isFinite(close) || !Number.isFinite(zoneLow) || !Number.isFinite(zoneHigh)) {
+    return false;
+  }
+  return bias === "bearish" ? close > zoneHigh : close < zoneLow;
+}
+
+function zoneRejectsTouch(bar = {}, low = null, high = null, bias = "bullish") {
+  const close = Number(bar?.close);
+  const zoneLow = Number(low);
+  const zoneHigh = Number(high);
+  if (!Number.isFinite(close) || !Number.isFinite(zoneLow) || !Number.isFinite(zoneHigh)) {
+    return false;
+  }
+  return bias === "bearish" ? close <= zoneLow : close >= zoneHigh;
+}
+
+function zoneShowsContinuationAfterReject(bars = [], rejectIndex = null, bias = "bullish") {
+  const normalizedBars = Array.isArray(bars) ? bars : [];
+  if (!Number.isInteger(rejectIndex) || rejectIndex < 0 || rejectIndex >= normalizedBars.length - 1) {
+    return false;
+  }
+  const rejectBar = normalizedBars[rejectIndex];
+  const nextBar = normalizedBars[rejectIndex + 1];
+  if (!rejectBar || !nextBar) return false;
+  const rejectClose = Number(rejectBar?.close);
+  const rejectHigh = Number(rejectBar?.high);
+  const rejectLow = Number(rejectBar?.low);
+  const nextClose = Number(nextBar?.close);
+  const nextHigh = Number(nextBar?.high);
+  const nextLow = Number(nextBar?.low);
+  if (bias === "bearish") {
+    return (
+      (Number.isFinite(nextClose) && Number.isFinite(rejectClose) && nextClose < rejectClose) ||
+      (Number.isFinite(nextLow) && Number.isFinite(rejectLow) && nextLow < rejectLow)
+    );
+  }
+  return (
+    (Number.isFinite(nextClose) && Number.isFinite(rejectClose) && nextClose > rejectClose) ||
+    (Number.isFinite(nextHigh) && Number.isFinite(rejectHigh) && nextHigh > rejectHigh)
+  );
+}
+
+function scanZoneLifecycle(bars = [], startIndex = 0, low = null, high = null, bias = "bullish") {
+  const normalizedBars = Array.isArray(bars) ? bars : [];
+  const lifecycle = {
+    firstTouchIndex: null,
+    lastTouchIndex: null,
+    lastRejectIndex: null,
+    firstBreakIndex: null,
+    touchCount: 0,
+    rejectCount: 0,
+  };
+  for (let index = Math.max(0, Number(startIndex) || 0); index < normalizedBars.length; index += 1) {
+    const bar = normalizedBars[index];
+    if (!zoneTouchesBar(bar, low, high)) continue;
+    lifecycle.touchCount += 1;
+    lifecycle.lastTouchIndex = index;
+    if (!Number.isInteger(lifecycle.firstTouchIndex)) lifecycle.firstTouchIndex = index;
+    if (zoneBreaksThrough(bar, low, high, bias)) {
+      lifecycle.firstBreakIndex = index;
+      break;
+    }
+    if (zoneRejectsTouch(bar, low, high, bias)) {
+      lifecycle.lastRejectIndex = index;
+      lifecycle.rejectCount += 1;
+    }
+  }
+  return lifecycle;
+}
+
+function buildDynamicZoneLifecycleArtifacts({
+  bars = [],
+  barIndexLookup = null,
+  baseItem = {},
+  creationEndTime = null,
+  convertType = "",
+  convertLabel = "",
+} = {}) {
+  const normalizedBars = Array.isArray(bars) ? bars : [];
+  const zoneLow = Number(baseItem?.price_low);
+  const zoneHigh = Number(baseItem?.price_high);
+  if (!normalizedBars.length || !Number.isFinite(zoneLow) || !Number.isFinite(zoneHigh)) {
+    return baseItem ? [baseItem] : [];
+  }
+  const creationStartTime = Number(baseItem?.bar_start ?? baseItem?.anchor_time);
+  const creationEnd = Number(creationEndTime ?? baseItem?.bar_end ?? baseItem?.anchor_time);
+  const creationEndIndex = barIndexForTime(barIndexLookup, creationEnd);
+  const startScanIndex =
+    Number.isInteger(creationEndIndex) && creationEndIndex >= 0
+      ? creationEndIndex + 1
+      : 0;
+  const baseBias = String(baseItem?.subtype || "").trim().toLowerCase() === "bearish"
+    ? "bearish"
+    : "bullish";
+  const baseType = String(baseItem?.type || "").trim().toLowerCase();
+  const convertedBias = baseBias === "bearish" ? "bullish" : "bearish";
+  const lastBarTime = Number(normalizedBars[normalizedBars.length - 1]?.time) || creationEnd;
+  const baseLifecycle = scanZoneLifecycle(
+    normalizedBars,
+    startScanIndex,
+    zoneLow,
+    zoneHigh,
+    baseBias,
+  );
+
+  if (Number.isInteger(baseLifecycle.lastRejectIndex) && !Number.isInteger(baseLifecycle.firstBreakIndex)) {
+    const touchBar = normalizedBars[baseLifecycle.lastRejectIndex];
+    return [
+      normalizeChartArtifactItem(
+        {
+          ...baseItem,
+          status: "inactive",
+          bar_end: Number(touchBar?.time) || creationEnd,
+          payload: {
+            ...(baseItem?.payload && typeof baseItem.payload === "object"
+              ? baseItem.payload
+              : {}),
+            lifecycle_state: "rejected_touch",
+            first_touch_time:
+              Number.isInteger(baseLifecycle.firstTouchIndex) && normalizedBars[baseLifecycle.firstTouchIndex]
+                ? Number(normalizedBars[baseLifecycle.firstTouchIndex]?.time) || null
+                : null,
+            last_touch_time:
+              Number.isInteger(baseLifecycle.lastTouchIndex) && normalizedBars[baseLifecycle.lastTouchIndex]
+                ? Number(normalizedBars[baseLifecycle.lastTouchIndex]?.time) || null
+                : null,
+            last_rejected_touch_time: Number(touchBar?.time) || null,
+            rejected_touch_count: baseLifecycle.rejectCount,
+            touch_count: baseLifecycle.touchCount,
+          },
+        },
+        { barIndexLookup },
+      ),
+    ];
+  }
+
+  if (Number.isInteger(baseLifecycle.firstBreakIndex)) {
+    const breakBar = normalizedBars[baseLifecycle.firstBreakIndex];
+    const breakTime = Number(breakBar?.time) || creationEnd;
+    const originalItem = normalizeChartArtifactItem(
+      {
+        ...baseItem,
+        status: "inactive",
+        bar_end: breakTime,
+        payload: {
+          ...(baseItem?.payload && typeof baseItem.payload === "object"
+            ? baseItem.payload
+            : {}),
+          lifecycle_state: "broken_through",
+          first_touch_time:
+            Number.isInteger(baseLifecycle.firstTouchIndex) && normalizedBars[baseLifecycle.firstTouchIndex]
+              ? Number(normalizedBars[baseLifecycle.firstTouchIndex]?.time) || null
+              : null,
+          last_touch_time:
+            Number.isInteger(baseLifecycle.lastTouchIndex) && normalizedBars[baseLifecycle.lastTouchIndex]
+              ? Number(normalizedBars[baseLifecycle.lastTouchIndex]?.time) || null
+              : null,
+          last_rejected_touch_time:
+            Number.isInteger(baseLifecycle.lastRejectIndex) && normalizedBars[baseLifecycle.lastRejectIndex]
+              ? Number(normalizedBars[baseLifecycle.lastRejectIndex]?.time) || null
+              : null,
+          broken_through_time: breakTime,
+          converted_to: convertType,
+          rejected_touch_count: baseLifecycle.rejectCount,
+          touch_count: baseLifecycle.touchCount,
+        },
+      },
+      { barIndexLookup },
+    );
+
+    const convertedLifecycle = scanZoneLifecycle(
+      normalizedBars,
+      baseLifecycle.firstBreakIndex + 1,
+      zoneLow,
+      zoneHigh,
+      convertedBias,
+    );
+    const convertedRejectIndex = Number.isInteger(convertedLifecycle.lastRejectIndex)
+      ? convertedLifecycle.lastRejectIndex
+      : null;
+    const requiresRetestContinuation = baseType === "ob";
+    const conversionConfirmed = requiresRetestContinuation
+      ? Number.isInteger(convertedRejectIndex) &&
+        zoneShowsContinuationAfterReject(normalizedBars, convertedRejectIndex, convertedBias)
+      : true;
+    if (!conversionConfirmed) {
+      return [originalItem];
+    }
+
+    const convertedEndTime =
+      Number.isInteger(convertedRejectIndex) && normalizedBars[convertedRejectIndex]
+        ? Number(normalizedBars[convertedRejectIndex]?.time) || lastBarTime
+        : lastBarTime;
+    const convertedStatus = Number.isInteger(convertedRejectIndex)
+      ? "inactive"
+      : Number.isInteger(convertedLifecycle.firstTouchIndex)
+        ? "touched"
+        : "active";
+    const convertedRejectTime =
+      Number.isInteger(convertedRejectIndex) && normalizedBars[convertedRejectIndex]
+        ? Number(normalizedBars[convertedRejectIndex]?.time) || null
+        : null;
+
+    const convertedItem = normalizeChartArtifactItem(
+      {
+        ...baseItem,
+        id: buildItemId([
+          baseItem?.timeframe || "",
+          convertType,
+          breakTime,
+          zoneLow,
+          zoneHigh,
+        ]),
+        type: convertType,
+        subtype: convertedBias,
+        label: convertLabel,
+        direction: convertedBias === "bearish" ? "SELL" : "BUY",
+        status: convertedStatus,
+        bar_start: breakTime,
+        bar_end: convertedEndTime,
+        anchor_time: breakTime,
+        payload: {
+          ...(baseItem?.payload && typeof baseItem.payload === "object"
+            ? baseItem.payload
+            : {}),
+          lifecycle_state:
+            convertedStatus === "inactive"
+              ? "converted_rejected_touch"
+              : convertedStatus === "touched"
+                ? "converted_touched_no_resolution"
+              : "converted_active",
+          converted_from: String(baseItem?.type || "").trim().toLowerCase(),
+          converted_at: breakTime,
+          first_touch_time:
+            Number.isInteger(convertedLifecycle.firstTouchIndex) &&
+            normalizedBars[convertedLifecycle.firstTouchIndex]
+              ? Number(normalizedBars[convertedLifecycle.firstTouchIndex]?.time) || null
+              : null,
+          last_touch_time:
+            Number.isInteger(convertedLifecycle.lastTouchIndex) &&
+            normalizedBars[convertedLifecycle.lastTouchIndex]
+              ? Number(normalizedBars[convertedLifecycle.lastTouchIndex]?.time) || null
+              : null,
+          last_rejected_touch_time: convertedRejectTime,
+          rejected_touch_count: convertedLifecycle.rejectCount,
+          touch_count: convertedLifecycle.touchCount,
+        },
+      },
+      { barIndexLookup },
+    );
+    return [originalItem, convertedItem];
+  }
+
+  const firstTouchTime =
+    Number.isInteger(baseLifecycle.firstTouchIndex) && normalizedBars[baseLifecycle.firstTouchIndex]
+      ? Number(normalizedBars[baseLifecycle.firstTouchIndex]?.time) || null
+      : null;
+  const lastTouchTime =
+    Number.isInteger(baseLifecycle.lastTouchIndex) && normalizedBars[baseLifecycle.lastTouchIndex]
+      ? Number(normalizedBars[baseLifecycle.lastTouchIndex]?.time) || null
+      : null;
+  return [
+    normalizeChartArtifactItem(
+      {
+        ...baseItem,
+        status: baseLifecycle.firstTouchIndex == null ? "active" : "touched",
+        bar_end: baseLifecycle.firstTouchIndex == null ? lastBarTime : lastTouchTime,
+        payload: {
+          ...(baseItem?.payload && typeof baseItem.payload === "object"
+            ? baseItem.payload
+            : {}),
+          lifecycle_state:
+            baseLifecycle.firstTouchIndex == null ? "awaiting_touch" : "touched_no_resolution",
+          first_touch_time: firstTouchTime,
+          last_touch_time: lastTouchTime,
+          touch_count: baseLifecycle.touchCount,
+        },
+      },
+      { barIndexLookup },
+    ),
+  ];
+}
+
 function normalizeChartArtifactItem(item = {}, fallback = {}) {
   const family = String(item.family || fallback.family || "object").trim();
   const type = String(item.type || fallback.type || "generic").trim();
@@ -62,6 +418,57 @@ function normalizeChartArtifactItem(item = {}, fallback = {}) {
   const anchorTime = Number(item.anchor_time ?? item.time ?? item.bar_start ?? item.barStart);
   const barStart = Number(item.bar_start ?? item.barStart ?? item.anchor_time ?? item.time);
   const barEnd = Number(item.bar_end ?? item.barEnd);
+  const payload =
+    item.payload && typeof item.payload === "object" ? clone(item.payload) : {};
+  const normalizedFamily = String(family || "").trim().toLowerCase();
+  const lifecycleState = String(payload.lifecycle_state || "").trim().toLowerCase();
+  const eventFamilies = new Set(["pattern", "structure", "divergence"]);
+  const zoneRejectEvent =
+    normalizedFamily === "zone" &&
+    (lifecycleState === "rejected_touch" ||
+      lifecycleState === "converted_rejected_touch");
+  const zoneBreakoutEvent =
+    normalizedFamily === "zone" &&
+    (lifecycleState === "converted_active" ||
+      lifecycleState === "converted_touched_no_resolution" ||
+      Number.isFinite(Number(payload.converted_at)));
+  const isEvent = eventFamilies.has(normalizedFamily) || zoneRejectEvent || zoneBreakoutEvent;
+  const eventTime =
+    zoneRejectEvent
+      ? Number(payload.last_rejected_touch_time ?? payload.last_touch_time ?? anchorTime)
+      : zoneBreakoutEvent
+        ? Number(payload.converted_at ?? anchorTime)
+        : anchorTime;
+  const eventKey =
+    zoneRejectEvent
+      ? "reject"
+      : zoneBreakoutEvent
+        ? "breakout"
+        : String(type || "").trim().toLowerCase();
+  const normalizedEventDirection = (() => {
+    const raw = String(item.direction || fallback.direction || "").trim().toLowerCase();
+    if (raw === "buy" || raw === "bullish") return "bullish";
+    if (raw === "sell" || raw === "bearish") return "bearish";
+    if (raw.includes("bull") || raw.includes("buy")) return "bullish";
+    if (raw.includes("bear") || raw.includes("sell")) return "bearish";
+    return "neutral";
+  })();
+  const barsWidth = resolveBarsWidth({
+    barIndexLookup:
+      fallback?.barIndexLookup instanceof Map ? fallback.barIndexLookup : null,
+    barStart,
+    barEnd,
+    anchorTime,
+    explicitBarsWidth:
+      item.bars_width ??
+      item.barsWidth ??
+      item.metrics?.bars_width ??
+      payload?.bars_width,
+    extensionBars:
+      payload?.extension_bars ??
+      item.metrics?.extension_bars ??
+      fallback?.extensionBars,
+  });
   return {
     id:
       String(item.id || "").trim() ||
@@ -74,19 +481,28 @@ function normalizeChartArtifactItem(item = {}, fallback = {}) {
     source: String(item.source || fallback.source || "derived").trim(),
     origin: String(item.origin || fallback.origin || "").trim(),
     status: String(item.status || fallback.status || "active").trim(),
-    direction: String(item.direction || fallback.direction || "").trim(),
+    direction:
+      isEvent && normalizedEventDirection !== "neutral"
+        ? normalizedEventDirection
+        : String(item.direction || fallback.direction || "").trim(),
     price: Number.isFinite(price) ? price : null,
     price_low: Number.isFinite(priceLow) ? priceLow : null,
     price_high: Number.isFinite(priceHigh) ? priceHigh : null,
     bar_start: Number.isFinite(barStart) ? barStart : null,
     bar_end: Number.isFinite(barEnd) ? barEnd : null,
+    bars_width: Number.isFinite(barsWidth) ? barsWidth : null,
     anchor_time: Number.isFinite(anchorTime) ? anchorTime : null,
     geometry:
       item.geometry && typeof item.geometry === "object" ? clone(item.geometry) : {},
     style: item.style && typeof item.style === "object" ? clone(item.style) : {},
     tags: Array.isArray(item.tags) ? [...item.tags] : [],
     metrics: item.metrics && typeof item.metrics === "object" ? clone(item.metrics) : {},
-    payload: item.payload && typeof item.payload === "object" ? clone(item.payload) : {},
+    payload,
+    is_event: isEvent,
+    event_scope: isEvent ? "bar" : "",
+    event_key: isEvent ? eventKey : "",
+    event_time: isEvent && Number.isFinite(eventTime) ? eventTime : null,
+    event_direction: isEvent ? normalizedEventDirection : "",
   };
 }
 
@@ -137,11 +553,18 @@ function inferPatternAt(bars = [], index = 0) {
 }
 
 function buildCandlePatternItems(bars = [], timeframe = "") {
+  const barIndexLookup = createBarIndexLookup(bars);
   const out = [];
   for (let index = 1; index < bars.length; index += 1) {
     const bar = bars[index];
     const patterns = inferPatternAt(bars, index);
     for (const pattern of patterns) {
+      const direction =
+        pattern.startsWith("bullish")
+          ? "BUY"
+          : pattern.startsWith("bearish")
+            ? "SELL"
+            : "";
       out.push(
         normalizeChartArtifactItem({
           id: buildItemId(["pattern", timeframe, pattern, bar.time]),
@@ -152,11 +575,12 @@ function buildCandlePatternItems(bars = [], timeframe = "") {
           timeframe,
           source: "derived",
           origin: "bars",
+          direction,
           price: bar.close,
           anchor_time: bar.time,
           bar_start: bar.time,
           payload: { bar },
-        }),
+        }, { barIndexLookup }),
       );
     }
   }
@@ -275,14 +699,17 @@ function candleRangeSize(bar = {}) {
 }
 
 function buildSwingLevelItems(bars = [], timeframe = "", pivot = 5) {
+  const barIndexLookup = createBarIndexLookup(bars);
   const effectivePivot = resolveAdaptiveStructurePivot(bars, pivot);
   const recentBarRanges = (Array.isArray(bars) ? bars : [])
     .slice(-40)
     .map((bar) => candleRangeSize(bar))
     .filter((value) => Number.isFinite(value) && value > 0);
   const tolerance = Math.max((medianNumber(recentBarRanges) || 1) * 0.03, 0.0000001);
+  const normalizedBars = Array.isArray(bars) ? bars : [];
+  const lastBarTime = Number(normalizedBars[normalizedBars.length - 1]?.time) || null;
   return classifyStructurePivots(
-    buildZigZagPivotPoints(bars, effectivePivot),
+    buildZigZagPivotPoints(normalizedBars, effectivePivot),
     tolerance,
   )
     .map((pivotPoint) => {
@@ -290,6 +717,25 @@ function buildSwingLevelItems(bars = [], timeframe = "", pivot = 5) {
       const range = candleRangeSize(bar);
       const structureTag = String(pivotPoint?.structureTag || "").trim().toLowerCase();
       const structureLabel = structureTag ? structureTag.toUpperCase() : "";
+      const pivotTime = Number(pivotPoint?.time);
+      const pivotPrice = Number(pivotPoint?.price);
+      const pivotIndex = barIndexForTime(barIndexLookup, pivotTime);
+      let breakTime = null;
+      if (Number.isInteger(pivotIndex)) {
+        for (let index = pivotIndex + 1; index < normalizedBars.length; index += 1) {
+          const nextBar = normalizedBars[index];
+          if (!nextBar) continue;
+          const close = Number(nextBar?.close);
+          if (!Number.isFinite(close)) continue;
+          const brokeLevel =
+            pivotPoint?.type === "swing_high"
+              ? close > pivotPrice + tolerance
+              : close < pivotPrice - tolerance;
+          if (!brokeLevel) continue;
+          breakTime = Number(nextBar?.time) || null;
+          break;
+        }
+      }
       return normalizeChartArtifactItem({
         id: buildItemId([
           "level",
@@ -301,18 +747,20 @@ function buildSwingLevelItems(bars = [], timeframe = "", pivot = 5) {
         family: "level",
         type: pivotPoint.type,
         subtype: "zigzag",
-        label: pivotPoint.type === "swing_high" ? "Swing High" : "Swing Low",
+        label: pivotPoint.type === "swing_high" ? "SH" : "SL",
         timeframe,
         source: "derived",
         origin: "bars",
-        price: pivotPoint.price,
-        anchor_time: pivotPoint.time,
-        bar_start: pivotPoint.time,
+        status: Number.isFinite(breakTime) ? "inactive" : "active",
+        price: pivotPrice,
+        anchor_time: pivotTime,
+        bar_start: pivotTime,
+        bar_end: Number.isFinite(breakTime) ? breakTime : lastBarTime,
         payload: {
           bar_range: range,
           price_padding: Math.max(
             range * 0.18,
-            Math.abs(Number(pivotPoint.price)) * 0.00015,
+            Math.abs(pivotPrice) * 0.00015,
           ),
           extension_bars: 3,
           swing_algo: "zigzag",
@@ -321,10 +769,82 @@ function buildSwingLevelItems(bars = [], timeframe = "", pivot = 5) {
           structure_label: structureLabel,
           previous_same_type_time: Number(pivotPoint?.previousSameTypeTime) || null,
           previous_same_type_price: Number(pivotPoint?.previousSameTypePrice) || null,
+          lifecycle_state: Number.isFinite(breakTime) ? "broken_structure" : "awaiting_break",
+          structure_break_time: breakTime,
         },
-      });
+      }, { barIndexLookup });
     })
     .slice(-80);
+}
+
+function buildSwingPointEventItems(bars = [], timeframe = "", pivot = 5) {
+  const barIndexLookup = createBarIndexLookup(bars);
+  return buildRecentStructurePivots(bars, pivot)
+    .map((pivotPoint) => {
+      const type = String(pivotPoint?.type || "").trim().toLowerCase();
+      const price = Number(pivotPoint?.price);
+      const time = Number(pivotPoint?.time);
+      if (!Number.isFinite(price) || !Number.isFinite(time)) return null;
+      const isHigh = type === "swing_high";
+      return normalizeChartArtifactItem({
+        id: buildItemId(["structure", timeframe, `${type}_event`, time, price]),
+        family: "structure",
+        type: `${type}_event`,
+        subtype: type,
+        label: isHigh ? "SH" : "SL",
+        timeframe,
+        source: "derived",
+        origin: "bars",
+        direction: isHigh ? "bearish" : "bullish",
+        price,
+        anchor_time: time,
+        bar_start: time,
+        bar_end: time,
+        payload: {
+          swing_time: time,
+          swing_price: price,
+          structure_tag: String(pivotPoint?.structureTag || "").trim().toLowerCase(),
+        },
+      }, { barIndexLookup });
+    })
+    .filter(Boolean)
+    .slice(-40);
+}
+
+function buildStructureTagEventItems(bars = [], timeframe = "", pivot = 5) {
+  const barIndexLookup = createBarIndexLookup(bars);
+  return buildRecentStructurePivots(bars, pivot)
+    .map((pivotPoint) => {
+      const structureTag = String(pivotPoint?.structureTag || "").trim().toLowerCase();
+      if (!["hh", "hl", "lh", "ll"].includes(structureTag)) return null;
+      const price = Number(pivotPoint?.price);
+      const time = Number(pivotPoint?.time);
+      if (!Number.isFinite(price) || !Number.isFinite(time)) return null;
+      return normalizeChartArtifactItem({
+        id: buildItemId(["structure", timeframe, structureTag, time, price]),
+        family: "structure",
+        type: structureTag,
+        subtype: String(pivotPoint?.type || "").trim().toLowerCase(),
+        label: structureTag.toUpperCase(),
+        timeframe,
+        source: "derived",
+        origin: "bars",
+        direction: structureTag === "hh" || structureTag === "hl" ? "bullish" : "bearish",
+        price,
+        anchor_time: time,
+        bar_start: time,
+        bar_end: time,
+        payload: {
+          structure_tag: structureTag,
+          pivot_time: time,
+          pivot_price: price,
+          previous_same_type_time: Number(pivotPoint?.previousSameTypeTime) || null,
+          previous_same_type_price: Number(pivotPoint?.previousSameTypePrice) || null,
+        },
+      }, { barIndexLookup });
+    })
+    .filter(Boolean)
+    .slice(-40);
 }
 
 function computeRsiSeries(bars = [], period = 14) {
@@ -371,6 +891,7 @@ function buildRecentStructurePivots(bars = [], pivot = 5) {
 }
 
 function buildTrendlineItems(bars = [], timeframe = "", pivot = 5) {
+  const barIndexLookup = createBarIndexLookup(bars);
   const pivots = buildRecentStructurePivots(bars, pivot);
   const lows = pivots.filter((item) => item?.type === "swing_low").slice(-3);
   const highs = pivots.filter((item) => item?.type === "swing_high").slice(-3);
@@ -411,7 +932,7 @@ function buildTrendlineItems(bars = [], timeframe = "", pivot = 5) {
           previous_tag: String(previousLow?.structureTag || "").trim().toLowerCase(),
           current_tag: String(latestLow?.structureTag || "").trim().toLowerCase(),
         },
-      }),
+      }, { barIndexLookup }),
     );
   }
   const latestHigh = highs[highs.length - 1];
@@ -450,13 +971,14 @@ function buildTrendlineItems(bars = [], timeframe = "", pivot = 5) {
           previous_tag: String(previousHigh?.structureTag || "").trim().toLowerCase(),
           current_tag: String(latestHigh?.structureTag || "").trim().toLowerCase(),
         },
-      }),
+      }, { barIndexLookup }),
     );
   }
   return out.slice(-2);
 }
 
 function buildRsiDivergenceItems(bars = [], timeframe = "", pivot = 5) {
+  const barIndexLookup = createBarIndexLookup(bars);
   const source = Array.isArray(bars) ? bars : [];
   if (source.length < 24) return [];
   const pivots = buildRecentStructurePivots(source, pivot);
@@ -505,7 +1027,7 @@ function buildRsiDivergenceItems(bars = [], timeframe = "", pivot = 5) {
           indicator_current: latestLowRsi,
           divergence_class: "regular_bullish",
         },
-      }),
+      }, { barIndexLookup }),
     );
   }
 
@@ -546,7 +1068,7 @@ function buildRsiDivergenceItems(bars = [], timeframe = "", pivot = 5) {
           indicator_current: latestHighRsi,
           divergence_class: "regular_bearish",
         },
-      }),
+      }, { barIndexLookup }),
     );
   }
 
@@ -601,6 +1123,7 @@ function isStrongDisplacementCandle(bars = [], index = 0, direction = "bullish")
 }
 
 function buildFvgZoneItems(bars = [], timeframe = "") {
+  const barIndexLookup = createBarIndexLookup(bars);
   const out = [];
   for (let index = 1; index < bars.length - 1; index += 1) {
     const left = bars[index - 1];
@@ -612,7 +1135,10 @@ function buildFvgZoneItems(bars = [], timeframe = "") {
       const middleRange = candleRangeSize(mid);
       if (!isMeaningfulFvgGap(gapSize, middleRange)) continue;
       out.push(
-        normalizeChartArtifactItem({
+        ...buildDynamicZoneLifecycleArtifacts({
+          bars,
+          barIndexLookup,
+          baseItem: {
           id: buildItemId(["zone", timeframe, "fvg_bullish", mid.time, left.high, right.low]),
           family: "zone",
           type: "fvg",
@@ -635,6 +1161,10 @@ function buildFvgZoneItems(bars = [], timeframe = "") {
             gap_size: gapSize,
             extension_bars: 20,
           },
+          },
+          creationEndTime: Number(right.time),
+          convertType: "ifvg",
+          convertLabel: "Bearish iFVG",
         }),
       );
     }
@@ -643,7 +1173,10 @@ function buildFvgZoneItems(bars = [], timeframe = "") {
       const middleRange = candleRangeSize(mid);
       if (!isMeaningfulFvgGap(gapSize, middleRange)) continue;
       out.push(
-        normalizeChartArtifactItem({
+        ...buildDynamicZoneLifecycleArtifacts({
+          bars,
+          barIndexLookup,
+          baseItem: {
           id: buildItemId(["zone", timeframe, "fvg_bearish", mid.time, right.high, left.low]),
           family: "zone",
           type: "fvg",
@@ -666,6 +1199,10 @@ function buildFvgZoneItems(bars = [], timeframe = "") {
             gap_size: gapSize,
             extension_bars: 20,
           },
+          },
+          creationEndTime: Number(right.time),
+          convertType: "ifvg",
+          convertLabel: "Bullish iFVG",
         }),
       );
     }
@@ -687,6 +1224,7 @@ function findLastOpposingCandle(bars = [], index = 0, direction = "bullish", loo
 }
 
 function buildOrderBlockItems(bars = [], timeframe = "") {
+  const barIndexLookup = createBarIndexLookup(bars);
   const out = [];
   for (let index = 1; index < bars.length - 1; index += 1) {
     const mid = bars[index];
@@ -696,7 +1234,10 @@ function buildOrderBlockItems(bars = [], timeframe = "") {
       const candidate = findLastOpposingCandle(bars, index, "bullish");
       if (candidate?.bar && Number(right.close) > Number(candidate.bar.high)) {
         out.push(
-          normalizeChartArtifactItem({
+          ...buildDynamicZoneLifecycleArtifacts({
+            bars,
+            barIndexLookup,
+            baseItem: {
             id: buildItemId([
               "zone",
               timeframe,
@@ -722,6 +1263,10 @@ function buildOrderBlockItems(bars = [], timeframe = "") {
               displacement_bar_time: Number(mid.time),
               confirmation_bar_time: Number(right.time),
             },
+            },
+            creationEndTime: Number(right.time),
+            convertType: "bb",
+            convertLabel: "Bearish BB",
           }),
         );
       }
@@ -730,7 +1275,10 @@ function buildOrderBlockItems(bars = [], timeframe = "") {
       const candidate = findLastOpposingCandle(bars, index, "bearish");
       if (candidate?.bar && Number(right.close) < Number(candidate.bar.low)) {
         out.push(
-          normalizeChartArtifactItem({
+          ...buildDynamicZoneLifecycleArtifacts({
+            bars,
+            barIndexLookup,
+            baseItem: {
             id: buildItemId([
               "zone",
               timeframe,
@@ -756,6 +1304,10 @@ function buildOrderBlockItems(bars = [], timeframe = "") {
               displacement_bar_time: Number(mid.time),
               confirmation_bar_time: Number(right.time),
             },
+            },
+            creationEndTime: Number(right.time),
+            convertType: "bb",
+            convertLabel: "Bullish BB",
           }),
         );
       }
@@ -765,6 +1317,7 @@ function buildOrderBlockItems(bars = [], timeframe = "") {
 }
 
 function buildLiquidityItems(bars = [], timeframe = "", pivot = 5) {
+  const barIndexLookup = createBarIndexLookup(bars);
   const out = [];
   const swings = buildSwingLevelItems(bars, timeframe, pivot)
     .map((item) => ({
@@ -818,7 +1371,7 @@ function buildLiquidityItems(bars = [], timeframe = "", pivot = 5) {
             second_touch_time: current.time,
             tolerance,
           },
-        }),
+        }, { barIndexLookup }),
       );
     }
     if (current.type === "swing_high") lastHigh = current;
@@ -836,6 +1389,7 @@ function resolveAdaptiveStructurePivot(bars = [], preferredPivot = 5) {
 }
 
 function buildSweepItems(bars = [], timeframe = "", pivot = 5) {
+  const barIndexLookup = createBarIndexLookup(bars);
   const out = [];
   const effectivePivot = resolveAdaptiveStructurePivot(bars, pivot);
   const pivots = buildZigZagPivotPoints(bars, effectivePivot);
@@ -888,7 +1442,7 @@ function buildSweepItems(bars = [], timeframe = "", pivot = 5) {
             swept_swing_time: Number(lastHigh.time),
             swept_swing_price: Number(lastHigh.price),
           },
-        }),
+        }, { barIndexLookup }),
       );
     }
 
@@ -919,7 +1473,7 @@ function buildSweepItems(bars = [], timeframe = "", pivot = 5) {
             swept_swing_time: Number(lastLow.time),
             swept_swing_price: Number(lastLow.price),
           },
-        }),
+        }, { barIndexLookup }),
       );
     }
   }
@@ -927,6 +1481,7 @@ function buildSweepItems(bars = [], timeframe = "", pivot = 5) {
 }
 
 function buildStructureBreakItems(bars = [], timeframe = "", pivot = 5) {
+  const barIndexLookup = createBarIndexLookup(bars);
   const out = [];
   const effectivePivot = resolveAdaptiveStructurePivot(bars, pivot);
   const recentBarRanges = bars
@@ -1019,7 +1574,7 @@ function buildStructureBreakItems(bars = [], timeframe = "", pivot = 5) {
             confirmed_by_close: true,
             source_swing_structure_tag: String(lastHigh?.structureTag || "").trim().toLowerCase(),
           },
-        }),
+        }, { barIndexLookup }),
       );
     }
 
@@ -1074,7 +1629,7 @@ function buildStructureBreakItems(bars = [], timeframe = "", pivot = 5) {
             confirmed_by_close: true,
             source_swing_structure_tag: String(lastLow?.structureTag || "").trim().toLowerCase(),
           },
-        }),
+        }, { barIndexLookup }),
       );
     }
   }
@@ -1082,6 +1637,7 @@ function buildStructureBreakItems(bars = [], timeframe = "", pivot = 5) {
 }
 
 function buildPreviousDayLevelItems(bars = [], timeframe = "") {
+  const barIndexLookup = createBarIndexLookup(bars);
   const dayBuckets = new Map();
   for (const bar of Array.isArray(bars) ? bars : []) {
     const dayKey = utcDayKeyFromUnixSec(bar?.time);
@@ -1119,7 +1675,7 @@ function buildPreviousDayLevelItems(bars = [], timeframe = "") {
         bar_end: current.endTime,
         anchor_time: current.startTime,
         payload: { previous_day: prev.dayKey, current_day: current.dayKey },
-      }),
+      }, { barIndexLookup }),
     );
     out.push(
       normalizeChartArtifactItem({
@@ -1136,13 +1692,14 @@ function buildPreviousDayLevelItems(bars = [], timeframe = "") {
         bar_end: current.endTime,
         anchor_time: current.startTime,
         payload: { previous_day: prev.dayKey, current_day: current.dayKey },
-      }),
+      }, { barIndexLookup }),
     );
   }
   return out.slice(-20);
 }
 
 function buildSupportDemandLevelItems(bars = [], timeframe = "", pivot = 5) {
+  const barIndexLookup = createBarIndexLookup(bars);
   const out = [];
   const swings = buildSwingLevelItems(bars, timeframe, pivot);
   for (const item of swings) {
@@ -1163,7 +1720,7 @@ function buildSupportDemandLevelItems(bars = [], timeframe = "", pivot = 5) {
           price,
           bar_start: anchorTime,
           anchor_time: anchorTime,
-        }),
+        }, { barIndexLookup }),
       );
     }
   }
@@ -1194,7 +1751,7 @@ function buildSupportDemandLevelItems(bars = [], timeframe = "", pivot = 5) {
           price_low: bottom,
           price_high: top,
         },
-      }),
+      }, { barIndexLookup }),
     );
   }
   return dedupeItems(out).slice(-60);
@@ -1232,14 +1789,8 @@ function artifactReferenceTime(item = {}) {
 function shouldLimitArtifactType(type = "", family = "") {
   const normalizedType = String(type || "").trim().toLowerCase();
   const normalizedFamily = String(family || "").trim().toLowerCase();
-  if (normalizedFamily === "pattern") return false;
-  if (normalizedFamily === "swing") return false;
   if (normalizedFamily === "trendline") return false;
   if (normalizedFamily === "divergence") return false;
-  if (normalizedType === "swing_high" || normalizedType === "swing_low") return false;
-  if (normalizedType === "bos" || normalizedType === "choch") return false;
-  if (normalizedType === "sweep_high" || normalizedType === "sweep_low") return false;
-  if (normalizedType === "liquidity_high" || normalizedType === "liquidity_low") return false;
   return true;
 }
 
@@ -1297,6 +1848,8 @@ function buildDerivedItemsFromBars(bars = [], timeframe = "") {
   return limitArtifactsNearLastBarByType(
     dedupeItems([
       ...buildSwingLevelItems(normalizedBars, timeframe),
+      ...buildSwingPointEventItems(normalizedBars, timeframe),
+      ...buildStructureTagEventItems(normalizedBars, timeframe),
       ...buildPreviousDayLevelItems(normalizedBars, timeframe),
       ...buildSupportDemandLevelItems(normalizedBars, timeframe),
       ...buildLiquidityItems(normalizedBars, timeframe),

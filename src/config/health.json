@@ -1,0 +1,74 @@
+{
+  "nodes": [
+    {
+      "id": "local-api",
+      "label": "Local API",
+      "url": "http://127.0.0.1:3001/health",
+      "port": 3001,
+      "type": "api",
+      "timeout_ms": 2000,
+      "output_format": {
+        "mode": "json_path_equals",
+        "path": "ok",
+        "equals": true,
+        "includes": ""
+      }
+    },
+    {
+      "id": "local-admin",
+      "label": "Local Admin",
+      "url": "http://127.0.0.1:3000/",
+      "port": 3000,
+      "type": "api",
+      "timeout_ms": 2000,
+      "output_format": {
+        "mode": "http_status",
+        "path": "",
+        "equals": 200,
+        "includes": ""
+      }
+    },
+    {
+      "id": "redis-local",
+      "label": "Redis",
+      "url": "redis://127.0.0.1:6379",
+      "port": 6379,
+      "type": "redis",
+      "timeout_ms": 1200,
+      "output_format": {
+        "mode": "tcp_connect",
+        "path": "",
+        "equals": true,
+        "includes": ""
+      }
+    },
+    {
+      "id": "sqlite-active-db",
+      "label": "Active SQLite DB",
+      "url": "sqlite:data/database.db",
+      "port": 0,
+      "type": "sqlite",
+      "timeout_ms": 200,
+      "output_format": {
+        "mode": "file_exists",
+        "path": "",
+        "equals": true,
+        "includes": ""
+      }
+    },
+    {
+      "id": "db-manager",
+      "label": "DB Manager",
+      "url": "http://127.0.0.1:8088/api/connections",
+      "port": 8088,
+      "type": "api",
+      "timeout_ms": 2000,
+      "output_format": {
+        "mode": "http_status",
+        "path": "",
+        "equals": 200,
+        "includes": ""
+      }
+    }
+  ]
+}

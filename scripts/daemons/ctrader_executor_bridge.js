@@ -4,7 +4,7 @@
 const http = require("http");
 const crypto = require("crypto");
 
-const TAG = "ctrader-executor";
+const TAG = envStr(process.env.CTRADER_SERVICE_TAG, "ctrader-executor");
 
 function envStr(v, fallback = "") {
   if (v === undefined || v === null) return fallback;
@@ -33,6 +33,14 @@ const CFG = {
       process.env.V2_BROKER_BASE_URL ||
       "https://127.0.0.1",
   ).replace(/\/+$/, ""),
+  brokerPullPath: envStr(
+    process.env.CTRADER_BROKER_PULL_PATH,
+    "/api/broker/pull",
+  ),
+  brokerAckPath: envStr(
+    process.env.CTRADER_BROKER_ACK_PATH,
+    "/api/broker/ack",
+  ),
   brokerAccountApiKey: envStr(
     process.env.CTRADER_ACCOUNT_API_KEY ||
       process.env.V2_BROKER_ACCOUNT_API_KEY,
@@ -333,6 +341,7 @@ function normalizeBrokerTaskItem(item = {}) {
     volume: Number.isFinite(Number(item.volume ?? item.lots))
       ? Number(item.volume ?? item.lots)
       : null,
+    strategy: String(item.strategy || item.strategy_name || "").trim(),
     note: String(item.note || "").trim(),
     account_id: envStr(item.account_id || CFG.accountId || null),
     account_number: envStr(item.account_number || CFG.accountNumber || null),
@@ -349,7 +358,7 @@ async function ackBrokerTask(item = {}, signal = {}, out = {}, error = null) {
   const status = error
     ? "ERROR"
     : downstreamStatusForTask(signal, out);
-  return postBrokerJson("/api/broker/ack", {
+  return postBrokerJson(CFG.brokerAckPath, {
     trade_id: tradeId,
     lease_token: leaseToken,
     execution_status: status,
@@ -392,7 +401,7 @@ async function processBrokerTask(item = {}) {
 
 async function pollBrokerTasksOnce() {
   if (!CFG.brokerAccountApiKey) return 0;
-  const out = await postBrokerJson("/api/broker/pull", {
+  const out = await postBrokerJson(CFG.brokerPullPath, {
     max_items: CFG.brokerPullMaxItems,
   });
   const items = Array.isArray(out?.items) ? out.items : [];

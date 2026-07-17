@@ -49,6 +49,13 @@ function loadChartSnapshot({
     symbol: symbolNorm,
     timeframe: tfNorm,
     bars: normalizedBars,
+    artifacts: [],
+    trade_plans: [],
+    coverage: {
+      timeframe: tfNorm,
+      start_bar: normalizedBars[0]?.time || null,
+      end_bar: normalizedBars[normalizedBars.length - 1]?.time || null,
+    },
     lastPrice: Number(lastBar?.close) || null,
     metadata: {
       bars_count: normalizedBars.length,

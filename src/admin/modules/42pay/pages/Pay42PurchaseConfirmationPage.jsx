@@ -4,6 +4,7 @@ import { api } from "../../../app/api";
 import PageHeader from "../../../shared/components/PageHeader";
 import ResponsivePanel from "../../../shared/components/ResponsivePanel";
 import Pay42MediaThumb from "./Pay42MediaThumb";
+import Pay42PageShell from "./Pay42PageShell";
 import { showDateTime } from "../../../shared/utils/format";
 import { formatMoney, statusTone } from "./pay42Ui";
 
@@ -63,7 +64,7 @@ export default function Pay42PurchaseConfirmationPage() {
   ).toUpperCase();
 
   return (
-    <section className="logs-page-container trades-page-container pay42-page-container stack-layout fadeIn">
+    <Pay42PageShell>
       <PageHeader
         className="trades-page-header"
         title="Booking Confirmation"
@@ -192,6 +193,6 @@ export default function Pay42PurchaseConfirmationPage() {
           </div>
         )}
       </ResponsivePanel>
-    </section>
+    </Pay42PageShell>
   );
 }

@@ -1,0 +1,153 @@
+{
+  "key": "price_action_v1",
+  "name": "Price Action v1",
+  "kind": "preset",
+  "description": "Price-action strategy using bullish/bearish candle confirmation and function-generated market trade plans from recent swing structure.",
+  "engine_version": "42trade.strategy.v2",
+  "status": "active",
+  "market": {
+    "symbol": ""
+  },
+  "params": {
+    "reward_rr": 2,
+    "stop_lookback": 3,
+    "stop_buffer_pct": 0,
+    "min_stop_pips": 15
+  },
+  "indicators": [],
+  "rules": [
+    {
+      "id": "bullish_price_action",
+      "name": "Buy",
+      "bias": "bullish",
+      "priority": "medium",
+      "when": {
+        "and": [
+          {
+            "fn": "bias",
+            "args": [
+              "bullish"
+            ]
+          },
+          {
+            "or": [
+              {
+                "fn": "pin_bar",
+                "args": [
+                  "bullish"
+                ]
+              },
+              {
+                "fn": "engulfing",
+                "args": [
+                  "bullish"
+                ]
+              },
+              {
+                "fn": "bos",
+                "args": [
+                  "bullish"
+                ]
+              },
+              {
+                "fn": "choch",
+                "args": [
+                  "bullish"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "actions": [
+        {
+          "id": "buy_market_plan",
+          "action": "trade",
+          "label": "Buy",
+          "trade_plan": {
+            "direction": "buy",
+            "type": "market",
+            "entry": "bar.close",
+            "sl": "price_action_sl(buy, params.stop_lookback, params.stop_buffer_pct, params.min_stop_pips)",
+            "tp": "price_action_tp(buy, params.stop_lookback, params.reward_rr, params.stop_buffer_pct, params.min_stop_pips)"
+          }
+        }
+      ]
+    },
+    {
+      "id": "bearish_price_action",
+      "name": "Sell",
+      "bias": "bearish",
+      "priority": "medium",
+      "when": {
+        "and": [
+          {
+            "fn": "bias",
+            "args": [
+              "bearish"
+            ]
+          },
+          {
+            "or": [
+              {
+                "fn": "pin_bar",
+                "args": [
+                  "bearish"
+                ]
+              },
+              {
+                "fn": "engulfing",
+                "args": [
+                  "bearish"
+                ]
+              },
+              {
+                "fn": "bos",
+                "args": [
+                  "bearish"
+                ]
+              },
+              {
+                "fn": "choch",
+                "args": [
+                  "bearish"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "actions": [
+        {
+          "id": "sell_market_plan",
+          "action": "trade",
+          "label": "Sell",
+          "trade_plan": {
+            "direction": "sell",
+            "type": "market",
+            "entry": "bar.close",
+            "sl": "price_action_sl(sell, params.stop_lookback, params.stop_buffer_pct, params.min_stop_pips)",
+            "tp": "price_action_tp(sell, params.stop_lookback, params.reward_rr, params.stop_buffer_pct, params.min_stop_pips)"
+          }
+        }
+      ]
+    }
+  ],
+  "risk": {
+    "rr_target": 2,
+    "stop_lookback": 3,
+    "max_open_trades": 1,
+    "fallback_stop_pct": 0.001,
+    "fallback_tp_pct": 0.002
+  },
+  "metadata": {
+    "strategy_type": "price_action",
+    "signal_source": "chart_artifacts",
+    "preview_current_bar_only": true
+  },
+  "min_bars": 20,
+  "conditions": {
+    "skip_news": true,
+    "news_window_minutes": 120
+  }
+}

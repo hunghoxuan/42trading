@@ -19,21 +19,54 @@
   align-items: center;
 }
 
-.system-tool-layout {
-  display: grid;
-  grid-template-columns: minmax(240px, 280px) minmax(0, 1fr) minmax(300px, 380px);
-  gap: 16px;
-  min-height: 0;
-}
-
-.system-tool-layout--compact-detail {
-  grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
-}
-
 .system-tool-sidebar,
 .system-tool-main,
 .system-tool-detail {
   min-height: 0;
+}
+
+.system-tool-browser-table .data-table-shell {
+  min-height: min(72vh, calc(100vh - 320px));
+}
+
+.system-tool-browser-table .events-table-wrap {
+  min-height: 0;
+}
+
+.system-tool-browser-table tbody tr {
+  cursor: pointer;
+}
+
+.system-tool-browser-table tbody tr.active td,
+.system-tool-browser-table tbody tr.is-active td,
+.system-tool-browser-table tbody tr.is-selected td {
+  background: rgba(64, 159, 255, 0.12);
+}
+
+.system-tool-browser-table tbody tr.active td:first-child,
+.system-tool-browser-table tbody tr.is-active td:first-child,
+.system-tool-browser-table tbody tr.is-selected td:first-child {
+  box-shadow: inset 2px 0 0 rgba(34, 211, 238, 0.95);
+}
+
+.system-tool-table__primary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.system-tool-table__title {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.system-tool-table__subtle {
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .system-tool-panel {
@@ -57,92 +90,93 @@
 .system-tool-panel__body--scroll {
   max-height: min(72vh, calc(100vh - 260px));
   overflow: auto;
+  padding: 0;
 }
 
 .system-tool-tree {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.system-tool-tree__node {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.system-tool-tree__row {
-  display: grid;
-  grid-template-columns: 20px minmax(0, 1fr);
-  gap: 8px;
-  align-items: start;
-}
-
-.system-tool-tree__toggle {
+  min-width: 0;
   border: 0;
   background: transparent;
-  color: var(--muted);
-  padding: 6px 0 0;
-  cursor: pointer;
+  padding: 2px 0;
 }
 
-.system-tool-tree__toggle:disabled {
-  cursor: default;
-  opacity: 0.5;
+.system-tool-sidebar.responsive-panel {
+  width: 280px !important;
+  max-width: 280px;
+  min-width: 280px;
+  align-self: stretch;
 }
 
-.system-tool-tree__children {
-  margin-left: 12px;
-  padding-left: 10px;
-  border-left: 1px solid rgba(142, 160, 181, 0.14);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.system-tool-sidebar .responsive-panel__body {
+  padding: 0;
 }
 
-.system-tool-tree__item,
-.system-tool-list__item {
-  width: 100%;
-  text-align: left;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  border-radius: var(--radius-lg);
-  padding: 10px 12px;
+.system-tool-sidebar .system-tool-panel__body--scroll {
+  padding: 0;
 }
 
-.system-tool-tree__item.is-active,
-.system-tool-list__item.is-active {
-  border-color: rgba(64, 159, 255, 0.45);
-  box-shadow: inset 0 0 0 1px rgba(64, 159, 255, 0.2);
-}
-
-.system-tool-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.system-tool-list__meta,
-.system-tool-tree__meta {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--muted);
-}
-
-.system-tool-list__title,
-.system-tool-tree__title {
-  font-size: 13px;
-  font-weight: 700;
+.system-tool-page .db-manager-workspace {
+  grid-template-columns: 280px minmax(0, 1fr);
 }
 
 .system-tool-detail__content {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.system-tool-image-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: zoom-in;
+}
+
+.system-tool-image-preview__img {
+  display: block;
+  width: 100%;
+  max-height: 360px;
+  object-fit: contain;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.system-tool-image-preview__meta {
+  margin-top: -2px;
+}
+
+.system-tool-image-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  border: 0;
+  background: rgba(2, 6, 23, 0.88);
+  cursor: zoom-out;
+}
+
+.system-tool-image-modal__content {
+  max-width: min(94vw, 1600px);
+  max-height: 92vh;
+}
+
+.system-tool-image-modal__img {
+  display: block;
+  max-width: 100%;
+  max-height: 92vh;
+  width: auto;
+  height: auto;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
 }
 
 .system-tool-detail__content pre,
@@ -240,6 +274,20 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+  font-size: 10px;
+}
+
+.db-manager-page button,
+.db-manager-page input,
+.db-manager-page select,
+.db-manager-page textarea,
+.db-manager-page table,
+.db-manager-page th,
+.db-manager-page td,
+.db-manager-page .minor-text,
+.db-manager-page .panel-label {
+  font-size: 10px;
+  line-height: 1.35;
 }
 
 .db-manager-toolbar {
@@ -257,21 +305,94 @@
   align-items: center;
 }
 
-.db-manager-grid {
-  display: grid;
-  grid-template-columns: minmax(240px, 280px) minmax(0, 1fr) minmax(320px, 400px);
-  gap: 16px;
+.db-manager-toolbar__group--compact {
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
 }
 
-.db-manager-grid--detail-closed {
-  grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
+.db-manager-toolbar__group--compact > .text-input:first-child {
+  flex: 0 0 min(420px, 42%);
+}
+
+.db-manager-toolbar__group--compact > .text-input:last-child {
+  flex: 1 1 auto;
+}
+
+.db-manager-workspace {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  min-width: 0;
+}
+
+.db-manager-nav-panel.responsive-panel {
+  width: 180px !important;
+  max-width: 180px;
+  min-width: 180px;
+  align-self: stretch;
+}
+
+.db-manager-nav-panel .responsive-panel__body {
+  padding: 0;
+}
+
+.db-manager-crud.crud-container--with-detail {
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 380px);
+}
+
+.system-tool-browser-crud.crud-container--with-detail {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.db-manager-crud .crud-container__panel-body {
+  padding: 0;
+}
+
+.db-manager-rows-panel.responsive-panel {
+  padding: 0;
+}
+
+.db-manager-rows-panel .responsive-panel__header {
+  padding: 14px 16px 0;
+}
+
+.db-manager-rows-panel .responsive-panel__body {
+  padding: 14px 16px;
+}
+
+.db-manager-page .system-tool-panel__body {
+  padding: 0;
+}
+
+.db-manager-rows-panel .data-table-shell {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  min-height: 0;
+}
+
+.db-manager-rows-panel .events-table-wrap {
+  flex: 0 1 auto;
+  min-height: 0;
+}
+
+.db-manager-table tbody tr {
+  height: auto;
+}
+
+.db-manager-table td,
+.db-manager-table th {
+  height: auto;
+  white-space: nowrap;
 }
 
 .db-manager-sidebar-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  max-height: min(72vh, calc(100vh - 260px));
+  gap: 6px;
+  max-height: min(72vh, calc(100vh - 240px));
   overflow: auto;
 }
 
@@ -281,26 +402,22 @@
   border: 1px solid var(--border);
   background: var(--surface);
   border-radius: var(--radius-lg);
-  padding: 10px 12px;
+  padding: 8px 6px;
 }
 
-.db-manager-table-item.is-active {
+.db-manager-table-item.active,
+.db-manager-table-item.is-active,
+.db-manager-table-item.is-selected {
   border-color: rgba(64, 159, 255, 0.45);
   box-shadow: inset 0 0 0 1px rgba(64, 159, 255, 0.2);
 }
 
 .db-manager-table-item__title {
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.db-manager-table-item__meta {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  text-align: left;
+  line-height: 1.25;
+  word-break: break-word;
 }
 
 .db-manager-data-wrap {
@@ -319,10 +436,12 @@
   background: var(--surface-elevated);
   z-index: 1;
   cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
 }
 
 .db-manager-cell {
-  max-width: 240px;
+  max-width: 200px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -334,6 +453,10 @@
   gap: 12px;
 }
 
+.db-manager-detail-body {
+  padding: 14px 16px;
+}
+
 .db-manager-form__grid {
   display: grid;
   grid-template-columns: 1fr;
@@ -342,14 +465,17 @@
 
 .db-manager-form__field {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
 }
 
 .db-manager-form__field label {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--muted);
   letter-spacing: 0.08em;
+  flex: 0 0 84px;
+  min-width: 84px;
 }
 
 .db-manager-form__field input,
@@ -362,6 +488,10 @@
 .db-manager-toolbar textarea {
   width: 100%;
   min-width: 0;
+}
+
+.db-manager-form__field .text-input {
+  flex: 1 1 auto;
 }
 
 .db-manager-form__actions {
@@ -387,11 +517,175 @@
   gap: 10px;
 }
 
+.db-manager-schema-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.db-manager-schema-browser {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.db-manager-schema-browser__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.db-manager-schema-browser__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.db-manager-schema-editor__notice {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+}
+
+.db-manager-schema-editor__grid {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.db-manager-schema-list,
+.db-manager-indexes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.db-manager-schema-list__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.db-manager-schema-list__items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.db-manager-schema-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  text-align: left;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 10px;
+  padding: 8px;
+}
+
+.db-manager-schema-item.active,
+.db-manager-schema-item.is-active,
+.db-manager-schema-item.is-selected {
+  border-color: rgba(64, 159, 255, 0.45);
+  box-shadow: inset 0 0 0 1px rgba(64, 159, 255, 0.2);
+}
+
+.db-manager-schema-item span {
+  color: var(--muted);
+}
+
+.db-manager-schema-form {
+  min-width: 0;
+}
+
+.db-manager-indexes__create {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+.db-manager-indexes__columns {
+  min-height: 88px;
+}
+
+.db-manager-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.db-manager-indexes__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.db-manager-index-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.db-manager-index-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+  padding: 8px 10px;
+}
+
+.db-manager-page .db-manager-query-result pre {
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
 @media (max-width: 1100px) {
   .system-tool-layout,
-  .db-manager-grid,
+  .db-manager-workspace,
   .system-tool-layout--compact-detail,
-  .db-manager-grid--detail-closed {
+  .db-manager-crud.crud-container--with-detail {
     grid-template-columns: 1fr;
+  }
+
+  .db-manager-nav-panel.responsive-panel {
+    width: 100% !important;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .db-manager-schema-editor__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 767px) {
+  .db-manager-toolbar__group--compact {
+    flex-wrap: wrap;
+  }
+
+  .db-manager-toolbar__group--compact > .text-input:first-child,
+  .db-manager-toolbar__group--compact > .text-input:last-child {
+    flex: 1 1 100%;
+  }
+
+  .db-manager-form__field {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .db-manager-form__field label {
+    flex-basis: auto;
+    min-width: 0;
   }
 }

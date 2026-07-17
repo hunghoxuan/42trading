@@ -1,11 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../../../app/api";
 import PageHeader from "../../../shared/components/PageHeader";
 import AdminPageToolbar, {
   AdminToolbarGroup,
 } from "../../../shared/components/AdminPageToolbar";
 import ResponsivePanel from "../../../shared/components/ResponsivePanel";
+import CrudContainer from "../../../shared/components/CrudContainer";
+import ComboButtonMenu from "../../../shared/components/ComboButtonMenu";
+import PaginationBar from "../../../shared/components/PaginationBar";
 import "./SystemToolsPages.css";
+
+const TABLE_MODE_ITEMS = [
+  { value: "table", label: "Table" },
+  { value: "grid", label: "Grid" },
+  { value: "cards", label: "Cards" },
+  { value: "carousel", label: "Carousel" },
+];
 
 function formatCellValue(value) {
   if (value === null || value === undefined) return "";
@@ -18,19 +29,82 @@ function formatCount(value) {
   return Number.isFinite(number) ? number.toLocaleString() : "-";
 }
 
+function buildFieldDraft(column = null) {
+  if (!column) {
+    return {
+      columnName: "",
+      nextColumnName: "",
+      typeName: "TEXT",
+      length: "",
+      precision: "",
+      scale: "",
+      nullable: true,
+      defaultMode: "none",
+      defaultLiteral: "",
+      defaultExpression: "",
+      isNew: true,
+    };
+  }
+
+  return {
+    columnName: String(column.column_name || ""),
+    nextColumnName: String(column.column_name || ""),
+    typeName: String(
+      column.character_maximum_length
+        ? column.data_type || column.udt_name || "TEXT"
+        : column.udt_name || column.data_type || "TEXT",
+    ).toUpperCase(),
+    length:
+      column.character_maximum_length === null ||
+      column.character_maximum_length === undefined
+        ? ""
+        : String(column.character_maximum_length),
+    precision:
+      column.numeric_precision === null || column.numeric_precision === undefined
+        ? ""
+        : String(column.numeric_precision),
+    scale:
+      column.numeric_scale === null || column.numeric_scale === undefined
+        ? ""
+        : String(column.numeric_scale),
+    nullable: String(column.is_nullable || "").toUpperCase() !== "NO",
+    defaultMode:
+      column.column_default === null || column.column_default === undefined
+        ? "none"
+        : "expression",
+    defaultLiteral: "",
+    defaultExpression:
+      column.column_default === null || column.column_default === undefined
+        ? ""
+        : String(column.column_default),
+    isNew: false,
+  };
+}
+
 export default function DbManagerPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [connections, setConnections] = useState([]);
-  const [connectionId, setConnectionId] = useState("");
-  const [tableSearch, setTableSearch] = useState("");
-  const [rowSearch, setRowSearch] = useState("");
+  const [connectionId, setConnectionId] = useState(
+    () => searchParams.get("db") || "",
+  );
+  const [search, setSearch] = useState("");
   const [tables, setTables] = useState([]);
   const [selectedTable, setSelectedTable] = useState(null);
   const [schemaRows, setSchemaRows] = useState([]);
+  const [tableIndexes, setTableIndexes] = useState([]);
   const [rows, setRows] = useState([]);
   const [selectedRow, setSelectedRow] = useState(null);
   const [draftValues, setDraftValues] = useState({});
+  const [schemaEditorOpen, setSchemaEditorOpen] = useState(false);
+  const [selectedFieldName, setSelectedFieldName] = useState("");
+  const [selectedIndexName, setSelectedIndexName] = useState("");
+  const [fieldDraft, setFieldDraft] = useState(null);
+  const [indexDraft, setIndexDraft] = useState({
+    indexName: "",
+    columns: [],
+    unique: false,
+  });
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(50);
   const [pages, setPages] = useState(1);
   const [total, setTotal] = useState(0);
   const [sortCol, setSortCol] = useState("");
@@ -41,8 +115,29 @@ export default function DbManagerPage() {
   const [loadingConnections, setLoadingConnections] = useState(false);
   const [loadingTables, setLoadingTables] = useState(false);
   const [loadingRows, setLoadingRows] = useState(false);
+  const [loadingSchemaMeta, setLoadingSchemaMeta] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const pageSize = 50;
+  const [detailOpen, setDetailOpen] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth >= 768 : true,
+  );
+  const [tableMode, setTableMode] = useState("table");
+  const [viewMode, setViewMode] = useState("data");
+  const routeConnectionId = String(searchParams.get("db") || "").trim();
+  const routeSchema = String(searchParams.get("schema") || "").trim();
+  const routeTableName = String(searchParams.get("table") || "").trim();
+  const selectedConnection = useMemo(
+    () =>
+      connections.find(
+        (connection) => String(connection.id || "").trim() === String(connectionId || "").trim(),
+      ) || null,
+    [connections, connectionId],
+  );
+  const schemaWritable = useMemo(
+    () => !String(selectedConnection?.name || "").toLowerCase().startsWith("sqlite:"),
+    [selectedConnection],
+  );
 
   const primaryKey = useMemo(
     () => schemaRows.find((row) => row.is_primary_key)?.column_name || schemaRows[0]?.column_name || "id",
@@ -53,6 +148,129 @@ export default function DbManagerPage() {
     () => selectedRow && selectedRow.__isNew === true,
     [selectedRow],
   );
+  const selectedField = useMemo(
+    () =>
+      schemaRows.find(
+        (row) => String(row.column_name || "") === String(selectedFieldName || ""),
+      ) || null,
+    [schemaRows, selectedFieldName],
+  );
+  const selectedIndex = useMemo(
+    () =>
+      tableIndexes.find(
+        (row) => String(row.index_name || "") === String(selectedIndexName || ""),
+      ) || null,
+    [tableIndexes, selectedIndexName],
+  );
+  const schemaMode = viewMode === "schema";
+
+  function updateRouteSelection(next = {}) {
+    const params = new URLSearchParams(searchParams);
+    const nextConnectionId = String(
+      next.connectionId ?? connectionId ?? "",
+    ).trim();
+    const nextSchema = String(
+      next.schema ?? selectedTable?.table_schema ?? "",
+    ).trim();
+    const nextTable = String(
+      next.table ?? selectedTable?.table_name ?? "",
+    ).trim();
+    if (nextConnectionId) params.set("db", nextConnectionId);
+    else params.delete("db");
+    if (nextSchema) params.set("schema", nextSchema);
+    else params.delete("schema");
+    if (nextTable) params.set("table", nextTable);
+    else params.delete("table");
+    setSearchParams(params, { replace: true });
+  }
+
+  function beginSchemaEditor(column = null) {
+    setSchemaEditorOpen(true);
+    setSelectedIndexName("");
+    const nextColumn = column || selectedField || schemaRows[0] || null;
+    if (nextColumn) {
+      setSelectedFieldName(String(nextColumn.column_name || ""));
+      setFieldDraft(buildFieldDraft(nextColumn));
+      setDetailOpen(true);
+      return;
+    }
+    setSelectedFieldName("");
+    setFieldDraft(buildFieldDraft(null));
+    setDetailOpen(true);
+  }
+
+  function beginNewField() {
+    setSchemaEditorOpen(true);
+    setSelectedFieldName("");
+    setSelectedIndexName("");
+    setFieldDraft(buildFieldDraft(null));
+    setDetailOpen(true);
+  }
+
+  function beginNewIndex() {
+    setSchemaEditorOpen(true);
+    setSelectedFieldName("");
+    setSelectedIndexName("__new__");
+    setFieldDraft(null);
+    setIndexDraft({
+      indexName: "",
+      columns: [],
+      unique: false,
+    });
+    setDetailOpen(true);
+  }
+
+  function selectSchemaField(column) {
+    setSchemaEditorOpen(true);
+    setSelectedRow(null);
+    setDraftValues({});
+    setSelectedIndexName("");
+    setSelectedFieldName(String(column?.column_name || ""));
+    setFieldDraft(buildFieldDraft(column));
+    setDetailOpen(true);
+  }
+
+  function selectSchemaIndex(indexRow) {
+    setSchemaEditorOpen(true);
+    setSelectedRow(null);
+    setDraftValues({});
+    setSelectedFieldName("");
+    setFieldDraft(null);
+    setSelectedIndexName(String(indexRow?.index_name || ""));
+    setIndexDraft({
+      indexName: String(indexRow?.index_name || ""),
+      columns: Array.isArray(indexRow?.columns) ? indexRow.columns : [],
+      unique: Boolean(indexRow?.is_unique),
+    });
+    setDetailOpen(true);
+  }
+
+  function toggleViewMode() {
+    setViewMode((current) => {
+      const nextMode = current === "schema" ? "data" : "schema";
+      if (nextMode === "schema") {
+        setSchemaEditorOpen(true);
+        setSelectedRow(null);
+        setDraftValues({});
+        if (schemaRows[0]) {
+          setSelectedFieldName(String(schemaRows[0].column_name || ""));
+          setSelectedIndexName("");
+          setFieldDraft(buildFieldDraft(schemaRows[0]));
+        } else {
+          setSelectedFieldName("");
+          setSelectedIndexName("");
+          setFieldDraft(buildFieldDraft(null));
+        }
+      } else {
+        setSchemaEditorOpen(false);
+        setSelectedFieldName("");
+        setSelectedIndexName("");
+        setFieldDraft(null);
+      }
+      setDetailOpen(true);
+      return nextMode;
+    });
+  }
 
   async function loadConnections() {
     try {
@@ -61,7 +279,17 @@ export default function DbManagerPage() {
       const nextConnections = Array.isArray(out?.connections) ? out.connections : [];
       setConnections(nextConnections);
       if (!connectionId && nextConnections.length) {
-        setConnectionId(nextConnections[0].id);
+        const preferredConnection =
+          nextConnections.find((item) => String(item.id || "").trim() === routeConnectionId) ||
+          nextConnections.find((item) => String(item.id || "").trim() === "active") ||
+          nextConnections[0];
+        const nextConnectionId = preferredConnection?.id || "";
+        setConnectionId(nextConnectionId);
+        updateRouteSelection({
+          connectionId: nextConnectionId,
+          schema: routeSchema,
+          table: routeTableName,
+        });
       }
       setError("");
     } catch (err) {
@@ -75,16 +303,28 @@ export default function DbManagerPage() {
     if (!connectionId) return;
     try {
       setLoadingTables(true);
-      const out = await api.dbManagerTables(connectionId, tableSearch);
+      const out = await api.dbManagerTables(connectionId, search);
       const nextTables = Array.isArray(out?.rows) ? out.rows : [];
       setTables(nextTables);
-      if (selectedTable) {
-        const keep = nextTables.find(
-          (item) =>
-            item.table_schema === selectedTable.table_schema &&
-            item.table_name === selectedTable.table_name,
-        );
-        setSelectedTable(keep || null);
+      const routeMatch =
+        routeSchema && routeTableName
+          ? nextTables.find(
+              (item) =>
+                item.table_schema === routeSchema &&
+                item.table_name === routeTableName,
+            )
+          : null;
+      const keep = selectedTable
+        ? nextTables.find(
+            (item) =>
+              item.table_schema === selectedTable.table_schema &&
+              item.table_name === selectedTable.table_name,
+          )
+        : null;
+      const nextSelectedTable = routeMatch || keep || null;
+      setSelectedTable(nextSelectedTable);
+      if (!nextSelectedTable && (routeSchema || routeTableName)) {
+        updateRouteSelection({ connectionId, schema: "", table: "" });
       }
       setError("");
     } catch (err) {
@@ -103,7 +343,7 @@ export default function DbManagerPage() {
         table: selectedTable.table_name,
         page,
         pageSize,
-        q: rowSearch,
+        q: search,
         sortCol,
         sortDir,
       });
@@ -128,25 +368,115 @@ export default function DbManagerPage() {
     }
   }
 
+  async function loadSchemaMeta() {
+    if (!connectionId || !selectedTable?.table_name) return;
+    try {
+      setLoadingSchemaMeta(true);
+      const out = await api.dbManagerSchema(
+        connectionId,
+        selectedTable.table_schema || "public",
+        selectedTable.table_name,
+      );
+      const nextSchemaRows = Array.isArray(out?.rows) ? out.rows : [];
+      const nextIndexes = Array.isArray(out?.indexes) ? out.indexes : [];
+      setSchemaRows(nextSchemaRows);
+      setTableIndexes(nextIndexes);
+      if (schemaEditorOpen) {
+        if (selectedIndexName && selectedIndexName !== "__new__") {
+          const keepIndex = nextIndexes.find(
+            (row) => String(row.index_name || "") === String(selectedIndexName || ""),
+          );
+          if (!keepIndex) setSelectedIndexName("");
+        } else if (selectedFieldName) {
+          const keep = nextSchemaRows.find(
+            (row) => String(row.column_name || "") === String(selectedFieldName || ""),
+          );
+          if (keep) {
+            setFieldDraft(buildFieldDraft(keep));
+          } else {
+            beginSchemaEditor(nextSchemaRows[0] || null);
+          }
+        } else if (!fieldDraft?.isNew) {
+          beginSchemaEditor(nextSchemaRows[0] || null);
+        }
+      }
+      setError("");
+    } catch (err) {
+      setError(err?.message || "Failed to load schema.");
+    } finally {
+      setLoadingSchemaMeta(false);
+    }
+  }
+
   useEffect(() => {
     loadConnections();
   }, []);
 
   useEffect(() => {
+    if (!routeConnectionId || routeConnectionId === connectionId) return;
+    const exists = connections.some(
+      (connection) => String(connection.id || "").trim() === routeConnectionId,
+    );
+    if (exists) {
+      setConnectionId(routeConnectionId);
+      setSelectedTable(null);
+      setSelectedRow(null);
+      setDraftValues({});
+    }
+  }, [routeConnectionId, connectionId, connections]);
+
+  useEffect(() => {
     loadTables();
-  }, [connectionId, tableSearch]);
+  }, [connectionId, search]);
 
   useEffect(() => {
     setPage(1);
-  }, [selectedTable?.table_name, rowSearch, pageSize]);
+  }, [selectedTable?.table_name, search]);
 
   useEffect(() => {
     loadRows();
-  }, [connectionId, selectedTable?.table_name, page, pageSize, rowSearch, sortCol, sortDir]);
+  }, [connectionId, selectedTable?.table_name, page, search, sortCol, sortDir]);
+
+  useEffect(() => {
+    loadSchemaMeta();
+  }, [connectionId, selectedTable?.table_schema, selectedTable?.table_name]);
+
+  useEffect(() => {
+    if (!connectionId) return;
+    updateRouteSelection({
+      connectionId,
+      schema: selectedTable?.table_schema || "",
+      table: selectedTable?.table_name || "",
+    });
+  }, [connectionId, selectedTable?.table_schema, selectedTable?.table_name]);
 
   function selectRow(row) {
     setSelectedRow(row);
     setDraftValues(row || {});
+    setDetailOpen(true);
+  }
+
+  function selectTable(table) {
+    setSelectedTable(table);
+    setSelectedRow(null);
+    setDraftValues({});
+    if (schemaMode) {
+      setSchemaEditorOpen(true);
+      setSelectedFieldName("");
+      setSelectedIndexName("");
+      setFieldDraft(buildFieldDraft(null));
+    } else {
+      setSchemaEditorOpen(false);
+      setSelectedFieldName("");
+      setSelectedIndexName("");
+      setFieldDraft(null);
+    }
+    setDetailOpen(true);
+    updateRouteSelection({
+      connectionId,
+      schema: table?.table_schema || "",
+      table: table?.table_name || "",
+    });
   }
 
   function handleSort(columnName) {
@@ -163,8 +493,14 @@ export default function DbManagerPage() {
     schemaRows.forEach((column) => {
       values[column.column_name] = "";
     });
+    setViewMode("data");
+    setSchemaEditorOpen(false);
+    setSelectedFieldName("");
+    setSelectedIndexName("");
+    setFieldDraft(null);
     setSelectedRow({ __isNew: true, ...values });
     setDraftValues(values);
+    setDetailOpen(true);
   }
 
   function cloneRow() {
@@ -243,21 +579,269 @@ export default function DbManagerPage() {
     }
   }
 
+  async function saveField() {
+    if (!connectionId || !selectedTable?.table_name || !fieldDraft) return;
+    try {
+      setSaving(true);
+      const payload = fieldDraft.isNew
+        ? {
+            action: "add_column",
+            columnName: fieldDraft.columnName,
+            typeName: fieldDraft.typeName,
+            length: fieldDraft.length,
+            precision: fieldDraft.precision,
+            scale: fieldDraft.scale,
+            nullable: fieldDraft.nullable,
+            defaultMode: fieldDraft.defaultMode,
+            defaultLiteral: fieldDraft.defaultLiteral,
+            defaultExpression: fieldDraft.defaultExpression,
+          }
+        : {
+            action: "edit_column",
+            columnName: fieldDraft.columnName,
+            nextColumnName: fieldDraft.nextColumnName,
+            typeName: fieldDraft.typeName,
+            length: fieldDraft.length,
+            precision: fieldDraft.precision,
+            scale: fieldDraft.scale,
+            nullable: fieldDraft.nullable,
+            defaultMode: fieldDraft.defaultMode,
+            defaultLiteral: fieldDraft.defaultLiteral,
+            defaultExpression: fieldDraft.defaultExpression,
+          };
+      await api.dbManagerTableAction(
+        connectionId,
+        selectedTable.table_schema || "public",
+        selectedTable.table_name,
+        payload,
+      );
+      await loadSchemaMeta();
+      await loadRows();
+      setSchemaEditorOpen(true);
+      setSelectedIndexName("");
+      setSelectedFieldName(fieldDraft.nextColumnName || fieldDraft.columnName || "");
+      setError("");
+    } catch (err) {
+      setError(err?.message || "Failed to save field.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteField() {
+    if (!connectionId || !selectedTable?.table_name || !selectedField) return;
+    const ok = window.confirm(`Delete field ${selectedField.column_name}?`);
+    if (!ok) return;
+    try {
+      setSaving(true);
+      await api.dbManagerTableAction(
+        connectionId,
+        selectedTable.table_schema || "public",
+        selectedTable.table_name,
+        {
+          action: "delete_columns",
+          columnNames: [selectedField.column_name],
+        },
+      );
+      setSelectedFieldName("");
+      setSelectedIndexName("");
+      setFieldDraft(null);
+      await loadSchemaMeta();
+      await loadRows();
+      setError("");
+    } catch (err) {
+      setError(err?.message || "Failed to delete field.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function createIndex() {
+    if (!connectionId || !selectedTable?.table_name) return;
+    try {
+      setSaving(true);
+      const nextIndexName = String(indexDraft.indexName || "").trim();
+      await api.dbManagerIndexAction(
+        connectionId,
+        selectedTable.table_schema || "public",
+        selectedTable.table_name,
+        {
+          action: "create_index",
+          indexName: indexDraft.indexName,
+          columns: indexDraft.columns,
+          unique: indexDraft.unique,
+        },
+      );
+      setIndexDraft({ indexName: "", columns: [], unique: false });
+      await loadSchemaMeta();
+      setSelectedFieldName("");
+      setFieldDraft(null);
+      setSelectedIndexName(nextIndexName || "");
+      setError("");
+    } catch (err) {
+      setError(err?.message || "Failed to create index.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteIndex(indexName) {
+    if (!connectionId || !selectedTable?.table_name || !indexName) return;
+    const ok = window.confirm(`Delete index ${indexName}?`);
+    if (!ok) return;
+    try {
+      setSaving(true);
+      await api.dbManagerIndexAction(
+        connectionId,
+        selectedTable.table_schema || "public",
+        selectedTable.table_name,
+        {
+          action: "delete_index",
+          indexName,
+        },
+      );
+      if (String(selectedIndexName || "") === String(indexName || "")) {
+        setSelectedIndexName("");
+      }
+      await loadSchemaMeta();
+      setError("");
+    } catch (err) {
+      setError(err?.message || "Failed to delete index.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const rowsColumns = useMemo(
+    () =>
+      schemaRows.map((column) => ({
+        accessorKey: column.column_name,
+        header: column.column_name,
+        cell: ({ row }) => formatCellValue(row.original?.[column.column_name]),
+      })),
+    [schemaRows],
+  );
+
+  const rowsMobileCard = useMemo(
+    () => ({
+      getTitle: (row) =>
+        formatCellValue(
+          row?.[primaryKey] ?? row?.[schemaRows[0]?.column_name || ""] ?? "Row",
+        ),
+      getSubtitle: () =>
+        selectedTable
+          ? `${selectedTable.table_schema}.${selectedTable.table_name}`
+          : "",
+      getRows: (row) => {
+        const details = schemaRows
+          .filter((column) => column.column_name !== primaryKey)
+          .slice(0, 4)
+          .map((column) => ({
+            value: `${column.column_name}: ${formatCellValue(row?.[column.column_name]) || "-"}`,
+          }));
+        const rowsOut = [];
+        for (let index = 0; index < details.length; index += 2) {
+          rowsOut.push(details.slice(index, index + 2));
+        }
+        return rowsOut;
+      },
+    }),
+    [primaryKey, schemaRows, selectedTable],
+  );
+
+  const schemaListContent = selectedTable ? (
+    <div className="db-manager-schema-browser">
+      <div className="db-manager-schema-browser__section">
+        <div className="db-manager-schema-browser__header">
+          <span className="panel-label">Fields</span>
+        </div>
+        <div className="db-manager-schema-list__items">
+          {schemaRows.length ? (
+            schemaRows.map((column) => (
+              <button
+                key={column.column_name}
+                type="button"
+                className={[
+                  "db-manager-schema-item",
+                  !selectedIndexName && selectedFieldName === column.column_name
+                    ? "is-active"
+                    : "",
+                ].join(" ")}
+                onClick={() => selectSchemaField(column)}
+              >
+                <strong>{column.column_name}</strong>
+                <span>{column.data_type || column.udt_name || "TEXT"}</span>
+              </button>
+            ))
+          ) : (
+            <div className="empty-state">No fields found.</div>
+          )}
+        </div>
+      </div>
+      <div className="db-manager-schema-browser__section">
+        <div className="db-manager-schema-browser__header">
+          <span className="panel-label">Indexes</span>
+        </div>
+        <div className="db-manager-schema-list__items">
+          {tableIndexes.length ? (
+            tableIndexes.map((indexRow) => (
+              <button
+                key={indexRow.index_name}
+                type="button"
+                className={[
+                  "db-manager-schema-item",
+                  selectedIndexName === indexRow.index_name ? "is-active" : "",
+                ].join(" ")}
+                onClick={() => selectSchemaIndex(indexRow)}
+              >
+                <strong>{indexRow.index_name}</strong>
+                <span>
+                  {(indexRow.columns || []).join(", ")}
+                  {indexRow.is_unique ? " · unique" : ""}
+                  {indexRow.is_primary ? " · primary" : ""}
+                </span>
+              </button>
+            ))
+          ) : (
+            <div className="empty-state">No indexes found.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  ) : (
+    <div className="empty-state">Select a table to browse its schema.</div>
+  );
+
   return (
     <section className="db-manager-page">
       <PageHeader title="DB Manager" />
       <AdminPageToolbar
         className="db-manager-toolbar"
         filters={
-          <AdminToolbarGroup className="db-manager-toolbar__group">
+          <AdminToolbarGroup className="db-manager-toolbar__group db-manager-toolbar__group--compact">
+            <button
+              type="button"
+              className="secondary-button icon-button"
+              onClick={() => setShowSql((current) => !current)}
+              aria-label={showSql ? "Hide SQL" : "Show SQL"}
+              title={showSql ? "Hide SQL" : "Show SQL"}
+            >
+              {showSql ? "</>" : "SQL"}
+            </button>
             <select
               className="text-input"
               value={connectionId}
               onChange={(event) => {
-                setConnectionId(event.target.value);
+                const nextConnectionId = event.target.value;
+                setConnectionId(nextConnectionId);
                 setSelectedTable(null);
                 setSelectedRow(null);
                 setDraftValues({});
+                updateRouteSelection({
+                  connectionId: nextConnectionId,
+                  schema: "",
+                  table: "",
+                });
               }}
             >
               <option value="">
@@ -271,45 +855,45 @@ export default function DbManagerPage() {
             </select>
             <input
               className="text-input"
-              value={tableSearch}
-              onChange={(event) => setTableSearch(event.target.value)}
-              placeholder="Search tables..."
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={
+                selectedTable
+                  ? "Search tables and rows..."
+                  : "Search tables..."
+              }
             />
-            <input
-              className="text-input"
-              value={rowSearch}
-              onChange={(event) => setRowSearch(event.target.value)}
-              placeholder="Search rows..."
-              disabled={!selectedTable}
-            />
-            <select
-              className="text-input"
-              value={pageSize}
-              onChange={(event) => setPageSize(Number(event.target.value) || 50)}
-            >
-              {[25, 50, 100, 200].map((value) => (
-                <option key={value} value={value}>
-                  {value} / page
-                </option>
-              ))}
-            </select>
           </AdminToolbarGroup>
         }
         actions={
           <AdminToolbarGroup className="db-manager-toolbar__group">
-            <button type="button" className="secondary-button" onClick={loadTables}>
-              Refresh
+            <button
+              type="button"
+              className="primary-button"
+              onClick={openNewRow}
+              disabled={!selectedTable || schemaMode}
+            >
+              New Row
             </button>
             <button
               type="button"
               className="secondary-button"
-              onClick={() => setShowSql((current) => !current)}
+              onClick={toggleViewMode}
+              disabled={!selectedTable}
+              aria-label={schemaMode ? "Switch to data mode" : "Switch to schema mode"}
+              title={schemaMode ? "Switch to data mode" : "Switch to schema mode"}
             >
-              {showSql ? "Hide SQL" : "Show SQL"}
+              {schemaMode ? "Data" : "Schema"}
             </button>
-            <span className="minor-text">
-              {selectedTable ? `${formatCount(total)} rows` : "Choose a table"}
-            </span>
+            <button
+              type="button"
+              className="secondary-button icon-button"
+              onClick={loadTables}
+              aria-label="Refresh"
+              title="Refresh"
+            >
+              ↻
+            </button>
           </AdminToolbarGroup>
         }
       />
@@ -346,192 +930,474 @@ export default function DbManagerPage() {
         </ResponsivePanel>
       ) : null}
 
-      <div
-        className={[
-          "db-manager-grid",
-          selectedTable ? "" : "db-manager-grid--detail-closed",
-        ].join(" ")}
-      >
-        <ResponsivePanel title="Tables" showToggle={false}>
-          <div className="system-tool-panel__body system-tool-panel__body--scroll">
-            <div className="db-manager-sidebar-list">
-              {loadingTables ? (
-                <div className="minor-text">Loading tables...</div>
-              ) : tables.length ? (
-                tables.map((table) => {
-                  const key = `${table.table_schema}.${table.table_name}`;
-                  const active =
-                    selectedTable?.table_schema === table.table_schema &&
-                    selectedTable?.table_name === table.table_name;
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      className={[
-                        "db-manager-table-item",
-                        active ? "is-active" : "",
-                      ].join(" ")}
-                      onClick={() => {
-                        setSelectedTable(table);
-                        setSelectedRow(null);
-                        setDraftValues({});
-                      }}
-                    >
-                      <div className="db-manager-table-item__title">
-                        {table.table_schema}.{table.table_name}
-                      </div>
-                      <div className="db-manager-table-item__meta">
-                        <span>{table.table_type || "TABLE"}</span>
-                        <span>{formatCount(table.row_estimate)}</span>
-                      </div>
-                    </button>
-                  );
-                })
-              ) : (
-                <div className="empty-state">No tables found.</div>
-              )}
-            </div>
-          </div>
-        </ResponsivePanel>
-
-        <ResponsivePanel title="Rows" showToggle={false}>
-          <div className="system-tool-panel__body">
-            {selectedTable ? (
-              <>
-                <div className="db-manager-toolbar__group" style={{ marginBottom: 12 }}>
-                  <button type="button" className="primary-button" onClick={openNewRow}>
-                    New Row
-                  </button>
+      <div className="db-manager-workspace">
+        <ResponsivePanel
+          title="Tables"
+          showToggle={false}
+          width="180px"
+          className="db-manager-nav-panel"
+        >
+          <div className="db-manager-sidebar-list">
+            {loadingTables ? (
+              <div className="minor-text">Loading tables...</div>
+            ) : tables.length ? (
+              tables.map((table) => {
+                const key = `${table.table_schema}.${table.table_name}`;
+                const active =
+                  selectedTable?.table_schema === table.table_schema &&
+                  selectedTable?.table_name === table.table_name;
+                return (
                   <button
+                    key={key}
                     type="button"
-                    className="secondary-button"
-                    onClick={() => setPage((current) => Math.max(1, current - 1))}
-                    disabled={page <= 1}
+                    className={[
+                      "db-manager-table-item",
+                      active ? "is-active" : "",
+                    ].join(" ")}
+                    onClick={() => selectTable(table)}
+                    title={`${table.table_schema}.${table.table_name}`}
                   >
-                    Prev
+                    <div className="db-manager-table-item__title">
+                      {table.table_schema}.{table.table_name}
+                    </div>
                   </button>
-                  <span className="minor-text">
-                    Page {page} / {pages}
-                  </span>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    onClick={() => setPage((current) => Math.min(pages, current + 1))}
-                    disabled={page >= pages}
-                  >
-                    Next
-                  </button>
-                </div>
-                <div className="db-manager-data-wrap">
-                  <table className="table-dense">
-                    <thead>
-                      <tr>
-                        {schemaRows.map((column) => (
-                          <th
-                            key={column.column_name}
-                            onClick={() => handleSort(column.column_name)}
-                          >
-                            {column.column_name}
-                            {sortCol === column.column_name
-                              ? sortDir === "ASC"
-                                ? " ▲"
-                                : " ▼"
-                              : ""}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {loadingRows ? (
-                        <tr>
-                          <td colSpan={Math.max(1, schemaRows.length)} className="loading">
-                            Loading rows...
-                          </td>
-                        </tr>
-                      ) : rows.length ? (
-                        rows.map((row, index) => (
-                          <tr
-                            key={`${formatCellValue(row[primaryKey])}-${index}`}
-                            onClick={() => selectRow(row)}
-                            style={{ cursor: "pointer" }}
-                          >
-                            {schemaRows.map((column) => (
-                              <td key={column.column_name} className="db-manager-cell">
-                                {formatCellValue(row[column.column_name])}
-                              </td>
-                            ))}
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan={Math.max(1, schemaRows.length)} className="empty-state">
-                            No rows found.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </>
+                );
+              })
             ) : (
-              <div className="empty-state">Select a table to browse its rows.</div>
+              <div className="empty-state">No tables found.</div>
             )}
           </div>
         </ResponsivePanel>
 
-        {selectedTable ? (
-          <ResponsivePanel
-            title={selectedRow ? (isNewRow ? "New Row" : "Row Detail") : "Schema"}
-            showToggle={false}
-          >
-            <div className="system-tool-panel__body system-tool-panel__body--scroll">
-              {selectedRow ? (
-                <div className="db-manager-form">
-                  <div className="db-manager-form__grid">
-                    {schemaRows.map((column) => (
-                      <div key={column.column_name} className="db-manager-form__field">
-                        <label>{column.column_name}</label>
-                        <textarea
-                          className="text-input"
-                          value={formatCellValue(draftValues[column.column_name])}
-                          onChange={(event) =>
-                            setDraftValues((current) => ({
-                              ...current,
-                              [column.column_name]: event.target.value,
-                            }))
-                          }
-                          rows={column.data_type === "json" ? 6 : 3}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                  <div className="db-manager-form__actions">
+        <CrudContainer
+          className="db-manager-crud"
+          sameHeight={false}
+          detailVisible={Boolean(selectedTable)}
+          detailOpen={detailOpen}
+          onDetailOpenChange={setDetailOpen}
+          detailCloseButton
+          list={{
+            title: selectedTable
+              ? schemaMode
+                ? `${selectedTable.table_name} Schema`
+                : `${formatCount(total)} ${selectedTable.table_name}`
+              : schemaMode
+                ? "Schema"
+                : "Rows",
+            headerActions: selectedTable ? (
+              schemaMode ? (
+                <>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={beginNewField}
+                    disabled={!schemaWritable}
+                  >
+                    Add Field
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={beginNewIndex}
+                    disabled={!schemaWritable}
+                  >
+                    Add Index
+                  </button>
+                </>
+              ) : (
+                <>
+                  <PaginationBar
+                    page={page}
+                    pages={pages}
+                    total={total}
+                    showPageSize={false}
+                    onPageChange={setPage}
+                    label={`Page ${page} / ${pages}`}
+                  />
+                  <ComboButtonMenu
+                    selectId="db-manager-mode"
+                    value={tableMode}
+                    buttonText={`Mode: ${TABLE_MODE_ITEMS.find((item) => item.value === tableMode)?.label || "Table"}`}
+                    onChange={setTableMode}
+                    items={TABLE_MODE_ITEMS}
+                    ariaLabel="Select DB Manager list mode"
+                    align="end"
+                    sideOffset={6}
+                    triggerClassName="data-table-mode-switcher"
+                  />
+                </>
+              )
+            ) : null,
+            panelClassName: "db-manager-rows-panel",
+            children: schemaMode ? schemaListContent : null,
+            tableProps: schemaMode
+              ? null
+              : selectedTable
+              ? {
+                  columns: rowsColumns,
+                  data: rows,
+                  sorting:
+                    sortCol
+                      ? {
+                          key: sortCol,
+                          dir: String(sortDir || "DESC").toLowerCase(),
+                        }
+                      : null,
+                  onSortingChange: (next) => {
+                    if (!next?.key) return;
+                    setSortCol(next.key);
+                    setSortDir(String(next.dir || "asc").toUpperCase());
+                  },
+                  loading: loadingRows,
+                  emptyText: "No rows found.",
+                  className: "events-table events-table--compact db-manager-table",
+                  onRowClick: selectRow,
+                  mode: tableMode,
+                  onModeChange: setTableMode,
+                  getRowId: (row, index) =>
+                    `${formatCellValue(row?.[primaryKey]) || "row"}-${index}`,
+                  selectedRowId:
+                    selectedRow && !isNewRow
+                      ? `${formatCellValue(selectedRow?.[primaryKey]) || "row"}-${rows.findIndex(
+                          (row) =>
+                            formatCellValue(row?.[primaryKey]) ===
+                            formatCellValue(selectedRow?.[primaryKey]),
+                        )}`
+                      : null,
+                  mobileCard: rowsMobileCard,
+                }
+              : {
+                  columns: [{ accessorKey: "empty", header: "Rows" }],
+                  data: [],
+                  emptyText: "Select a table to browse its rows.",
+                  className: "events-table events-table--compact db-manager-table",
+                },
+          }}
+          detail={{
+            title: "",
+            subtitle: "",
+            headerActions: schemaMode
+              ? selectedIndexName === "__new__"
+                ? (
                     <button
                       type="button"
                       className="primary-button"
-                      onClick={saveRow}
-                      disabled={saving}
+                      onClick={createIndex}
+                      disabled={!schemaWritable}
                     >
-                      {saving ? "Saving..." : "Save"}
+                      Add Index
                     </button>
-                    <button type="button" className="secondary-button" onClick={cloneRow}>
-                      Clone
-                    </button>
-                    {!isNewRow ? (
-                      <button type="button" className="danger-button" onClick={deleteRow}>
-                        Delete
+                  )
+                : selectedIndex && !selectedIndex.is_primary
+                  ? (
+                      <button
+                        type="button"
+                        className="danger-button"
+                        onClick={() => deleteIndex(selectedIndex.index_name)}
+                        disabled={!schemaWritable}
+                      >
+                        Delete Index
                       </button>
-                    ) : null}
-                  </div>
+                    )
+                  : fieldDraft
+                    ? (
+                        <>
+                          <button
+                            type="button"
+                            className="primary-button"
+                            onClick={saveField}
+                            disabled={!schemaWritable || !fieldDraft}
+                          >
+                            {fieldDraft?.isNew ? "Add Field" : "Save Field"}
+                          </button>
+                          {!fieldDraft?.isNew ? (
+                            <button
+                              type="button"
+                              className="danger-button"
+                              onClick={deleteField}
+                              disabled={!schemaWritable || !selectedField}
+                            >
+                              Delete Field
+                            </button>
+                          ) : null}
+                        </>
+                      )
+                    : null
+              : selectedRow
+                ? (
+                    <>
+                      <button
+                        type="button"
+                        className="primary-button"
+                        onClick={saveRow}
+                        disabled={saving}
+                      >
+                        {saving ? "Saving..." : "Save"}
+                      </button>
+                      <button type="button" className="secondary-button" onClick={cloneRow}>
+                        Clone
+                      </button>
+                      {!isNewRow ? (
+                        <button type="button" className="danger-button" onClick={deleteRow}>
+                          Delete
+                        </button>
+                      ) : null}
+                    </>
+                  )
+                : null,
+            children: (
+              <div className="system-tool-panel__body system-tool-panel__body--scroll">
+                <div className="db-manager-detail-body">
+                  {schemaMode ? (
+                    <div className="db-manager-schema-editor">
+                      <div className="db-manager-schema-editor__notice minor-text">
+                        {schemaWritable
+                          ? "Field and index changes are applied directly to the selected database."
+                          : "Schema editing is view-only for SQLite connections."}
+                      </div>
+                      {selectedIndexName === "__new__" ? (
+                        <div className="db-manager-indexes">
+                          <div className="db-manager-indexes__create">
+                            <input
+                              type="text"
+                              className="text-input"
+                              placeholder="index_name"
+                              value={indexDraft.indexName}
+                              onChange={(event) =>
+                                setIndexDraft((current) => ({
+                                  ...current,
+                                  indexName: event.target.value,
+                                }))
+                              }
+                            />
+                            <select
+                              multiple
+                              className="text-input db-manager-indexes__columns"
+                              value={indexDraft.columns}
+                              onChange={(event) =>
+                                setIndexDraft((current) => ({
+                                  ...current,
+                                  columns: Array.from(event.target.selectedOptions).map(
+                                    (option) => option.value,
+                                  ),
+                                }))
+                              }
+                            >
+                              {schemaRows.map((column) => (
+                                <option key={column.column_name} value={column.column_name}>
+                                  {column.column_name}
+                                </option>
+                              ))}
+                            </select>
+                            <label className="db-manager-checkbox">
+                              <input
+                                type="checkbox"
+                                checked={indexDraft.unique}
+                                onChange={(event) =>
+                                  setIndexDraft((current) => ({
+                                    ...current,
+                                    unique: event.target.checked,
+                                  }))
+                                }
+                              />
+                              Unique
+                            </label>
+                          </div>
+                        </div>
+                      ) : selectedIndex ? (
+                        <div className="db-manager-index-detail">
+                          <dl className="system-tool-kv">
+                            <dt>Name</dt>
+                            <dd>{selectedIndex.index_name}</dd>
+                            <dt>Columns</dt>
+                            <dd>{(selectedIndex.columns || []).join(", ") || "-"}</dd>
+                            <dt>Unique</dt>
+                            <dd>{selectedIndex.is_unique ? "Yes" : "No"}</dd>
+                            <dt>Primary</dt>
+                            <dd>{selectedIndex.is_primary ? "Yes" : "No"}</dd>
+                          </dl>
+                        </div>
+                      ) : fieldDraft ? (
+                        <div className="db-manager-schema-form">
+                          <div className="db-manager-form__grid">
+                            <div className="db-manager-form__field">
+                              <label>Field Name</label>
+                              <input
+                                type="text"
+                                className="text-input"
+                                value={fieldDraft?.isNew ? fieldDraft?.columnName || "" : fieldDraft?.nextColumnName || ""}
+                                onChange={(event) =>
+                                  setFieldDraft((current) => ({
+                                    ...(current || buildFieldDraft(null)),
+                                    [current?.isNew ? "columnName" : "nextColumnName"]: event.target.value,
+                                  }))
+                                }
+                              />
+                            </div>
+                            <div className="db-manager-form__field">
+                              <label>Type</label>
+                              <input
+                                type="text"
+                                className="text-input"
+                                value={fieldDraft?.typeName || ""}
+                                onChange={(event) =>
+                                  setFieldDraft((current) => ({
+                                    ...(current || buildFieldDraft(null)),
+                                    typeName: event.target.value,
+                                  }))
+                                }
+                              />
+                            </div>
+                            <div className="db-manager-form__field">
+                              <label>Length</label>
+                              <input
+                                type="text"
+                                className="text-input"
+                                value={fieldDraft?.length || ""}
+                                onChange={(event) =>
+                                  setFieldDraft((current) => ({
+                                    ...(current || buildFieldDraft(null)),
+                                    length: event.target.value,
+                                  }))
+                                }
+                              />
+                            </div>
+                            <div className="db-manager-form__field">
+                              <label>Precision</label>
+                              <input
+                                type="text"
+                                className="text-input"
+                                value={fieldDraft?.precision || ""}
+                                onChange={(event) =>
+                                  setFieldDraft((current) => ({
+                                    ...(current || buildFieldDraft(null)),
+                                    precision: event.target.value,
+                                  }))
+                                }
+                              />
+                            </div>
+                            <div className="db-manager-form__field">
+                              <label>Scale</label>
+                              <input
+                                type="text"
+                                className="text-input"
+                                value={fieldDraft?.scale || ""}
+                                onChange={(event) =>
+                                  setFieldDraft((current) => ({
+                                    ...(current || buildFieldDraft(null)),
+                                    scale: event.target.value,
+                                  }))
+                                }
+                              />
+                            </div>
+                            <div className="db-manager-form__field">
+                              <label>Nullable</label>
+                              <select
+                                className="text-input"
+                                value={fieldDraft?.nullable ? "yes" : "no"}
+                                onChange={(event) =>
+                                  setFieldDraft((current) => ({
+                                    ...(current || buildFieldDraft(null)),
+                                    nullable: event.target.value === "yes",
+                                  }))
+                                }
+                              >
+                                <option value="yes">YES</option>
+                                <option value="no">NO</option>
+                              </select>
+                            </div>
+                            <div className="db-manager-form__field">
+                              <label>Default Mode</label>
+                              <select
+                                className="text-input"
+                                value={fieldDraft?.defaultMode || "none"}
+                                onChange={(event) =>
+                                  setFieldDraft((current) => ({
+                                    ...(current || buildFieldDraft(null)),
+                                    defaultMode: event.target.value,
+                                  }))
+                                }
+                              >
+                                <option value="none">None</option>
+                                <option value="expression">Expression</option>
+                                <option value="literal">Literal</option>
+                              </select>
+                            </div>
+                            {fieldDraft?.defaultMode === "expression" ? (
+                              <div className="db-manager-form__field">
+                                <label>Default Expression</label>
+                                <input
+                                  type="text"
+                                  className="text-input"
+                                  value={fieldDraft?.defaultExpression || ""}
+                                  onChange={(event) =>
+                                    setFieldDraft((current) => ({
+                                      ...(current || buildFieldDraft(null)),
+                                      defaultExpression: event.target.value,
+                                    }))
+                                  }
+                                />
+                              </div>
+                            ) : null}
+                            {fieldDraft?.defaultMode === "literal" ? (
+                              <div className="db-manager-form__field">
+                                <label>Default Literal</label>
+                                <input
+                                  type="text"
+                                  className="text-input"
+                                  value={fieldDraft?.defaultLiteral || ""}
+                                  onChange={(event) =>
+                                    setFieldDraft((current) => ({
+                                      ...(current || buildFieldDraft(null)),
+                                      defaultLiteral: event.target.value,
+                                    }))
+                                  }
+                                />
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="empty-state">
+                          Select a field or index to inspect its schema detail.
+                        </div>
+                      )}
+                    </div>
+                  ) : selectedRow ? (
+                    <div className="db-manager-form">
+                      <div className="db-manager-form__grid">
+                        {schemaRows.map((column) => (
+                          <div key={column.column_name} className="db-manager-form__field">
+                            <label>{column.column_name}</label>
+                            <input
+                              type="text"
+                              className="text-input"
+                              value={formatCellValue(draftValues[column.column_name])}
+                              onChange={(event) =>
+                                setDraftValues((current) => ({
+                                  ...current,
+                                  [column.column_name]: event.target.value,
+                                }))
+                              }
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="db-manager-query-result">
+                      {loadingSchemaMeta ? (
+                        <div className="minor-text">Loading schema...</div>
+                      ) : (
+                        <pre>{JSON.stringify(schemaRows, null, 2)}</pre>
+                      )}
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <div className="db-manager-query-result">
-                  <pre>{JSON.stringify(schemaRows, null, 2)}</pre>
-                </div>
-              )}
-            </div>
-          </ResponsivePanel>
-        ) : null}
+              </div>
+            ),
+          }}
+        />
       </div>
     </section>
   );

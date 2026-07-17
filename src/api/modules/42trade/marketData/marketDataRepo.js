@@ -93,6 +93,7 @@ function rebuildBrokerBarsFromCanonicalSource(symbol, tf, options = {}) {
     sourceBars,
     targetTfKey,
     sourceTfKey,
+    { symbol: sym },
   );
   if (!reconciled.length) {
     return { rewritten: false, rows: 0, reason: "empty_reconciled_series" };

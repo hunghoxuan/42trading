@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 const {
   createTradeRepository,
   resolveUserTradeDbPath,
-} = require("../src/api/trades/tradesRepo");
+} = require("../src/api/modules/42trade/trades0/tradesRepo.js");
 const ctraderExecutorBridge = require("../scripts/daemons/ctrader_executor_bridge.js");
 const ctraderDownstreamServer = require("../scripts/daemons/ctrader_downstream_server.js");
 
@@ -546,6 +546,22 @@ test("ctrader executor normalizes queued cancel tasks without requiring entry pr
   assert.equal(task.entry, null);
 });
 
+test("ctrader broker task normalization preserves strategy labels", () => {
+  const task = ctraderExecutorBridge.normalizeBrokerTaskItem({
+    sid: "TRD_STRAT_1",
+    type: "OPEN",
+    symbol: "xauusd",
+    action: "buy",
+    entry: 3345.5,
+    sl: 3335.5,
+    tp: 3365.5,
+    volume: 0.2,
+    strategy: "Price Action v1",
+  });
+
+  assert.equal(task.strategy, "Price Action v1");
+});
+
 test("ctrader downstream matches broker tasks by ticket and label fallback", () => {
   const task = ctraderDownstreamServer.normalizeIncomingTask({
     signal: {
@@ -587,4 +603,15 @@ test("ctrader downstream matches broker tasks by ticket and label fallback", () 
     { symbolId: 77 },
   );
   assert.equal(orderMatchByLabel, true);
+});
+
+test("ctrader downstream uses strategy for label and keeps sid in comment", () => {
+  assert.equal(
+    ctraderDownstreamServer.buildBrokerLabel("Price Action v1", "TRD_123"),
+    "Price Action v1",
+  );
+  assert.match(
+    ctraderDownstreamServer.buildBrokerComment("TRD_123", "Entry on BOS retest"),
+    /^TRD_123 \| Entry on BOS retest$/,
+  );
 });

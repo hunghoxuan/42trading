@@ -6,9 +6,9 @@
   "engine_version": "42trade.strategy.v2",
   "status": "active",
   "market": {
-    "symbol": "XAUUSD",
-    "tf": "15"
+    "symbol": ""
   },
+  "params": {},
   "indicators": [],
   "rules": [
     {
@@ -94,5 +94,10 @@
       "sweep"
     ]
   },
-  "min_bars": 20
+  "risk": {},
+  "min_bars": 20,
+  "conditions": {
+    "skip_news": true,
+    "news_window_minutes": 120
+  }
 }

@@ -19,7 +19,7 @@ function normalizeTempResponseSid(value = "") {
 
 async function fetchTempFolders() {
   const base = window.location.origin;
-  const res = await fetch(`${base}/api/trades/temp`, { credentials: "include" });
+  const res = await fetch(`${base}/api/trades0/temp`, { credentials: "include" });
   if (!res.ok) throw new Error("Failed to fetch");
   return res.json();
 }

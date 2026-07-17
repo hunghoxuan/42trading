@@ -1,5 +1,6 @@
 const schemaModule = require("./schema.js");
 const path = require("path");
+const fs = require("fs");
 
 let defaultDb = null;
 let defaultBackend = null;
@@ -69,6 +70,7 @@ function createSqliteProvider(config) {
   const { drizzle } = require("drizzle-orm/better-sqlite3");
   const schema = schemaModule.sqlite;
   const sqlitePath = config.sqlitePath;
+  fs.mkdirSync(path.dirname(sqlitePath), { recursive: true, mode: 0o700 });
   const raw = new Database(sqlitePath);
   raw.pragma("journal_mode = WAL");
   raw.pragma("foreign_keys = ON");

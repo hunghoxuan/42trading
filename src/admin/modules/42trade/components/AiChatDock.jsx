@@ -45,6 +45,11 @@ const MODE_OPTIONS = [
   { id: "trade", label: "Trade" },
   { id: "codex", label: "Codex" },
 ];
+const CHAT_ATTACHMENT_ACCEPT =
+  "image/*,text/html,text/markdown,text/plain,.md,.markdown,.html,.htm,audio/*,video/*";
+const MAX_CHAT_ATTACHMENT_COUNT = 8;
+const MAX_CHAT_ATTACHMENT_SIZE = 10 * 1024 * 1024;
+const MAX_CHAT_LONG_TEXT_CHARS = 120000;
 
 function makeConversationId() {
   return `conv_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
@@ -142,6 +147,132 @@ function readMessageText(message) {
     .join("");
 }
 
+function safeBase64Encode(value = "") {
+  try {
+    return window.btoa(unescape(encodeURIComponent(String(value || ""))));
+  } catch {
+    return "";
+  }
+}
+
+function parseDataUrl(value = "") {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^data:([^;,]+)?(?:;charset=([^;,]+))?(;base64)?,(.*)$/i);
+  if (!match) return null;
+  return {
+    mediaType: String(match[1] || "application/octet-stream").trim().toLowerCase(),
+    isBase64: Boolean(match[3]),
+    data: String(match[4] || ""),
+  };
+}
+
+function decodeDataUrlText(value = "") {
+  const parsed = parseDataUrl(value);
+  if (!parsed) return "";
+  try {
+    if (parsed.isBase64) {
+      return decodeURIComponent(escape(window.atob(parsed.data)));
+    }
+    return decodeURIComponent(parsed.data);
+  } catch {
+    return "";
+  }
+}
+
+function inferMediaType(filename = "", fallback = "application/octet-stream") {
+  const lower = String(filename || "").trim().toLowerCase();
+  if (lower.endsWith(".md") || lower.endsWith(".markdown")) return "text/markdown";
+  if (lower.endsWith(".html") || lower.endsWith(".htm")) return "text/html";
+  if (lower.endsWith(".txt")) return "text/plain";
+  if (lower.endsWith(".json")) return "application/json";
+  if (lower.endsWith(".csv")) return "text/csv";
+  return fallback;
+}
+
+function attachmentKind(part = {}) {
+  const mediaType = String(part?.mediaType || "").trim().toLowerCase();
+  const filename = String(part?.filename || "").trim().toLowerCase();
+  if (mediaType.startsWith("image/")) return "image";
+  if (mediaType.startsWith("audio/")) return "audio";
+  if (mediaType.startsWith("video/")) return "video";
+  if (mediaType === "text/html" || filename.endsWith(".html") || filename.endsWith(".htm"))
+    return "html";
+  if (
+    mediaType === "text/markdown" ||
+    filename.endsWith(".md") ||
+    filename.endsWith(".markdown")
+  )
+    return "markdown";
+  if (
+    mediaType.startsWith("text/") ||
+    mediaType === "application/json" ||
+    mediaType === "text/csv"
+  )
+    return "text";
+  return "file";
+}
+
+function formatFileSize(bytes) {
+  const size = Number(bytes);
+  if (!Number.isFinite(size) || size <= 0) return "";
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatAttachmentLabel(part = {}) {
+  const kind = attachmentKind(part);
+  if (kind === "markdown") return "Markdown";
+  if (kind === "html") return "HTML";
+  if (kind === "audio") return "Audio";
+  if (kind === "video") return "Video";
+  if (kind === "image") return "Image";
+  if (kind === "text") return "Text";
+  return "File";
+}
+
+function isPreviewableAttachment(part = {}) {
+  return attachmentKind(part) !== "file" && Boolean(part?.url);
+}
+
+function buildLongTextAttachment(text = "") {
+  const content = String(text || "").trim();
+  if (!content) return null;
+  const encoded = safeBase64Encode(content);
+  if (!encoded) return null;
+  return {
+    type: "file",
+    mediaType: "text/plain",
+    filename: `notes-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.txt`,
+    url: `data:text/plain;charset=utf-8;base64,${encoded}`,
+    size: content.length,
+  };
+}
+
+function readAttachmentSnippet(part = {}, maxChars = 280) {
+  const kind = attachmentKind(part);
+  if (kind === "image" || kind === "audio" || kind === "video" || kind === "file") {
+    return "";
+  }
+  const text = decodeDataUrlText(part?.url || "");
+  if (!text) return "";
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (compact.length <= maxChars) return compact;
+  return `${compact.slice(0, Math.max(40, maxChars - 1))}...`;
+}
+
+function triggerAttachmentDownload(part = {}) {
+  const url = String(part?.url || "").trim();
+  if (!url) return;
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = String(part?.filename || "attachment").trim() || "attachment";
+  anchor.rel = "noreferrer";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
 function renderInlineText(text = "", keyPrefix = "inline") {
   const raw = String(text || "");
   const parts = raw.split(/(`[^`]+`)/g).filter(Boolean);
@@ -205,6 +336,139 @@ function renderAssistantContent(text = "") {
   }
 
   return <div className="ai-chat-markdown">{nodes}</div>;
+}
+
+function renderAttachmentPreviewBody(part = {}) {
+  const url = String(part?.url || "").trim();
+  if (!url) return null;
+  const kind = attachmentKind(part);
+  if (kind === "image") {
+    return <img className="ai-chat-preview__image" src={url} alt={part?.filename || "Preview"} />;
+  }
+  if (kind === "audio") {
+    return <audio className="ai-chat-preview__media" controls preload="metadata" src={url} />;
+  }
+  if (kind === "video") {
+    return <video className="ai-chat-preview__media" controls preload="metadata" src={url} />;
+  }
+  if (kind === "html") {
+    return (
+      <iframe
+        className="ai-chat-preview__frame"
+        srcDoc={decodeDataUrlText(url)}
+        sandbox=""
+        title={part?.filename || "HTML preview"}
+      />
+    );
+  }
+  const text = decodeDataUrlText(url);
+  if (kind === "markdown") {
+    return <div className="ai-chat-preview__text">{renderAssistantContent(text)}</div>;
+  }
+  return <pre className="ai-chat-preview__pre">{text}</pre>;
+}
+
+function renderAttachmentPart(part, key, { onPreview, onRemove, compact = false } = {}) {
+  if (!part || part.type !== "file") return null;
+  const snippet = readAttachmentSnippet(part);
+  const previewable = isPreviewableAttachment(part);
+  const canDownload = Boolean(part?.url);
+  return (
+    <div
+      key={key}
+      className={`ai-chat-attachment${compact ? " ai-chat-attachment--compact" : ""}`}
+    >
+      {attachmentKind(part) === "image" ? (
+        <img
+          className="ai-chat-attachment__thumb"
+          src={part.url}
+          alt={part.filename || "Attachment"}
+        />
+      ) : null}
+      <div className="ai-chat-attachment__meta">
+        <div className="ai-chat-attachment__name">
+          {String(part.filename || `${formatAttachmentLabel(part)} attachment`).trim()}
+        </div>
+        <div className="ai-chat-attachment__info">
+          {formatAttachmentLabel(part)}
+          {part?.size ? ` · ${formatFileSize(part.size)}` : ""}
+        </div>
+        {snippet ? <div className="ai-chat-attachment__snippet">{snippet}</div> : null}
+      </div>
+      <div className="ai-chat-attachment__actions">
+        {previewable ? (
+          <button type="button" className="secondary-button" onClick={() => onPreview?.(part)}>
+            Preview
+          </button>
+        ) : null}
+        {canDownload ? (
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => triggerAttachmentDownload(part)}
+          >
+            Download
+          </button>
+        ) : null}
+        {onRemove ? (
+          <button type="button" className="secondary-button" onClick={onRemove}>
+            Remove
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function renderMessageContent(message, { onPreview } = {}) {
+  const parts = Array.isArray(message?.parts) ? message.parts : [];
+  const textParts = parts.filter(
+    (part) => part?.type === "text" || part?.type === "reasoning",
+  );
+  const fileParts = parts.filter((part) => part?.type === "file");
+  if (!textParts.length && !fileParts.length) {
+    const fallbackText = readMessageText(message).trim();
+    if (!fallbackText) return null;
+    return message?.role === "assistant"
+      ? renderAssistantContent(fallbackText || "...")
+      : fallbackText;
+  }
+  return (
+    <div className="ai-chat-parts">
+      {textParts.map((part, index) => {
+        const text = String(part?.text || "").trim();
+        if (!text) return null;
+        return (
+          <div key={`text-${message?.id || "msg"}-${index}`} className="ai-chat-parts__text">
+            {message?.role === "assistant" ? renderAssistantContent(text) : text}
+          </div>
+        );
+      })}
+      {fileParts.map((part, index) =>
+        renderAttachmentPart(part, `file-${message?.id || "msg"}-${index}`, {
+          onPreview,
+        }),
+      )}
+    </div>
+  );
+}
+
+async function fileToAttachmentPart(file) {
+  const blob = file instanceof File ? file : null;
+  if (!blob) return null;
+  const asDataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Failed to read file."));
+    reader.readAsDataURL(blob);
+  });
+  return {
+    type: "file",
+    mediaType: inferMediaType(blob.name, blob.type || "application/octet-stream"),
+    filename: blob.name,
+    url: asDataUrl,
+    size: Number(blob.size || 0),
+  };
 }
 
 function formatConversationLabel(item = {}) {
@@ -712,11 +976,16 @@ function AiChatThread({
   initialMessages,
 }) {
   const [draft, setDraft] = useState("");
+  const [attachmentParts, setAttachmentParts] = useState([]);
+  const [longTextDraft, setLongTextDraft] = useState("");
+  const [showLongTextForm, setShowLongTextForm] = useState(false);
+  const [previewAttachment, setPreviewAttachment] = useState(null);
   const [manualMessages, setManualMessages] = useState(initialMessages);
   const [manualStatus, setManualStatus] = useState("idle");
   const [manualError, setManualError] = useState("");
   const [codexActivities, setCodexActivities] = useState([]);
   const listRef = useRef(null);
+  const fileInputRef = useRef(null);
   const codexRequestRef = useRef(null);
   const codexLiveAssistantIdRef = useRef("");
   const codexAssistantFlushFrameRef = useRef(0);
@@ -745,6 +1014,10 @@ function AiChatThread({
     setManualStatus("idle");
     setManualError("");
     setCodexActivities([]);
+    setAttachmentParts([]);
+    setLongTextDraft("");
+    setShowLongTextForm(false);
+    setPreviewAttachment(null);
     codexLiveAssistantIdRef.current = "";
     codexAssistantPendingTextRef.current = "";
     if (codexAssistantFlushFrameRef.current) {
@@ -892,10 +1165,23 @@ function AiChatThread({
 
   async function submitCodexMessage(text) {
     const trimmed = String(text || "").trim();
-    if (!trimmed || pending) return;
-    const userMessage = buildChatMessage("user", trimmed);
+    const extraParts = [...attachmentParts];
+    const longTextAttachment = buildLongTextAttachment(longTextDraft);
+    if (longTextAttachment) extraParts.push(longTextAttachment);
+    if ((!trimmed && !extraParts.length) || pending) return;
+    const userMessage = {
+      id: `msg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      role: "user",
+      parts: [
+        ...(trimmed ? [{ type: "text", text: trimmed }] : []),
+        ...extraParts,
+      ],
+    };
     const nextMessages = [...manualMessages, userMessage];
     setDraft("");
+    setAttachmentParts([]);
+    setLongTextDraft("");
+    setShowLongTextForm(false);
     setManualError("");
     setManualStatus("submitted");
     setCodexActivities([]);
@@ -1030,14 +1316,22 @@ function AiChatThread({
   async function handleSubmit(event) {
     event?.preventDefault?.();
     const trimmed = String(draft || "").trim();
-    if (!trimmed || pending) return;
+    const extraParts = [...attachmentParts];
+    const longTextAttachment = buildLongTextAttachment(longTextDraft);
+    if (longTextAttachment) extraParts.push(longTextAttachment);
+    if ((!trimmed && !extraParts.length) || pending) return;
     if (allowedMode === "codex") {
       await submitCodexMessage(trimmed);
       return;
     }
     setDraft("");
+    setAttachmentParts([]);
+    setLongTextDraft("");
+    setShowLongTextForm(false);
     sendMessage(
-      { text: trimmed },
+      trimmed
+        ? { text: trimmed, files: extraParts }
+        : { files: extraParts },
       {
         body: {
           mode: allowedMode,
@@ -1048,6 +1342,37 @@ function AiChatThread({
         },
       },
     );
+  }
+
+  async function handleFileSelection(event) {
+    const selectedFiles = Array.from(event?.target?.files || []);
+    if (!selectedFiles.length) return;
+    event.target.value = "";
+    if (attachmentParts.length + selectedFiles.length > MAX_CHAT_ATTACHMENT_COUNT) {
+      setManualError(`Attach up to ${MAX_CHAT_ATTACHMENT_COUNT} files per message.`);
+      return;
+    }
+    const oversize = selectedFiles.find(
+      (file) => Number(file?.size || 0) > MAX_CHAT_ATTACHMENT_SIZE,
+    );
+    if (oversize) {
+      setManualError(
+        `${oversize.name} is too large. Keep each file under ${formatFileSize(MAX_CHAT_ATTACHMENT_SIZE)}.`,
+      );
+      return;
+    }
+    setManualError("");
+    try {
+      const parts = [];
+      for (const file of selectedFiles) {
+        const part = await fileToAttachmentPart(file);
+        if (part) parts.push(part);
+      }
+      if (!parts.length) return;
+      setAttachmentParts((current) => [...current, ...parts]);
+    } catch (error) {
+      setManualError(error instanceof Error ? error.message : String(error));
+    }
   }
 
   function handleKeyDown(event) {
@@ -1106,9 +1431,10 @@ function AiChatThread({
             >
               <div className="ai-chat-message__role">{message.role}</div>
               <div className="ai-chat-message__content">
-                {message.role === "assistant"
-                  ? renderAssistantContent(content || "...")
-                  : content}
+                {renderMessageContent(message, { onPreview: setPreviewAttachment }) ||
+                  (message.role === "assistant"
+                    ? renderAssistantContent(content || "...")
+                    : content)}
               </div>
             </div>
           );
@@ -1132,6 +1458,20 @@ function AiChatThread({
       {visibleError ? <div className="error-inline">{visibleError}</div> : null}
 
       <form className="ai-chat-composer" onSubmit={handleSubmit}>
+        {attachmentParts.length ? (
+          <div className="ai-chat-attachment-list">
+            {attachmentParts.map((part, index) =>
+              renderAttachmentPart(part, `draft-file-${index}`, {
+                onPreview: setPreviewAttachment,
+                onRemove: () =>
+                  setAttachmentParts((current) =>
+                    current.filter((_, itemIndex) => itemIndex !== index),
+                  ),
+                compact: true,
+              }),
+            )}
+          </div>
+        ) : null}
         <textarea
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
@@ -1145,23 +1485,59 @@ function AiChatThread({
           }
           rows={4}
         />
+        {showLongTextForm ? (
+          <textarea
+            value={longTextDraft}
+            onChange={(event) =>
+              setLongTextDraft(String(event.target.value || "").slice(0, MAX_CHAT_LONG_TEXT_CHARS))
+            }
+            placeholder="Optional long-form notes, markdown, logs, or pasted document text..."
+            rows={6}
+          />
+        ) : null}
         <div className="ai-chat-composer__actions">
-          <select
-            className="ai-chat-mode-select"
-            value={allowedMode}
-            onChange={(event) => setSelectedMode(event.target.value)}
-            disabled={pending}
-          >
-            {MODE_OPTIONS.map((option) => (
-              <option
-                key={option.id}
-                value={option.id}
-                disabled={option.id === "codex" && !canUseCodex}
-              >
-                {option.label}
-              </option>
-            ))}
-          </select>
+          <div className="ai-chat-composer__left">
+            <select
+              className="ai-chat-mode-select"
+              value={allowedMode}
+              onChange={(event) => setSelectedMode(event.target.value)}
+              disabled={pending}
+            >
+              {MODE_OPTIONS.map((option) => (
+                <option
+                  key={option.id}
+                  value={option.id}
+                  disabled={option.id === "codex" && !canUseCodex}
+                >
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={pending}
+            >
+              Attach
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => setShowLongTextForm((current) => !current)}
+              disabled={pending}
+            >
+              {showLongTextForm ? "Hide notes" : "Long text"}
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={CHAT_ATTACHMENT_ACCEPT}
+              multiple
+              hidden
+              onChange={handleFileSelection}
+            />
+          </div>
           {allowedMode === "codex" ? (
             <button
               type="button"
@@ -1186,7 +1562,51 @@ function AiChatThread({
             Send
           </button>
         </div>
+        {showLongTextForm ? (
+          <div className="ai-chat-composer__hint">
+            Long text will be attached as a downloadable `.txt` file.
+          </div>
+        ) : null}
       </form>
+      {previewAttachment ? (
+        <div className="ai-chat-preview" role="dialog" aria-modal="true">
+          <div className="ai-chat-preview__backdrop" onClick={() => setPreviewAttachment(null)} />
+          <div className="ai-chat-preview__panel">
+            <div className="ai-chat-preview__header">
+              <div>
+                <strong>
+                  {String(previewAttachment.filename || "Attachment preview").trim()}
+                </strong>
+                <div className="ai-chat-preview__meta">
+                  {formatAttachmentLabel(previewAttachment)}
+                  {previewAttachment?.size
+                    ? ` · ${formatFileSize(previewAttachment.size)}`
+                    : ""}
+                </div>
+              </div>
+              <div className="ai-chat-preview__actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => triggerAttachmentDownload(previewAttachment)}
+                >
+                  Download
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setPreviewAttachment(null)}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className="ai-chat-preview__body">
+              {renderAttachmentPreviewBody(previewAttachment)}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }

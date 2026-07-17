@@ -2,22 +2,19 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../../app/api";
 import { showDateTime } from "../../../shared/utils/format";
-import DataTable from "../../../shared/components/DataTable";
 import PageHeader from "../../../shared/components/PageHeader";
 import ResponsivePanel from "../../../shared/components/ResponsivePanel";
-import AdminPageToolbar, {
-  AdminToolbarGroup,
-} from "../../../shared/components/AdminPageToolbar";
+import ComboButtonMenu from "../../../shared/components/ComboButtonMenu";
+import CrudContainer from "../../../shared/components/CrudContainer";
 import InputComboSelect from "../../../shared/components/InputComboSelect";
 import PaginationBar from "../../../shared/components/PaginationBar";
 import DateTimePicker from "../../../shared/components/DateTimePicker";
 import { showToast } from "../../../shared/components/ToastContainer";
-import MobileFullscreenModal from "../../../shared/components/MobileFullscreenModal";
 import Pay42MediaThumb from "./Pay42MediaThumb";
+import Pay42PageShell from "./Pay42PageShell";
 import {
   formatMoney,
   roleLabel,
-  statusTone,
 } from "./pay42Ui";
 
 function emptyOfferForm() {
@@ -48,6 +45,12 @@ function validateOfferForm(form = {}) {
 }
 
 const MOBILE_BREAKPOINT = 768;
+const TABLE_MODE_ITEMS = [
+  { value: "table", label: "Table" },
+  { value: "grid", label: "Grid" },
+  { value: "cards", label: "Cards" },
+  { value: "carousel", label: "Carousel" },
+];
 
 export default function Pay42OffersPage({ authUser }) {
   const [searchParams] = useSearchParams();
@@ -56,7 +59,9 @@ export default function Pay42OffersPage({ authUser }) {
   const [isMobileEditor, setIsMobileEditor] = useState(() =>
     typeof window !== "undefined" ? window.innerWidth < MOBILE_BREAKPOINT : false,
   );
-  const [mobileEditorOpen, setMobileEditorOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth >= MOBILE_BREAKPOINT : true,
+  );
   const [form, setForm] = useState(emptyOfferForm());
   const [filter, setFilter] = useState({
     q: "",
@@ -68,6 +73,7 @@ export default function Pay42OffersPage({ authUser }) {
   const [error, setError] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [tableMode, setTableMode] = useState("table");
 
   const currentRole = roleLabel(authUser);
   const canManage = currentRole === "seller" || currentRole === "admin";
@@ -146,9 +152,7 @@ export default function Pay42OffersPage({ authUser }) {
       product_id: seededProductId,
       offer_name: wantsNew ? current.offer_name || "" : current.offer_name,
     }));
-    if (isMobileEditor && wantsNew) {
-      setMobileEditorOpen(true);
-    }
+    if (wantsNew) setDetailOpen(true);
   }, [searchParams, isMobileEditor]);
 
   const columns = useMemo(
@@ -157,18 +161,18 @@ export default function Pay42OffersPage({ authUser }) {
         accessorKey: "product_name",
         header: "OFFER",
         cell: ({ row }) => (
-          <div className="pay42-cell-media">
-            <Pay42MediaThumb
-              src={row.original.product_image}
-              alt={row.original.product_name || row.original.sid}
-              label={row.original.product_name || row.original.sid}
-              className="pay42-thumb"
-            />
-            <div className="cell-wrap">
-              <strong>
+            <div className="pay42-cell-media">
+              <Pay42MediaThumb
+                src={row.original.product_image}
+                alt={row.original.product_name || row.original.sid}
+                label={row.original.product_name || row.original.sid}
+                className="pay42-thumb"
+              />
+            <div className="cell-wrap ui-data-stack">
+              <strong className="ui-data-title">
                 {row.original.metadata?.offer_name || row.original.product_name || "-"}
               </strong>
-              <span className="minor-text">{row.original.sid}</span>
+              <span className="ui-data-meta">{row.original.sid}</span>
             </div>
           </div>
         ),
@@ -183,12 +187,13 @@ export default function Pay42OffersPage({ authUser }) {
         header: "STATUS",
         cell: ({ row }) => (
           <span
-            className="minor-text"
-            style={{
-              color: statusTone(row.original.status),
-              fontWeight: 700,
-              letterSpacing: "0.08em",
-            }}
+            className={[
+              "badge",
+              "badge-mini",
+              String(row.original.status || "-").toUpperCase(),
+            ]
+              .filter(Boolean)
+              .join(" ")}
           >
             {String(row.original.status || "-").toUpperCase()}
           </span>
@@ -309,27 +314,22 @@ export default function Pay42OffersPage({ authUser }) {
       qr_code: row.qr_code || "",
       qr_code_image: row.qr_code_image || "",
     });
-    if (isMobileEditor) setMobileEditorOpen(true);
+    setDetailOpen(true);
   }
 
   function startNewOffer() {
     setForm(emptyOfferForm());
-    if (isMobileEditor) setMobileEditorOpen(true);
+    setDetailOpen(true);
   }
 
-  function closeMobileEditor() {
-    setMobileEditorOpen(false);
+  function closeDetail() {
+    setDetailOpen(false);
   }
 
   const offerFormPanel = (
-    <ResponsivePanel
-      title={isMobileEditor ? "" : form.sid ? "Edit Offer" : "Create Offer"}
-      subtitle={isMobileEditor ? "" : form.sid ? form.sid : "Seller pricing"}
-      showToggle={false}
-    >
       <div className="pay42-form-grid pay42-offer-form-grid">
         <label className="pay42-form-field pay42-form-field--full">
-          <span className="minor-text">PRODUCT</span>
+          <span className="ui-field-label">PRODUCT</span>
           <InputComboSelect
             value={form.product_id}
             onChange={(e) =>
@@ -347,7 +347,7 @@ export default function Pay42OffersPage({ authUser }) {
         {form.product_id ? (
           <>
             <label className="pay42-form-field pay42-form-field--full">
-              <span className="minor-text">OFFER NAME</span>
+              <span className="ui-field-label">OFFER NAME</span>
               <input
                 value={form.offer_name}
                 onChange={(e) =>
@@ -357,7 +357,7 @@ export default function Pay42OffersPage({ authUser }) {
               />
             </label>
             <label className="pay42-form-field">
-              <span className="minor-text">PRICE</span>
+              <span className="ui-field-label">PRICE</span>
               <input
                 value={form.price}
                 onChange={(e) => setForm((prev) => ({ ...prev, price: e.target.value }))}
@@ -365,7 +365,7 @@ export default function Pay42OffersPage({ authUser }) {
               />
             </label>
             <label className="pay42-form-field">
-              <span className="minor-text">TAX</span>
+              <span className="ui-field-label">TAX</span>
               <input
                 value={form.tax}
                 onChange={(e) => setForm((prev) => ({ ...prev, tax: e.target.value }))}
@@ -373,7 +373,7 @@ export default function Pay42OffersPage({ authUser }) {
               />
             </label>
             <label className="pay42-form-field">
-              <span className="minor-text">START AT</span>
+              <span className="ui-field-label">START AT</span>
               <DateTimePicker
                 mode="datetime"
                 value={form.start_at}
@@ -383,7 +383,7 @@ export default function Pay42OffersPage({ authUser }) {
               />
             </label>
             <label className="pay42-form-field">
-              <span className="minor-text">END AT</span>
+              <span className="ui-field-label">END AT</span>
               <DateTimePicker
                 mode="datetime"
                 value={form.end_at}
@@ -423,7 +423,7 @@ export default function Pay42OffersPage({ authUser }) {
                 <button
                   type="button"
                   className="secondary-button"
-                  onClick={closeMobileEditor}
+                  onClick={closeDetail}
                 >
                   Cancel
                 </button>
@@ -443,120 +443,138 @@ export default function Pay42OffersPage({ authUser }) {
             <button
               type="button"
               className="secondary-button"
-              onClick={closeMobileEditor}
+              onClick={closeDetail}
             >
               Cancel
             </button>
           </div>
         ) : null}
       </div>
-    </ResponsivePanel>
   );
 
   return (
-    <section className="logs-page-container trades-page-container pay42-page-container stack-layout fadeIn">
-      <PageHeader
-        className="trades-page-header"
-        title="Offers"
-        actions={
-          <div className="pay42-inline-actions">
-            {canManage ? (
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={startNewOffer}
-              >
-                New Offer
-              </button>
-            ) : null}
-            <button type="button" className="secondary-button" onClick={load}>
-              Refresh
-            </button>
-          </div>
-        }
-      />
-
-      <AdminPageToolbar
-        className="trades-toolbar-panel"
-        filters={
-          <ResponsivePanel
-            title="Filters"
-            className="trades-filters-panel"
-            headerMode="mobile"
-            border="mobile"
-          >
-            <div className="trades-toolbar-row">
-              <div className="trades-toolbar-filters">
-                <input
-                  value={filter.q}
-                  placeholder="SEARCH OFFERS..."
-                  onChange={(e) =>
-                    setFilter((prev) => ({ ...prev, q: e.target.value }))
-                  }
-                />
-                <InputComboSelect
-                  value={filter.product_id}
-                  onChange={(e) =>
-                    setFilter((prev) => ({ ...prev, product_id: e.target.value }))
-                  }
-                >
-                  <option value="">ALL PRODUCTS</option>
-                  {products.map((product) => (
-                    <option key={product.sid} value={product.sid}>
-                      {product.name}
-                    </option>
-                  ))}
-                </InputComboSelect>
-                <InputComboSelect
-                  value={filter.status}
-                  onChange={(e) =>
-                    setFilter((prev) => ({ ...prev, status: e.target.value }))
-                  }
-                >
-                  <option value="">ALL STATUS</option>
-                  <option value="ACTIVE">ACTIVE</option>
-                  <option value="INACTIVE">INACTIVE</option>
-                </InputComboSelect>
-              </div>
-            </div>
-          </ResponsivePanel>
-        }
-      />
+    <Pay42PageShell>
+      <PageHeader className="trades-page-header" title="Offers" />
 
       {error ? <div className="error">{error}</div> : null}
 
       {canManage ? (
-        <div className="pay42-split-layout pay42-split-layout--list-first">
-          <ResponsivePanel
-            title={`${filteredOffers.length} Offers`}
-            subtitle={isMobileEditor ? "Tap a card to open the editor" : "Select a row to edit"}
-            className="component-frozen-wrap"
-            headerActions={
-              <PaginationBar
-                page={page}
-                pages={totalPages}
-                total={filteredOffers.length}
-                pageSize={pageSize}
-                pageSizeOptions={[10, 20, 50]}
-                onPageChange={setPage}
-                onPageSizeChange={setPageSize}
-                label={`${Math.min(filteredOffers.length, (page - 1) * pageSize + 1)}-${Math.min(filteredOffers.length, page * pageSize)} / ${filteredOffers.length}`}
-              />
+        <CrudContainer
+          className="pay42-crud-layout"
+          toolbar={{
+            displayMode: "top",
+            filters: (
+              <div className="trades-toolbar-row">
+                <div className="trades-toolbar-filters">
+                  <input
+                    value={filter.q}
+                    placeholder="SEARCH OFFERS..."
+                    onChange={(e) =>
+                      setFilter((prev) => ({ ...prev, q: e.target.value }))
+                    }
+                  />
+                  <InputComboSelect
+                    value={filter.product_id}
+                    onChange={(e) =>
+                      setFilter((prev) => ({ ...prev, product_id: e.target.value }))
+                    }
+                  >
+                    <option value="">ALL PRODUCTS</option>
+                    {products.map((product) => (
+                      <option key={product.sid} value={product.sid}>
+                        {product.name}
+                      </option>
+                    ))}
+                  </InputComboSelect>
+                  <InputComboSelect
+                    value={filter.status}
+                    onChange={(e) =>
+                      setFilter((prev) => ({ ...prev, status: e.target.value }))
+                    }
+                  >
+                    <option value="">ALL STATUS</option>
+                    <option value="ACTIVE">ACTIVE</option>
+                    <option value="INACTIVE">INACTIVE</option>
+                  </InputComboSelect>
+                </div>
+              </div>
+            ),
+            actionItems: [
+              {
+                key: "new-offer",
+                label: "New Offer",
+                onClick: startNewOffer,
+                className: "primary-button",
+              },
+              {
+                key: "refresh-offers",
+                label: "Refresh offers",
+                onClick: load,
+                className: "secondary-button",
+                ariaLabel: "Refresh offers",
+                title: "Refresh offers",
+                children: "↻",
+              },
+            ],
+          }}
+          detailMode={isMobileEditor ? "modal" : "section"}
+          detailOpen={detailOpen}
+          onDetailOpenChange={(open) => {
+            if (open) {
+              setDetailOpen(true);
+              return;
             }
-          >
-            <DataTable
-              columns={columns}
-              data={pagedOffers}
-              loading={loading}
-              emptyText="No offers yet."
-              className="events-table"
-              onRowClick={selectOffer}
-              mobileCard={mobileCard}
-            />
-          </ResponsivePanel>
-
-          {!isMobileEditor ? offerFormPanel : null}
-        </div>
+            closeDetail();
+          }}
+          detailCloseButton
+          list={{
+            title: `${filteredOffers.length} Offers`,
+            panelClassName: "component-frozen-wrap",
+            headerActions: (
+              <>
+                <PaginationBar
+                  page={page}
+                  pages={totalPages}
+                  total={filteredOffers.length}
+                  pageSize={pageSize}
+                  pageSizeOptions={[10, 20, 50]}
+                  onPageChange={setPage}
+                  onPageSizeChange={setPageSize}
+                  label={`${Math.min(filteredOffers.length, (page - 1) * pageSize + 1)}-${Math.min(filteredOffers.length, page * pageSize)} / ${filteredOffers.length}`}
+                />
+                <ComboButtonMenu
+                  selectId="pay42-offers-mode"
+                  value={tableMode}
+                  buttonText={`Mode: ${TABLE_MODE_ITEMS.find((item) => item.value === tableMode)?.label || "Table"}`}
+                  onChange={setTableMode}
+                  items={TABLE_MODE_ITEMS}
+                  ariaLabel="Select offers view mode"
+                  align="end"
+                  sideOffset={6}
+                  triggerClassName="data-table-mode-switcher"
+                />
+              </>
+            ),
+            tableProps: {
+              columns,
+              data: pagedOffers,
+              loading,
+              emptyText: "No offers yet.",
+              className: "events-table events-table--compact",
+              onRowClick: selectOffer,
+              mode: tableMode,
+              onModeChange: setTableMode,
+              getRowId: (row) => row.sid,
+              selectedRowId: form.sid || null,
+              mobileCard,
+            },
+          }}
+          detail={{
+            title: form.sid ? "Edit Offer" : "Create Offer",
+            subtitle: form.sid ? form.sid : "Seller pricing",
+            children: offerFormPanel,
+          }}
+        />
       ) : (
         <div className="pay42-card-grid">
           {filteredOffers.map((row) => (
@@ -609,17 +627,6 @@ export default function Pay42OffersPage({ authUser }) {
           ))}
         </div>
       )}
-
-      {canManage && isMobileEditor ? (
-        <MobileFullscreenModal
-          open={mobileEditorOpen}
-          title={form.sid ? "Edit Offer" : "Create Offer"}
-          subtitle={form.sid ? form.sid : "Seller pricing"}
-          onClose={closeMobileEditor}
-        >
-          {offerFormPanel}
-        </MobileFullscreenModal>
-      ) : null}
-    </section>
+    </Pay42PageShell>
   );
 }

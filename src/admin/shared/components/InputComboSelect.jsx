@@ -178,6 +178,29 @@ export default function InputComboSelect({
       String(option.value || "").toLowerCase().includes(query),
     );
   }, [effectiveMode, normalizedText, options, search, searchable]);
+  const filteredEnabledOptions = useMemo(
+    () => filteredOptions.filter((option) => !option.disabled),
+    [filteredOptions],
+  );
+  const allFilteredSelected = useMemo(
+    () =>
+      multiple &&
+      filteredEnabledOptions.length > 0 &&
+      filteredEnabledOptions.every((option) => normalizedComboValue.includes(option.value)),
+    [filteredEnabledOptions, multiple, normalizedComboValue],
+  );
+  const someFilteredSelected = useMemo(
+    () =>
+      multiple &&
+      filteredEnabledOptions.some((option) => normalizedComboValue.includes(option.value)),
+    [filteredEnabledOptions, multiple, normalizedComboValue],
+  );
+  const selectAllRef = useRef(null);
+
+  useEffect(() => {
+    if (!multiple || !selectAllRef.current) return;
+    selectAllRef.current.indeterminate = someFilteredSelected && !allFilteredSelected;
+  }, [allFilteredSelected, multiple, someFilteredSelected]);
 
   useEffect(() => {
     if (effectiveMode !== "both" || !matchTriggerWidth) return undefined;
@@ -459,16 +482,58 @@ export default function InputComboSelect({
           sticky="partial"
           data-component={multiple ? "FormMultiComboSelect" : dataComponent || "InputComboSelect.Menu"}
         >
-          {searchable ? (
-            <div className="combo-button-menu__filter-wrap">
-              <input
-                ref={searchInputRef}
-                className="combo-button-menu__filter"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder={searchPlaceholder}
-                onKeyDown={(event) => event.stopPropagation()}
-              />
+          {searchable || multiple ? (
+            <div className="combo-button-menu__toolbar">
+              {searchable ? (
+                <div className="combo-button-menu__filter-wrap">
+                  <input
+                    ref={searchInputRef}
+                    className="combo-button-menu__filter"
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    placeholder={searchPlaceholder}
+                    onKeyDown={(event) => event.stopPropagation()}
+                  />
+                </div>
+              ) : null}
+              {multiple ? (
+                <label
+                  className="combo-button-menu__select-all"
+                  onKeyDown={(event) => event.stopPropagation()}
+                  title="Select all filtered"
+                >
+                  <input
+                    ref={selectAllRef}
+                    type="checkbox"
+                    aria-label="Select all filtered"
+                    checked={allFilteredSelected}
+                    disabled={disabled || readOnly || !filteredEnabledOptions.length}
+                    onChange={(event) => {
+                      event.stopPropagation();
+                      const filteredValues = filteredEnabledOptions.map((option) => option.value);
+                      const currentValues = Array.isArray(normalizedComboValue)
+                        ? normalizedComboValue
+                        : [];
+                      const nextValues = event.target.checked
+                        ? [...new Set([...currentValues, ...filteredValues])]
+                        : currentValues.filter((value) => !filteredValues.includes(value));
+                      const eventPayload = buildEventPayload({
+                        id,
+                        name,
+                        value: nextValues[0] || "",
+                        values: nextValues,
+                        multiple: true,
+                      });
+                      onChange?.(eventPayload);
+                      onSelected?.(
+                        nextValues,
+                        filteredEnabledOptions.length === 1 ? filteredEnabledOptions[0] : null,
+                      );
+                    }}
+                    onClick={(event) => event.stopPropagation()}
+                  />
+                </label>
+              ) : null}
             </div>
           ) : null}
           {filteredOptions.map((option) => {

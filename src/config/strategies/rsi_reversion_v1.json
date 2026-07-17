@@ -4,6 +4,7 @@
   "kind": "preset",
   "description": "Buys oversold RSI recoveries and sells overbought RSI rollovers for mean reversion.",
   "engine_version": "42trade.strategy.v2",
+  "status": "active",
   "params": {
     "rsi_period": 14,
     "oversold": 30,
@@ -74,5 +75,9 @@
     "fallback_stop_pct": 0.001,
     "fallback_tp_pct": 0.0015
   },
-  "min_bars": 40
+  "min_bars": 40,
+  "conditions": {
+    "skip_news": true,
+    "news_window_minutes": 120
+  }
 }

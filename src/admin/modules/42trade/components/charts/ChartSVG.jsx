@@ -29,6 +29,15 @@ function toUnixSec(value) {
   return Math.floor(ms / 1000);
 }
 
+function toEpochSec(value) {
+  const num = Number(value);
+  if (Number.isFinite(num)) {
+    if (num > 1e12) return Math.floor(num / 1000);
+    if (num > 1e9) return Math.floor(num);
+  }
+  return toUnixSec(value);
+}
+
 function ensureBars(bars = []) {
   if (!Array.isArray(bars)) return [];
   return bars
@@ -38,6 +47,7 @@ function ensureBars(bars = []) {
       const high = Number(row?.high ?? row?.h);
       const low = Number(row?.low ?? row?.l);
       const close = Number(row?.close ?? row?.c);
+      const volume = Number(row?.volume ?? row?.v ?? 0);
       if (
         !Number.isFinite(time) ||
         !Number.isFinite(open) ||
@@ -47,7 +57,14 @@ function ensureBars(bars = []) {
       ) {
         return null;
       }
-      return { time, open, high, low, close };
+      return {
+        time,
+        open,
+        high,
+        low,
+        close,
+        volume: Number.isFinite(volume) && volume > 0 ? volume : 0,
+      };
     })
     .filter(Boolean)
     .sort((a, b) => a.time - b.time);
@@ -171,6 +188,7 @@ const INDICATOR_COLORS = {
   rsi: "#a855f7",
   rsiEma9: "#facc15",
   rsiWma45: "#34d399",
+  volume: "#60a5fa",
 };
 
 function clamp(value, min, max) {
@@ -266,6 +284,74 @@ function formatAxisPrice(value) {
   return Math.abs(num) >= 1000 ? num.toFixed(2) : num.toFixed(5);
 }
 
+function parseColorToRgb(color) {
+  const raw = String(color || "").trim().toLowerCase();
+  if (!raw) return null;
+  if (raw === "#fff" || raw === "#ffffff" || raw === "white") {
+    return { r: 255, g: 255, b: 255 };
+  }
+  if (raw === "#000" || raw === "#000000" || raw === "black") {
+    return { r: 0, g: 0, b: 0 };
+  }
+  const hex = raw.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (hex) {
+    const value = hex[1];
+    if (value.length === 3) {
+      return {
+        r: parseInt(value[0] + value[0], 16),
+        g: parseInt(value[1] + value[1], 16),
+        b: parseInt(value[2] + value[2], 16),
+      };
+    }
+    return {
+      r: parseInt(value.slice(0, 2), 16),
+      g: parseInt(value.slice(2, 4), 16),
+      b: parseInt(value.slice(4, 6), 16),
+    };
+  }
+  const rgb = raw.match(
+    /^rgba?\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)(?:\s*,\s*[0-9.]+\s*)?\)$/i,
+  );
+  if (rgb) {
+    return {
+      r: Number(rgb[1]),
+      g: Number(rgb[2]),
+      b: Number(rgb[3]),
+    };
+  }
+  return null;
+}
+
+function resolveReadableTextColor(
+  backgroundColor,
+  fallback = BACKTEST_CHART_THEME.badgeText,
+) {
+  const rgb = parseColorToRgb(backgroundColor);
+  if (!rgb) return fallback;
+  const luminance =
+    (0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b) / 255;
+  return luminance >= 0.68 ? "#0f172a" : fallback;
+}
+
+function resolveSvgLineDash(style, fallback = "4 6") {
+  const normalized = String(style || "").trim().toLowerCase();
+  if (normalized === "solid") return "0";
+  if (normalized === "dash" || normalized === "dashed") return "8 6";
+  if (normalized === "dot" || normalized === "dotted") return "4 6";
+  return fallback;
+}
+
+function resolveSvgMarkerShape(shape, placement = "belowBar") {
+  const normalized = String(shape || "").trim().toLowerCase();
+  if (normalized === "arrowdown" || normalized === "down") return "down";
+  if (normalized === "arrowup" || normalized === "up") return "up";
+  if (normalized === "none") return "none";
+  if (normalized === "circle") return "circle";
+  return String(placement || "").trim().toLowerCase() === "abovebar"
+    ? "down"
+    : "up";
+}
+
 function resolveClosedTradeLine(trade = null, fallback = {}, barBounds = null) {
   const source = trade && typeof trade === "object" ? trade : fallback;
   const hasClosedEvent = Boolean(
@@ -306,6 +392,7 @@ export default function ChartSVG({
   showLegend = true,
   showIndicators = false,
   indicatorVisibilityConfig = null,
+  sharedObjects = [],
   className = "",
   style = null,
 }) {
@@ -690,6 +777,13 @@ export default function ChartSVG({
     () => buildIndicatorSeries(plottedBars),
     [plottedBars],
   );
+  const visibleSharedObjects = useMemo(
+    () =>
+      (Array.isArray(sharedObjects) ? sharedObjects : []).filter(
+        (item) => item && item.visible !== false,
+      ),
+    [sharedObjects],
+  );
   const visibleTrendIndicators = useMemo(
     () =>
       ["sma20", "sma50", "sma200"].filter(
@@ -704,10 +798,12 @@ export default function ChartSVG({
       ),
     [indicatorVisibility],
   );
+  const showVolumeBars =
+    showIndicators && indicatorVisibility.volume !== false;
   const showRsiPanel =
     showIndicators &&
     indicatorVisibility.rsiPanel !== false &&
-    visibleOscillatorIndicators.length > 0;
+    (visibleOscillatorIndicators.length > 0 || showVolumeBars);
   const showCandles = indicatorVisibility.candles !== false;
   const showBlurCandles = showCandles && indicatorVisibility.zigzag !== false;
   const blurUpColor = "rgba(125, 211, 252, 0.30)";
@@ -736,6 +832,21 @@ export default function ChartSVG({
         });
       });
     }
+    visibleSharedObjects.forEach((item) => {
+      [
+        item?.price,
+        item?.price2,
+        item?.anchorPrice,
+        item?.anchorPrice2,
+        item?.price_top,
+        item?.price_bottom,
+      ].forEach((value) => {
+        const num = Number(value);
+        if (Number.isFinite(num) && num > 0) {
+          priceValues.push(num);
+        }
+      });
+    });
     const selectedLineLevels = selectedTrade
       ? [
           selectedTrade.entry,
@@ -809,6 +920,7 @@ export default function ChartSVG({
     pnlRealized,
     exitPrice,
     plottedBarBounds,
+    visibleSharedObjects,
   ]);
 
   const lineLevels = useMemo(() => {
@@ -966,6 +1078,20 @@ export default function ChartSVG({
   const yForOscillator = (value) =>
     chartModel.indicatorPanelTop +
     ((100 - Number(value)) / 100) * chartModel.indicatorPanelHeight;
+  const volumeBars = showVolumeBars
+    ? plottedBars.map((bar) => ({
+        time: Number(bar?.time),
+        open: Number(bar?.open),
+        close: Number(bar?.close),
+        value: Math.max(0, Number(bar?.volume ?? 0)),
+      }))
+    : [];
+  const maxVolume = volumeBars.reduce(
+    (best, bar) => Math.max(best, Number(bar?.value) || 0),
+    0,
+  );
+  const volumePanelHeight = chartModel.indicatorPanelHeight * 0.48;
+  const volumeBaseY = chartModel.indicatorPanelTop + chartModel.indicatorPanelHeight;
 
   const buildSvgPath = (series = [], yMapper) => {
     const points = (Array.isArray(series) ? series : [])
@@ -979,6 +1105,170 @@ export default function ChartSVG({
     if (!points.length) return "";
     return `M ${points.join(" L ")}`;
   };
+
+  const sharedOverlayObjects = useMemo(() => {
+    if (!chartModel || !plottedBars.length || !visibleSharedObjects.length) {
+      return { zones: [], lines: [], segments: [], points: [] };
+    }
+    const firstTime = Number(plottedBars[0]?.time);
+    const lastTime = Number(plottedBars[plottedBars.length - 1]?.time);
+    const leftX = chartModel.padding.left;
+    const rightX = width - chartModel.padding.right;
+    const clampX = (value) => clamp(value, leftX, rightX);
+    const clampY = (value) =>
+      clamp(
+        value,
+        chartModel.padding.top,
+        chartModel.padding.top + chartModel.innerHeight,
+      );
+    const yForObjectPrice = (value) => {
+      const price = Number(value);
+      if (!Number.isFinite(price)) return null;
+      return clampY(chartModel.yForPrice(price));
+    };
+    const overlays = { zones: [], lines: [], segments: [], points: [] };
+    visibleSharedObjects.forEach((item, index) => {
+      const kind = String(item?.kind || "").trim().toLowerCase();
+      const color = String(item?.color || "#60a5fa");
+      const label = String(
+        item?.label || item?.marker_text || item?.type || "",
+      ).trim();
+      const dash = resolveSvgLineDash(item?.line_style, "4 6");
+      const strokeWidth = Math.max(1, Number(item?.line_width) || 1);
+
+      if (kind === "zone") {
+        const top = Number(item?.price_top ?? item?.anchorPrice ?? item?.price);
+        const bottom = Number(
+          item?.price_bottom ?? item?.anchorPrice2 ?? item?.price,
+        );
+        const startTime =
+          toEpochSec(item?.anchorTimeMs ?? item?.time) ?? firstTime;
+        const explicitEndTime = toEpochSec(item?.anchorTimeMs2 ?? item?.time2);
+        const lifecycleState = String(item?.artifact_payload?.payload?.lifecycle_state || "")
+          .trim()
+          .toLowerCase();
+        const itemStatus = String(item?.artifact_payload?.status || item?.status || "")
+          .trim()
+          .toLowerCase();
+        const extendUnvisited =
+          (String(item?.artifact_group || "").trim().toLowerCase() === "fvg" ||
+            String(item?.artifact_group || "").trim().toLowerCase() === "ob") &&
+          itemStatus === "active" &&
+          lifecycleState === "awaiting_touch" &&
+          !Number.isFinite(explicitEndTime);
+        const endTime = Number.isFinite(explicitEndTime)
+          ? explicitEndTime
+          : extendUnvisited
+            ? lastTime
+            : null;
+        const y1 = yForObjectPrice(top);
+        const y2 = yForObjectPrice(bottom);
+        if (
+          !Number.isFinite(startTime) ||
+          !Number.isFinite(endTime) ||
+          !Number.isFinite(y1) ||
+          !Number.isFinite(y2)
+        ) {
+          return;
+        }
+        const x1 = clampX(chartModel.xForTime(startTime));
+        const x2 = clampX(chartModel.xForTime(endTime));
+        overlays.zones.push({
+          key: String(item?.id || `shared-zone-${index}`),
+          x: Math.min(x1, x2),
+          y: Math.min(y1, y2),
+          width: Math.max(1, Math.abs(x2 - x1)),
+          height: Math.max(1, Math.abs(y2 - y1)),
+          color,
+          fill: String(item?.bg_color || `${color}14`),
+          label,
+        });
+        return;
+      }
+
+      if (kind === "segment") {
+        const startTime = toEpochSec(item?.anchorTimeMs ?? item?.time);
+        const endTime = toEpochSec(item?.anchorTimeMs2 ?? item?.time2);
+        const startPrice = Number(item?.anchorPrice ?? item?.price);
+        const endPrice = Number(item?.anchorPrice2 ?? item?.price2);
+        const y1 = yForObjectPrice(startPrice);
+        const y2 = yForObjectPrice(endPrice);
+        if (
+          !Number.isFinite(startTime) ||
+          !Number.isFinite(endTime) ||
+          !Number.isFinite(y1) ||
+          !Number.isFinite(y2)
+        ) {
+          return;
+        }
+        overlays.segments.push({
+          key: String(item?.id || `shared-segment-${index}`),
+          x1: clampX(chartModel.xForTime(startTime)),
+          x2: clampX(chartModel.xForTime(endTime)),
+          y1,
+          y2,
+          color,
+          dash,
+          strokeWidth,
+          label,
+        });
+        return;
+      }
+
+      if (kind === "line") {
+        const price = Number(item?.price ?? item?.anchorPrice);
+        const y = yForObjectPrice(price);
+        if (!Number.isFinite(y)) return;
+        const lineScope = String(item?.line_scope || "full").trim().toLowerCase();
+        const startTime = toEpochSec(item?.anchorTimeMs ?? item?.time);
+        const endTime = toEpochSec(item?.anchorTimeMs2 ?? item?.time2);
+        const startX = Number.isFinite(startTime)
+          ? clampX(chartModel.xForTime(startTime))
+          : leftX;
+        const endX = Number.isFinite(endTime)
+          ? clampX(chartModel.xForTime(endTime))
+          : rightX;
+        overlays.lines.push({
+          key: String(item?.id || `shared-line-${index}`),
+          x1:
+            lineScope === "segment" || lineScope === "segment_to_scale"
+              ? startX
+              : leftX,
+          x2: lineScope === "segment" ? endX : rightX,
+          y,
+          color,
+          dash,
+          strokeWidth,
+          label,
+        });
+        return;
+      }
+
+      if (kind === "point") {
+        const timeSec = toEpochSec(item?.time ?? item?.anchorTimeMs);
+        const price = Number(item?.price ?? item?.anchorPrice);
+        const y = yForObjectPrice(price);
+        if (!Number.isFinite(timeSec) || !Number.isFinite(y)) return;
+        const placement = String(item?.marker_position || "belowBar");
+        overlays.points.push({
+          key: String(item?.id || `shared-point-${index}`),
+          x: clampX(chartModel.xForTime(timeSec)),
+          y,
+          color,
+          textColor: resolveReadableTextColor(
+            item?.text_color || item?.color,
+            item?.text_color || BACKTEST_CHART_THEME.badgeText,
+          ),
+          label: String(item?.marker_text || label || "").trim(),
+          placement: placement.toLowerCase().includes("above")
+            ? "above"
+            : "below",
+          shape: resolveSvgMarkerShape(item?.marker_shape, placement),
+        });
+      }
+    });
+    return overlays;
+  }, [chartModel, plottedBars, visibleSharedObjects, width]);
 
   const tradeBoxes = effectiveTrades
     .map((trade) => {
@@ -1064,6 +1354,7 @@ export default function ChartSVG({
             const textWidth = Math.max(42, priceText.length * 6.8 + 10);
             const titleWidth = line.title ? 16 : 0;
             const badgeX = width - chartModel.padding.right + 4;
+            const badgeTextColor = resolveReadableTextColor(line.color);
             return (
               <g key={line.key}>
                 <line
@@ -1101,7 +1392,7 @@ export default function ChartSVG({
                     fontSize="10"
                     fontWeight="700"
                     textAnchor="middle"
-                    fill={BACKTEST_CHART_THEME.badgeText}
+                    fill={badgeTextColor}
                   >
                     {line.title}
                   </text>
@@ -1112,13 +1403,40 @@ export default function ChartSVG({
                   fontSize="10"
                   fontWeight="700"
                   textAnchor="middle"
-                  fill={BACKTEST_CHART_THEME.badgeText}
+                  fill={badgeTextColor}
                 >
                   {priceText}
                 </text>
               </g>
             );
           })}
+
+          {sharedOverlayObjects.zones.map((zone) => (
+            <g key={zone.key}>
+              <rect
+                x={zone.x}
+                y={zone.y}
+                width={zone.width}
+                height={zone.height}
+                fill={zone.fill}
+                stroke={zone.color}
+                strokeDasharray="4 6"
+                strokeOpacity="0.5"
+                rx="4"
+              />
+              {zone.label ? (
+                <text
+                  x={zone.x + 6}
+                  y={zone.y + 12}
+                  fontSize="9"
+                  fontWeight="600"
+                  fill={zone.color}
+                >
+                  {zone.label}
+                </text>
+              ) : null}
+            </g>
+          ))}
 
           {showIndicators &&
             visibleTrendIndicators.map((key) => {
@@ -1222,6 +1540,37 @@ export default function ChartSVG({
                   </g>
                 );
               })}
+              {showVolumeBars && maxVolume > 0
+                ? volumeBars.map((bar) => {
+                    const x = xForTime(bar.time);
+                    if (!Number.isFinite(x)) return null;
+                    const ratio = Math.max(
+                      0,
+                      Math.min(1, (Number(bar?.value) || 0) / maxVolume),
+                    );
+                    const barHeight = Math.max(1, ratio * volumePanelHeight);
+                    const isBullish = Number(bar.close) >= Number(bar.open);
+                    const fill = isBullish
+                      ? "rgba(34,197,94,0.34)"
+                      : "rgba(239,68,68,0.34)";
+                    const stroke = isBullish
+                      ? "rgba(34,197,94,0.62)"
+                      : "rgba(239,68,68,0.62)";
+                    return (
+                      <rect
+                        key={`vol-${bar.time}`}
+                        x={x - candleWidth / 2}
+                        y={volumeBaseY - barHeight}
+                        width={Math.max(1.5, candleWidth)}
+                        height={barHeight}
+                        fill={fill}
+                        stroke={stroke}
+                        strokeWidth="0.4"
+                        rx="1"
+                      />
+                    );
+                  })
+                : null}
               {visibleOscillatorIndicators.map((key) => {
                 const path = buildSvgPath(
                   builtIndicators[key],
@@ -1266,6 +1615,58 @@ export default function ChartSVG({
             </g>
           ))}
 
+          {sharedOverlayObjects.segments.map((segment) => (
+            <g key={segment.key}>
+              <line
+                x1={segment.x1}
+                x2={segment.x2}
+                y1={segment.y1}
+                y2={segment.y2}
+                stroke={segment.color}
+                strokeDasharray={segment.dash}
+                strokeWidth={segment.strokeWidth}
+                opacity="0.92"
+              />
+              {segment.label ? (
+                <text
+                  x={Math.min(segment.x2 + 6, width - chartModel.padding.right - 2)}
+                  y={segment.y2 - 6}
+                  fontSize="9"
+                  fontWeight="600"
+                  fill={segment.color}
+                >
+                  {segment.label}
+                </text>
+              ) : null}
+            </g>
+          ))}
+
+          {sharedOverlayObjects.lines.map((line) => (
+            <g key={line.key}>
+              <line
+                x1={line.x1}
+                x2={line.x2}
+                y1={line.y}
+                y2={line.y}
+                stroke={line.color}
+                strokeDasharray={line.dash}
+                strokeWidth={line.strokeWidth}
+                opacity="0.9"
+              />
+              {line.label ? (
+                <text
+                  x={Math.min(line.x2 + 6, width - chartModel.padding.right - 2)}
+                  y={line.y - 5}
+                  fontSize="9"
+                  fontWeight="600"
+                  fill={resolveReadableTextColor(line.color, line.color)}
+                >
+                  {line.label}
+                </text>
+              ) : null}
+            </g>
+          ))}
+
           {markers.map((marker) => {
             const x = chartModel.xForTime(marker.time);
             const y = chartModel.yForPrice(marker.price);
@@ -1286,6 +1687,7 @@ export default function ChartSVG({
                 anchorShape === "up"
                   ? `${x},${y - anchorSize} ${x - anchorSize},${y + anchorSize} ${x + anchorSize},${y + anchorSize}`
                   : `${x},${y + anchorSize} ${x - anchorSize},${y - anchorSize} ${x + anchorSize},${y - anchorSize}`;
+              const markerTextColor = resolveReadableTextColor(marker.color);
               return (
                 <g key={marker.key}>
                   {anchorShape === "none" ? null : anchorShape === "circle" ? (
@@ -1319,7 +1721,7 @@ export default function ChartSVG({
                     y={badgeY + 9.6}
                     fontSize="8.2"
                     fontWeight="600"
-                    fill={BACKTEST_CHART_THEME.badgeText}
+                    fill={markerTextColor}
                   >
                     {marker.text}
                   </text>
@@ -1372,6 +1774,65 @@ export default function ChartSVG({
               </g>
             );
           })}
+
+          {sharedOverlayObjects.points.map((point) => {
+            const anchorSize = 5;
+            const points =
+              point.shape === "up"
+                ? `${point.x},${point.y - anchorSize} ${point.x - anchorSize},${point.y + anchorSize} ${point.x + anchorSize},${point.y + anchorSize}`
+                : `${point.x},${point.y + anchorSize} ${point.x - anchorSize},${point.y - anchorSize} ${point.x + anchorSize},${point.y - anchorSize}`;
+            const badgeWidth = Math.max(26, point.label.length * 5.6 + 12);
+            const badgeHeight = point.label ? 14 : 0;
+            const badgeYRaw =
+              point.placement === "below"
+                ? point.y + 6
+                : point.y - badgeHeight - 6;
+            const badgeY = Math.max(2, Math.min(height - badgeHeight - 2, badgeYRaw));
+            const badgeX = Math.max(2, Math.min(width - badgeWidth - 2, point.x + 8));
+            return (
+              <g key={point.key}>
+                {point.shape === "none" ? null : point.shape === "circle" ? (
+                  <circle
+                    cx={point.x}
+                    cy={point.y}
+                    r="4.5"
+                    fill={point.color}
+                    stroke="#ffffff"
+                    strokeWidth="0.9"
+                  />
+                ) : (
+                  <polygon
+                    points={points}
+                    fill={point.color}
+                    stroke="#ffffff"
+                    strokeWidth="0.9"
+                  />
+                )}
+                {point.label ? (
+                  <>
+                    <rect
+                      x={badgeX}
+                      y={badgeY}
+                      width={badgeWidth}
+                      height={badgeHeight}
+                      rx="6"
+                      fill={point.color}
+                      opacity="0.94"
+                    />
+                    <text
+                      x={badgeX + 6}
+                      y={badgeY + 9.6}
+                      fontSize="8.2"
+                      fontWeight="600"
+                      fill={point.textColor}
+                    >
+                      {point.label}
+                    </text>
+                  </>
+                ) : null}
+              </g>
+            );
+          })}
         </svg>
       </div>
 
@@ -1394,7 +1855,10 @@ export default function ChartSVG({
           ) : null}
           {showRsiPanel ? (
             <span className="minor-text">
-              Oscillator: {visibleOscillatorIndicators.join(", ")}
+              Oscillator: {[
+                ...visibleOscillatorIndicators,
+                ...(showVolumeBars ? ["volume"] : []),
+              ].join(", ")}
             </span>
           ) : null}
           {selectedTrade ? (

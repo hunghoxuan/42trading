@@ -25,7 +25,7 @@ namespace cAlgo.Robots
         private const int TransientErrorLogThresholdCount = 10;
         private const int TransientErrorLogThresholdSeconds = 30;
 
-        [Parameter("Server Base URL", DefaultValue = "http://127.0.0.1:3001")]
+        [Parameter("Server API Base URL", DefaultValue = "http://127.0.0.1:3001/api")]
         public string ServerBaseUrl { get; set; }
 
         [Parameter("EA API Key", DefaultValue = "acc_506cb604d10644736df6a7bf77c79fd30731")]
@@ -46,10 +46,10 @@ namespace cAlgo.Robots
         [Parameter("Provider Code", DefaultValue = "ICMARKETS")]
         public string ProviderCode { get; set; }
 
-        [Parameter("Max Risk ($)", DefaultValue = 100)]
+        [Parameter("Max Risk ($)", DefaultValue = 50)]
         public double MaxRiskAmount { get; set; }
 
-        [Parameter("Max Risk (%)", DefaultValue = 1.0)]
+        [Parameter("Max Risk (%)", DefaultValue = 0.5)]
         public double MaxRiskPercent { get; set; }
 
         public enum ManagementStrategy
@@ -198,6 +198,7 @@ namespace cAlgo.Robots
         private Dictionary<string, string> _ticketSidMap = new Dictionary<string, string>(); // ticket -> sid backfill for empty comments
         private Dictionary<string, string> _symbolResolveCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private HashSet<string> _notFoundSymbols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private HashSet<string> _noQuoteSymbols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         private List<string> _trackedSymbols = new List<string>(); // symbols learned from /api/broker/pull
 
@@ -235,7 +236,7 @@ namespace cAlgo.Robots
 
         private string ResolveSid(string ticket, string commentSid)
         {
-            var sid = string.IsNullOrWhiteSpace(commentSid) ? "" : commentSid.Trim();
+            var sid = ExtractSidFromBrokerComment(commentSid);
             if (!string.IsNullOrEmpty(sid)) return sid;
             var key = string.IsNullOrWhiteSpace(ticket) ? "" : ticket.Trim();
             if (string.IsNullOrEmpty(key)) return "";
@@ -243,6 +244,35 @@ namespace cAlgo.Robots
             if (_ticketSidMap.TryGetValue(key, out mapped) && !string.IsNullOrWhiteSpace(mapped))
                 return mapped.Trim();
             return "";
+        }
+
+        private string GetServerApiBaseUrl()
+        {
+            var baseUrl = string.IsNullOrWhiteSpace(ServerBaseUrl) ? "" : ServerBaseUrl.Trim();
+            if (string.IsNullOrEmpty(baseUrl)) return "http://127.0.0.1:3001/api";
+
+            try
+            {
+                var parsed = new Uri(baseUrl, UriKind.Absolute);
+                var normalized = baseUrl.TrimEnd('/');
+                var absPath = parsed.AbsolutePath ?? "/";
+                if (string.IsNullOrWhiteSpace(absPath) || absPath == "/")
+                    return normalized + "/api";
+                return normalized;
+            }
+            catch
+            {
+                return baseUrl.TrimEnd('/');
+            }
+        }
+
+        private string BuildServerApiUrl(string relativePath)
+        {
+            var baseUrl = GetServerApiBaseUrl();
+            var suffix = string.IsNullOrWhiteSpace(relativePath)
+                ? ""
+                : "/" + relativePath.Trim().TrimStart('/');
+            return baseUrl.TrimEnd('/') + suffix;
         }
 
         private string BuildBrokerComment(string sid)
@@ -253,12 +283,44 @@ namespace cAlgo.Robots
             return "SID:" + value.Substring(0, 12);
         }
 
+        private string ExtractSidFromBrokerComment(string comment)
+        {
+            var value = string.IsNullOrWhiteSpace(comment) ? "" : comment.Trim();
+            if (string.IsNullOrEmpty(value)) return "";
+            var pipeIndex = value.IndexOf('|');
+            if (pipeIndex >= 0) value = value.Substring(0, pipeIndex).Trim();
+            return value;
+        }
+
+        private string BuildBrokerLabel(string strategy, string entryModel)
+        {
+            var parts = new List<string>();
+            var strategyValue = string.IsNullOrWhiteSpace(strategy) ? "" : Regex.Replace(strategy.Trim(), "\\s+", " ");
+            var entryModelValue = string.IsNullOrWhiteSpace(entryModel) ? "" : Regex.Replace(entryModel.Trim(), "\\s+", " ");
+            if (!string.IsNullOrEmpty(strategyValue)) parts.Add(strategyValue);
+            if (!string.IsNullOrEmpty(entryModelValue) && !string.Equals(entryModelValue, strategyValue, StringComparison.OrdinalIgnoreCase)) parts.Add(entryModelValue);
+            var value = string.Join(" / ", parts);
+            if (string.IsNullOrEmpty(value)) return MagicNumber.ToString();
+            if (value.Length <= 50) return value;
+            return value.Substring(0, 50);
+        }
+
+        private string BuildBrokerComment(string sid, string note)
+        {
+            // Broker comments are identity fields for sync/dedupe. Notes belong in server data, not cTrader Comment.
+            return BuildBrokerComment(sid);
+        }
+
         private bool CommentMatchesSid(string commentValue, string sid)
         {
             var normalizedComment = string.IsNullOrWhiteSpace(commentValue) ? "" : commentValue.Trim();
+            var commentSid = ExtractSidFromBrokerComment(commentValue);
             var normalizedSid = string.IsNullOrWhiteSpace(sid) ? "" : sid.Trim();
             if (string.IsNullOrEmpty(normalizedComment) || string.IsNullOrEmpty(normalizedSid)) return false;
-            return normalizedComment == normalizedSid || normalizedComment == BuildBrokerComment(normalizedSid);
+            return normalizedComment == normalizedSid ||
+                commentSid == normalizedSid ||
+                normalizedComment == BuildBrokerComment(normalizedSid) ||
+                commentSid == BuildBrokerComment(normalizedSid);
         }
 
         private static string PanelValue(string value, string fallback = "-")
@@ -410,19 +472,41 @@ namespace cAlgo.Robots
             if (!TryResolveBrokerSymbol(rawSymbol, out resolvedName)) return null;
             try
             {
-                foreach (var loaded in Symbols)
-                {
-                    if (loaded == null) continue;
-                    var loadedName = loaded.ToString();
-                    if (string.Equals(loadedName, resolvedName, StringComparison.OrdinalIgnoreCase))
-                        return Symbols.GetSymbol(resolvedName);
-                }
-                return null;
+                return Symbols.GetSymbol(resolvedName);
             }
             catch
             {
                 return null;
             }
+        }
+
+        private bool HasUsableQuotes(Symbol symbol)
+        {
+            if (symbol == null) return false;
+            try
+            {
+                double bid = double.IsNaN(symbol.Bid) ? 0 : symbol.Bid;
+                double ask = double.IsNaN(symbol.Ask) ? 0 : symbol.Ask;
+                return bid > 0 && ask > 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private bool TryResolveQuotedSymbol(string rawSymbol, out Symbol symbol)
+        {
+            symbol = ResolveLoadedSymbol(rawSymbol);
+            if (symbol == null) return false;
+            if (HasUsableQuotes(symbol))
+            {
+                _noQuoteSymbols.Remove(symbol.Name);
+                return true;
+            }
+
+            _noQuoteSymbols.Add(symbol.Name);
+            return false;
         }
 
         private bool TryResolveBrokerSymbol(string rawSymbol, out string symbolName)
@@ -1011,11 +1095,11 @@ namespace cAlgo.Robots
             {
                 try
                 {
-                    var s = ResolveLoadedSymbol(sym);
-                    if (s == null) continue;
+                    Symbol s;
+                    if (!TryResolveQuotedSymbol(sym, out s)) continue;
                     double bid = double.IsNaN(s.Bid) ? 0 : s.Bid;
                     double ask = double.IsNaN(s.Ask) ? 0 : s.Ask;
-                    if (bid > 0 && ask > 0) result.Add(Tuple.Create(s.Name, bid, ask));
+                    result.Add(Tuple.Create(s.Name, bid, ask));
                 }
                 catch { }
             }
@@ -1415,7 +1499,7 @@ namespace cAlgo.Robots
             var startedAt = DateTime.Now;
             try
             {
-                var url = ServerBaseUrl.TrimEnd('/') + "/api/broker/pull?account_id=" + accountId + "&max_items=50";
+                var url = BuildServerApiUrl("broker/pull") + "?account_id=" + accountId + "&max_items=50";
                 using (request = new HttpRequestMessage(System.Net.Http.HttpMethod.Get, url))
                 {
                     request.Headers.Add("x-api-key", EaApiKey);
@@ -1552,7 +1636,7 @@ namespace cAlgo.Robots
             if (string.IsNullOrEmpty(id)) return;
 
             // Dedup by lease: skip if this exact (sid, lease_token) already processed
-            var leaseKey = id + ":" + (leaseToken ?? "");
+            var leaseKey = BuildLeaseKey(id, leaseToken);
             if (!string.IsNullOrEmpty(leaseToken) && _processedLeases.Contains(leaseKey)) return;
             if (!string.IsNullOrEmpty(leaseToken)) _processedLeases.Add(leaseKey);
 
@@ -1560,23 +1644,25 @@ namespace cAlgo.Robots
 
             BeginInvokeOnMainThread(() =>
             {
-                var symbol = ResolveLoadedSymbol(symbolCode);
-
-                if (symbol == null)
+                try
                 {
-                    var msg = "Symbol not found: " + symbolCode;
-                    RecordPollEvent("", id, symbolCode, action, "REJECTED_SYMBOL", msg, "error");
-                    SafeAck(id, leaseToken, "REJECTED", "", msg);
-                    SafePrint("[Error] Symbol '{0}' not found in your platform.", symbolCode);
-                    return;
-                }
+                    var symbol = ResolveLoadedSymbol(symbolCode);
 
-                symbolCode = symbol.Name;
+                    if (symbol == null)
+                    {
+                        var msg = "Symbol not found: " + symbolCode;
+                        RecordPollEvent("", id, symbolCode, action, "REJECTED_SYMBOL", msg, "error");
+                        SafeAck(id, leaseToken, "REJECTED", "", msg);
+                        SafePrint("[Error] Symbol '{0}' not found in your platform.", symbolCode);
+                        return;
+                    }
 
-                // Shared variables for all task types
-                var sl = ParseDouble(GetJsonValue(json, "sl"));
-                var tp = ParseDouble(GetJsonValue(json, "tp"));
-                if (tp <= 0) tp = ParseDouble(GetJsonValue(json, "tp1"));
+                    symbolCode = symbol.Name;
+
+                    // Shared variables for all task types
+                    var sl = ParseDouble(GetJsonValue(json, "sl"));
+                    var tp = ParseDouble(GetJsonValue(json, "tp"));
+                    if (tp <= 0) tp = ParseDouble(GetJsonValue(json, "tp1"));
 
                 // --- CANCEL: close position or delete order ---
                 if (taskType == "CANCEL")
@@ -1977,10 +2063,15 @@ namespace cAlgo.Robots
 
                 if (partials.Count > 0) _tradePartials[id] = partials;
 
-                var label = MagicNumber.ToString();
+                var strategyLabel = GetJsonValue(json, "strategy");
+                var entryModelLabel = GetJsonValue(json, "entry_model");
+                if (string.IsNullOrWhiteSpace(entryModelLabel)) entryModelLabel = GetJsonValue(json, "entryModel");
+                var label = BuildBrokerLabel(strategyLabel, entryModelLabel);
                 var brokerComment = BuildBrokerComment(id);
                 var tradeType = (action == "BUY") ? TradeType.Buy : TradeType.Sell;
                 TradeResult res = null;
+                var requestedSl = sl;
+                var requestedTp = tp;
 
                 if (executionPrice <= 0)
                 {
@@ -2164,14 +2255,60 @@ namespace cAlgo.Robots
 
                     RecordPollEvent(ticket, id, symbolCode, action, (res.Position != null ? "CREATED_POSITION" : "CREATED_ORDER"), "", "created");
                     double lots = symbol.VolumeInUnitsToQuantity(volumeUnits);
-                    SafeAck(id, leaseToken, (res.Position != null ? "OPEN" : "PENDING"), ticket, "", (res.Position != null ? res.Position.EntryPrice : (res.PendingOrder != null ? res.PendingOrder.TargetPrice : 0)), finalRiskMoney, lots);
+                    double ackEntry = (res.Position != null ? res.Position.EntryPrice : (res.PendingOrder != null ? res.PendingOrder.TargetPrice : 0));
+                    double ackSlPips = 0;
+                    double ackTpPips = 0;
+                    if (symbol.PipSize > 0 && ackEntry > 0)
+                    {
+                        if (sl > 0) ackSlPips = Math.Abs(ackEntry - sl) / symbol.PipSize;
+                        if (tp > 0) ackTpPips = Math.Abs(tp - ackEntry) / symbol.PipSize;
+                    }
+                    SafeAck(
+                        id,
+                        leaseToken,
+                        (res.Position != null ? "OPEN" : "PENDING"),
+                        ticket,
+                        "",
+                        ackEntry,
+                        finalRiskMoney,
+                        lots,
+                        requestedSl,
+                        sl,
+                        requestedTp,
+                        tp,
+                        ackSlPips,
+                        ackTpPips
+                    );
                 }
-                else
+                    else
+                    {
+                        RecordPollEvent("", id, symbolCode, action, "CREATE_FAILED", res.Error.ToString(), "error");
+                        SafeAck(id, leaseToken, "REJECTED", "", res.Error.ToString());
+                    }
+                }
+                catch (Exception ex)
                 {
-                    RecordPollEvent("", id, symbolCode, action, "CREATE_FAILED", res.Error.ToString(), "error");
-                    SafeAck(id, leaseToken, "REJECTED", "", res.Error.ToString());
+                    var err = string.Format(
+                        CultureInfo.InvariantCulture,
+                        "execute_signal_failed: {0}",
+                        ex.Message
+                    );
+                    RecordPollEvent(ticketStr, id, symbolCode, action, "EXECUTE_FAILED", err, "error");
+                    SafeLog("ERROR", "[Error] ExecuteSignal failed for {0}: {1}", id, ex);
+                    SafeAck(id, leaseToken, "ERROR", ticketStr, err);
                 }
             });
+        }
+
+        private string BuildLeaseKey(string sid, string token)
+        {
+            return (sid ?? "") + ":" + (token ?? "");
+        }
+
+        private void ReleaseProcessedLease(string sid, string token)
+        {
+            if (string.IsNullOrWhiteSpace(sid) || string.IsNullOrWhiteSpace(token)) return;
+            _processedLeases.Remove(BuildLeaseKey(sid, token));
         }
 
         private void CleanupOldEntries()
@@ -2252,7 +2389,7 @@ namespace cAlgo.Robots
                     + ",\"symbol_metrics\":[" + string.Join(",", metricsList ?? new List<string>()) + "]"
                     + ",\"prices\":[" + string.Join(",", priceList) + "]}";
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
-                using (request = new HttpRequestMessage(System.Net.Http.HttpMethod.Post, ServerBaseUrl.TrimEnd('/') + "/api/broker/sync"))
+                using (request = new HttpRequestMessage(System.Net.Http.HttpMethod.Post, BuildServerApiUrl("broker/sync")))
                 {
                     request.Headers.Add("x-api-key", EaApiKey);
                     request.Content = content;
@@ -2351,6 +2488,8 @@ namespace cAlgo.Robots
                     var localNewBars = 0;
                     foreach (var sym in symbols)
                     {
+                        Symbol resolvedSymbol;
+                        if (!TryResolveQuotedSymbol(sym, out resolvedSymbol)) continue;
                         foreach (var tfStr in tfs)
                         {
                             try
@@ -2367,13 +2506,13 @@ namespace cAlgo.Robots
                                     default: continue;
                                 }
 
-                                var bars = MarketData.GetBars(tf, sym);
+                                var bars = MarketData.GetBars(tf, resolvedSymbol.Name);
                                 if (bars == null || bars.Count < 1) continue;
 
                                 var lastBar = bars.LastBar;
                                 long barTime = ToUnixTime(lastBar.OpenTime);
 
-                                string key = sym + "_" + tfStr;
+                                string key = resolvedSymbol.Name + "_" + tfStr;
                                 long lastKnown;
                                 if (_barLastTime.TryGetValue(key, out lastKnown) && barTime <= lastKnown)
                                     continue;
@@ -2381,7 +2520,7 @@ namespace cAlgo.Robots
                                 _barLastTime[key] = barTime;
 
                                 localBars.Add(
-                                    "{\"s\":\"" + sym + "\"" +
+                                    "{\"s\":\"" + resolvedSymbol.Name + "\"" +
                                     ",\"tf\":\"" + tfStr + "\"" +
                                     ",\"t\":" + barTime.ToString() +
                                     ",\"o\":" + lastBar.Open.ToString("F5", CultureInfo.InvariantCulture) +
@@ -2411,7 +2550,7 @@ namespace cAlgo.Robots
                 var payload = "{\"source_id\":\"Ctrader\",\"account_id\":\"" + accId + "\",\"bars\":[" + string.Join(",", barList) + "]}";
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
                 content.Headers.Add("x-api-key", EaApiKey);
-                var response = await _httpClient.PostAsync(ServerBaseUrl.TrimEnd('/') + "/api/broker/bars", content);
+                var response = await _httpClient.PostAsync(BuildServerApiUrl("broker/bars"), content);
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -2443,7 +2582,7 @@ namespace cAlgo.Robots
             try
             {
                 // 1. Get coverage from webhook
-                var covUrl = ServerBaseUrl.TrimEnd('/') + "/api/broker/symbols?symbols=" + string.Join(",", symbols);
+                var covUrl = BuildServerApiUrl("broker/symbols") + "?symbols=" + string.Join(",", symbols);
                 var covRequest = new HttpRequestMessage(System.Net.Http.HttpMethod.Get, covUrl);
                 covRequest.Headers.Add("x-api-key", EaApiKey);
                 var covResponse = await _httpClient.SendAsync(covRequest);
@@ -2471,6 +2610,9 @@ namespace cAlgo.Robots
                     foreach (var sym in symbols)
                     {
                         if (sw.ElapsedMilliseconds >= maxMainThreadMs) break;
+                        Symbol resolvedSymbol;
+                        if (!TryResolveQuotedSymbol(sym, out resolvedSymbol)) continue;
+                        var symUpper = resolvedSymbol.Name.ToUpperInvariant();
                         foreach (var tfStr in tfs)
                         {
                             if (sw.ElapsedMilliseconds >= maxMainThreadMs) break;
@@ -2478,7 +2620,6 @@ namespace cAlgo.Robots
                             try
                             {
                                 // Parse remote end from coverage
-                                var symUpper = sym.ToUpper();
                                 long remoteEnd = 0;
                                 int existingBars = 0, targetBars = 500;
                                 var symPattern = "\"symbol\":\"" + symUpper + "\"";
@@ -2540,7 +2681,7 @@ namespace cAlgo.Robots
                                     default: continue;
                                 }
 
-                                var bars = MarketData.GetBars(tf, sym);
+                                var bars = MarketData.GetBars(tf, resolvedSymbol.Name);
                                 if (bars == null || bars.Count < 1) continue;
                                 var latestBar = bars.LastBar;
                                 long latestTime = ToUnixTime(latestBar.OpenTime);
@@ -2611,7 +2752,7 @@ namespace cAlgo.Robots
                     + "\",\"sync_mode\":\"incremental\",\"items\":[" + string.Join(",", syncItems) + "]}";
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
                 content.Headers.Add("x-api-key", EaApiKey);
-                var postResponse = await _httpClient.PostAsync(ServerBaseUrl.TrimEnd('/') + "/api/broker/prices-sync", content);
+                var postResponse = await _httpClient.PostAsync(BuildServerApiUrl("broker/prices-sync"), content);
 
                 if (postResponse.IsSuccessStatusCode)
                 {
@@ -2863,7 +3004,22 @@ namespace cAlgo.Robots
             }
         }
 
-        private async Task AckAsync(string sid, string token, string status, string ticket, string err, double entryExec = 0, double riskMoneyPlanned = 0, double volumeLots = 0)
+        private async Task AckAsync(
+            string sid,
+            string token,
+            string status,
+            string ticket,
+            string err,
+            double entryExec = 0,
+            double riskMoneyPlanned = 0,
+            double volumeLots = 0,
+            double requestedSl = 0,
+            double usedSl = 0,
+            double requestedTp = 0,
+            double usedTp = 0,
+            double slPips = 0,
+            double tpPips = 0
+        )
         {
             var payload = "{\"trade_id\":\"" + sid
                 + "\",\"lease_token\":\"" + (token ?? "") + "\""
@@ -2873,10 +3029,18 @@ namespace cAlgo.Robots
                 + ",\"message\":\"" + (err ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"") + "\""
                 + ",\"entry_exec\":" + entryExec.ToString("F5", CultureInfo.InvariantCulture)
                 + ",\"risk_money_planned\":" + riskMoneyPlanned.ToString("F2", CultureInfo.InvariantCulture)
-                + ",\"volume\":" + volumeLots.ToString("F2", CultureInfo.InvariantCulture) + "}";
+                + ",\"volume\":" + volumeLots.ToString("F2", CultureInfo.InvariantCulture)
+                + ",\"requested_sl\":" + requestedSl.ToString("F5", CultureInfo.InvariantCulture)
+                + ",\"sl_exec\":" + usedSl.ToString("F5", CultureInfo.InvariantCulture)
+                + ",\"used_sl\":" + usedSl.ToString("F5", CultureInfo.InvariantCulture)
+                + ",\"requested_tp\":" + requestedTp.ToString("F5", CultureInfo.InvariantCulture)
+                + ",\"tp_exec\":" + usedTp.ToString("F5", CultureInfo.InvariantCulture)
+                + ",\"used_tp\":" + usedTp.ToString("F5", CultureInfo.InvariantCulture)
+                + ",\"sl_pips\":" + slPips.ToString("F2", CultureInfo.InvariantCulture)
+                + ",\"tp_pips\":" + tpPips.ToString("F2", CultureInfo.InvariantCulture) + "}";
             var content = new StringContent(payload, Encoding.UTF8, "application/json");
             content.Headers.Add("x-api-key", EaApiKey);
-            var response = await _httpClient.PostAsync(ServerBaseUrl.TrimEnd('/') + "/api/broker/ack", content);
+            var response = await _httpClient.PostAsync(BuildServerApiUrl("broker/ack"), content);
             if (!response.IsSuccessStatusCode)
             {
                 var body = await response.Content.ReadAsStringAsync();
@@ -2885,13 +3049,79 @@ namespace cAlgo.Robots
         }
 
         // Reliable ack: runs on thread pool so it completes even inside BeginInvokeOnMainThread
-        private void SafeAck(string sid, string token, string status, string ticket, string err, double entryExec = 0, double riskMoneyPlanned = 0, double volumeLots = 0)
+        private void SafeAck(
+            string sid,
+            string token,
+            string status,
+            string ticket,
+            string err,
+            double entryExec = 0,
+            double riskMoneyPlanned = 0,
+            double volumeLots = 0,
+            double requestedSl = 0,
+            double usedSl = 0,
+            double requestedTp = 0,
+            double usedTp = 0,
+            double slPips = 0,
+            double tpPips = 0
+        )
         {
             Task.Run(async () =>
             {
+                const int maxAttempts = 3;
                 try
                 {
-                    await AckAsync(sid, token, status, ticket, err, entryExec, riskMoneyPlanned, volumeLots);
+                    for (int attempt = 1; attempt <= maxAttempts; attempt++)
+                    {
+                        try
+                        {
+                            await AckAsync(
+                                sid,
+                                token,
+                                status,
+                                ticket,
+                                err,
+                                entryExec,
+                                riskMoneyPlanned,
+                                volumeLots,
+                                requestedSl,
+                                usedSl,
+                                requestedTp,
+                                usedTp,
+                                slPips,
+                                tpPips
+                            );
+                            if (attempt > 1)
+                            {
+                                SafeLog(
+                                    "INFO",
+                                    "[Ack] {0} recovered for {1} on retry {2}/{3}",
+                                    status,
+                                    sid,
+                                    attempt,
+                                    maxAttempts
+                                );
+                            }
+                            break;
+                        }
+                        catch (Exception ex)
+                        {
+                            if (attempt >= maxAttempts)
+                            {
+                                ReleaseProcessedLease(sid, token);
+                                throw new Exception(
+                                    string.Format(
+                                        CultureInfo.InvariantCulture,
+                                        "ack failed after {0} attempts: {1}",
+                                        maxAttempts,
+                                        ex.Message
+                                    ),
+                                    ex
+                                );
+                            }
+                            await Task.Delay(400 * attempt);
+                        }
+                    }
                     SafeLog(
                         IsErrorStatus(status) ? "ERROR" : "INFO",
                         IsErrorStatus(status) ? "[Error] [Ack] {0} sent for {1}" : "[Ack] {0} sent for {1}",
@@ -2926,7 +3156,7 @@ namespace cAlgo.Robots
 
                 var bl = new StringBuilder();
                 var pollTimeStr = _lastPollTime == DateTime.MinValue ? "WAITING..." : _lastPollTime.ToString("HH:mm:ss");
-                bl.AppendLine(string.Format("GET /api/broker/pull: {0}, {1}", _pollStatus, pollTimeStr));
+                bl.AppendLine(string.Format("GET broker/pull: {0}, {1}", _pollStatus, pollTimeStr));
                 bl.AppendLine(string.Format("NET: {0}ms FAILS:{1}",
                     _lastPollLatencyMs >= 0 ? _lastPollLatencyMs.ToString(CultureInfo.InvariantCulture) : "-",
                     _pollConsecutiveFailures));
@@ -2961,7 +3191,7 @@ namespace cAlgo.Robots
 
                 var br = new StringBuilder();
                 var syncTimeStr = _lastSyncTime == DateTime.MinValue ? "WAITING..." : _lastSyncTime.ToString("HH:mm:ss");
-                br.AppendLine(string.Format("POST /api/broker/sync: {0}, {1}", _syncStatus, syncTimeStr));
+                br.AppendLine(string.Format("POST broker/sync: {0}, {1}", _syncStatus, syncTimeStr));
                 br.AppendLine(string.Format("NET: {0}ms FAILS:{1}",
                     _lastSyncLatencyMs >= 0 ? _lastSyncLatencyMs.ToString(CultureInfo.InvariantCulture) : "-",
                     _syncConsecutiveFailures));

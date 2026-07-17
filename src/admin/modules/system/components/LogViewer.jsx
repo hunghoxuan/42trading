@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../../app/api";
 import { realtimeClient } from "../../42trade/realtime/realtimeClientSingleton";
 import DataTable from "../../../shared/components/DataTable";
+import CrudContainer from "../../../shared/components/CrudContainer";
 import { formatRelativeDateTime, showDateTime } from "../../../shared/utils/format";
 
 function sortLogFiles(files = []) {
@@ -36,6 +37,99 @@ function parseStructuredMessage(rest = "") {
   };
 }
 
+function splitMetadataEntries(metadataText = "") {
+  const source = String(metadataText || "").trim();
+  if (!source) return [];
+  const entries = [];
+  let current = "";
+  let quote = null;
+  let bracketDepth = 0;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    const prev = index > 0 ? source[index - 1] : "";
+    if (quote) {
+      current += char;
+      if (char === quote && prev !== "\\") quote = null;
+      continue;
+    }
+    if (char === "\"" || char === "'") {
+      quote = char;
+      current += char;
+      continue;
+    }
+    if (char === "{" || char === "[") {
+      bracketDepth += 1;
+      current += char;
+      continue;
+    }
+    if (char === "}" || char === "]") {
+      bracketDepth = Math.max(0, bracketDepth - 1);
+      current += char;
+      continue;
+    }
+    if (char === "," && bracketDepth === 0) {
+      const next = source[index + 1] || "";
+      if (next === " ") {
+        entries.push(current.trim());
+        current = "";
+        index += 1;
+        continue;
+      }
+    }
+    current += char;
+  }
+
+  if (current.trim()) entries.push(current.trim());
+  return entries.filter(Boolean);
+}
+
+function parseMetadataValue(rawValue = "") {
+  const value = String(rawValue || "").trim();
+  if (!value) return "";
+  if (
+    (value.startsWith("\"") && value.endsWith("\"")) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    const inner = value.slice(1, -1);
+    try {
+      return JSON.parse(`"${inner.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`);
+    } catch {
+      return inner;
+    }
+  }
+  if (value === "true") return true;
+  if (value === "false") return false;
+  if (value === "null") return null;
+  if (/^-?\d+(\.\d+)?$/.test(value)) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  if (
+    (value.startsWith("{") && value.endsWith("}")) ||
+    (value.startsWith("[") && value.endsWith("]"))
+  ) {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return value;
+    }
+  }
+  return value;
+}
+
+function parseMetadataText(metadataText = "") {
+  const out = {};
+  for (const entry of splitMetadataEntries(metadataText)) {
+    const separator = entry.indexOf("=");
+    if (separator <= 0) continue;
+    const key = entry.slice(0, separator).trim();
+    if (!key) continue;
+    out[key] = parseMetadataValue(entry.slice(separator + 1));
+  }
+  return out;
+}
+
 function parseStandardLogLine(line, index) {
   const match = String(line || "").match(
     /^\[([^\]]+)\]\s+\[([^\]]+)\]\s+\[([^\]]+)\]\s+(.*)$/,
@@ -54,6 +148,7 @@ function parseStandardLogLine(line, index) {
 
   const [, timestamp, level, eventType, rest] = match;
   const parsed = parseStructuredMessage(rest);
+  const metadata = parseMetadataText(parsed.metadataText);
   return {
     id: `${timestamp}-${eventType}-${index}`,
     raw: String(line || ""),
@@ -62,6 +157,7 @@ function parseStandardLogLine(line, index) {
     eventType: String(eventType || "").toUpperCase(),
     message: parsed.message,
     metadataText: parsed.metadataText,
+    metadata,
   };
 }
 
@@ -126,6 +222,7 @@ export default function LogViewer({
   staticLines = null,
   staticLoading = false,
   hideToolbar = false,
+  useCrudContainer = false,
 }) {
   const [files, setFiles] = useState([]);
   const [selectedFile, setSelectedFile] = useState(fileName || "");
@@ -133,6 +230,8 @@ export default function LogViewer({
   const [totalLines, setTotalLines] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [selectedRowId, setSelectedRowId] = useState("");
   const isStaticMode = Array.isArray(staticLines);
   const realtimeUnsubscribeRef = useRef(null);
 
@@ -156,6 +255,11 @@ export default function LogViewer({
         .map((line, index) => parseStandardLogLine(line, index))
         .reverse(),
     [effectiveLines],
+  );
+
+  const selectedRow = useMemo(
+    () => tableRows.find((row) => row.id === selectedRowId) || null,
+    [selectedRowId, tableRows],
   );
 
   const tableColumns = useMemo(
@@ -218,6 +322,13 @@ export default function LogViewer({
     ],
     [],
   );
+
+  const handleSelectRow = useCallback((row) => {
+    const nextId = String(row?.id || "");
+    if (!nextId) return;
+    setSelectedRowId(nextId);
+    setDetailOpen(true);
+  }, []);
 
   const loadLogs = useCallback(
     async (preferredFile = "") => {
@@ -290,6 +401,19 @@ export default function LogViewer({
   }, [fileName, source, objectId]);
 
   useEffect(() => {
+    if (!tableRows.length) {
+      setSelectedRowId("");
+      setDetailOpen(false);
+      return;
+    }
+    if (selectedRowId && tableRows.some((row) => row.id === selectedRowId)) {
+      return;
+    }
+    setSelectedRowId("");
+    setDetailOpen(false);
+  }, [selectedRowId, tableRows]);
+
+  useEffect(() => {
     if (isStaticMode) return;
     loadLogs(fileName || "");
   }, [loadLogs, fileName, isStaticMode]);
@@ -342,63 +466,168 @@ export default function LogViewer({
     };
   }, [isStaticMode, limit, objectId, selectedFile, source]);
 
+  const fileButtons = files.length > 0 ? (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      {files.map((entry) => (
+        <button
+          key={entry.name}
+          type="button"
+          className={`secondary-button ${selectedFile === entry.name ? "active" : ""}`}
+          onClick={() => loadLogs(entry.name)}
+          disabled={effectiveLoading}
+        >
+          {entry.name}
+          {entry.scope === "legacy" ? " (legacy)" : ""}
+        </button>
+      ))}
+    </div>
+  ) : null;
+
+  const toolbarContent = (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        flexWrap: "wrap",
+      }}
+    >
+      {fileButtons}
+      <span className="minor-text" style={{ marginLeft: files.length ? 4 : 0 }}>
+        Latest {Math.min(limit, effectiveTotalLines || effectiveLines.length || limit)} lines
+        {effectiveTotalLines > 0 ? ` of ${effectiveTotalLines}` : ""}
+        {activeFileMeta?.last_modified
+          ? ` • updated ${showDateTime(activeFileMeta.last_modified)}`
+          : ""}
+        {activeFileMeta?.size_bytes != null
+          ? ` • ${formatBytes(activeFileMeta.size_bytes)}`
+          : ""}
+      </span>
+      {!isStaticMode ? (
+        <button
+          type="button"
+          className="secondary-button"
+          style={{ marginLeft: "auto" }}
+          onClick={() => loadLogs(selectedFile)}
+          disabled={effectiveLoading || !source || !objectId}
+        >
+          {effectiveLoading ? "Loading..." : "Refresh"}
+        </button>
+      ) : null}
+    </div>
+  );
+
+  const standardTable = (
+    <DataTable
+      columns={tableColumns}
+      data={tableRows}
+      loading={false}
+      emptyText="No log lines available."
+      onRowClick={useCrudContainer ? handleSelectRow : undefined}
+      selectedRowId={useCrudContainer ? selectedRowId : null}
+    />
+  );
+
+  const detailPayload = selectedRow
+    ? {
+        id: selectedRow.id,
+        timestamp: selectedRow.timestamp,
+        level: selectedRow.level,
+        eventType: selectedRow.eventType,
+        message: selectedRow.message,
+        metadata: selectedRow.metadata,
+        raw: selectedRow.raw,
+      }
+    : null;
+
+  if (useCrudContainer && effectiveFormat === "standard") {
+    return (
+      <div className="stack-layout">
+        {!hideToolbar ? toolbarContent : null}
+        {error ? <div className="form-message msg-error">{error}</div> : null}
+        {!effectiveLoading && !error && !isStaticMode && files.length === 0 ? (
+          <div className="minor-text">{emptyText}</div>
+        ) : null}
+        <CrudContainer
+          sameHeight
+          detailVisible={Boolean(selectedRow)}
+          detailOpen={detailOpen && Boolean(selectedRow)}
+          onDetailOpenChange={(open) => {
+            setDetailOpen(Boolean(open));
+            if (!open) setSelectedRowId("");
+          }}
+          detailCloseButton
+          list={{
+            title: activeFileMeta?.name || "Logs",
+            subtitle: "Click a log row to inspect the full payload",
+            panelClassName: "component-frozen-wrap",
+            children: effectiveLoading ? (
+              <div className="minor-text">Loading logs...</div>
+            ) : (
+              standardTable
+            ),
+          }}
+          detail={{
+            title: selectedRow?.eventType || "Log Detail",
+            subtitle: selectedRow?.timestamp
+              ? `${showDateTime(selectedRow.timestamp)} • ${selectedRow.level}`
+              : "Select a log row to inspect its JSON payload",
+            children: detailPayload ? (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  minHeight: 0,
+                  height: "100%",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() =>
+                      navigator.clipboard.writeText(
+                        JSON.stringify(detailPayload, null, 2),
+                      )
+                    }
+                  >
+                    Copy
+                  </button>
+                </div>
+                <pre
+                  style={{
+                    margin: 0,
+                    flex: "1 1 auto",
+                    minHeight: 0,
+                    height: "100%",
+                    overflow: "auto",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                    border: "1px solid var(--border)",
+                    borderRadius: 10,
+                    padding: 12,
+                    background: "color-mix(in srgb, var(--surface) 82%, transparent)",
+                  }}
+                >
+                  {JSON.stringify(detailPayload, null, 2)}
+                </pre>
+              </div>
+            ) : (
+              <div className="minor-text">Select a log row to inspect its JSON payload.</div>
+            ),
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="stack-layout">
       {!hideToolbar ? (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            flexWrap: "wrap",
-          }}
-        >
-          {files.length > 0 ? (
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {files.map((entry) => (
-                <button
-                  key={entry.name}
-                  type="button"
-                  className={`secondary-button ${selectedFile === entry.name ? "active" : ""}`}
-                  onClick={() => loadLogs(entry.name)}
-                  disabled={effectiveLoading}
-                >
-                  {entry.name}
-                  {entry.scope === "legacy" ? " (legacy)" : ""}
-                </button>
-              ))}
-            </div>
-          ) : null}
-          <span
-            className="minor-text"
-            style={{ marginLeft: files.length ? 4 : 0 }}
-          >
-            Latest{" "}
-            {Math.min(
-              limit,
-              effectiveTotalLines || effectiveLines.length || limit,
-            )}{" "}
-            lines
-            {effectiveTotalLines > 0 ? ` of ${effectiveTotalLines}` : ""}
-            {activeFileMeta?.last_modified
-              ? ` • updated ${showDateTime(activeFileMeta.last_modified)}`
-              : ""}
-            {activeFileMeta?.size_bytes != null
-              ? ` • ${formatBytes(activeFileMeta.size_bytes)}`
-              : ""}
-          </span>
-          {!isStaticMode ? (
-            <button
-              type="button"
-              className="secondary-button"
-              style={{ marginLeft: "auto" }}
-              onClick={() => loadLogs(selectedFile)}
-              disabled={effectiveLoading || !source || !objectId}
-            >
-              {effectiveLoading ? "Loading..." : "Refresh"}
-            </button>
-          ) : null}
-        </div>
+        toolbarContent
       ) : null}
 
       {error ? <div className="form-message msg-error">{error}</div> : null}
@@ -419,12 +648,7 @@ export default function LogViewer({
         {effectiveLoading ? (
           <div className="minor-text">Loading logs...</div>
         ) : effectiveFormat === "standard" ? (
-          <DataTable
-            columns={tableColumns}
-            data={tableRows}
-            loading={false}
-            emptyText="No log lines available."
-          />
+          standardTable
         ) : effectiveLines.length ? (
           <pre
             style={{

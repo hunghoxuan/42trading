@@ -1,0 +1,369 @@
+{
+  "version": 3,
+  "groups": [
+    {
+      "id": "forex",
+      "name": "Forex",
+      "symbols": [
+        "EURUSD",
+        "GBPUSD",
+        "USDJPY",
+        "AUDUSD",
+        "NZDUSD",
+        "USDCAD",
+        "USDCHF",
+        "EURGBP",
+        "EURJPY",
+        "GBPJPY",
+        "AUDJPY",
+        "CADJPY",
+        "AUDNZD",
+        "AUDCAD",
+        "GBPCAD",
+        "EURAUD",
+        "EURCHF",
+        "GBPCHF",
+        "EURSGD",
+        "USDSGD"
+      ]
+    },
+    {
+      "id": "indices",
+      "name": "Indices",
+      "symbols": [
+        "US30",
+        "US500",
+        "USTEC",
+        "UK100",
+        "DE40",
+        "JP225",
+        "HK50"
+      ]
+    },
+    {
+      "id": "metals",
+      "name": "Metals",
+      "symbols": [
+        "XAUUSD",
+        "XAGUSD",
+        "XPTUSD",
+        "XPDUSD",
+        "XAUEUR",
+        "XAUGBP",
+        "XAUJPY",
+        "XAUAUD",
+        "COPPER"
+      ]
+    },
+    {
+      "id": "energy",
+      "name": "Energy",
+      "symbols": [
+        "XTIUSD",
+        "XBRUSD",
+        "XNGUSD"
+      ]
+    },
+    {
+      "id": "grains",
+      "name": "Grains",
+      "symbols": [
+        "CORN",
+        "WHEAT",
+        "SOYBEAN"
+      ]
+    },
+    {
+      "id": "softs",
+      "name": "Softs",
+      "symbols": [
+        "COFFEE",
+        "SUGAR",
+        "COTTON",
+        "COCOA"
+      ]
+    },
+    {
+      "id": "crypto",
+      "name": "Crypto",
+      "symbols": [
+        "BTCUSD",
+        "ETHUSD",
+        "XRPUSD",
+        "SOLUSD",
+        "DOGEUSD",
+        "ADAUSD",
+        "LTCUSD",
+        "BNBUSD",
+        "DOTUSD",
+        "MATICUSD",
+        "ATOMUSD",
+        "ETCUSD",
+        "NEARUSD",
+        "BCHUSD",
+        "LINKUSD",
+        "AVAXUSD"
+      ]
+    }
+  ],
+  "symbols": {
+    "BRENT": {
+      "label": "Brent Crude Oil",
+      "group": "energy",
+      "defaultSymbol": "XBRUSD",
+      "tradable": {
+        "icmarkets": true,
+        "oanda": true
+      },
+      "brokerSymbols": {
+        "icmarkets": [
+          "XBRUSD",
+          "UKOIL"
+        ],
+        "oanda": [
+          "OILBRNT.pro"
+        ]
+      }
+    },
+    "WTI": {
+      "label": "WTI Crude Oil",
+      "group": "energy",
+      "defaultSymbol": "XTIUSD",
+      "tradable": {
+        "icmarkets": true,
+        "oanda": true
+      },
+      "brokerSymbols": {
+        "icmarkets": [
+          "XTIUSD",
+          "USOIL",
+          "WTI"
+        ],
+        "oanda": [
+          "OILWTI.pro"
+        ]
+      }
+    },
+    "NATGAS": {
+      "label": "Natural Gas",
+      "group": "energy",
+      "defaultSymbol": "XNGUSD",
+      "tradable": {
+        "icmarkets": true,
+        "oanda": true
+      },
+      "brokerSymbols": {
+        "icmarkets": [
+          "XNGUSD"
+        ],
+        "oanda": [
+          "NATGAS.pro"
+        ]
+      }
+    },
+    "GOLD": {
+      "label": "Gold",
+      "group": "metals",
+      "defaultSymbol": "XAUUSD",
+      "tradable": {
+        "icmarkets": true,
+        "oanda": true
+      },
+      "brokerSymbols": {
+        "icmarkets": [
+          "XAUUSD",
+          "XAUEUR",
+          "XAUGBP",
+          "XAUJPY",
+          "XAUAUD"
+        ],
+        "oanda": [
+          "GOLD.pro"
+        ]
+      }
+    },
+    "SILVER": {
+      "label": "Silver",
+      "group": "metals",
+      "defaultSymbol": "XAGUSD",
+      "tradable": {
+        "icmarkets": true,
+        "oanda": true
+      },
+      "brokerSymbols": {
+        "icmarkets": [
+          "XAGUSD"
+        ],
+        "oanda": [
+          "SILVER.pro"
+        ]
+      }
+    },
+    "PLATINUM": {
+      "label": "Platinum",
+      "group": "metals",
+      "defaultSymbol": "XPTUSD",
+      "tradable": {
+        "icmarkets": true,
+        "oanda": true
+      },
+      "brokerSymbols": {
+        "icmarkets": [
+          "XPTUSD"
+        ],
+        "oanda": [
+          "PLATIN.pro"
+        ]
+      }
+    },
+    "PALLADIUM": {
+      "label": "Palladium",
+      "group": "metals",
+      "defaultSymbol": "XPDUSD",
+      "tradable": {
+        "icmarkets": true,
+        "oanda": true
+      },
+      "brokerSymbols": {
+        "icmarkets": [
+          "XPDUSD"
+        ],
+        "oanda": [
+          "PALLAD.pro"
+        ]
+      }
+    },
+    "COPPER": {
+      "label": "Copper",
+      "group": "metals",
+      "defaultSymbol": "COPPER",
+      "tradable": {
+        "icmarkets": false,
+        "oanda": true
+      },
+      "brokerSymbols": {
+        "icmarkets": [],
+        "oanda": [
+          "COPPER-US.pro"
+        ]
+      }
+    },
+    "CORN": {
+      "label": "Corn",
+      "group": "grains",
+      "defaultSymbol": "CORN",
+      "tradable": {
+        "icmarkets": true,
+        "oanda": false
+      },
+      "brokerSymbols": {
+        "icmarkets": [
+          "CORN"
+        ],
+        "oanda": []
+      }
+    },
+    "WHEAT": {
+      "label": "Wheat",
+      "group": "grains",
+      "defaultSymbol": "WHEAT",
+      "tradable": {
+        "icmarkets": true,
+        "oanda": true
+      },
+      "brokerSymbols": {
+        "icmarkets": [
+          "WHEAT"
+        ],
+        "oanda": [
+          "WHEAT.pro"
+        ]
+      }
+    },
+    "SOYBEAN": {
+      "label": "Soybean",
+      "group": "grains",
+      "defaultSymbol": "SOYBEAN",
+      "tradable": {
+        "icmarkets": true,
+        "oanda": true
+      },
+      "brokerSymbols": {
+        "icmarkets": [
+          "SOYBEAN"
+        ],
+        "oanda": [
+          "SOYBEAN.pro"
+        ]
+      }
+    },
+    "COFFEE": {
+      "label": "Coffee",
+      "group": "softs",
+      "defaultSymbol": "COFFEE",
+      "tradable": {
+        "icmarkets": true,
+        "oanda": true
+      },
+      "brokerSymbols": {
+        "icmarkets": [
+          "COFFEE"
+        ],
+        "oanda": [
+          "COFFEE.pro"
+        ]
+      }
+    },
+    "SUGAR": {
+      "label": "Sugar",
+      "group": "softs",
+      "defaultSymbol": "SUGAR",
+      "tradable": {
+        "icmarkets": true,
+        "oanda": true
+      },
+      "brokerSymbols": {
+        "icmarkets": [
+          "SUGAR"
+        ],
+        "oanda": [
+          "SUGAR.pro"
+        ]
+      }
+    },
+    "COTTON": {
+      "label": "Cotton",
+      "group": "softs",
+      "defaultSymbol": "COTTON",
+      "tradable": {
+        "icmarkets": true,
+        "oanda": true
+      },
+      "brokerSymbols": {
+        "icmarkets": [
+          "COTTON"
+        ],
+        "oanda": [
+          "COTTON.pro"
+        ]
+      }
+    },
+    "COCOA": {
+      "label": "Cocoa",
+      "group": "softs",
+      "defaultSymbol": "COCOA",
+      "tradable": {
+        "icmarkets": true,
+        "oanda": true
+      },
+      "brokerSymbols": {
+        "icmarkets": [
+          "COCOA"
+        ],
+        "oanda": [
+          "COCOA.pro"
+        ]
+      }
+    }
+  }
+}

@@ -67,7 +67,7 @@ export default function BacktestBarsSelector({
   const [menuWidth, setMenuWidth] = useState(0);
 
   const mode = String(value?.limit_mode || "bars").trim() || "bars";
-  const barsValue = String(value?.limit_bars_value || value?.limit || "all").trim() || "all";
+  const barsValue = String(value?.limit_bars_value || value?.limit || "3000").trim() || "3000";
   const preset = String(value?.limit_preset || "today").trim() || "today";
   const startDate = String(value?.limit_start_date || "").trim();
   const endDate = String(value?.limit_end_date || "").trim();

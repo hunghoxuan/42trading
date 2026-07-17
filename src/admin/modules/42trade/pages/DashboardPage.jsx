@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../../../app/api";
 import { isAuthRedirectError } from "../../../shared/utils/authPolicy.js";
 import { showToast } from "../../../shared/components/ToastContainer";
@@ -61,6 +61,501 @@ const PERIOD_DISPLAY = [
 ];
 
 const DASHBOARD_CALENDAR_CACHE_KEY = "tvbridge_dashboard_calendar_master_v1";
+
+function trades2Text(value, fallback = "") {
+  const out = String(value ?? "").trim();
+  return out || fallback;
+}
+
+function trades2PnlValue(row = {}) {
+  const value = Number(row?.broker_pnl ?? row?.pnl_realized);
+  return Number.isFinite(value) ? value : null;
+}
+
+function trades2CanonicalStatus(row = {}) {
+  const raw = trades2Text(row?.execution_status || row?.status).toUpperCase();
+  const closeReason = trades2Text(row?.close_reason).toUpperCase();
+  if (["TP", "SL"].includes(raw)) return raw;
+  if (["PLACED", "OPEN", "ACTIVE", "EXECUTED", "START", "FILLED"].includes(raw)) {
+    return "FILLED";
+  }
+  if (["NEW", "LOCKED", "SUBMITTED", "PENDING"].includes(raw)) return "PENDING";
+  if (["CANCEL", "CANCELLED", "EXPIRED"].includes(raw)) return "CANCELLED";
+  if (["FAIL", "FAILED", "ERROR", "REJECTED"].includes(raw)) return "REJECTED";
+  if (raw === "CLOSED") {
+    if (closeReason === "TP" || closeReason === "SL") return closeReason;
+    return "CLOSED";
+  }
+  return raw;
+}
+
+function trades2TimestampMs(row = {}) {
+  const value = row?.closed_at || row?.opened_at || row?.updated_at || row?.created_at;
+  const ms = Date.parse(String(value || ""));
+  return Number.isFinite(ms) ? ms : NaN;
+}
+
+function trades2LocalPeriodRange(period = "all") {
+  const now = new Date();
+  const end = now.toISOString();
+  if (period === "all") return { start: null, end: null };
+  if (period === "today") {
+    return {
+      start: new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString(),
+      end,
+    };
+  }
+  if (period === "yesterday") {
+    return {
+      start: new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() - 1,
+      ).toISOString(),
+      end: new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString(),
+    };
+  }
+  if (period === "week") {
+    const day = now.getDay() || 7;
+    return {
+      start: new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() - (day - 1),
+      ).toISOString(),
+      end,
+    };
+  }
+  if (period === "last_week") {
+    const day = now.getDay() || 7;
+    return {
+      start: new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() - (day - 1) - 7,
+      ).toISOString(),
+      end: new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() - (day - 1),
+      ).toISOString(),
+    };
+  }
+  if (period === "month") {
+    return {
+      start: new Date(now.getFullYear(), now.getMonth(), 1).toISOString(),
+      end,
+    };
+  }
+  if (period === "last_month") {
+    return {
+      start: new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString(),
+      end: new Date(now.getFullYear(), now.getMonth(), 1).toISOString(),
+    };
+  }
+  if (period === "year") {
+    return {
+      start: new Date(now.getFullYear(), 0, 1).toISOString(),
+      end,
+    };
+  }
+  return { start: null, end: null };
+}
+
+function filterTrades2RowsByPeriod(rows = [], { start = null, end = null } = {}) {
+  const fromMs = start ? Date.parse(String(start)) : NaN;
+  const toMs = end ? Date.parse(String(end)) : NaN;
+  return (Array.isArray(rows) ? rows : []).filter((row) => {
+    const rowMs = trades2TimestampMs(row);
+    if (Number.isFinite(fromMs) && (!Number.isFinite(rowMs) || rowMs < fromMs)) {
+      return false;
+    }
+    if (Number.isFinite(toMs) && (!Number.isFinite(rowMs) || rowMs > toMs)) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function trades2ClosedRows(rows = []) {
+  return (Array.isArray(rows) ? rows : []).filter((row) => {
+    const status = trades2CanonicalStatus(row);
+    const closeReason = trades2Text(row?.close_reason).toUpperCase();
+    const pnl = trades2PnlValue(row);
+    return (
+      ["CLOSED", "TP", "SL"].includes(status) ||
+      closeReason === "TP" ||
+      closeReason === "SL" ||
+      (status === "CANCELLED" && pnl !== null)
+    );
+  });
+}
+
+function trades2SourceIdFromRow(row = {}) {
+  const raw = row?.raw_json || {};
+  return trades2Text(row?.source_id || raw?.source_id || row?.source || raw?.source);
+}
+
+function trades2StrategyLabelFromRow(row = {}) {
+  const raw = row?.raw_json || {};
+  return trades2Text(row?.strategy || raw?.strategy);
+}
+
+function trades2EntryModelLabelFromRow(row = {}) {
+  const raw = row?.raw_json || {};
+  const firstPlan = Array.isArray(raw?.trade_plan)
+    ? raw.trade_plan[0] || {}
+    : raw?.trade_plan && typeof raw.trade_plan === "object"
+      ? raw.trade_plan
+      : {};
+  const metadataPlan =
+    row?.metadata?.trade_plan && typeof row.metadata.trade_plan === "object"
+      ? row.metadata.trade_plan
+      : {};
+  const candidate = trades2Text(
+    firstPlan?.entry_model ||
+      metadataPlan?.entry_model ||
+      raw?.entry_model ||
+      raw?.entryModel ||
+      row?.entry_model,
+  );
+  return /^ai[_-]/i.test(candidate) ? "" : candidate;
+}
+
+function trades2OrderTypeFromRow(row = {}) {
+  const raw = row?.raw_json || {};
+  const metadata = row?.metadata || {};
+  const firstPlan = Array.isArray(raw?.trade_plan)
+    ? raw.trade_plan[0] || {}
+    : raw?.trade_plan && typeof raw.trade_plan === "object"
+      ? raw.trade_plan
+      : {};
+  const orderTypeRaw = trades2Text(
+    row?.order_type ||
+      metadata?.order_type ||
+      raw?.order_type ||
+      raw?.orderType ||
+      firstPlan?.order_type,
+    "LIMIT",
+  ).toLowerCase();
+  if (orderTypeRaw.includes("market")) return "market";
+  if (orderTypeRaw.includes("stop")) return "stop";
+  return "limit";
+}
+
+function computeTrades2Metrics(rows = []) {
+  const all = Array.isArray(rows) ? rows : [];
+  const countPending = all.filter((row) => trades2CanonicalStatus(row) === "PENDING").length;
+  const countFilled = all.filter((row) => trades2CanonicalStatus(row) === "FILLED").length;
+  const countClosed = all.filter((row) =>
+    ["CLOSED", "TP", "SL"].includes(trades2CanonicalStatus(row)),
+  ).length;
+  const countCancelled = all.filter(
+    (row) => trades2CanonicalStatus(row) === "CANCELLED",
+  ).length;
+  const closedRows = trades2ClosedRows(all);
+  let wins = 0;
+  let losses = 0;
+  let totalPnl = 0;
+  let winSumPnl = 0;
+  let loseSumPnl = 0;
+  for (const row of closedRows) {
+    const status = trades2CanonicalStatus(row);
+    const closeReason = trades2Text(row?.close_reason).toUpperCase();
+    const pnl = trades2PnlValue(row);
+    if (status === "TP" || closeReason === "TP") wins += 1;
+    else if (status === "SL" || closeReason === "SL") losses += 1;
+    else if (pnl !== null && pnl > 0) wins += 1;
+    else if (pnl !== null && pnl < 0) losses += 1;
+    if (pnl !== null) {
+      totalPnl += pnl;
+      if (pnl > 0) winSumPnl += pnl;
+      if (pnl < 0) loseSumPnl += pnl;
+    }
+  }
+  const filledRows = all.filter((row) => trades2CanonicalStatus(row) === "FILLED");
+  const filledOpenPnl = filledRows.reduce((sum, row) => {
+    const pnl = trades2PnlValue(row);
+    return pnl !== null ? sum + pnl : sum;
+  }, 0);
+  const filledOpenWinSumPnl = filledRows.reduce((sum, row) => {
+    const pnl = trades2PnlValue(row);
+    return pnl !== null && pnl > 0 ? sum + pnl : sum;
+  }, 0);
+  const filledOpenLoseSumPnl = filledRows.reduce((sum, row) => {
+    const pnl = trades2PnlValue(row);
+    return pnl !== null && pnl < 0 ? sum + pnl : sum;
+  }, 0);
+  const filledOpenPlannedTpPnl = filledRows.reduce((sum, row) => {
+    const pnl = Number(row?.broker_tp_pnl ?? row?.planned_tp_pnl ?? 0);
+    return Number.isFinite(pnl) ? sum + pnl : sum;
+  }, 0);
+  const filledOpenPlannedSlPnl = filledRows.reduce((sum, row) => {
+    const pnl = Number(row?.broker_sl_pnl ?? row?.planned_sl_pnl ?? 0);
+    return Number.isFinite(pnl) ? sum + pnl : sum;
+  }, 0);
+  const filledOpenWins = filledRows.filter((row) => {
+    const pnl = trades2PnlValue(row);
+    return pnl !== null && pnl > 0;
+  }).length;
+  const filledOpenLosses = filledRows.filter((row) => {
+    const pnl = trades2PnlValue(row);
+    return pnl !== null && pnl < 0;
+  }).length;
+  const decided = wins + losses;
+  return {
+    total_signals: all.length,
+    total_trades: countPending + countFilled + countClosed,
+    wins,
+    losses,
+    win_rate: decided > 0 ? (wins / decided) * 100 : 0,
+    total_pnl: totalPnl,
+    buy_pnl: 0,
+    sell_pnl: 0,
+    win_sum_pnl: winSumPnl,
+    lose_sum_pnl: loseSumPnl,
+    total_rr: 0,
+    count_pending: countPending,
+    count_filled: countFilled,
+    count_closed: countClosed,
+    count_cancelled: countCancelled,
+    filled_open_pnl: filledOpenPnl,
+    filled_open_win_sum_pnl: filledOpenWinSumPnl,
+    filled_open_lose_sum_pnl: filledOpenLoseSumPnl,
+    filled_open_planned_tp_pnl: filledOpenPlannedTpPnl,
+    filled_open_planned_sl_pnl: filledOpenPlannedSlPnl,
+    filled_open_wins: filledOpenWins,
+    filled_open_losses: filledOpenLosses,
+  };
+}
+
+function computeTrades2TopRows(rows = [], keyPicker, { limit = 100 } = {}) {
+  const map = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const baseKey = trades2Text(keyPicker(row));
+    if (!baseKey) continue;
+    const status = trades2CanonicalStatus(row);
+    const closeReason = trades2Text(row?.close_reason).toUpperCase();
+    const pnl = trades2PnlValue(row);
+    if (!map.has(baseKey)) {
+      map.set(baseKey, {
+        key: baseKey,
+        name: baseKey,
+        direction: trades2Text(row?.action).toUpperCase() || "BUY",
+        wins: 0,
+        losses: 0,
+        trades: 0,
+        pnl_total: 0,
+        rr_total: 0,
+        rr_sum: 0,
+        rr_count: 0,
+      });
+    }
+    const entry = map.get(baseKey);
+    if (
+      status === "CLOSED" ||
+      status === "TP" ||
+      status === "SL" ||
+      closeReason === "TP" ||
+      closeReason === "SL"
+    ) {
+      entry.trades += 1;
+      if (status === "TP" || closeReason === "TP") entry.wins += 1;
+      else if (status === "SL" || closeReason === "SL") entry.losses += 1;
+      else if (pnl !== null && pnl > 0) entry.wins += 1;
+      else if (pnl !== null && pnl < 0) entry.losses += 1;
+      if (pnl !== null) entry.pnl_total += pnl;
+    }
+  }
+  return [...map.values()]
+    .map((entry) => {
+      const decided = entry.wins + entry.losses;
+      return {
+        ...entry,
+        win_rate: decided > 0 ? (entry.wins / decided) * 100 : 0,
+      };
+    })
+    .filter(
+      (entry) =>
+        Math.abs(entry.pnl_total) > 0.001 ||
+        entry.win_rate > 0 ||
+        entry.wins > 0 ||
+        entry.losses > 0,
+    )
+    .sort(
+      (a, b) =>
+        b.win_rate - a.win_rate ||
+        b.trades - a.trades ||
+        (a.key < b.key ? -1 : 1),
+    )
+    .slice(0, limit);
+}
+
+async function loadTrades2DashboardFromList(apiClient, filters = {}) {
+  const baseParams = {
+    account_id: filters.account_id || "",
+    symbol: filters.symbol || "",
+    source: filters.source || "",
+    entry_model: filters.entry_model || "",
+    action: filters.direction || "",
+    pnl_state: filters.pnl_state || "",
+    chart_tf: filters.chart_tf || "",
+    trade_tf: filters.trade_tf || "",
+    pageSize: 200,
+  };
+  let page = 1;
+  let totalPages = 1;
+  const allRows = [];
+  while (page <= totalPages && allRows.length < 100000) {
+    const out = await apiClient.v2Trades2({ ...baseParams, page });
+    const items = Array.isArray(out?.items) ? out.items : [];
+    allRows.push(...items);
+    totalPages = Math.max(1, Number(out?.pages || 1));
+    if (!items.length) break;
+    page += 1;
+  }
+
+  const range = trades2Text(filters.range, "all").toLowerCase();
+  const selectedRows = filterTrades2RowsByPeriod(
+    allRows,
+    trades2LocalPeriodRange(range),
+  );
+  const periodKeys = [
+    "all",
+    "today",
+    "yesterday",
+    "last_week",
+    "last_month",
+    "week",
+    "month",
+    "year",
+  ];
+  const periodTotals = Object.fromEntries(
+    periodKeys.map((key) => {
+      const metrics = computeTrades2Metrics(
+        filterTrades2RowsByPeriod(allRows, trades2LocalPeriodRange(key)),
+      );
+      return [
+        key,
+        {
+          total_pnl: metrics.total_pnl,
+          total_rr: metrics.total_rr,
+          total_trades: metrics.total_trades,
+          total_wins: metrics.wins,
+          total_losses: metrics.losses,
+          win_sum_pnl: metrics.win_sum_pnl,
+          lose_sum_pnl: metrics.lose_sum_pnl,
+        },
+      ];
+    }),
+  );
+
+  const seriesBucket = range === "today" ? "hour" : "day";
+  const seriesMap = new Map();
+  for (const row of selectedRows) {
+    const status = trades2CanonicalStatus(row);
+    const pnl = trades2PnlValue(row);
+    if (
+      !["CLOSED", "TP", "SL"].includes(status) &&
+      !(status === "CANCELLED" && pnl !== null)
+    ) {
+      continue;
+    }
+    if (pnl === null) continue;
+    const date = new Date(
+      row?.closed_at || row?.opened_at || row?.updated_at || row?.created_at,
+    );
+    if (!Number.isFinite(date.getTime())) continue;
+    const key =
+      seriesBucket === "hour"
+        ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:00`
+        : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    seriesMap.set(key, (seriesMap.get(key) || 0) + pnl);
+  }
+
+  return {
+    ok: true,
+    accounts_summary: [...new Set(allRows.map((row) => trades2Text(row?.account_id)).filter(Boolean))]
+      .sort()
+      .map((accountId) => ({ account_id: accountId, name: accountId })),
+    filters: {
+      user_id: trades2Text(allRows[0]?.user_id, "default"),
+      symbol: trades2Text(filters.symbol).toUpperCase(),
+      source: trades2Text(filters.source),
+      entry_model: trades2Text(filters.entry_model),
+      chart_tf: trades2Text(filters.chart_tf),
+      trade_tf: trades2Text(filters.trade_tf),
+      direction: trades2Text(filters.direction).toUpperCase(),
+      pnl_state: trades2Text(filters.pnl_state).toLowerCase(),
+      range,
+      accounts: [...new Set(allRows.map((row) => trades2Text(row?.account_id)).filter(Boolean))].sort(),
+      symbols: [...new Set(allRows.map((row) => trades2Text(row?.symbol).toUpperCase()).filter(Boolean))].sort(),
+      sources: [...new Set(allRows.map((row) => trades2SourceIdFromRow(row)).filter(Boolean))].sort(),
+      strategies: [...new Set(allRows.map((row) => trades2StrategyLabelFromRow(row)).filter(Boolean))].sort(),
+      entry_models: [...new Set(allRows.map((row) => trades2EntryModelLabelFromRow(row)).filter(Boolean))].sort(),
+      chart_tfs: [
+        ...new Set(
+          allRows
+            .map((row) =>
+              trades2Text(
+                row?.chart_tf ||
+                  row?.raw_json?.chart_tf ||
+                  row?.raw_json?.chartTf ||
+                  row?.trade_tf ||
+                  row?.raw_json?.trade_tf ||
+                  row?.raw_json?.sourceTf ||
+                  row?.raw_json?.timeframe,
+              ),
+            )
+            .filter(Boolean),
+        ),
+      ].sort(),
+      trade_tfs: [
+        ...new Set(
+          allRows
+            .map((row) =>
+              trades2Text(
+                row?.trade_tf ||
+                  row?.raw_json?.trade_tf ||
+                  row?.raw_json?.sourceTf ||
+                  row?.raw_json?.timeframe,
+              ),
+            )
+            .filter(Boolean),
+        ),
+      ].sort(),
+    },
+    metrics: computeTrades2Metrics(selectedRows),
+    period_totals: periodTotals,
+    top_winrate: {
+      symbols: computeTrades2TopRows(selectedRows, (row) =>
+        trades2Text(row?.symbol).toUpperCase(),
+      ),
+      entry_models: computeTrades2TopRows(selectedRows, (row) =>
+        trades2EntryModelLabelFromRow(row),
+      ),
+      strategies: computeTrades2TopRows(selectedRows, (row) =>
+        trades2StrategyLabelFromRow(row),
+      ),
+      accounts: computeTrades2TopRows(selectedRows, (row) =>
+        trades2Text(row?.account_id),
+      ),
+      sources: computeTrades2TopRows(selectedRows, (row) =>
+        trades2SourceIdFromRow(row),
+      ),
+      directional: computeTrades2TopRows(selectedRows, (row) => {
+        const dir = trades2Text(row?.action || row?.side, "BUY").toLowerCase();
+        const typeRaw = trades2OrderTypeFromRow(row);
+        const capitalize = (value) =>
+          value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+        return `${capitalize(dir)} ${capitalize(typeRaw)}`;
+      }),
+    },
+    pnl_series: [...seriesMap.entries()]
+      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      .map(([x, y]) => ({ x, y })),
+  };
+}
 
 function normalizeDateKey(raw) {
   const s = String(raw || "").trim();
@@ -527,8 +1022,10 @@ function TableBlock({
 
 export default function DashboardPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const isTrades2Route = location.pathname.startsWith("/trades2");
+  const tradeRouteBase = isTrades2Route ? "/trades2" : "/trades";
   const [data, setData] = useState(null);
-  const [accounts, setAccounts] = useState([]);
   const [settings, setSettings] = useState([]);
   const [error, setError] = useState("");
   const [lastRefreshAt, setLastRefreshAt] = useState(null);
@@ -569,10 +1066,9 @@ export default function DashboardPage() {
     if (inFlightRef.current) return;
     inFlightRef.current = true;
     try {
-      const [resp, accs] = await Promise.all([
-        api.dashboardAdvanced(filters),
-        api.v2Accounts(),
-      ]);
+      const resp = isTrades2Route
+        ? await loadTrades2DashboardFromList(api, filters)
+        : await api.dashboardAdvanced(filters);
       setData(resp);
       const userKey = calendarScopeKey(filters, resp?.filters?.user_id || "");
       const dailyMap = buildDailyPnlMap(resp?.pnl_series || []);
@@ -586,7 +1082,6 @@ export default function DashboardPage() {
       };
       saveCalendarCache(calendarMasterRef.current);
       setCalendarData(merged);
-      setAccounts(Array.isArray(accs?.items) ? accs.items : []);
       setError("");
       setLastRefreshAt(new Date());
     } catch (e) {
@@ -603,6 +1098,7 @@ export default function DashboardPage() {
     initialLoadKeyRef.current = nextKey;
     load();
   }, [
+    isTrades2Route,
     filters.account_id,
     filters.symbol,
     filters.source,
@@ -625,6 +1121,7 @@ export default function DashboardPage() {
     }, AUTO_REFRESH_MS);
     return () => clearInterval(t);
   }, [
+    isTrades2Route,
     filters.account_id,
     filters.symbol,
     filters.source,
@@ -897,7 +1394,9 @@ export default function DashboardPage() {
 
   const goTrades = ({ status = "closed", ...extra } = {}) => {
     const qs = buildTradeSearch(extra);
-    navigate(`/trades/${String(status).toLowerCase()}${qs ? `?${qs}` : ""}`);
+    navigate(
+      `${tradeRouteBase}/${String(status).toLowerCase()}${qs ? `?${qs}` : ""}`,
+    );
   };
 
   const periodCardClick = (key) => {
@@ -911,7 +1410,7 @@ export default function DashboardPage() {
   return (
     <section className="stack-layout fadeIn">
       <PageHeader
-        title="Dashboard"
+        title={isTrades2Route ? "Trades2 Dashboard" : "Dashboard"}
         actions={
           <CronRunLauncher
             value={selectedCronName}

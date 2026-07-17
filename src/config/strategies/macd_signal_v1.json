@@ -4,6 +4,7 @@
   "kind": "preset",
   "description": "Uses MACD line crossing its signal line to catch momentum shifts.",
   "engine_version": "42trade.strategy.v2",
+  "status": "active",
   "params": {
     "fast_period": 12,
     "slow_period": 26,
@@ -86,5 +87,9 @@
     "fallback_stop_pct": 0.001,
     "fallback_tp_pct": 0.002
   },
-  "min_bars": 50
+  "min_bars": 50,
+  "conditions": {
+    "skip_news": true,
+    "news_window_minutes": 120
+  }
 }

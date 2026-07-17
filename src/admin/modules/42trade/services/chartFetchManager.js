@@ -45,6 +45,48 @@ function flightKey(symbol, tf) {
   return `${norm(symbol)}:${String(tf).toLowerCase()}`;
 }
 
+function sanitizeCachedBars(bars) {
+  if (!Array.isArray(bars) || !bars.length) return [];
+  const byTime = new Map();
+  for (const bar of bars) {
+    if (!bar || typeof bar !== "object") continue;
+    const time = Number(bar?.time ?? bar?.t);
+    const open = Number(bar?.open ?? bar?.o);
+    const high = Number(bar?.high ?? bar?.h);
+    const low = Number(bar?.low ?? bar?.l);
+    const close = Number(bar?.close ?? bar?.c);
+    const volume = Number(bar?.volume ?? bar?.v ?? 0);
+    if (
+      !Number.isFinite(time) ||
+      time <= 0 ||
+      !Number.isFinite(open) ||
+      !Number.isFinite(high) ||
+      !Number.isFinite(low) ||
+      !Number.isFinite(close)
+    ) {
+      continue;
+    }
+    byTime.set(time, {
+      ...bar,
+      time,
+      open,
+      high,
+      low,
+      close,
+      volume: Number.isFinite(volume) ? volume : 0,
+    });
+  }
+  return [...byTime.values()].sort((left, right) => left.time - right.time);
+}
+
+function sanitizeCachedEntry(entry) {
+  if (!entry || typeof entry !== "object") return entry;
+  return {
+    ...entry,
+    bars: sanitizeCachedBars(entry.bars),
+  };
+}
+
 // ── queue ──
 function processQueue() {
   while (queue.length > 0 && activeCount < CONCURRENCY_CAP) {
@@ -139,7 +181,7 @@ function enqueue(symbol, tf, fetcher) {
 function set(symbol, tf, entry) {
   if (!ENABLED) return;
   const key = cacheKey(symbol, tf);
-  tfCache.set(key, { ...entry, created_at: Date.now() });
+  tfCache.set(key, { ...sanitizeCachedEntry(entry), created_at: Date.now() });
 }
 
 /** Get cached entry for a symbol+TF. Returns null if missing, stale if expired. */
@@ -149,7 +191,7 @@ function get(symbol, tf) {
   const entry = tfCache.get(key);
   if (!entry) return null;
   const stale = Date.now() - entry.created_at > tfToMs(tf);
-  return { ...entry, stale };
+  return { ...sanitizeCachedEntry(entry), stale };
 }
 
 /** Check if symbol+TF has fresh data. */

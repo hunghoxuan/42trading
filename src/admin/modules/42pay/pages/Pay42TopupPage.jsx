@@ -3,6 +3,7 @@ import { api } from "../../../app/api";
 import PageHeader from "../../../shared/components/PageHeader";
 import ResponsivePanel from "../../../shared/components/ResponsivePanel";
 import { showDateTime } from "../../../shared/utils/format";
+import Pay42PageShell from "./Pay42PageShell";
 import { formatMoney, statusTone } from "./pay42Ui";
 
 const TOPUP_METHODS = [
@@ -110,7 +111,7 @@ export default function Pay42TopupPage() {
   }
 
   return (
-    <section className="logs-page-container trades-page-container pay42-page-container stack-layout fadeIn">
+    <Pay42PageShell>
       <PageHeader
         className="trades-page-header"
         title="TOP UP"
@@ -268,6 +269,6 @@ export default function Pay42TopupPage() {
           </div>
         </ResponsivePanel>
       </div>
-    </section>
+    </Pay42PageShell>
   );
 }
