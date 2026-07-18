@@ -5542,6 +5542,7 @@ export default function SymbolChart({
   autoStartReplay = false,
   externalChartData = null,
   chartStrategies = EMPTY_ARRAY,
+  strategyScanMode = "",
   showStrategyMarkersDefault = false,
   allowedRules = null,
   allowedEvents = null,
@@ -5600,6 +5601,11 @@ export default function SymbolChart({
     () => buildAllowedRuleEventSet(allowedRules, allowedEvents, allowed_rules, allowed_events),
     [allowedRules, allowedEvents, allowed_rules, allowed_events],
   );
+  const effectiveStrategyScanMode = useMemo(() => {
+    const normalized = String(strategyScanMode || "").trim().toLowerCase();
+    if (normalized === "backtest" || normalized === "live") return normalized;
+    return isBacktestChartReplay ? "backtest" : "live";
+  }, [isBacktestChartReplay, strategyScanMode]);
   const chartSessionTradeSid = useMemo(
     () =>
       String(
@@ -7309,7 +7315,7 @@ export default function SymbolChart({
         symbol: cleanSym,
         tf: tfKey,
         multiTfBars: barsByTfSource,
-        scanMode: isBacktestChartReplay ? "backtest" : "live",
+        scanMode: effectiveStrategyScanMode,
         newsEvents: strategyCalendarEvents,
       });
       const plans = Array.isArray(evaluation?.latestTradePlans)
@@ -7324,7 +7330,8 @@ export default function SymbolChart({
   }, [
     chartStrategies,
     cleanSym,
-    isBacktestChartReplay,
+      effectiveStrategyScanMode,
+      isBacktestChartReplay,
     master?.bars,
     replayBarsByTf,
     strategyCalendarEvents,
@@ -10038,7 +10045,7 @@ export default function SymbolChart({
         symbol: cleanSym,
         tf: tfKey,
         multiTfBars: barsByTfSource,
-        scanMode: isBacktestChartReplay ? "backtest" : "live",
+        scanMode: effectiveStrategyScanMode,
         newsEvents: strategyCalendarEvents,
       });
       const hits = Array.isArray(evaluation?.matches) ? evaluation.matches : [];
@@ -10061,6 +10068,7 @@ export default function SymbolChart({
     chartStrategies,
     allowedRuleEventKeys,
     cleanSym,
+    effectiveStrategyScanMode,
     isBacktestChartReplay,
     master?.bars,
     replayBarsByTf,
@@ -10225,7 +10233,7 @@ export default function SymbolChart({
             symbol: cleanSym,
             tf: tfKey,
             timeSec: targetTfTimeSec,
-            scanMode: isBacktestChartReplay ? "backtest" : "live",
+            scanMode: effectiveStrategyScanMode,
             newsEvents: cachedNewsEvents,
           })
             .filter((plan) => {
@@ -10290,8 +10298,8 @@ export default function SymbolChart({
     chartStrategies,
     cleanSym,
     ctxMenu,
+    effectiveStrategyScanMode,
     effectiveBarsByTfForPlans,
-    isBacktestChartReplay,
     resolveContextualScanTimeSec,
   ]);
   const handleLoadMoreMenuStrategies = useCallback(() => {

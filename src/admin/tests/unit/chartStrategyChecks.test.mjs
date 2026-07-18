@@ -119,6 +119,40 @@ test("evaluateChartStrategies drops matches that only occurred before the lookba
   assert.equal(result.matches.length, 0);
 });
 
+test("evaluateChartStrategies preserves short event marker abbreviations", () => {
+  const strategy = {
+    id: "rules_tester_preview",
+    name: "Rules Tester",
+    engine_version: "42trade.strategy.v2",
+    indicators: [],
+    events: [
+      {
+        id: "bos",
+        abbr: "BOS",
+        name: "Break of Structure",
+        family: "structure",
+        when: {
+          ">": [{ var: "bar.close" }, 10],
+        },
+        actions: [{ id: "draw", action: "draw", label: "BOS" }],
+      },
+    ],
+  };
+
+  const result = evaluateChartStrategies({
+    bars: makeBars([9, 11, 12]),
+    strategies: [strategy],
+    lookbackBars: 3,
+    symbol: "BTCUSD",
+    tf: "5m",
+    scanMode: "backtest",
+  });
+
+  assert.equal(result.matches.length, 2);
+  assert.equal(result.matches[0].ruleEvent?.abbr, "BOS");
+  assert.equal(result.matches[0].ruleEvent?.family, "structure");
+});
+
 test("evaluateChartStrategies skips inactive strategies in live mode but allows them in backtest mode", () => {
   const strategy = {
     id: "inactive_cross",

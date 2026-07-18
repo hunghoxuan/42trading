@@ -672,6 +672,10 @@ function normalizeStrategyEvents(strategy = {}) {
         name:
           String(rule?.name || rule?.label || `Rule ${ruleIndex + 1}`).trim() ||
           `Rule ${ruleIndex + 1}`,
+        abbr: String(rule?.abbr || rule?.short_name || "").trim(),
+        icon: String(rule?.icon || "").trim(),
+        family: String(rule?.family || "").trim(),
+        priority: String(rule?.priority || "").trim(),
         bias: String(rule?.bias || "").trim().toLowerCase(),
         when: rule?.when && typeof rule.when === "object" ? rule.when : null,
         actions: Array.isArray(rule?.actions)
@@ -694,6 +698,10 @@ function normalizeStrategyEvents(strategy = {}) {
         name:
           String(event?.name || event?.label || `Event ${eventIndex + 1}`).trim() ||
           `Event ${eventIndex + 1}`,
+        abbr: String(event?.abbr || event?.short_name || "").trim(),
+        icon: String(event?.icon || "").trim(),
+        family: String(event?.family || "").trim(),
+        priority: String(event?.priority || "").trim(),
         bias: String(event?.bias || "").trim().toLowerCase(),
         when: event?.when && typeof event.when === "object" ? event.when : null,
         actions: Array.isArray(event?.actions)
@@ -1611,7 +1619,11 @@ export function evaluateChartStrategies({
             icon: String(event.icon || "activity").trim(),
             family: String(event.family || "strategy").trim(),
             params: {},
-            outputs: { bias: String(event.bias || "").trim().toLowerCase() },
+            outputs: {
+              ...(event.outputs && typeof event.outputs === "object" ? event.outputs : {}),
+              bias: String(event.bias || event.outputs?.bias || "").trim().toLowerCase(),
+              priority: String(event.priority || event.outputs?.priority || "").trim(),
+            },
           },
           result: ruleResult,
           ctx: {

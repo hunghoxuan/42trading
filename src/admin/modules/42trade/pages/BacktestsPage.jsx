@@ -3891,6 +3891,7 @@ export default function BacktestsPage() {
                     fillViewportForFourCharts={false}
                     showEventMarkers={false}
                     showStrategyMarkersDefault
+                    strategyScanMode="backtest"
                     chartStrategies={ruleTesterChartStrategy ? [ruleTesterChartStrategy] : []}
                     allowedRules={ruleTester.rule ? [ruleTester.rule] : null}
                   />
