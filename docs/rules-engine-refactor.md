@@ -120,6 +120,6 @@ flowchart TD
 - Chart strategy marker adapters now prefer normalized `RuleEvent` fields for marker identity, label, timeframe, family, type, time, and price.
 - Shared `.cjs` files are generated from shared ESM sources via `scripts/build_shared_cjs.cjs`; edit `.js` source files, then run `pnpm build:shared-cjs`.
 
-## Next Refactor Targets
+## Future Hardening
 
 1. Add broader API/UI integration coverage for the new shared rule/event/strategy pipeline.
