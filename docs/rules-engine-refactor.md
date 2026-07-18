@@ -105,7 +105,7 @@ flowchart TD
 ## Current Implementation Slice
 
 - `src/shared/rules-engine/ruleEngine.js` and `.cjs` now own expression evaluation.
-- `src/shared/rules-engine/features/detectArtifacts.js` and `.cjs` expose artifact detection behind a shared feature boundary.
+- `src/shared/rules-engine/features/detectArtifacts.js` and `.cjs` own artifact detection; the old admin detector paths are compatibility wrappers.
 - Admin chart strategy checks delegate `evaluateRule` to the shared engine.
 - API backtests delegate `evaluateRule` to the shared engine.
 - Chart strategy hits now include `ruleEvent` for incremental chart adoption.
@@ -116,6 +116,5 @@ flowchart TD
 
 ## Next Refactor Targets
 
-1. Move artifact detector implementation bodies from `src/admin/modules/42trade/chartArtifacts` into `src/shared/rules-engine/features`.
-2. Make chart layers render directly from `RuleEvent[]` for detector markers.
-3. Replace generated CJS copies with a single build step or source-of-truth package boundary.
+1. Make chart layers render directly from `RuleEvent[]` for detector markers.
+2. Replace generated CJS copies with a single build step or source-of-truth package boundary.
