@@ -2655,38 +2655,12 @@ function simulateRuleBasedStrategy(bars, strategy, options = {}) {
       const primaryStrategySignal = hitStrategySignals[0] || null;
       const tradePlans = Array.isArray(hit?.tradePlans) ? hit.tradePlans : [];
       let tradePlanCursor = 0;
-      for (const action of Array.isArray(hit?.actions) ? hit.actions : []) {
-        const actionKind = resolveStrategyActionKind(action);
-        const sharedTradePlan =
-          actionKind === "trade" ? tradePlans[tradePlanCursor++] || null : null;
-        if (sharedTradePlan) {
-          const normalizedTradePlan = normalizeStrategyTradePlan(
-            {
-              direction: sharedTradePlan.direction,
-              type: sharedTradePlan.type,
-              entry: sharedTradePlan.entry,
-              sl: sharedTradePlan.sl,
-              tp: sharedTradePlan.tp,
-            },
-            String(sharedTradePlan.direction || "").trim().toLowerCase() === "sell"
-              ? "sell"
-              : "buy",
-          );
-          applyEventActionToSignalState(signalState, {
-            ...action,
-            trade_plan: normalizedTradePlan,
-          });
-        }
-        eventLog.push({
-          event_id: hit?.eventId || "",
-          event_name: hit?.eventName || "",
-          strategy_signal_id: primaryStrategySignal?.id || "",
-          strategy_signal_strategy_id: primaryStrategySignal?.strategy_id || "",
-          strategy_signal_event_id: primaryStrategySignal?.source_event_id || "",
-          action_id: action?.id || "",
-          action_type: actionKind,
-          action: actionKind,
-          trade_plan: sharedTradePlan
+      for (const strategySignal of hitStrategySignals) {
+        for (const action of Array.isArray(strategySignal?.actions) ? strategySignal.actions : []) {
+          const actionKind = resolveStrategyActionKind(action);
+          const sharedTradePlan =
+            actionKind === "trade" ? tradePlans[tradePlanCursor++] || null : null;
+          const eventTradePlan = sharedTradePlan
             ? normalizeStrategyTradePlan(
                 {
                   direction: sharedTradePlan.direction,
@@ -2699,20 +2673,39 @@ function simulateRuleBasedStrategy(bars, strategy, options = {}) {
                   ? "sell"
                   : "buy",
               )
-            : null,
-          message: action?.message || "",
-          url: action?.url || "",
-          method: action?.method || "",
-          symbol: String(strategy?.market?.symbol || options?.symbol || "").trim().toUpperCase(),
-          tf: String(strategy?.market?.tf || options?.tf || "").trim(),
-          bar_index: i,
-          bar_time_unix: Number(bars[i]?.time || 0),
-          bar_time: toIsoFromUnixSeconds(bars[i]?.time),
-          bar_close: round(Number(bars[i]?.close), 5),
-          rule_event: hit?.ruleEvent || null,
-          strategy_signals: hitStrategySignals,
-          artifacts: Array.isArray(hit?.artifacts) ? hit.artifacts : [],
-        });
+            : null;
+          if (eventTradePlan) {
+            applyEventActionToSignalState(signalState, {
+              ...action,
+              trade_plan: eventTradePlan,
+            });
+          }
+          eventLog.push({
+            event_id: hit?.eventId || "",
+            event_name: hit?.eventName || "",
+            strategy_signal_id: strategySignal?.id || primaryStrategySignal?.id || "",
+            strategy_signal_strategy_id:
+              strategySignal?.strategy_id || primaryStrategySignal?.strategy_id || "",
+            strategy_signal_event_id:
+              strategySignal?.source_event_id || primaryStrategySignal?.source_event_id || "",
+            action_id: action?.id || "",
+            action_type: actionKind,
+            action: actionKind,
+            trade_plan: eventTradePlan,
+            message: action?.message || "",
+            url: action?.url || "",
+            method: action?.method || "",
+            symbol: String(strategy?.market?.symbol || options?.symbol || "").trim().toUpperCase(),
+            tf: String(strategy?.market?.tf || options?.tf || "").trim(),
+            bar_index: i,
+            bar_time_unix: Number(bars[i]?.time || 0),
+            bar_time: toIsoFromUnixSeconds(bars[i]?.time),
+            bar_close: round(Number(bars[i]?.close), 5),
+            rule_event: hit?.ruleEvent || null,
+            strategy_signals: hitStrategySignals,
+            artifacts: Array.isArray(hit?.artifacts) ? hit.artifacts : [],
+          });
+        }
       }
     }
     return signalState;

@@ -381,6 +381,10 @@ test("simulateStrategy logs triggered events and supports non-trade actions in v
   assert.equal(result.event_log[0].strategy_signal_id, result.strategy_signals[0].id);
   assert.equal(result.event_log[0].rule_event?.rule_id, "long_breakout");
   assert.deepEqual(
+    result.event_log.map((entry) => entry.action_id),
+    result.strategy_signals[0].actions.map((action) => action.id),
+  );
+  assert.deepEqual(
     result.event_log.map((entry) => entry.event_id),
     ["long_breakout", "long_breakout"],
   );
