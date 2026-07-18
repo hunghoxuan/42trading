@@ -105,14 +105,16 @@ flowchart TD
 ## Current Implementation Slice
 
 - `src/shared/rules-engine/ruleEngine.js` and `.cjs` now own expression evaluation.
+- `src/shared/rules-engine/features/detectArtifacts.js` and `.cjs` expose artifact detection behind a shared feature boundary.
 - Admin chart strategy checks delegate `evaluateRule` to the shared engine.
 - API backtests delegate `evaluateRule` to the shared engine.
 - Chart strategy hits now include `ruleEvent` for incremental chart adoption.
 - The predefined rule registry starts from fresh detector building blocks: crosses, rejections, EMA/VWAP/key level/MACD/candle/structure rules.
+- `/api/rules` and `/v2/rules` expose predefined JS rules, custom JSON rules, the rule schema, and an example payload.
 
 ## Next Refactor Targets
 
-1. Move chart artifact detector code from `src/admin/modules/42trade/chartArtifacts` into `src/shared/rules-engine/features`.
+1. Move artifact detector implementation bodies from `src/admin/modules/42trade/chartArtifacts` into `src/shared/rules-engine/features`.
 2. Make chart layers render directly from `RuleEvent[]` for detector markers.
 3. Add a `StrategyEngine` that consumes `RuleEvent[]` instead of re-running mixed chart logic.
 4. Make backtests run the same pipeline: bars to rule events to strategy signals to simulated trades.

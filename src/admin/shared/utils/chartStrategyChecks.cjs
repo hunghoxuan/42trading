@@ -15,7 +15,7 @@ source = source.replace(/^export function\s+([A-Za-z0-9_]+)\s*\(/gm, (_match, na
 });
 
 const compiledSource = `
-const sharedArtifactDetection = require("../../modules/42trade/chartArtifacts/detectArtifacts.cjs");
+const sharedArtifactDetection = require("../../../shared/rules-engine/features/detectArtifacts.cjs");
 const strategyEventFunctions = require("../../modules/42trade/chartArtifacts/strategyEventFunctions.cjs");
 const strategyScanEngine = require("../../../shared/utils/strategyScanEngine.cjs");
 const sharedRulesEngine = require("../../../shared/rules-engine/index.cjs");

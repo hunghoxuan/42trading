@@ -2,7 +2,7 @@
 
 const crypto = require("crypto");
 const chartArtifactRepo = require("./chartArtifactRepo");
-const sharedArtifactDetection = require("../../../../admin/modules/42trade/chartArtifacts/detectArtifacts.cjs");
+const sharedArtifactDetection = require("../../../../shared/rules-engine/features/detectArtifacts.cjs");
 
 const ARTIFACT_VERSION = 5;
 const { resolveLegacyTradeObjectsPath } = chartArtifactRepo;

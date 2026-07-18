@@ -16,7 +16,7 @@ const {
   evaluateRuleExpression,
 } = require("../../../../shared/rules-engine/index.cjs");
 const { normalizeSymbolList } = require("../../../../config/symbolGroups.cjs");
-const sharedArtifactDetection = require("../../../../admin/modules/42trade/chartArtifacts/detectArtifacts.cjs");
+const sharedArtifactDetection = require("../../../../shared/rules-engine/features/detectArtifacts.cjs");
 const strategyEventFunctions = require("../../../../admin/modules/42trade/chartArtifacts/strategyEventFunctions.cjs");
 const {
   evaluateChartStrategies,

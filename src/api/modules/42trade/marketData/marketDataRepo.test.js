@@ -6,7 +6,7 @@ const path = require("node:path");
 
 const barsStorage = require("./marketDataRepo");
 const chartArtifactService = require("../charts/chartArtifactService");
-const sharedArtifactDetection = require("../../../../admin/modules/42trade/chartArtifacts/detectArtifacts.cjs");
+const sharedArtifactDetection = require("../../../../shared/rules-engine/features/detectArtifacts.cjs");
 
 function makeTempDataRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "bars-storage-"));
