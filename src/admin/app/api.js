@@ -116,6 +116,13 @@ function shouldRetryAbortedProxyResponse(path, res, data, attemptedUrl, retryUrl
   return message.includes("operation was aborted");
 }
 
+function shouldRetryDevProxyStatus(path, res, attemptedUrl, retryUrl) {
+  if (!import.meta.env.DEV) return false;
+  if (!String(path || "").startsWith("/api/")) return false;
+  if (!retryUrl || retryUrl === attemptedUrl) return false;
+  return Number(res?.status || 0) === 404;
+}
+
 function runtimeApiKey() {
   const u = new URL(window.location.href);
   const keyFromQuery = (u.searchParams.get("apiKey") || "").trim();
@@ -510,6 +517,11 @@ async function requestJson(
       emitApiRequestEvent({ ok: false, ...meta, error: wrapped.message });
       throw wrapped;
     }
+  }
+
+  if (shouldRetryDevProxyStatus(path, res, finalUrl, directDevUrl)) {
+    res = await doFetch(directDevUrl);
+    finalUrl = directDevUrl;
   }
 
   let data;
