@@ -190,6 +190,7 @@ const RULE_MODE_OPTIONS = [
   { value: "compare", label: "Compare" },
   { value: "if_true", label: "If True" },
   { value: "if_not", label: "If Not" },
+  { value: "predefined_rule", label: "Predefined Rule" },
 ];
 
 const RULE_COMPARE_OPTIONS = (Array.isArray(strategyFunctions?.operators)
@@ -499,6 +500,23 @@ function buildRuleLibraryEntry({
   };
 }
 
+function buildRuleLibraryEntryFromCatalogRule(rule = {}) {
+  const condition =
+    rule?.condition && typeof rule.condition === "object" && !Array.isArray(rule.condition)
+      ? rule.condition
+      : rule?.when && typeof rule.when === "object" && !Array.isArray(rule.when)
+        ? rule.when
+        : null;
+  const tree = buildRuleDraftFromExpression(condition);
+  if (!tree) return null;
+  return buildRuleLibraryEntry({
+    id: `catalog_${String(rule?.kind || "predefined")}_${String(rule?.id || rule?.abbr || rule?.name || "")}`,
+    label: String(rule?.name || rule?.abbr || rule?.id || "Rule").trim(),
+    source: String(rule?.kind || "predefined").trim() || "predefined",
+    tree,
+  });
+}
+
 function updateRuleTreeNode(node, targetId, updater) {
   if (!node || typeof node !== "object") return node;
   if (String(node.id || "") === String(targetId || "")) {
@@ -528,9 +546,11 @@ function RuleTestConditionEditor({
   node,
   onChange,
   onRemove,
+  ruleTemplateItems = [],
 }) {
   const functionMeta =
     RULE_FUNCTION_OPTIONS.find((item) => item.value === String(node?.functionName || "").trim()) || null;
+  const mode = String(node?.mode || "compare");
   return (
     <div
       style={{
@@ -541,7 +561,7 @@ function RuleTestConditionEditor({
       }}
     >
       <InputComboSelect
-        value={String(node?.mode || "compare")}
+        value={mode}
         onChange={(event) =>
           onChange({
             ...node,
@@ -555,7 +575,7 @@ function RuleTestConditionEditor({
           </option>
         ))}
       </InputComboSelect>
-      {String(node?.mode || "compare") === "compare" ? (
+      {mode === "compare" ? (
         <>
           <InputComboSelect
             value={String(node?.left || "")}
@@ -588,6 +608,28 @@ function RuleTestConditionEditor({
             {RULE_DEFAULT_VARIABLE_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
+              </option>
+            ))}
+          </InputComboSelect>
+        </>
+      ) : mode === "predefined_rule" ? (
+        <>
+          <InputComboSelect
+            value=""
+            searchable
+            searchPlaceholder="Filter templates..."
+            onChange={(event) => {
+              const selected = (Array.isArray(ruleTemplateItems) ? ruleTemplateItems : [])
+                .find((item) => String(item.id || "") === String(event.target.value || ""));
+              if (!selected?.tree) return;
+              onChange(cloneRuleTestTreeWithFreshIds(cloneJson(selected.tree)));
+            }}
+            style={{ gridColumn: "span 3", width: "100%" }}
+          >
+            <option value="">Select predefined rule...</option>
+            {(Array.isArray(ruleTemplateItems) ? ruleTemplateItems : []).map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.label}
               </option>
             ))}
           </InputComboSelect>
@@ -692,6 +734,7 @@ function RuleTestGroupEditor({
   node,
   onChange,
   isRoot = false,
+  ruleTemplateItems = [],
 }) {
   if (!node || node.type !== "group") return null;
   return (
@@ -762,6 +805,7 @@ function RuleTestGroupEditor({
           <RuleTestGroupEditor
             key={child.id}
             node={child}
+            ruleTemplateItems={ruleTemplateItems}
             onChange={(nextChild) => onChange(updateRuleTreeNode(node, child.id, () => nextChild))}
           />
         ) : (
@@ -772,6 +816,7 @@ function RuleTestGroupEditor({
               onChange(updateRuleTreeNode(node, child.id, () => nextChild))
             }
             onRemove={() => onChange(removeRuleTreeNode(node, child.id))}
+            ruleTemplateItems={ruleTemplateItems}
           />
         ),
       )}
@@ -1355,6 +1400,8 @@ export default function BacktestsPage() {
   });
   const [ruleEditorTab, setRuleEditorTab] = useState("edit");
   const [ruleLibraryTab, setRuleLibraryTab] = useState("popular");
+  const [ruleCatalog, setRuleCatalog] = useState([]);
+  const [loadingRules, setLoadingRules] = useState(false);
   const [testedRuleStrategy, setTestedRuleStrategy] = useState(null);
   const [ruleTestRunKey, setRuleTestRunKey] = useState(0);
   const routeAutoRunKeyRef = useRef("");
@@ -1407,6 +1454,23 @@ export default function BacktestsPage() {
     }
   }
 
+  async function loadRulesCatalog() {
+    setLoadingRules(true);
+    try {
+      const res = await api.listRules();
+      const items = Array.isArray(res?.items)
+        ? res.items
+        : Array.isArray(res?.rules)
+          ? res.rules
+          : [];
+      setRuleCatalog(items);
+    } catch {
+      setRuleCatalog([]);
+    } finally {
+      setLoadingRules(false);
+    }
+  }
+
   async function loadStrategyCatalog() {
     setLoadingStrategies(true);
     try {
@@ -1447,6 +1511,7 @@ export default function BacktestsPage() {
 
   useEffect(() => {
     loadRuns();
+    loadRulesCatalog();
     loadStrategyCatalog();
   }, []);
 
@@ -1729,7 +1794,13 @@ export default function BacktestsPage() {
       if (!entry?.tree) return;
       items.push(entry);
     };
+    const catalogEntries = (Array.isArray(ruleCatalog) ? ruleCatalog : [])
+      .map((rule) => buildRuleLibraryEntryFromCatalogRule(rule))
+      .filter(Boolean);
 
+    if (catalogEntries.length) {
+      catalogEntries.forEach(pushItem);
+    } else {
     pushItem(
       buildRuleLibraryEntry({
         id: "popular_bos",
@@ -1905,6 +1976,7 @@ export default function BacktestsPage() {
         },
       }),
     );
+    }
 
     (Array.isArray(allStrategies) ? allStrategies : []).forEach((strategy, strategyIndex) => {
       const strategyName =
@@ -1941,7 +2013,7 @@ export default function BacktestsPage() {
       seen.add(key);
       return true;
     });
-  }, [allStrategies]);
+  }, [allStrategies, ruleCatalog]);
   const visibleRuleLibraryItems = useMemo(
     () =>
       ruleLibraryItems.filter((item) =>
@@ -3392,7 +3464,11 @@ export default function BacktestsPage() {
                     {item.label}
                   </span>
                   <span className="minor-text backtests-item-card__tag" style={{ fontSize: 10, flex: "0 0 auto" }}>
-                    {item.source === "strategy" ? "Strategy" : "Popular"}
+                    {item.source === "strategy"
+                      ? "Strategy"
+                      : item.source === "custom"
+                        ? "Custom"
+                        : "Predefined"}
                   </span>
                 </div>
               </button>
@@ -3402,7 +3478,9 @@ export default function BacktestsPage() {
           <div className="minor-text" style={{ fontSize: 11 }}>
             {ruleLibraryTab === "strategy"
               ? "No strategy-derived rules available yet."
-              : "No popular rules available."}
+              : loadingRules
+                ? "Loading rule catalog..."
+                : "No predefined or custom rules available."}
           </div>
         )}
       </ListItems>
@@ -3654,6 +3732,7 @@ export default function BacktestsPage() {
                         key={String(ruleTester?.rule?.id || "rule-editor-root")}
                         rule={ruleTester.rule}
                         variableOptions={RULE_DEFAULT_VARIABLE_VALUES}
+                        ruleTemplates={ruleCatalog}
                         showActions={false}
                         currentTimeframeLabel={timeframeLabel(ruleTester.tf)}
                         onChange={(nextRule) => {

@@ -18,6 +18,7 @@ const CONDITION_MODE_OPTIONS = [
   { value: "compare", label: "Compare" },
   { value: "if_true", label: "If True" },
   { value: "if_not", label: "If Not" },
+  { value: "predefined_rule", label: "Predefined Rule" },
   { value: "is_true", label: "Rule True" },
   { value: "get_artifacts", label: "GET_ARTIFACTS" },
   { value: "draw", label: "DRAW" },
@@ -471,6 +472,7 @@ function ensureConditionDraft(node) {
   const mode =
     rawMode === "if_true" ||
     rawMode === "if_not" ||
+    rawMode === "predefined_rule" ||
     WRAPPER_FUNCTION_MODES.has(rawMode)
       ? rawMode
       : "compare";
@@ -737,9 +739,11 @@ function RuleConditionEditor({
   onRemove,
   variableOptions,
   currentTimeframeLabel = "",
+  ruleTemplateOptions = [],
 }) {
   const draft = ensureConditionDraft(node);
   const isWrapperMode = WRAPPER_FUNCTION_MODES.has(draft.mode);
+  const isTemplateMode = draft.mode === "predefined_rule";
   const isFunctionMode = draft.mode !== "compare";
   const functionMeta = getFunctionMeta(draft.functionName);
   const functionArgs = Array.isArray(draft.args) ? draft.args : [];
@@ -782,7 +786,32 @@ function RuleConditionEditor({
         >
           {toFlatOptions(CONDITION_MODE_OPTIONS)}
         </InputComboSelect>
-        {isFunctionMode ? (
+        {isTemplateMode ? (
+          <>
+            <InputComboSelect
+              value=""
+              searchable
+              searchPlaceholder="Filter templates..."
+              onChange={(event) => {
+                const selected = (Array.isArray(ruleTemplateOptions) ? ruleTemplateOptions : [])
+                  .find((item) => String(item.value || "") === String(event.target.value || ""));
+                const nextTree = selected?.expression
+                  ? buildVisualNodeFromExpression(selected.expression)
+                  : selected?.tree;
+                if (!nextTree) return;
+                onChange(nextTree);
+              }}
+              style={{ gridColumn: "span 3", width: "100%", minWidth: 0 }}
+            >
+              <option value="">Select predefined rule...</option>
+              {(Array.isArray(ruleTemplateOptions) ? ruleTemplateOptions : []).map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </InputComboSelect>
+          </>
+        ) : isFunctionMode ? (
           <>
             {isWrapperMode ? (
               <div
@@ -920,6 +949,7 @@ function RuleConditionEditor({
           <RuleTreeEditor
             node={draft.target}
             variableOptions={variableOptions}
+            ruleTemplateOptions={ruleTemplateOptions}
             onChange={(nextTarget) =>
               onChange(
                 ensureConditionDraft({
@@ -943,6 +973,7 @@ function RuleTreeEditor({
   variableOptions,
   depth = 0,
   currentTimeframeLabel = "",
+  ruleTemplateOptions = [],
 }) {
   if (!node) return null;
   if (node.type === "condition") {
@@ -953,6 +984,7 @@ function RuleTreeEditor({
         onRemove={onRemove}
         variableOptions={variableOptions}
         currentTimeframeLabel={currentTimeframeLabel}
+        ruleTemplateOptions={ruleTemplateOptions}
       />
     );
   }
@@ -1015,6 +1047,7 @@ function RuleTreeEditor({
                 variableOptions={variableOptions}
                 depth={depth + 1}
                 currentTimeframeLabel={currentTimeframeLabel}
+                ruleTemplateOptions={ruleTemplateOptions}
                 onChange={(nextChild) =>
                   onChange(updateTreeNode(node, child.id, () => nextChild))
                 }
@@ -1190,6 +1223,7 @@ export default function RuleBuilder({
   onChange,
   onRemove = null,
   variableOptions = [],
+  ruleTemplates = [],
   showName = true,
   showMeta = true,
   showActions = true,
@@ -1203,6 +1237,34 @@ export default function RuleBuilder({
   const unsupportedExpression = useMemo(
     () => !buildVisualNodeFromExpression(normalizedRule.when),
     [normalizedRule.when],
+  );
+  const ruleTemplateOptions = useMemo(
+    () =>
+      (Array.isArray(ruleTemplates) ? ruleTemplates : [])
+        .map((template, index) => {
+          const expression =
+            template?.condition && typeof template.condition === "object"
+              ? template.condition
+              : template?.when && typeof template.when === "object"
+                ? template.when
+                : null;
+          if (!expression || !buildVisualNodeFromExpression(expression)) return null;
+          const label = String(
+            template?.name ||
+              template?.short_name ||
+              template?.abbr ||
+              template?.id ||
+              `Rule ${index + 1}`,
+          ).trim();
+          const sourceLabel = template?.kind === "custom" ? "Custom" : "Predefined";
+          return {
+            value: String(template?.id || template?.abbr || `rule_${index}`),
+            label: `${label || `Rule ${index + 1}`} (${sourceLabel})`,
+            expression,
+          };
+        })
+        .filter(Boolean),
+    [ruleTemplates],
   );
 
   const updateRule = (patch) => {
@@ -1291,6 +1353,7 @@ export default function RuleBuilder({
           <RuleTreeEditor
             node={tree}
             variableOptions={variableOptions}
+            ruleTemplateOptions={ruleTemplateOptions}
             currentTimeframeLabel={currentTimeframeLabel}
             onChange={(nextNode) =>
               updateRule({ when: buildExpressionFromVisualNode(nextNode) || { and: [] } })

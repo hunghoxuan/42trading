@@ -119,7 +119,77 @@ flowchart TD
 - Backtest event simulation now evaluates chart-emitted `RuleEvent`s through the shared strategy engine and consumes matched `StrategySignal[]` actions for trade execution/event logging.
 - Chart strategy marker adapters now prefer normalized `RuleEvent` fields for marker identity, label, timeframe, family, type, time, and price.
 - Shared `.cjs` files are generated from shared ESM sources via `scripts/build_shared_cjs.cjs`; edit `.js` source files, then run `pnpm build:shared-cjs`.
+- The Rules UI loads `/api/rules` for the library and for builder templates, so predefined JS rules and custom JSON rules share one picker.
+
+## Format Review
+
+The current direction is logically sound: keep "rule" for the reusable condition definition and emit "rule events" when that definition happens on a bar. Do not rename rules to events globally; the split is useful because the same rule can happen many times and can be reused by charts, strategies, and backtests.
+
+The main cleanup target is strategy vocabulary. In strategy JSON, `rules[]` currently means executable strategy triggers with actions, while the catalog uses `condition`. This works but is easy to confuse. The preferred long-term shape is:
+
+```json
+{
+  "engine_version": "42trade.strategy.v3",
+  "indicators": [],
+  "event_rules": [
+    {
+      "id": "bullish_bos_context",
+      "rule_id": "bullish_break_of_structure",
+      "params": { "tf": "current" }
+    }
+  ],
+  "signals": [
+    {
+      "id": "long_after_sweep_and_choch",
+      "name": "Long After Sweep + CHOCH",
+      "when": {
+        "then": [
+          { "event": "bullish_liquidity_sweep" },
+          { "event": "bullish_change_of_character", "within_bars": 10 }
+        ]
+      },
+      "actions": [
+        {
+          "id": "buy",
+          "action": "trade",
+          "trade_plan": {
+            "direction": "buy",
+            "type": "market",
+            "entry": "bar.close",
+            "sl": "suggested_trade_sl(bullish)",
+            "tp": "suggested_trade_tp(bullish)"
+          }
+        }
+      ]
+    }
+  ],
+  "risk": {}
+}
+```
+
+Recommended naming:
+
+- `RuleDefinition`: catalog item with `id`, `abbr`, `name`, `condition`, `icon`, `family`, `params`, and `outputs`.
+- `RuleEvent`: runtime occurrence emitted by RuleEngine.
+- `StrategySignal`: strategy-level decision produced by StrategyEngine from one or more rule events.
+- `Action`: side effect or trade plan attached to a strategy signal.
+
+Recommended storage:
+
+- Keep popular built-ins in `src/shared/rules-engine/predefinedRules.js` because some depend on executable feature helpers and artifact context.
+- Keep user-authored/custom portable rules in `src/config/rules/*.json`.
+- Let strategies reference catalog rules by `rule_id` where possible; allow inline `when` expressions only for advanced custom signals.
+- Version the next breaking strategy shape as `42trade.strategy.v3` instead of silently changing existing v2 files.
+
+Recommended engine improvements:
+
+- Add rule parameter substitution so templates can declare `{ "var": "params.ema" }` and strategies/users can override `ema_length`, source, bias, timeframe, or level.
+- Add a capability/dependency block per rule, for example required indicators, required artifacts, and minimum bars, so the chart/backtest can prepare context before evaluation.
+- Normalize all rule outputs into event metadata: `bias`, `severity`, `confidence`, `marker`, `price_path`, and optional `zone_path`.
+- Keep cross and breakout separate: `crosses_above/below` is a one-bar transition across a value; `breakout` should mean displacement beyond a level/range with confirmation rules such as close beyond, volume, ATR/body expansion, or retest.
+- Add a migration adapter from strategy v2 `rules[]/events[]` into v3 `signals[]` before deleting legacy strategy files.
 
 ## Future Hardening
 
 1. Add broader API/UI integration coverage for the new shared rule/event/strategy pipeline.
+2. Migrate shipped strategy JSON to the proposed v3 signal vocabulary after adding the adapter.

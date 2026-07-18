@@ -4198,6 +4198,18 @@ var PREDEFINED_RULES = [
     outputs: { marker: "dot" }
   },
   {
+    id: "price_rejected_vwap",
+    abbr: "RJ_VWAP",
+    name: "Price Rejected VWAP",
+    icon: "waves",
+    family: "vwap",
+    params: {},
+    condition: {
+      rejected: [{ var: "bar.close" }, { var: "indicators.vwap" }]
+    },
+    outputs: { marker: "dot" }
+  },
+  {
     id: "price_crosses_vwap",
     abbr: "PX_VWAP",
     name: "Price Crosses VWAP",
@@ -4208,6 +4220,18 @@ var PREDEFINED_RULES = [
       crosses_above: [{ var: "bar.close" }, { var: "indicators.vwap" }]
     },
     outputs: { bias: "bullish", marker: "arrow_up" }
+  },
+  {
+    id: "price_crosses_below_vwap",
+    abbr: "PX_VWAP_DN",
+    name: "Price Crosses Below VWAP",
+    icon: "waves",
+    family: "vwap",
+    params: { side: "below" },
+    condition: {
+      crosses_below: [{ var: "bar.close" }, { var: "indicators.vwap" }]
+    },
+    outputs: { bias: "bearish", marker: "arrow_down" }
   },
   {
     id: "price_rejected_key_level",
@@ -4234,6 +4258,30 @@ var PREDEFINED_RULES = [
     outputs: { bias: "bullish", marker: "arrow_up" }
   },
   {
+    id: "price_breaks_below_key_level",
+    abbr: "BRK_LVL_DN",
+    name: "Price Breaks Below Key Level",
+    icon: "move-down-right",
+    family: "key_level",
+    params: { side: "below", close_confirmation: true },
+    condition: {
+      crosses_below: [{ var: "bar.close" }, { var: "levels.key" }]
+    },
+    outputs: { bias: "bearish", marker: "arrow_down" }
+  },
+  {
+    id: "price_retests_key_level",
+    abbr: "RT_LVL",
+    name: "Price Retests Key Level",
+    icon: "rotate-ccw",
+    family: "key_level",
+    params: { level: "levels.key" },
+    condition: {
+      retest: [{ var: "bar.close" }, { var: "levels.key" }]
+    },
+    outputs: { marker: "dot" }
+  },
+  {
     id: "price_rejected_bollinger_band",
     abbr: "RJ_BB",
     name: "Price Rejected Bollinger Band",
@@ -4246,6 +4294,18 @@ var PREDEFINED_RULES = [
     outputs: { marker: "dot" }
   },
   {
+    id: "price_crosses_bollinger_mid",
+    abbr: "PX_BB_MID",
+    name: "Price Crosses Bollinger Mid",
+    icon: "brackets",
+    family: "volatility",
+    params: { side: "above" },
+    condition: {
+      crosses_above: [{ var: "bar.close" }, { var: "indicators.bb_mid" }]
+    },
+    outputs: { bias: "bullish", marker: "arrow_up" }
+  },
+  {
     id: "macd_cross",
     abbr: "MACD_X",
     name: "MACD Cross",
@@ -4256,6 +4316,58 @@ var PREDEFINED_RULES = [
       crosses_above: [{ var: "indicators.macd" }, { var: "indicators.macd_signal" }]
     },
     outputs: { bias: "bullish", marker: "arrow_up" }
+  },
+  {
+    id: "macd_cross_down",
+    abbr: "MACD_X_DN",
+    name: "MACD Cross Down",
+    icon: "chart-no-axes-combined",
+    family: "momentum",
+    params: { side: "below" },
+    condition: {
+      crosses_below: [{ var: "indicators.macd" }, { var: "indicators.macd_signal" }]
+    },
+    outputs: { bias: "bearish", marker: "arrow_down" }
+  },
+  {
+    id: "rsi_oversold",
+    abbr: "RSI_OS",
+    name: "RSI Oversold",
+    icon: "gauge",
+    family: "momentum",
+    params: { threshold: 30 },
+    condition: { "<": [{ var: "indicators.rsi_14" }, 30] },
+    outputs: { bias: "bullish", marker: "dot" }
+  },
+  {
+    id: "rsi_overbought",
+    abbr: "RSI_OB",
+    name: "RSI Overbought",
+    icon: "gauge",
+    family: "momentum",
+    params: { threshold: 70 },
+    condition: { ">": [{ var: "indicators.rsi_14" }, 70] },
+    outputs: { bias: "bearish", marker: "dot" }
+  },
+  {
+    id: "rsi_crosses_above_50",
+    abbr: "RSI_50_UP",
+    name: "RSI Crosses Above 50",
+    icon: "gauge",
+    family: "momentum",
+    params: { threshold: 50 },
+    condition: { crosses_above: [{ var: "indicators.rsi_14" }, 50] },
+    outputs: { bias: "bullish", marker: "arrow_up" }
+  },
+  {
+    id: "rsi_crosses_below_50",
+    abbr: "RSI_50_DN",
+    name: "RSI Crosses Below 50",
+    icon: "gauge",
+    family: "momentum",
+    params: { threshold: 50 },
+    condition: { crosses_below: [{ var: "indicators.rsi_14" }, 50] },
+    outputs: { bias: "bearish", marker: "arrow_down" }
   },
   {
     id: "bullish_engulfing",
@@ -4278,6 +4390,36 @@ var PREDEFINED_RULES = [
     outputs: { bias: "bearish", marker: "arrow_down" }
   },
   {
+    id: "pin_bar",
+    abbr: "PIN",
+    name: "Pin Bar",
+    icon: "candlestick-chart",
+    family: "candle_pattern",
+    params: { bias: "" },
+    condition: { fn: "pin_bar", args: [] },
+    outputs: { marker: "dot" }
+  },
+  {
+    id: "inside_bar",
+    abbr: "INSIDE",
+    name: "Inside Bar",
+    icon: "candlestick-chart",
+    family: "candle_pattern",
+    params: {},
+    condition: { fn: "inside_bar", args: [] },
+    outputs: { marker: "dot" }
+  },
+  {
+    id: "outside_bar",
+    abbr: "OUTSIDE",
+    name: "Outside Bar",
+    icon: "candlestick-chart",
+    family: "candle_pattern",
+    params: {},
+    condition: { fn: "outside_bar", args: [] },
+    outputs: { marker: "dot" }
+  },
+  {
     id: "liquidity_sweep",
     abbr: "SWP",
     name: "Liquidity Sweep",
@@ -4286,6 +4428,26 @@ var PREDEFINED_RULES = [
     params: { bias: "" },
     condition: { fn: "sweep", args: [] },
     outputs: { marker: "diamond" }
+  },
+  {
+    id: "bullish_liquidity_sweep",
+    abbr: "SWP_B",
+    name: "Bullish Liquidity Sweep",
+    icon: "scan-line",
+    family: "structure",
+    params: { bias: "bullish" },
+    condition: { fn: "sweep", args: ["bullish"] },
+    outputs: { bias: "bullish", marker: "diamond" }
+  },
+  {
+    id: "bearish_liquidity_sweep",
+    abbr: "SWP_S",
+    name: "Bearish Liquidity Sweep",
+    icon: "scan-line",
+    family: "structure",
+    params: { bias: "bearish" },
+    condition: { fn: "sweep", args: ["bearish"] },
+    outputs: { bias: "bearish", marker: "diamond" }
   },
   {
     id: "break_of_structure",
@@ -4298,6 +4460,26 @@ var PREDEFINED_RULES = [
     outputs: { marker: "flag" }
   },
   {
+    id: "bullish_break_of_structure",
+    abbr: "BOS_B",
+    name: "Bullish Break of Structure",
+    icon: "route",
+    family: "structure",
+    params: { bias: "bullish" },
+    condition: { fn: "bos", args: ["bullish"] },
+    outputs: { bias: "bullish", marker: "flag" }
+  },
+  {
+    id: "bearish_break_of_structure",
+    abbr: "BOS_S",
+    name: "Bearish Break of Structure",
+    icon: "route",
+    family: "structure",
+    params: { bias: "bearish" },
+    condition: { fn: "bos", args: ["bearish"] },
+    outputs: { bias: "bearish", marker: "flag" }
+  },
+  {
     id: "change_of_character",
     abbr: "CHOCH",
     name: "Change of Character",
@@ -4306,6 +4488,86 @@ var PREDEFINED_RULES = [
     params: { bias: "" },
     condition: { fn: "choch", args: [] },
     outputs: { marker: "flag" }
+  },
+  {
+    id: "bullish_change_of_character",
+    abbr: "CHOCH_B",
+    name: "Bullish Change of Character",
+    icon: "shuffle",
+    family: "structure",
+    params: { bias: "bullish" },
+    condition: { fn: "choch", args: ["bullish"] },
+    outputs: { bias: "bullish", marker: "flag" }
+  },
+  {
+    id: "bearish_change_of_character",
+    abbr: "CHOCH_S",
+    name: "Bearish Change of Character",
+    icon: "shuffle",
+    family: "structure",
+    params: { bias: "bearish" },
+    condition: { fn: "choch", args: ["bearish"] },
+    outputs: { bias: "bearish", marker: "flag" }
+  },
+  {
+    id: "order_block_rejection",
+    abbr: "RJ_OB",
+    name: "Order Block Rejection",
+    icon: "box",
+    family: "order_block",
+    params: { level: "ob" },
+    condition: { fn: "rejected", args: ["ob"] },
+    outputs: { marker: "dot" }
+  },
+  {
+    id: "fvg_rejection",
+    abbr: "RJ_FVG",
+    name: "FVG Rejection",
+    icon: "gap",
+    family: "fair_value_gap",
+    params: { level: "fvg" },
+    condition: { fn: "rejected", args: ["fvg"] },
+    outputs: { marker: "dot" }
+  },
+  {
+    id: "trend_bullish",
+    abbr: "TREND_B",
+    name: "Bullish Trend",
+    icon: "trending-up",
+    family: "regime",
+    params: { bias: "bullish" },
+    condition: { fn: "trend", args: ["bullish"] },
+    outputs: { bias: "bullish", marker: "dot" }
+  },
+  {
+    id: "trend_bearish",
+    abbr: "TREND_S",
+    name: "Bearish Trend",
+    icon: "trending-down",
+    family: "regime",
+    params: { bias: "bearish" },
+    condition: { fn: "trend", args: ["bearish"] },
+    outputs: { bias: "bearish", marker: "dot" }
+  },
+  {
+    id: "phase_impulse",
+    abbr: "IMPULSE",
+    name: "Impulse Phase",
+    icon: "zap",
+    family: "regime",
+    params: { phase: "impulse" },
+    condition: { fn: "phase", args: ["impulse"] },
+    outputs: { marker: "dot" }
+  },
+  {
+    id: "phase_pullback",
+    abbr: "PULLBACK",
+    name: "Pullback Phase",
+    icon: "undo-2",
+    family: "regime",
+    params: { phase: "pullback" },
+    condition: { fn: "phase", args: ["pullback"] },
+    outputs: { marker: "dot" }
   }
 ];
 function listPredefinedRules() {
