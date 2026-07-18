@@ -155,6 +155,10 @@ function normalizeStoredTrade(input = {}) {
     raw.execution_status || raw.executionStatus || "PENDING",
   ).toUpperCase();
   const now = new Date().toISOString();
+  const canonicalOrderType = resolveCanonicalStoredOrderType(
+    raw,
+    raw.order_type || raw.orderType || "",
+  );
 
   return {
     ...raw,
@@ -171,7 +175,7 @@ function normalizeStoredTrade(input = {}) {
     chart_tf: chartTf,
     symbol,
     action,
-    order_type: text(raw.order_type || raw.orderType).toLowerCase() || null,
+    order_type: canonicalOrderType || null,
     volume: numberOrNull(raw.volume),
     entry: numberOrNull(raw.entry),
     sl: numberOrNull(raw.sl),
@@ -238,6 +242,54 @@ function normalizeStoredTrade(input = {}) {
     created_at: toIso(raw.created_at || raw.createdAt, now),
     updated_at: toIso(raw.updated_at || raw.updatedAt, now),
   };
+}
+
+function normalizeOrderTypeValue(value, fallback = "") {
+  const fb = text(fallback).toLowerCase();
+  const raw = text(value).toLowerCase().replace(/[_-]+/g, " ");
+  if (!raw) return ["limit", "market", "stop"].includes(fb) ? fb : "";
+  if (raw === "limit" || raw === "market" || raw === "stop") return raw;
+  if (raw.includes("market")) return "market";
+  if (raw.includes("stop")) return "stop";
+  if (raw.includes("limit")) return "limit";
+  return ["limit", "market", "stop"].includes(fb) ? fb : "";
+}
+
+function firstTradePlanValue(source = {}) {
+  if (!source || typeof source !== "object") return {};
+  if (Array.isArray(source.trade_plan)) return source.trade_plan[0] || {};
+  if (source.trade_plan && typeof source.trade_plan === "object") {
+    return source.trade_plan;
+  }
+  return {};
+}
+
+function resolveCanonicalStoredOrderType(row = {}, fallback = "") {
+  const raw = objectValue(row.raw_json, {});
+  const metadata = objectValue(row.metadata, {});
+  const metadataRaw = objectValue(metadata.raw_json, {});
+  const rawPlan = firstTradePlanValue(raw);
+  const metadataRawPlan = firstTradePlanValue(metadataRaw);
+  return (
+    normalizeOrderTypeValue(
+      raw.order_type ||
+        raw.orderType ||
+        metadataRaw.order_type ||
+        metadataRaw.orderType ||
+        rawPlan.order_type ||
+        rawPlan.orderType ||
+        rawPlan.type ||
+        metadataRawPlan.order_type ||
+        metadataRawPlan.orderType ||
+        metadataRawPlan.type ||
+        row.order_type ||
+        metadata.trade_type ||
+        metadata.tradeType ||
+        metadata.order_type ||
+        fallback,
+      fallback,
+    ) || null
+  );
 }
 
 function tradeEntityId(sid = "") {
@@ -1105,6 +1157,13 @@ function buildAckUpdate(currentRow, accountId, payload = {}, options = {}) {
     ) ??
     currentRow.rr_planned ??
     null;
+  const preservedOrderType = resolveCanonicalStoredOrderType(
+    currentRow,
+    recoveredBrokerState?.order_type ||
+      payload.order_type ||
+      currentRow.order_type ||
+      "",
+  );
 
   return {
     account_id: accountId,
@@ -1143,11 +1202,7 @@ function buildAckUpdate(currentRow, accountId, payload = {}, options = {}) {
         ? riskMoneyPlanned
         : currentRow.risk_money_planned ?? null,
     rr_planned: rrPlanned,
-    order_type:
-      recoveredBrokerState?.order_type ||
-      payload.order_type ||
-      currentRow.order_type ||
-      null,
+    order_type: preservedOrderType,
     entry: nextEntry ?? null,
     sl: nextSl,
     tp: nextTp,
@@ -2048,8 +2103,9 @@ function createTradesRepo(options = {}) {
           ticketCandidates.map((ticket) => byTicket.get(ticket)).find(Boolean) ||
           null;
 
-        const syncMeta = {
-          order_type: it.order_type || null,
+      const syncMeta = {
+          order_type: normalizeOrderTypeValue(it.order_type) || null,
+          broker_order_type: normalizeOrderTypeValue(it.order_type) || null,
           broker_name: options.brokerName || "",
           provider_code: options.providerCode || "",
           last_change_origin: "broker",
@@ -2067,6 +2123,10 @@ function createTradesRepo(options = {}) {
         };
 
         if (existing) {
+          const preservedOrderType = resolveCanonicalStoredOrderType(
+            existing,
+            existing.order_type || it.order_type || "",
+          );
           const nextExecutionStatus = String(it.execution_status || "")
             .trim()
             .toUpperCase();
@@ -2076,7 +2136,10 @@ function createTradesRepo(options = {}) {
           const nextDispatchStatus = consumeLease
             ? "CONSUMED"
             : existing.dispatch_status;
-          const nextMetadata = mergeBrokerSyncMetadata(existing.metadata, syncMeta);
+          const nextMetadata = mergeBrokerSyncMetadata(existing.metadata, {
+            ...syncMeta,
+            order_type: preservedOrderType || null,
+          });
           const updated = await updateTradePatch(
             existing,
             {
@@ -2101,7 +2164,11 @@ function createTradesRepo(options = {}) {
               broker_tp_pnl: it.tp_pnl ?? existing.broker_tp_pnl ?? null,
               broker_sl_pnl: it.sl_pnl ?? existing.broker_sl_pnl ?? null,
               entry_exec: it.entry ?? existing.entry_exec ?? null,
-              order_type: it.order_type || existing.order_type || null,
+              order_type:
+                preservedOrderType ||
+                normalizeOrderTypeValue(it.order_type) ||
+                existing.order_type ||
+                null,
               close_reason: isTerminalExecutionStatus(nextExecutionStatus)
                 ? it.close_reason || existing.close_reason || null
                 : null,

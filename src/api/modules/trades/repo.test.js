@@ -519,3 +519,116 @@ test("trades broker sync treats broker comment note suffix as non-identity", asy
   assert.equal(existing.trade.dispatch_status, "CONSUMED");
   assert.equal(discovered.trade, null);
 });
+
+test("trades broker sync preserves planned order type from raw_json for existing trades", async () => {
+  const sqlitePath = path.join(tempRoot("sync-order-type"), "trades.sqlite");
+  const repo = createTradesRepo({
+    sqlitePath,
+    objectStore: { provider: "sqlite" },
+    sourceStorageBackend: "sqlite",
+  });
+
+  await repo.upsertTrade(
+    seedRow({
+      sid: "TRD_SYNC_TYPE_1",
+      trade_id: "TRD_SYNC_TYPE_1",
+      source_id: "ai_claude",
+      order_type: "limit",
+      execution_status: "PENDING",
+      dispatch_status: "LEASED",
+      metadata: {
+        provider_code: "ctrader",
+        raw_json: {
+          order_type: "Limit",
+          trade_plan: [{ order_type: "Limit" }],
+        },
+      },
+      raw_json: {
+        order_type: "Limit",
+        trade_plan: [{ order_type: "Limit" }],
+      },
+      note: "TRD_SYNC_TYPE_1",
+    }),
+    { appendJournal: false },
+  );
+
+  const synced = await repo.brokerSyncTrades(
+    "user",
+    "acc-1",
+    [
+      {
+        ticket: "654321",
+        ticket_candidates: ["654321"],
+        note: "TRD_SYNC_TYPE_1",
+        symbol: "BTCUSD",
+        action: "BUY",
+        execution_status: "FILLED",
+        order_type: "MARKET",
+        lots: 0.2,
+        volume: 0.2,
+        entry: 65010,
+        sl: 64800,
+        tp: 65500,
+      },
+    ],
+    {
+      now: "2026-07-10T10:30:00.000Z",
+      snapshotComplete: false,
+      brokerName: "ctrader",
+      providerCode: "ctrader",
+      sourceId: "CTRADER",
+    },
+  );
+
+  const loaded = await repo.getTrade({
+    sid: "TRD_SYNC_TYPE_1",
+    user_id: "user",
+  });
+
+  assert.equal(synced.ok, true);
+  assert.equal(loaded.trade.order_type, "limit");
+  assert.equal(loaded.trade.metadata.order_type, "limit");
+  assert.equal(loaded.trade.metadata.broker_order_type, "market");
+  assert.equal(loaded.trade.metadata.broker_data.order_type, "MARKET");
+});
+
+test("trades upsert canonicalizes stored order type from raw_json", async () => {
+  const sqlitePath = path.join(tempRoot("upsert-order-type"), "trades.sqlite");
+  const repo = createTradesRepo({
+    sqlitePath,
+    objectStore: { provider: "sqlite" },
+    sourceStorageBackend: "sqlite",
+  });
+
+  const saved = await repo.upsertTrade(
+    seedRow({
+      sid: "TRD_UPSERT_TYPE_1",
+      trade_id: "TRD_UPSERT_TYPE_1",
+      source_id: "ai_claude",
+      order_type: "market",
+      execution_status: "PENDING",
+      dispatch_status: "NEW",
+      metadata: {
+        raw_json: {
+          order_type: "Limit",
+          trade_plan: [{ order_type: "Limit" }],
+        },
+      },
+      raw_json: {
+        order_type: "Limit",
+        trade_plan: [{ order_type: "Limit" }],
+      },
+      note: "TRD_UPSERT_TYPE_1",
+    }),
+    { appendJournal: false },
+  );
+
+  const loaded = await repo.getTrade({
+    sid: "TRD_UPSERT_TYPE_1",
+    user_id: "user",
+  });
+
+  assert.equal(saved.trade.order_type, "limit");
+  assert.equal(loaded.trade.order_type, "limit");
+  assert.equal(loaded.trade.raw_json.order_type, "Limit");
+});

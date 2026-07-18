@@ -3257,6 +3257,8 @@ class TimeRangeBoxPrimitive {
     shadowColor = "",
     label = "",
     labelFontSize = null,
+    labelBackgroundColor = "rgba(2, 6, 23, 0.82)",
+    labelColor = "",
   }) {
     this._startTime = startTimeSec;
     this._endTime = endTimeSec;
@@ -3279,6 +3281,8 @@ class TimeRangeBoxPrimitive {
     this._labelFontSize = Number.isFinite(Number(labelFontSize))
       ? Math.max(6, Number(labelFontSize))
       : null;
+    this._labelBackgroundColor = String(labelBackgroundColor || "rgba(2, 6, 23, 0.82)").trim();
+    this._labelColor = String(labelColor || lineColor || "#e2e8f0").trim();
     this._series = null;
     this._chart = null;
   }
@@ -3416,9 +3420,9 @@ class TimeRangeBoxPrimitive {
                       0,
                       Math.min(y1 - chipH, Math.round((y0 + y1 - chipH) / 2)),
                     );
-                    ctx.fillStyle = "rgba(2, 6, 23, 0.82)";
+                    ctx.fillStyle = self._labelBackgroundColor;
                     ctx.fillRect(chipX, chipY, chipW, chipH);
-                    ctx.fillStyle = self._lineColor;
+                    ctx.fillStyle = self._labelColor || self._lineColor;
                     ctx.fillText(self._label, chipX + padX, chipY + padY);
                   }
                 }
@@ -5551,7 +5555,7 @@ export default function TradeSignalChart({
               timeSec,
               price,
               color: lineColor,
-              text: String(label || obj.marker_text || obj.type || "").trim(),
+              text: String(obj.marker_text || label || obj.type || "").trim(),
               placement: String(obj.marker_position || "belowBar"),
               shape: String(obj.marker_shape || "auto"),
               markerSize: obj.marker_size,
@@ -5662,6 +5666,8 @@ export default function TradeSignalChart({
                 : "",
             label,
             labelFontSize: obj?.label_font_size,
+            labelBackgroundColor: obj?.label_bg_color,
+            labelColor: obj?.label_color,
           });
           candleSeries.attachPrimitive(zonePrimitive);
           sharedOverlayPrimitivesRef.current.push(zonePrimitive);

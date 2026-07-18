@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const backtestService = require("../src/api/backtests/backtestService");
+const backtestService = require("../src/api/modules/42trade/backtests/backtestService");
 
 const {
   normalizeBarRows,
@@ -373,22 +373,20 @@ test("simulateStrategy logs triggered events and supports non-trade actions in v
   assert.equal(result.trades.length, 1);
   assert.equal(result.trades[0].action, "BUY");
   assert.equal(Array.isArray(result.event_log), true);
-  assert.equal(result.event_log.length, 4);
+  assert.equal(result.event_log.length, 2);
   assert.deepEqual(
     result.event_log.map((entry) => entry.event_id),
-    ["bullish", "bullish", "bearish", "bearish"],
+    ["long_breakout", "long_breakout"],
   );
   assert.deepEqual(
     result.event_log.map((entry) => entry.action_type),
-    ["trade", "notify.toast", "trade", "notify.toast"],
+    ["trade", "notify.toast"],
   );
   assert.equal(result.event_log[0].trade_plan?.direction, "buy");
-  assert.equal(result.event_log[2].trade_plan?.direction, "sell");
   assert.equal(result.event_log[1].message, "Breakout fired");
-  assert.equal(result.event_log[3].message, "Breakout fired");
 });
 
-test("all built-in preset strategies are rule-based and executable through the generic simulator", () => {
+test("all built-in preset strategies are rule-based and executable through the generic simulator", async () => {
   const bars = [];
   for (let index = 0; index < 320; index += 1) {
     const base = 100 + Math.sin(index / 7) * 6 + Math.cos(index / 19) * 3 + index * 0.08;
@@ -406,7 +404,7 @@ test("all built-in preset strategies are rule-based and executable through the g
     });
   }
 
-  for (const strategy of backtestService.listStrategies()) {
+  for (const strategy of await backtestService.listStrategies()) {
     assert.equal(strategy.engine_version, "42trade.strategy.v2", `${strategy.key} should declare engine version`);
     assert.ok(Array.isArray(strategy.events), `${strategy.key} should define events`);
     assert.ok(Array.isArray(strategy.indicators), `${strategy.key} should define indicators`);

@@ -731,6 +731,9 @@ function formatCompactDateTime(dateLike) {
 }
 
 function parseNum(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return parseNum(value.price ?? value.value ?? value.level);
+  }
   if (typeof value === "number") return Number.isFinite(value) ? value : NaN;
   let raw = String(value ?? "").trim();
   if (!raw) return NaN;
@@ -850,6 +853,27 @@ function planTpLevelNumber(plan = {}, level = 1) {
       plan?.multiple_exits?.tp3?.price ??
       plan?.multiple_exits?.full_tp?.price,
   );
+}
+
+function planTpLevelRrNumber(plan = {}, level = 1) {
+  const ep = plan?.execution_plan || {};
+  const key = `tp${level}`;
+  return parseNum(
+    ep?.[key]?.rr ??
+      ep?.[key]?.risk_reward ??
+      plan?.[key]?.rr ??
+      plan?.[key]?.risk_reward ??
+      plan?.multiple_exits?.[key]?.rr ??
+      plan?.multiple_exits?.[key]?.risk_reward,
+  );
+}
+
+function firstFiniteNumber(...values) {
+  for (const value of values) {
+    const n = parseNum(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return NaN;
 }
 
 function planInvalidationText(plan = {}, parsed = {}) {
@@ -1939,7 +1963,12 @@ function extractPositionFromAnalysis(parsed) {
   const tp = Number.isFinite(planTp)
     ? planTp
     : parseNum(parsed?.tp ?? parsed?.take_profit);
-  const rrRaw = parseNum(plan.rr ?? plan.risk_reward ?? parsed?.rr);
+  const rrRaw = firstFiniteNumber(
+    planTpLevelRrNumber(plan, 1),
+    plan.rr,
+    plan.risk_reward,
+    parsed?.rr,
+  );
   let rr = null;
   if (Number.isFinite(entry) && Number.isFinite(sl) && Number.isFinite(tp)) {
     const risk = Math.abs(entry - sl);
@@ -1955,6 +1984,9 @@ function extractPositionFromAnalysis(parsed) {
     direction: finalDirection,
     entry: Number.isFinite(entry) ? formatNum3(entry) : "",
     tp: Number.isFinite(tp) ? formatNum3(tp) : "",
+    tp1: Number.isFinite(planTpLevelNumber(plan, 1))
+      ? formatNum3(planTpLevelNumber(plan, 1))
+      : "",
     sl: Number.isFinite(sl) ? formatNum3(sl) : "",
     rr: Number.isFinite(rr) ? formatNum3(rr) : "",
     trade_type: planOrderTypeText(plan, parsed),
@@ -2093,7 +2125,12 @@ function extractPositionFromPlan(plan, parsed = {}) {
   const tp = Number.isFinite(planTp)
     ? planTp
     : parseNum(parsed?.tp ?? parsed?.take_profit);
-  const rrRaw = parseNum(item.rr ?? item.risk_reward ?? parsed?.rr);
+  const rrRaw = firstFiniteNumber(
+    planTpLevelRrNumber(item, 1),
+    item.rr,
+    item.risk_reward,
+    parsed?.rr,
+  );
   let rr = null;
   if (Number.isFinite(entry) && Number.isFinite(sl) && Number.isFinite(tp)) {
     const risk = Math.abs(entry - sl);
@@ -2105,6 +2142,9 @@ function extractPositionFromPlan(plan, parsed = {}) {
     direction,
     entry: Number.isFinite(entry) ? formatNum3(entry) : "",
     tp: Number.isFinite(tp) ? formatNum3(tp) : "",
+    tp1: Number.isFinite(planTpLevelNumber(item, 1))
+      ? formatNum3(planTpLevelNumber(item, 1))
+      : "",
     sl: Number.isFinite(sl) ? formatNum3(sl) : "",
     rr: Number.isFinite(rr) ? formatNum3(rr) : "",
     trade_type: planOrderTypeText(item, parsed),
@@ -2517,12 +2557,20 @@ function parseTradePlanFromRaw(rawText) {
     const n = Number(String(m[1]).replace(/,/g, ""));
     return Number.isFinite(n) ? n : null;
   };
+  const inPlanTpNum = (key) =>
+    inPlanNum(new RegExp(`"${key}"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)`, "i")) ??
+    inPlanNum(
+      new RegExp(
+        `"${key}"\\s*:\\s*\\{[\\s\\S]*?"price"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)`,
+        "i",
+      ),
+    );
 
   const entry = inPlanNum(/"entry"\s*:\s*(-?\d+(?:\.\d+)?)/i);
   const sl = inPlanNum(/"sl"\s*:\s*(-?\d+(?:\.\d+)?)/i);
-  const tp1 = inPlanNum(/"tp1"\s*:\s*(-?\d+(?:\.\d+)?)/i);
-  const tp2 = inPlanNum(/"tp2"\s*:\s*(-?\d+(?:\.\d+)?)/i);
-  const tp3 = inPlanNum(/"tp3"\s*:\s*(-?\d+(?:\.\d+)?)/i);
+  const tp1 = inPlanTpNum("tp1");
+  const tp2 = inPlanTpNum("tp2");
+  const tp3 = inPlanTpNum("tp3");
   const rr = inPlanNum(/"rr"\s*:\s*(-?\d+(?:\.\d+)?)/i);
   const direction =
     inPlan(/"direction"\s*:\s*"([^"]+)"/i) || inPlan(/"dir"\s*:\s*"([^"]+)"/i);

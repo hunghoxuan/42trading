@@ -38,11 +38,25 @@ test("InputComboSelect centralizes the shared combo and hybrid control logic", (
   assert.match(inputComboSelectSource, /data-component=\{dataComponent \|\| "InputComboSelect"\}/);
 });
 
+test("InputComboSelect displays unknown selected values instead of the first option", () => {
+  assert.match(inputComboSelectSource, /if\s*\(!normalized\)\s*return "Select\.\.\."/);
+  assert.match(inputComboSelectSource, /options\.find\(\(option\) => option\.value === normalized\)\?\.label \|\|/);
+  assert.match(inputComboSelectSource, /normalized \|\|[\s\S]*"Select\.\.\."/);
+});
+
 test("Strategy editor uses one shared InputComboSelect for combo and hybrid inputs", () => {
   assert.doesNotMatch(strategyEditorSource, /ValueParamInput/);
   assert.match(strategyEditorSource, /import InputComboSelect from "\.\.\/\.\.\/\.\.\/shared\/components\/InputComboSelect"/);
   assert.match(strategyEditorSource, /<InputComboSelect[\s\S]*text=\{operandText\}/);
   assert.match(strategyEditorSource, /<InputComboSelect[\s\S]*value=\{resolveSelectValue\(indicator\?\.field/);
+});
+
+test("Strategy editor parameter catalog includes price-action params and custom keys", () => {
+  assert.match(strategyEditorSource, /value:\s*"reward_rr"/);
+  assert.match(strategyEditorSource, /value:\s*"stop_buffer_pct"/);
+  assert.match(strategyEditorSource, /value:\s*"min_stop_pips"/);
+  assert.match(strategyEditorSource, /const paramKeyCatalog = useMemo/);
+  assert.match(strategyEditorSource, /Object\.keys\(draft\?\.params \|\| \{\}\)\.forEach/);
 });
 
 test("TradePlanEditor numeric controls render readOnly inputs and disabled nested controls", () => {

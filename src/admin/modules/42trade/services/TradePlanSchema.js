@@ -18,6 +18,10 @@
  */
 export function resolveField(p, field, ctx) {
   if (!ctx) ctx = {};
+  const priceOf = (value) =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value.price ?? value.value ?? value.level ?? null)
+      : value;
   switch (field) {
     // ── Prices ──
     case "entry":
@@ -31,11 +35,12 @@ export function resolveField(p, field, ctx) {
       );
     case "tp":
       return (
+        p?.execution_plan?.tp1?.price ??
+        priceOf(p?.tp1) ??
         p?.take_profit ??
         p?.multiple_exits?.full_tp?.price ??
-        p?.tp3 ??
-        p?.tp1 ??
-        p?.tp ??
+        priceOf(p?.tp3) ??
+        priceOf(p?.tp) ??
         ctx?.tp ??
         ctx?.take_profit ??
         (Array.isArray(p?.tps) && p.tps[p.tps.length - 1]?.price) ??
@@ -43,16 +48,18 @@ export function resolveField(p, field, ctx) {
       );
     case "tp2":
       return (
+        p?.execution_plan?.tp2?.price ??
         p?.multiple_exits?.tp2?.price ??
-        p?.tp2 ??
+        priceOf(p?.tp2) ??
         (Array.isArray(p?.tps) && p.tps[1]?.price) ??
         null
       );
     case "tp3":
       return (
+        p?.execution_plan?.tp3?.price ??
         p?.multiple_exits?.tp3?.price ??
         p?.multiple_exits?.full_tp?.price ??
-        p?.tp3 ??
+        priceOf(p?.tp3) ??
         (Array.isArray(p?.tps) && p.tps[2]?.price) ??
         null
       );

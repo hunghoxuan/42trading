@@ -416,6 +416,9 @@ function asNum(value, fallback = NaN) {
   if (value === undefined || value === null) {
     return fallback;
   }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return asNum(value.price ?? value.value ?? value.level, fallback);
+  }
   if (typeof value === "string" && value.trim() === "") {
     return fallback;
   }
@@ -14592,6 +14595,9 @@ async function healthCronStatusesByName() {
 
 function mt5ParsePriceOrNull(v) {
   if (v == null) return null;
+  if (v && typeof v === "object" && !Array.isArray(v)) {
+    return mt5ParsePriceOrNull(v.price ?? v.value ?? v.level);
+  }
   const raw = String(v).trim();
   if (!raw) return null;
   const normalized =
@@ -34814,6 +34820,43 @@ const appHandler = async (req, res) => {
         parsed = {},
         fallbackSymbol = "",
       ) => {
+        const planTpPrice = (plan = {}, level = 1) => {
+          const ep = plan?.execution_plan || {};
+          if (level === 1) {
+            return mt5ParsePriceOrNull(
+              ep?.tp1?.price ??
+                plan?.tp1 ??
+                plan?.tp ??
+                plan?.take_profit ??
+                plan?.multiple_exits?.tp1?.price ??
+                plan?.multiple_exits?.full_tp?.price,
+            );
+          }
+          if (level === 2) {
+            return mt5ParsePriceOrNull(
+              ep?.tp2?.price ?? plan?.tp2 ?? plan?.multiple_exits?.tp2?.price,
+            );
+          }
+          return mt5ParsePriceOrNull(
+            ep?.tp3?.price ??
+              plan?.tp3 ??
+              plan?.multiple_exits?.tp3?.price ??
+              plan?.multiple_exits?.full_tp?.price,
+          );
+        };
+        const planTpRr = (plan = {}, level = 1) => {
+          const ep = plan?.execution_plan || {};
+          const key = `tp${level}`;
+          return asNum(
+            ep?.[key]?.rr ??
+              ep?.[key]?.risk_reward ??
+              plan?.[key]?.rr ??
+              plan?.[key]?.risk_reward ??
+              plan?.multiple_exits?.[key]?.rr ??
+              plan?.multiple_exits?.[key]?.risk_reward,
+            null,
+          );
+        };
         const plans = [];
         if (Array.isArray(parsed?.trade_plan)) {
           plans.push(...parsed.trade_plan);
@@ -34829,7 +34872,11 @@ const appHandler = async (req, res) => {
           const sl = Number(
             ep?.stop_loss?.price ?? plan?.sl ?? plan?.stop_loss,
           );
-          const tp = Number(ep?.tp1?.price ?? resolvePlanTakeProfit(plan));
+          const tp1 = planTpPrice(plan, 1);
+          const tp2 = planTpPrice(plan, 2);
+          const tp3 = planTpPrice(plan, 3);
+          const targets = mt5NormalizeTpTargets([tp1, tp2, tp3], plan?.direction);
+          const tp = targets[0] ?? mt5ParsePriceOrNull(resolvePlanTakeProfit(plan));
           if (
             Number.isFinite(entry) &&
             Number.isFinite(sl) &&
@@ -34840,6 +34887,11 @@ const appHandler = async (req, res) => {
               entry,
               sl,
               tp,
+              tp1: targets[0] ?? null,
+              tp2: targets[1] ?? null,
+              tp3: targets[2] ?? null,
+              tp_targets: targets,
+              rr: planTpRr(plan, 1) ?? asNum(plan?.rr ?? plan?.risk_reward, null),
               symbol: String(
                 plan?.symbol || parsed?.symbol || fallbackSymbol || "",
               )
@@ -34929,8 +34981,12 @@ const appHandler = async (req, res) => {
                 entry: pick.entry,
                 sl: pick.sl,
                 tp: pick.tp,
+                tp1: pick.tp1,
+                tp2: pick.tp2,
+                tp3: pick.tp3,
+                tp_targets: pick.tp_targets,
                 volume: asNum(body?.volume ?? body?.lots, null),
-                rr_planned: asNum(plan?.rr, null),
+                rr_planned: pick.rr,
                 note: String(
                   plan?.note || parsedJson?.final_verdict?.note || "",
                 ).trim(),
@@ -35013,8 +35069,12 @@ const appHandler = async (req, res) => {
                   entry: pick.entry,
                   sl: pick.sl,
                   tp: pick.tp,
+                  tp1: pick.tp1,
+                  tp2: pick.tp2,
+                  tp3: pick.tp3,
+                  tp_targets: pick.tp_targets,
                   volume: asNum(body?.volume ?? body?.lots, null),
-                  rr_planned: asNum(plan?.rr, null),
+                  rr_planned: pick.rr,
                   risk_pct_planned: asNum(plan?.risk_pct, null),
                   confidence_pct: asNum(plan?.confidence_pct, null),
                   estimated_bars: asNum(plan?.estimated_bars, null),
@@ -35110,8 +35170,12 @@ const appHandler = async (req, res) => {
               entry: pick.entry,
               sl: pick.sl,
               tp: pick.tp,
+              tp1: pick.tp1,
+              tp2: pick.tp2,
+              tp3: pick.tp3,
+              tp_targets: pick.tp_targets,
               volume: asNum(body?.volume ?? body?.lots, null),
-              rr_planned: asNum(plan?.rr, null),
+              rr_planned: pick.rr,
               risk_pct_planned: asNum(plan?.risk_pct, null),
               note: String(
                 plan?.note || parsedJson?.final_verdict?.note || "",

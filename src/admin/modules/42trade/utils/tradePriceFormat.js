@@ -1,5 +1,8 @@
 export function parseTradePriceNumber(value) {
   if (value == null) return null;
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return parseTradePriceNumber(value.price ?? value.value ?? value.level);
+  }
   const numeric = Number(String(value).trim().replace(",", "."));
   return Number.isFinite(numeric) ? numeric : null;
 }

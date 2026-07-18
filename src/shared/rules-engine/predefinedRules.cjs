@@ -1,0 +1,150 @@
+"use strict";
+
+const PREDEFINED_RULES = [
+  {
+    id: "price_crosses_ema",
+    abbr: "PX_EMA",
+    name: "Price Crosses EMA",
+    icon: "crosshair",
+    family: "moving_average",
+    params: { side: "above", source: "close", ema_length: 20 },
+    condition: { crosses_above: [{ var: "bar.close" }, { var: "indicators.ema_20" }] },
+    outputs: { bias: "bullish", marker: "arrow_up" },
+  },
+  {
+    id: "ema_fast_crosses_ema_slow",
+    abbr: "EMA_X",
+    name: "Fast EMA Crosses Slow EMA",
+    icon: "git-compare-arrows",
+    family: "moving_average",
+    params: { side: "above", fast_length: 9, slow_length: 21 },
+    condition: { crosses_above: [{ var: "indicators.ema_fast" }, { var: "indicators.ema_slow" }] },
+    outputs: { bias: "bullish", marker: "arrow_up" },
+  },
+  {
+    id: "price_rejected_ema",
+    abbr: "RJ_EMA",
+    name: "Price Rejected EMA",
+    icon: "undo-2",
+    family: "moving_average",
+    params: { ema_length: 20 },
+    condition: { rejected: [{ var: "bar.close" }, { var: "indicators.ema_20" }] },
+    outputs: { marker: "dot" },
+  },
+  {
+    id: "price_crosses_vwap",
+    abbr: "PX_VWAP",
+    name: "Price Crosses VWAP",
+    icon: "waves",
+    family: "vwap",
+    params: { side: "above" },
+    condition: { crosses_above: [{ var: "bar.close" }, { var: "indicators.vwap" }] },
+    outputs: { bias: "bullish", marker: "arrow_up" },
+  },
+  {
+    id: "price_rejected_key_level",
+    abbr: "RJ_LVL",
+    name: "Price Rejected Key Level",
+    icon: "minus",
+    family: "key_level",
+    params: { level: "levels.key" },
+    condition: { rejected: [{ var: "bar.close" }, { var: "levels.key" }] },
+    outputs: { marker: "dot" },
+  },
+  {
+    id: "price_breaks_key_level",
+    abbr: "BRK_LVL",
+    name: "Price Breaks Key Level",
+    icon: "move-up-right",
+    family: "key_level",
+    params: { side: "above", close_confirmation: true },
+    condition: { crosses_above: [{ var: "bar.close" }, { var: "levels.key" }] },
+    outputs: { bias: "bullish", marker: "arrow_up" },
+  },
+  {
+    id: "price_rejected_bollinger_band",
+    abbr: "RJ_BB",
+    name: "Price Rejected Bollinger Band",
+    icon: "brackets",
+    family: "volatility",
+    params: { band: "lower" },
+    condition: { rejected: [{ var: "bar.close" }, { var: "indicators.bb_lower" }] },
+    outputs: { marker: "dot" },
+  },
+  {
+    id: "macd_cross",
+    abbr: "MACD_X",
+    name: "MACD Cross",
+    icon: "chart-no-axes-combined",
+    family: "momentum",
+    params: { side: "above" },
+    condition: { crosses_above: [{ var: "indicators.macd" }, { var: "indicators.macd_signal" }] },
+    outputs: { bias: "bullish", marker: "arrow_up" },
+  },
+  {
+    id: "bullish_engulfing",
+    abbr: "B_ENG",
+    name: "Bullish Engulfing",
+    icon: "candlestick-chart",
+    family: "candle_pattern",
+    params: {},
+    condition: { fn: "engulfing", args: ["bullish"] },
+    outputs: { bias: "bullish", marker: "arrow_up" },
+  },
+  {
+    id: "bearish_engulfing",
+    abbr: "S_ENG",
+    name: "Bearish Engulfing",
+    icon: "candlestick-chart",
+    family: "candle_pattern",
+    params: {},
+    condition: { fn: "engulfing", args: ["bearish"] },
+    outputs: { bias: "bearish", marker: "arrow_down" },
+  },
+  {
+    id: "liquidity_sweep",
+    abbr: "SWP",
+    name: "Liquidity Sweep",
+    icon: "scan-line",
+    family: "structure",
+    params: { bias: "" },
+    condition: { fn: "sweep", args: [] },
+    outputs: { marker: "diamond" },
+  },
+  {
+    id: "break_of_structure",
+    abbr: "BOS",
+    name: "Break of Structure",
+    icon: "route",
+    family: "structure",
+    params: { bias: "" },
+    condition: { fn: "bos", args: [] },
+    outputs: { marker: "flag" },
+  },
+  {
+    id: "change_of_character",
+    abbr: "CHOCH",
+    name: "Change of Character",
+    icon: "shuffle",
+    family: "structure",
+    params: { bias: "" },
+    condition: { fn: "choch", args: [] },
+    outputs: { marker: "flag" },
+  },
+];
+
+function listPredefinedRules() {
+  return PREDEFINED_RULES.map((rule) => ({
+    ...rule,
+    params: { ...(rule.params || {}) },
+    outputs: { ...(rule.outputs || {}) },
+    condition: JSON.parse(JSON.stringify(rule.condition || null)),
+  }));
+}
+
+function findPredefinedRule(id = "") {
+  const needle = String(id || "").trim();
+  return listPredefinedRules().find((rule) => rule.id === needle) || null;
+}
+
+module.exports = { PREDEFINED_RULES, findPredefinedRule, listPredefinedRules };

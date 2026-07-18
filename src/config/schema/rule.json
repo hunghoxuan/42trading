@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "42trade.rule.v1",
+  "title": "42trade Rule",
+  "type": "object",
+  "required": ["id", "abbr", "name", "condition"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9._-]{3,80}$"
+    },
+    "abbr": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "icon": {
+      "type": "string",
+      "maxLength": 80
+    },
+    "family": {
+      "type": "string",
+      "maxLength": 80
+    },
+    "params": {
+      "type": "object",
+      "additionalProperties": {
+        "type": ["number", "string", "boolean", "array", "object", "null"]
+      }
+    },
+    "condition": {},
+    "outputs": {
+      "type": "object",
+      "properties": {
+        "bias": { "type": "string" },
+        "marker": { "type": "string" },
+        "severity": { "type": "string" },
+        "confidence": { "type": "number" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

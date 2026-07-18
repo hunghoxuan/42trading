@@ -200,6 +200,12 @@ function cleanFieldValue(v) {
   return String(v);
 }
 
+function cleanTargetFieldValue(v) {
+  const n = parseNum(v);
+  if (Number.isFinite(n) && n <= 0) return "";
+  return cleanFieldValue(v);
+}
+
 function calcSliderMeta(rawValue) {
   const n = parseNum(rawValue);
   if (!Number.isFinite(n)) {
@@ -250,7 +256,8 @@ function calcRrByTarget(entryRaw, slRaw, targetRaw, directionRaw = "") {
   if (
     !Number.isFinite(entry) ||
     !Number.isFinite(sl) ||
-    !Number.isFinite(target)
+    !Number.isFinite(target) ||
+    target <= 0
   )
     return "";
   const direction = String(directionRaw || "").toUpperCase();
@@ -763,6 +770,8 @@ export function TradePlanEditor({
     () => calcRrByTarget(value.entry, value.sl, value.tp3, value.direction),
     [value.entry, value.sl, value.tp3, value.direction],
   );
+  const tp2HasPrice = (parseNum(value.tp2) ?? 0) > 0;
+  const tp3HasPrice = (parseNum(value.tp3) ?? 0) > 0;
 
   const handleRrChange = useCallback(
     (key, rrVal) => {
@@ -1265,7 +1274,7 @@ export function TradePlanEditor({
                   idPrefix={idPrefix}
                   label="TP2"
                   k="tp2"
-                  valueRaw={value.tp2}
+                  valueRaw={cleanTargetFieldValue(value.tp2)}
                   entryValue={value.entry}
                   slValue={value.sl}
                   frozenStep={frozenStep}
@@ -1280,7 +1289,7 @@ export function TradePlanEditor({
                   idPrefix={idPrefix}
                   label="RR2"
                   k="rr2"
-                  valueRaw={value.rr2 != null ? value.rr2 : rr2}
+                  valueRaw={tp2HasPrice ? (value.rr2 != null ? value.rr2 : rr2) : ""}
                   controlsDisabled={controlsDisabled}
                   onUpdate={handleRrChange}
                   disabled={tradeFieldsDisabled}
@@ -1295,7 +1304,7 @@ export function TradePlanEditor({
                   idPrefix={idPrefix}
                   label="TP3"
                   k="tp3"
-                  valueRaw={value.tp3}
+                  valueRaw={cleanTargetFieldValue(value.tp3)}
                   entryValue={value.entry}
                   slValue={value.sl}
                   frozenStep={frozenStep}
@@ -1310,7 +1319,7 @@ export function TradePlanEditor({
                   idPrefix={idPrefix}
                   label="RR3"
                   k="rr3"
-                  valueRaw={value.rr3 != null ? value.rr3 : rr3}
+                  valueRaw={tp3HasPrice ? (value.rr3 != null ? value.rr3 : rr3) : ""}
                   controlsDisabled={controlsDisabled}
                   onUpdate={handleRrChange}
                   disabled={tradeFieldsDisabled}

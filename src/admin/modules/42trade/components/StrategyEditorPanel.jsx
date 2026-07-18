@@ -184,7 +184,12 @@ const PARAM_KEY_OPTIONS = [
   { value: "smooth_period", label: "smooth_period" },
   { value: "stddev", label: "stddev" },
   { value: "rr_target", label: "rr_target" },
+  { value: "reward_rr", label: "reward_rr" },
+  { value: "reward_rr_floor", label: "reward_rr_floor" },
   { value: "stop_lookback", label: "stop_lookback" },
+  { value: "stop_buffer_pct", label: "stop_buffer_pct" },
+  { value: "min_stop_pips", label: "min_stop_pips" },
+  { value: "suggested_level_tfs", label: "suggested_level_tfs" },
   { value: "oversold", label: "oversold" },
   { value: "overbought", label: "overbought" },
 ];
@@ -959,9 +964,7 @@ function withNullOption(items = []) {
 
 function resolveSelectValue(value, options = []) {
   const normalized = String(value ?? "").trim();
-  return options.some((item) => String(item?.value ?? "") === normalized)
-    ? normalized
-    : "";
+  return normalized;
 }
 
 function buildDefaultDraft(exampleStrategy, defaults = {}) {
@@ -2269,6 +2272,17 @@ export default function StrategyEditorPanel({
   const hasIndicators = Array.isArray(draft?.indicators) && draft.indicators.length > 0;
   const hasRuleValues = Array.isArray(draft?.rules) && draft.rules.length > 0;
   const hasParams = Object.keys(draft?.params || {}).length > 0;
+  const paramKeyCatalog = useMemo(() => {
+    const byValue = new Map(
+      PARAM_KEY_OPTIONS.map((option) => [String(option.value || ""), option]),
+    );
+    Object.keys(draft?.params || {}).forEach((key) => {
+      const value = String(key || "").trim();
+      if (!value || byValue.has(value)) return;
+      byValue.set(value, { value, label: value });
+    });
+    return Array.from(byValue.values());
+  }, [draft?.params]);
   const hasDescription = hasDataValue(draft?.description);
   const visibleRules = Array.isArray(draft?.rules) ? draft.rules : [];
   const backtestSummary =
@@ -3025,14 +3039,14 @@ export default function StrategyEditorPanel({
                     type="button"
                     className="secondary-button"
                     disabled={
-                      PARAM_KEY_OPTIONS.every((option) =>
+                      paramKeyCatalog.every((option) =>
                         Object.prototype.hasOwnProperty.call(draft?.params || {}, option.value),
                       )
                     }
                     onClick={() =>
                       updateDraft((base) => {
                         const nextParams = { ...(base.params || {}) };
-                        const nextOption = PARAM_KEY_OPTIONS.find(
+                        const nextOption = paramKeyCatalog.find(
                           (option) => !Object.prototype.hasOwnProperty.call(nextParams, option.value),
                         );
                         if (!nextOption) return base;
@@ -3064,7 +3078,7 @@ export default function StrategyEditorPanel({
                     </div>
                     {Object.entries(draft?.params || {}).map(([key, value]) => {
                       const paramKeyOptions = withNullOption(
-                        PARAM_KEY_OPTIONS.filter(
+                        paramKeyCatalog.filter(
                           (option) =>
                             option.value === key ||
                             !Object.prototype.hasOwnProperty.call(draft?.params || {}, option.value),

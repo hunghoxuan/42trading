@@ -86,6 +86,8 @@ test("evaluateChartStrategies returns the latest matching event inside the lookb
   assert.equal(result.matches[0].strategyId, "ema_cross");
   assert.equal(result.matches[0].eventId, "entry_long");
   assert.equal(result.matches[0].displayText, "EMA Cross · Entry Long");
+  assert.equal(result.matches[0].ruleEvent?.rule_id, "entry_long");
+  assert.equal(result.matches[0].ruleEvent?.abbr, "entry_long");
 });
 
 test("evaluateChartStrategies drops matches that only occurred before the lookback window", () => {

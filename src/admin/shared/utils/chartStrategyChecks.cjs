@@ -18,6 +18,7 @@ const compiledSource = `
 const sharedArtifactDetection = require("../../modules/42trade/chartArtifacts/detectArtifacts.cjs");
 const strategyEventFunctions = require("../../modules/42trade/chartArtifacts/strategyEventFunctions.cjs");
 const strategyScanEngine = require("../../../shared/utils/strategyScanEngine.cjs");
+const sharedRulesEngine = require("../../../shared/rules-engine/index.cjs");
 ${source}
 module.exports = { ${exportNames.join(", ")} };
 `;

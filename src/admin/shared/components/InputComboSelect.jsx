@@ -80,9 +80,11 @@ function buildEventPayload({
 }
 
 function defaultSingleLabel(options, value) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "Select...";
   return (
-    options.find((option) => option.value === String(value ?? ""))?.label ||
-    options[0]?.label ||
+    options.find((option) => option.value === normalized)?.label ||
+    normalized ||
     "Select..."
   );
 }

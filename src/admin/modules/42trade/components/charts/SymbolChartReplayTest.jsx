@@ -1548,10 +1548,18 @@ function artifactTypeAbbr(typeRaw = "") {
   if (type === "ob") return "OB";
   if (type === "bos") return "BOS";
   if (type === "choch") return "CHOCH";
-  if (type === "sweep_high" || type === "sweep_low") return "SWEEP";
+  if (type === "sweep_high" || type === "sweep_low") return "SW";
   if (type === "key_level") return "KL";
   if (type === "strategy") return "STR";
   return type.replaceAll("_", " ");
+}
+
+function sanitizeChartText(value = "") {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  const normalized = text.toLowerCase();
+  if (normalized === "null" || normalized === "undefined") return "";
+  return text;
 }
 
 function artifactDisplayTypeKey(item = {}) {
@@ -1625,6 +1633,15 @@ function artifactMarkerText(item = {}) {
   return artifactTypeAbbr(type).slice(0, 4).toUpperCase();
 }
 
+function isTrueSignalEventItem(item = {}) {
+  return !!(
+    item &&
+    typeof item === "object" &&
+    item?.is_event === true &&
+    artifactMarkerText(item)
+  );
+}
+
 function strategyHitMarkerText(hit = {}) {
   const latestArtifactPayload =
     hit?.latestArtifact?.payload && typeof hit.latestArtifact.payload === "object"
@@ -1678,8 +1695,10 @@ function strategyHitToChartObject(hit = {}, fallbackTf = "") {
     kind: "point",
     type: "STRATEGY",
     label:
-      String(hit?.eventName || hit?.event_name || hit?.strategyName || "Strategy").trim() ||
-      "Strategy",
+      sanitizeChartText(hit?.eventName) ||
+      sanitizeChartText(hit?.event_name) ||
+      sanitizeChartText(hit?.strategyName) ||
+      "",
     visible: true,
     tf: String(hit?.tf || fallbackTf || "").trim(),
     color: String(sourceTfColor || hit?.markerColor || "#38bdf8"),
@@ -2131,6 +2150,44 @@ function artifactSourceSpanEndTimeSec(item = {}, startTimeSec = null, fallbackTf
   return null;
 }
 
+function resolveZoneEventMarkerPrice(item = {}, top = null, bottom = null, fallbackPrice = null) {
+  const payload =
+    item?.payload && typeof item.payload === "object"
+      ? item.payload
+      : item?.artifact_payload?.payload && typeof item.artifact_payload.payload === "object"
+        ? item.artifact_payload.payload
+        : {};
+  const lifecycleState = String(payload.lifecycle_state || "").trim().toLowerCase();
+  const eventKey = String(item?.event_key || "").trim().toLowerCase();
+  const direction = String(
+    item?.event_direction || item?.direction || payload?.bias || item?.subtype || "",
+  )
+    .trim()
+    .toLowerCase();
+  const bearish = direction === "sell" || direction === "bearish";
+  const bullish = direction === "buy" || direction === "bullish";
+  if (
+    eventKey === "breakout" ||
+    lifecycleState === "broken_through" ||
+    lifecycleState === "converted_active" ||
+    lifecycleState === "converted_touched_no_resolution"
+  ) {
+    if (bearish && Number.isFinite(bottom)) return bottom;
+    if (bullish && Number.isFinite(top)) return top;
+  }
+  if (
+    eventKey === "reject" ||
+    lifecycleState === "rejected_touch" ||
+    lifecycleState === "converted_rejected_touch"
+  ) {
+    if (bearish && Number.isFinite(top)) return top;
+    if (bullish && Number.isFinite(bottom)) return bottom;
+  }
+  if (Number.isFinite(fallbackPrice)) return fallbackPrice;
+  if (Number.isFinite(top) && Number.isFinite(bottom)) return (top + bottom) / 2;
+  return Number.isFinite(top) ? top : bottom;
+}
+
 function artifactItemToChartObject(item = {}, fallbackTf = "") {
   if (!item || typeof item !== "object") return null;
   const family = String(item.family || "").trim().toLowerCase();
@@ -2311,7 +2368,7 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
         ? artifactSourceSpanEndTimeSec(item, timeSec, tf) ??
           (timeSec + artifactSourceTfSeconds(item, tf) * defaultZoneExtensionBars)
         : null;
-    return {
+    const zoneObject = {
       id: String(item.id || `${family}-${type}-${timeSec || top}`),
       kind: "zone",
       type: type.toUpperCase() || "ZONE",
@@ -2339,6 +2396,63 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
       source_tf: tf,
       artifact_payload: item,
     };
+    const eventTimeSec = Number(item?.event_time ?? item?.anchor_time ?? item?.bar_end) || null;
+    const eventDirection = String(
+      item?.event_direction || item?.direction || item?.payload?.bias || item?.subtype || "",
+    )
+      .trim()
+      .toLowerCase();
+    const zoneEventMarkerText = artifactMarkerText(item);
+    const eventPrice = resolveZoneEventMarkerPrice(
+      item,
+      top,
+      bottom,
+      Number.isFinite(price) ? price : null,
+    );
+    if (
+      item?.is_event &&
+      zoneEventMarkerText &&
+      Number.isFinite(eventTimeSec) &&
+      Number.isFinite(eventPrice)
+    ) {
+      return [
+        zoneObject,
+        {
+          id: `${String(item.id || `${family}-${type}-${eventTimeSec}`)}:event`,
+          kind: "point",
+          type: type.toUpperCase() || "POINT",
+          label: artifactInlineLabel(item, tf),
+          visible: true,
+          tf,
+          color,
+          price: eventPrice,
+          time: eventTimeSec,
+          anchorTimeMs: eventTimeSec * 1000,
+          anchorPrice: eventPrice,
+          line_style: "dot",
+          line_width: 0.1,
+          marker_shape:
+            eventDirection === "sell" || eventDirection === "bearish"
+              ? "arrowDown"
+              : "arrowUp",
+          marker_text: zoneEventMarkerText,
+          marker_position:
+            eventDirection === "sell" || eventDirection === "bearish"
+              ? "aboveBar"
+              : "belowBar",
+          marker_size: 4,
+          artifact_family: family,
+          artifact_type: `${type}_event`,
+          artifact_group: groupKey,
+          source_tf: tf,
+          artifact_payload: item,
+          is_event: true,
+          event_key: item?.event_key || "",
+          event_time: eventTimeSec,
+        },
+      ];
+    }
+    return zoneObject;
   }
 
   if (family === "pattern" || family === "structure") {
@@ -6516,6 +6630,7 @@ export default function SymbolChart({
         bars,
       ).map((item) => {
         const groupKey = artifactGroupKeyForItem(item);
+        if (isTrueSignalEventItem(item)) return item;
         const storedVisible = artifactGroupVisibility?.[groupKey];
         if (typeof storedVisible === "boolean") {
           return { ...item, visible: storedVisible };
@@ -7678,6 +7793,7 @@ export default function SymbolChart({
         replaySourceBars,
       ).map((item) => {
         const groupKey = artifactGroupKeyForItem(item);
+        if (isTrueSignalEventItem(item)) return item;
         const storedVisible = artifactGroupVisibility?.[groupKey];
         if (typeof storedVisible === "boolean") {
           return { ...item, visible: storedVisible };
@@ -7854,6 +7970,7 @@ export default function SymbolChart({
         replaySourceBars,
       ).map((item) => {
         const groupKey = artifactGroupKeyForItem(item);
+        if (isTrueSignalEventItem(item)) return item;
         const storedVisible = artifactGroupVisibility?.[groupKey];
         if (typeof storedVisible === "boolean") {
           return { ...item, visible: storedVisible };

@@ -639,7 +639,7 @@ function RealtimeTfAnalysisOverlay({
         pointerEvents: "auto",
         display: "flex",
         flexDirection: "column",
-        gap: 1,
+        gap: 4,
         minWidth: 110,
         padding: "1px 2px",
         borderRadius: 0,
@@ -668,11 +668,11 @@ function RealtimeTfAnalysisOverlay({
             key={tf}
             style={{
               display: "grid",
-              gridTemplateColumns: "18px auto",
-              alignItems: "center",
-              gap: 2,
+              gridTemplateColumns: "24px auto",
+              alignItems: "start",
+              columnGap: 5,
               fontSize: 10,
-              lineHeight: 1,
+              lineHeight: 1.15,
               color: isActive ? "#f8fafc" : "rgba(226, 232, 240, 0.94)",
               fontWeight: isActive ? 700 : 600,
             }}
@@ -689,7 +689,7 @@ function RealtimeTfAnalysisOverlay({
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "flex-start",
-                gap: 2,
+                gap: 4,
                 flexWrap: "wrap",
               }}
             >
@@ -741,7 +741,7 @@ function RealtimeTfAnalysisOverlay({
                     fontVariantNumeric: "tabular-nums",
                     display: "inline-flex",
                     alignItems: "center",
-                    gap: 2,
+                    gap: 3,
                     background: `${recentEvent.color}12`,
                   }}
                   title={recentEvent.title}
@@ -2057,10 +2057,25 @@ function artifactTypeAbbr(typeRaw = "") {
   if (type === "ob") return "OB";
   if (type === "bos") return "BOS";
   if (type === "choch") return "CHOCH";
-  if (type === "sweep_high" || type === "sweep_low") return "SWEEP";
+  if (type === "sweep_high" || type === "sweep_low") return "SW";
   if (type === "key_level") return "KL";
   if (type === "strategy") return "STR";
   return type.replaceAll("_", " ");
+}
+
+function sanitizeChartText(value = "") {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  const normalized = text.toLowerCase();
+  if (normalized === "null" || normalized === "undefined") return "";
+  return text;
+}
+
+function joinChartText(parts = [], separator = " · ") {
+  return (Array.isArray(parts) ? parts : [])
+    .map((part) => sanitizeChartText(part))
+    .filter(Boolean)
+    .join(separator);
 }
 
 function artifactDisplayTypeKey(item = {}) {
@@ -2393,6 +2408,12 @@ function strategyHitToChartObject(hit = {}, fallbackTf = "") {
   if (!Number.isFinite(timeSec) || timeSec <= 0) return null;
   const sourceTf = String(hit?.sourceTf || hit?.source_tf || hit?.tf || fallbackTf || "").trim();
   const sourceTfColor = artifactTimeframeColor(sourceTf);
+  const latestArtifactGroup = artifactGroupKeyForItem(hit?.latestArtifact || {});
+  const baseMarkerColor = String(hit?.markerColor || sourceTfColor || "#38bdf8");
+  const markerColor =
+    latestArtifactGroup === "bb"
+      ? brightenHexColor(baseMarkerColor, 0.3)
+      : baseMarkerColor;
   const price = Number(
     hit?.latestArtifact?.price ??
       hit?.latestArtifact?.payload?.level ??
@@ -2413,14 +2434,14 @@ function strategyHitToChartObject(hit = {}, fallbackTf = "") {
     kind: "point",
     type: "STRATEGY",
     label:
-      String(hit?.eventName || hit?.event_name || hit?.strategyName || "Strategy").trim() ||
-      "Strategy",
+      sanitizeChartText(hit?.eventName) ||
+      sanitizeChartText(hit?.event_name) ||
+      sanitizeChartText(hit?.strategyName) ||
+      "",
     visible: true,
     tf: String(hit?.tf || fallbackTf || "").trim(),
-    color: String(sourceTfColor || hit?.markerColor || "#38bdf8"),
-    text_color: String(
-      hit?.markerTextColor || sourceTfColor,
-    ),
+    color: markerColor,
+    text_color: String(hit?.markerTextColor || markerColor),
     price: Number.isFinite(price) ? price : null,
     time: timeSec,
     anchorTimeMs: timeSec * 1000,
@@ -2726,6 +2747,22 @@ function withHexAlpha(color = "", alpha = "ff") {
   const normalized = /^#[0-9a-f]{8}$/i.test(base) ? base.slice(0, 7) : base;
   if (!/^#[0-9a-f]{6}$/i.test(normalized)) return base;
   return `${normalized}${String(alpha || "ff").trim()}`;
+}
+
+function brightenHexColor(color = "", amount = 0.2) {
+  const base = String(color || "").trim();
+  const normalized = /^#[0-9a-f]{8}$/i.test(base) ? base.slice(0, 7) : base;
+  const match = normalized.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+  if (!match) return base;
+  const mix = Math.max(0, Math.min(1, Number(amount) || 0));
+  const nextChannel = (hex) => {
+    const current = parseInt(hex, 16);
+    const next = Math.round(current + (255 - current) * mix);
+    return Math.max(0, Math.min(255, next))
+      .toString(16)
+      .padStart(2, "0");
+  };
+  return `#${nextChannel(match[1])}${nextChannel(match[2])}${nextChannel(match[3])}`;
 }
 
 function artifactColorForItem(item = {}) {
@@ -3143,6 +3180,14 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
         groupKey === "fvg" || groupKey === "ifvg" || groupKey === "bb" || groupKey === "ob"
           ? withHexAlpha(color, "05")
           : withHexAlpha(color, "0d"),
+      label_bg_color:
+        groupKey === "bb"
+          ? "rgba(2, 6, 23, 0.94)"
+          : undefined,
+      label_color:
+        groupKey === "bb"
+          ? brightenHexColor(color, 0.24)
+          : undefined,
       price_top: top,
       price_bottom: bottom,
       time: Number.isFinite(timeSec) ? timeSec : null,
@@ -3183,14 +3228,13 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
         : null,
       artifact_payload: item,
     };
-    const suppressedZoneEventTypes = new Set(["fvg", "ifvg", "bb"]);
-    const normalizedZoneType = String(type || "").trim().toLowerCase();
     const eventTimeSec = Number(item?.event_time ?? item?.anchor_time ?? item?.bar_end) || null;
     const eventDirection = String(
       item?.event_direction || item?.direction || item?.payload?.bias || item?.subtype || "",
     )
       .trim()
       .toLowerCase();
+    const zoneEventMarkerText = artifactMarkerText(item);
     const eventPrice = resolveZoneEventMarkerPrice(
       item,
       top,
@@ -3199,7 +3243,7 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
     );
     if (
       item?.is_event &&
-      !suppressedZoneEventTypes.has(normalizedZoneType) &&
+      zoneEventMarkerText &&
       Number.isFinite(eventTimeSec) &&
       Number.isFinite(eventPrice)
     ) {
@@ -3223,7 +3267,7 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
             eventDirection === "sell" || eventDirection === "bearish"
               ? "arrowDown"
               : "arrowUp",
-          marker_text: artifactMarkerText(item),
+          marker_text: zoneEventMarkerText,
           marker_position:
             eventDirection === "sell" || eventDirection === "bearish"
               ? "aboveBar"
@@ -3679,6 +3723,55 @@ function latestArtifactEventTimeSec(item = {}) {
   return Number.isFinite(anchorTime) && anchorTime > 0 ? anchorTime : null;
 }
 
+function latestArtifactEventPrice(item = {}) {
+  const candidates = [
+    item?.price,
+    item?.anchorPrice,
+    item?.anchor_price,
+    item?.price_top,
+    item?.price_high,
+    item?.price_bottom,
+    item?.price_low,
+  ];
+  for (const candidate of candidates) {
+    const value = Number(candidate);
+    if (Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+function artifactEventDedupeKey(entry = {}, tfKey = "") {
+  const marker = String(entry?.markerText || "").trim().toUpperCase();
+  const timeBucket = Math.round(Number(entry?.eventTime) || 0);
+  const price = Number(entry?.price);
+  const priceBucket = Number.isFinite(price) ? Math.round(price * 10000) : "na";
+  return `${String(tfKey || "").trim().toLowerCase()}|${marker}|${timeBucket}|${priceBucket}`;
+}
+
+function dedupeSignalEventObjects(objects = []) {
+  const seen = new Set();
+  return (Array.isArray(objects) ? objects : []).filter((item) => {
+    if (!isTrueSignalEventItem(item)) return true;
+    const tfKey = artifactSourceTfLabel(item?.source_tf || item?.tf || "");
+    const key = artifactEventDedupeKey(
+      {
+        markerText: item?.marker_text || artifactMarkerText(item?.artifact_payload || item),
+        eventTime:
+          item?.event_time ??
+          item?.time ??
+          (Number.isFinite(Number(item?.anchorTimeMs))
+            ? Number(item.anchorTimeMs) / 1000
+            : null),
+        price: item?.price ?? item?.anchorPrice ?? item?.anchor_price,
+      },
+      tfKey,
+    );
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function buildRecentArtifactEventsByTf({
   artifactObjectsByChartId = {},
   artifactItemsByTf = {},
@@ -3688,7 +3781,6 @@ function buildRecentArtifactEventsByTf({
 }) {
   const output = {};
   const recentEventEntriesByTf = {};
-  const chartObjectPresenceByTf = {};
   for (const [chartId, itemsRaw] of Object.entries(artifactObjectsByChartId || {})) {
     const fallbackTf = String(chartId || "").trim().toLowerCase().split("-").slice(-1)[0];
     const items = Array.isArray(itemsRaw) ? itemsRaw : [];
@@ -3696,7 +3788,6 @@ function buildRecentArtifactEventsByTf({
       const tfKey = String(item?.source_tf || item?.tf || fallbackTf || "")
         .trim()
         .toLowerCase();
-      if (tfKey) chartObjectPresenceByTf[tfKey] = true;
       if (!item || typeof item !== "object" || item?.kind !== "point" || item?.is_event !== true) {
         continue;
       }
@@ -3722,6 +3813,7 @@ function buildRecentArtifactEventsByTf({
         color: String(item?.color || artifactColorForItem(item?.artifact_payload || item)).trim(),
         direction: normalizeArtifactEventDirection(item?.artifact_payload || item),
         eventTime,
+        price: Number(item?.price ?? item?.anchorPrice ?? item?.anchor_price),
         title: `${displayTfLabel(tfKey)} ${String(item?.label || item?.type || eventKey).trim()} at ${new Date(eventTime * 1000).toLocaleString()}`,
       });
     }
@@ -3729,9 +3821,7 @@ function buildRecentArtifactEventsByTf({
   for (const [tfKeyRaw, itemsRaw] of Object.entries(artifactItemsByTf || {})) {
     const tfKey = String(tfKeyRaw || "").trim().toLowerCase();
     if (
-      !tfKey ||
-      chartObjectPresenceByTf[tfKey] === true ||
-      (Array.isArray(recentEventEntriesByTf[tfKey]) && recentEventEntriesByTf[tfKey].length)
+      !tfKey
     ) {
       continue;
     }
@@ -3754,12 +3844,16 @@ function buildRecentArtifactEventsByTf({
           color: artifactColorForItem(item),
           direction: normalizeArtifactEventDirection(item),
           eventTime,
+          price: latestArtifactEventPrice(item),
           title: `${displayTfLabel(tfKey)} ${fullLabel} at ${new Date(eventTime * 1000).toLocaleString()}`,
         };
       })
       .filter(Boolean);
     if (entries.length) {
-      recentEventEntriesByTf[tfKey] = entries;
+      if (!Array.isArray(recentEventEntriesByTf[tfKey])) {
+        recentEventEntriesByTf[tfKey] = [];
+      }
+      recentEventEntriesByTf[tfKey].push(...entries);
     }
   }
   for (const [tfKeyRaw, itemsRaw] of Object.entries(recentEventEntriesByTf || {})) {
@@ -3775,6 +3869,13 @@ function buildRecentArtifactEventsByTf({
       .filter((entry) => Number.isFinite(Number(entry?.eventTime)))
       .filter((entry) => recentCutoff == null || Number(entry.eventTime) >= recentCutoff)
       .sort((left, right) => Number(left.eventTime) - Number(right.eventTime))
+      .filter((entry, index, entries) => {
+        const key = artifactEventDedupeKey(entry, tfKey);
+        return entries.findIndex((candidate) => {
+          const candidateKey = artifactEventDedupeKey(candidate, tfKey);
+          return candidateKey === key;
+        }) === index;
+      })
       .slice(-5)
       .filter((entry) => entry?.markerText);
     if (!recentEvents.length) continue;
@@ -8568,6 +8669,7 @@ export default function SymbolChart({
           bars,
         ).map((item) => {
           const groupKey = artifactGroupKeyForItem(item);
+          if (isTrueSignalEventItem(item)) return item;
           const storedVisible = artifactGroupVisibility?.[groupKey];
           if (typeof storedVisible === "boolean") {
             return { ...item, visible: storedVisible };
@@ -8576,6 +8678,7 @@ export default function SymbolChart({
         });
         const nextRawObjects = rawObjects.map((item) => {
           const groupKey = artifactGroupKeyForItem(item);
+          if (isTrueSignalEventItem(item)) return item;
           const storedVisible = artifactGroupVisibility?.[groupKey];
           if (typeof storedVisible === "boolean") {
             return { ...item, visible: storedVisible };
@@ -11758,6 +11861,7 @@ export default function SymbolChart({
                   )
                   .map((item) => {
                     const itemGroupKey = artifactGroupKeyForItem(item);
+                    const isSignalEvent = isTrueSignalEventItem(item);
                     const storedGroupVisible = artifactGroupVisibility?.[itemGroupKey];
                     const groupVisible =
                       typeof storedGroupVisible === "boolean"
@@ -11771,7 +11875,9 @@ export default function SymbolChart({
                       visible:
                         mode === "svg" && isActiveSwingArtifactObject(item)
                           ? true
-                          : item?.visible !== false &&
+                          : isSignalEvent
+                            ? item?.visible !== false
+                            : item?.visible !== false &&
                             groupVisible !== false &&
                             !isHiddenByDefaultGroup,
                       color: artifactTimeframeColor(
@@ -11823,25 +11929,27 @@ export default function SymbolChart({
                   ? strategyMarkerObjectsByTf[tf.toLowerCase()]
                   : [];
               const replaySharedObjects = isBacktestChartReplay
-                ? [
-                    ...strategyMarkerObjects,
-                    ...artifactObjects,
-                    ...phaseTargetBoundaryObjects,
-                    ...analysisSummaryObjects,
-                    ...annotationObjects,
-                  ]
-                    .map((item) => projectArtifactObjectForReplay(item, replayCurrentBarTimeSec))
-                    .filter(Boolean)
+                ? dedupeSignalEventObjects(
+                    [
+                      ...strategyMarkerObjects,
+                      ...artifactObjects,
+                      ...phaseTargetBoundaryObjects,
+                      ...analysisSummaryObjects,
+                      ...annotationObjects,
+                    ]
+                      .map((item) => projectArtifactObjectForReplay(item, replayCurrentBarTimeSec))
+                      .filter(Boolean),
+                  )
                 : [];
               const sharedChartObjects = isBacktestChartReplay
                 ? replaySharedObjects
-                : [
+                : dedupeSignalEventObjects([
                     ...strategyMarkerObjects,
                     ...artifactObjects,
                     ...phaseTargetBoundaryObjects,
                     ...analysisSummaryObjects,
                     ...annotationObjects,
-                  ];
+                  ]);
               const isActiveTf = activeChartId === chartId;
 
               return (
@@ -12886,9 +12994,15 @@ export default function SymbolChart({
                   interval: String(plan?._menu_tf || plan?.tf || activeTf || "").trim(),
                   source_id: "auto_chart",
                   source: "auto_chart",
-                  strategy: String(plan?.strategy_name || plan?.strategy || "").trim(),
-                  entry_model: String(plan?.entry_model || plan?.entryModel || "").trim(),
-                  rule_name: String(plan?.rule_name || plan?.event_name || "").trim(),
+                  strategy: sanitizeChartText(
+                    plan?.strategy_name || plan?.strategy || "",
+                  ),
+                  entry_model: sanitizeChartText(
+                    plan?.entry_model || plan?.entryModel || "",
+                  ),
+                  rule_name: sanitizeChartText(
+                    plan?.rule_name || plan?.event_name || "",
+                  ),
                 });
                 setCtxMenu(null);
                 return;
@@ -12906,16 +13020,22 @@ export default function SymbolChart({
                 String(plan?._menu_tf || plan?.tf || activeTf || "").trim(),
               );
               search.set("source_id", "auto_chart");
-              if (plan?.strategy_name || plan?.strategy) {
+              const strategyName = sanitizeChartText(
+                plan?.strategy_name || plan?.strategy || "",
+              );
+              if (strategyName) {
                 search.set(
                   "strategy",
-                  String(plan?.strategy_name || plan?.strategy || "").trim(),
+                  strategyName,
                 );
               }
-              if (plan?.entry_model || plan?.entryModel) {
+              const entryModel = sanitizeChartText(
+                plan?.entry_model || plan?.entryModel || "",
+              );
+              if (entryModel) {
                 search.set(
                   "entry_model",
-                  String(plan?.entry_model || plan?.entryModel || "").trim(),
+                  entryModel,
                 );
               }
               window.location.href = `${tradesNamespaceBase}/manual/${encodeURIComponent(
@@ -12952,9 +13072,13 @@ export default function SymbolChart({
                   interval: String(plan?._scan_tf || plan?.tf || contextualTf || "").trim(),
                   source_id: "auto_chart",
                   source: "auto_chart",
-                  strategy: String(plan?.strategy_name || plan?.strategy || "").trim(),
+                  strategy: sanitizeChartText(
+                    plan?.strategy_name || plan?.strategy || "",
+                  ),
                   entry_model: "scan",
-                  rule_name: String(plan?.rule_name || plan?.event_name || "").trim(),
+                  rule_name: sanitizeChartText(
+                    plan?.rule_name || plan?.event_name || "",
+                  ),
                 });
                 setCtxMenu(null);
                 return;
@@ -12978,10 +13102,13 @@ export default function SymbolChart({
                 String(plan?._scan_tf || plan?.tf || contextualTf || "").trim(),
               );
               search.set("source_id", "auto_chart");
-              if (plan?.strategy_name || plan?.strategy) {
+              const scannedStrategyName = sanitizeChartText(
+                plan?.strategy_name || plan?.strategy || "",
+              );
+              if (scannedStrategyName) {
                 search.set(
                   "strategy",
-                  String(plan?.strategy_name || plan?.strategy || "").trim(),
+                  scannedStrategyName,
                 );
               }
               search.set("entry_model", "scan");
@@ -13322,7 +13449,17 @@ export default function SymbolChart({
                           )}
                           ref={applyOverlayButtonImportantStyle}
                           type="button"
-                          title={`${String(plan?.strategy_name || plan?.strategy || "Strategy")} · ${String(plan?._menu_tf || plan?.tf || "")}`}
+                          title={
+                            joinChartText(
+                              [
+                                plan?.strategy_name || plan?.strategy || "",
+                                String(plan?._menu_tf || plan?.tf || "")
+                                  .trim()
+                                  .toUpperCase(),
+                              ],
+                              " / ",
+                            ) || undefined
+                          }
                           style={{
                             display: "flex",
                             alignItems: "center",
@@ -13351,7 +13488,7 @@ export default function SymbolChart({
                               textOverflow: "ellipsis",
                             }}
                           >
-                            {String(plan?.strategy_name || plan?.strategy || "Strategy")}
+                            {sanitizeChartText(plan?.strategy_name || plan?.strategy || "")}
                           </span>
                           <span style={{ color: ENTRY_MENU_COLOR, flex: "0 0 auto" }}>
                             {formatTradeMenuPrice(plan?.entry)}
@@ -13447,7 +13584,15 @@ export default function SymbolChart({
                               )}
                               ref={applyOverlayButtonImportantStyle}
                               type="button"
-                              title={`${String(plan?.strategy_name || plan?.strategy || "Strategy")} · ${String(plan?.rule_name || plan?.event_name || plan?.condition || "Rule")}`}
+                              title={
+                                joinChartText(
+                                  [
+                                    plan?.strategy_name || plan?.strategy || "",
+                                    plan?.rule_name || plan?.event_name || plan?.condition || "",
+                                  ],
+                                  " / ",
+                                ) || undefined
+                              }
                               style={{
                                 display: "flex",
                                 alignItems: "center",
@@ -13475,7 +13620,7 @@ export default function SymbolChart({
                                   textOverflow: "ellipsis",
                                 }}
                               >
-                                {String(plan?.strategy_name || plan?.strategy || "Strategy")}
+                                {sanitizeChartText(plan?.strategy_name || plan?.strategy || "")}
                               </span>
                               <span style={{ color: ENTRY_MENU_COLOR, flex: "0 0 auto" }}>
                                 {formatTradeMenuPrice(plan?.entry)}

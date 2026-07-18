@@ -12,6 +12,9 @@ const objectStore = require("../../../shared/objects/objectStoreRepo");
 const {
   createStrategyScanEngine,
 } = require("../../../../shared/utils/strategyScanEngine.cjs");
+const {
+  evaluateRuleExpression,
+} = require("../../../../shared/rules-engine/index.cjs");
 const { normalizeSymbolList } = require("../../../../config/symbolGroups.cjs");
 const sharedArtifactDetection = require("../../../../admin/modules/42trade/chartArtifacts/detectArtifacts.cjs");
 const strategyEventFunctions = require("../../../../admin/modules/42trade/chartArtifacts/strategyEventFunctions.cjs");
@@ -191,55 +194,117 @@ function preferLaterRecord(left, right) {
 function summarizeStrategyBacktestRecords(records = []) {
   const rawRuns = Array.isArray(records) ? records.filter((record) => record?.run) : [];
   if (!rawRuns.length) return null;
-  const latestRecord = rawRuns.reduce((best, current) => {
+  const grouped = new Map();
+  for (const record of rawRuns) {
+    const run = record?.run || {};
+    const summary =
+      record?.summary && typeof record.summary === "object"
+        ? record.summary
+        : run.summary && typeof run.summary === "object"
+          ? run.summary
+          : {};
+    const key = [
+      buildRunStrategyFingerprint(run),
+      buildRunDatasetFingerprint(run, summary),
+      buildRunExecutionFingerprint(run),
+    ].join("|");
+    const current = grouped.get(key);
+    grouped.set(key, current ? preferLaterRecord(current, record) : record);
+  }
+  const uniqueRecords = Array.from(grouped.values());
+  const latestRecord = uniqueRecords.reduce((best, current) => {
     if (!best) return current;
     return preferLaterRecord(best, current);
   }, null);
-  const run = latestRecord?.run || {};
-  const summary =
-    latestRecord?.summary && typeof latestRecord.summary === "object"
-      ? latestRecord.summary
-      : run.summary && typeof run.summary === "object"
-        ? run.summary
-        : {};
-  const totalTrades = Number(summary?.total_trades || 0);
-  const winRate = Number(summary?.win_rate_pct || 0);
-  const totalPnl = Number(summary?.total_pnl || 0);
-  const totalR = Number(summary?.total_r || 0);
-  const startedAtMs =
-    toTimestampMs(run?.started_at) ||
-    toTimestampMs(run?.created_at) ||
-    toTimestampMs(run?.updated_at) ||
-    toTimestampMs(run?.completed_at);
-  const completedAtMs =
-    toTimestampMs(run?.completed_at) ||
-    toTimestampMs(run?.updated_at) ||
-    startedAtMs;
-  const firstBarAtMs = toTimestampMs(summary?.first_bar_at);
-  const lastBarAtMs = toTimestampMs(summary?.last_bar_at);
+  const numericSummaries = uniqueRecords.map((record) => {
+    const run = record?.run || {};
+    const summary =
+      record?.summary && typeof record.summary === "object"
+        ? record.summary
+        : run.summary && typeof run.summary === "object"
+          ? run.summary
+          : {};
+    return { run, summary };
+  });
+  const totalTrades = numericSummaries.reduce(
+    (sum, item) => sum + (Number(item.summary?.total_trades || 0) || 0),
+    0,
+  );
+  const totalPnl = numericSummaries.reduce(
+    (sum, item) => sum + (Number(item.summary?.total_pnl || 0) || 0),
+    0,
+  );
+  const totalR = numericSummaries.reduce(
+    (sum, item) => sum + (Number(item.summary?.total_r || 0) || 0),
+    0,
+  );
+  const winRates = numericSummaries
+    .map((item) => Number(item.summary?.win_rate_pct))
+    .filter(Number.isFinite);
+  const avgWinRate = winRates.length
+    ? winRates.reduce((sum, value) => sum + value, 0) / winRates.length
+    : 0;
+  const weightedWinRate = totalTrades > 0
+    ? numericSummaries.reduce((sum, item) => {
+        const trades = Number(item.summary?.total_trades || 0) || 0;
+        const winRate = Number(item.summary?.win_rate_pct);
+        return Number.isFinite(winRate) ? sum + trades * winRate : sum;
+      }, 0) / totalTrades
+    : avgWinRate;
+  const runPnlValues = numericSummaries
+    .map((item) => Number(item.summary?.total_pnl))
+    .filter(Number.isFinite);
+  const startedTimes = numericSummaries
+    .map((item) =>
+      toTimestampMs(item.run?.started_at) ||
+      toTimestampMs(item.run?.created_at) ||
+      toTimestampMs(item.run?.updated_at) ||
+      toTimestampMs(item.run?.completed_at),
+    )
+    .filter(Boolean);
+  const completedTimes = numericSummaries
+    .map((item) =>
+      toTimestampMs(item.run?.completed_at) ||
+      toTimestampMs(item.run?.updated_at) ||
+      toTimestampMs(item.run?.started_at) ||
+      toTimestampMs(item.run?.created_at),
+    )
+    .filter(Boolean);
+  const firstBarTimes = numericSummaries
+    .map((item) => toTimestampMs(item.summary?.first_bar_at))
+    .filter(Boolean);
+  const lastBarTimes = numericSummaries
+    .map((item) => toTimestampMs(item.summary?.last_bar_at))
+    .filter(Boolean);
+  const latestRun = latestRecord?.run || {};
+  const latestCompletedAt =
+    toTimestampMs(latestRun?.completed_at) ||
+    toTimestampMs(latestRun?.updated_at) ||
+    toTimestampMs(latestRun?.started_at) ||
+    toTimestampMs(latestRun?.created_at);
 
   return {
     raw_runs: rawRuns.length,
-    unique_runs: latestRecord ? 1 : 0,
-    duplicate_runs: 0,
-    run_count: latestRecord ? 1 : 0,
+    unique_runs: uniqueRecords.length,
+    duplicate_runs: Math.max(0, rawRuns.length - uniqueRecords.length),
+    run_count: uniqueRecords.length,
     history_runs: rawRuns.length,
-    first_backtested_at: startedAtMs ? new Date(startedAtMs).toISOString() : null,
-    last_backtested_at: completedAtMs ? new Date(completedAtMs).toISOString() : null,
-    earliest_data_start_at: firstBarAtMs ? new Date(firstBarAtMs).toISOString() : null,
-    latest_data_start_at: firstBarAtMs ? new Date(firstBarAtMs).toISOString() : null,
-    earliest_data_end_at: lastBarAtMs ? new Date(lastBarAtMs).toISOString() : null,
-    latest_data_end_at: lastBarAtMs ? new Date(lastBarAtMs).toISOString() : null,
-    avg_win_rate_pct: Number.isFinite(winRate) ? round(winRate, 2) : 0,
-    weighted_win_rate_pct: Number.isFinite(winRate) ? round(winRate, 2) : 0,
+    first_backtested_at: startedTimes.length ? new Date(Math.min(...startedTimes)).toISOString() : null,
+    last_backtested_at: completedTimes.length ? new Date(Math.max(...completedTimes)).toISOString() : null,
+    earliest_data_start_at: firstBarTimes.length ? new Date(Math.min(...firstBarTimes)).toISOString() : null,
+    latest_data_start_at: firstBarTimes.length ? new Date(Math.max(...firstBarTimes)).toISOString() : null,
+    earliest_data_end_at: lastBarTimes.length ? new Date(Math.min(...lastBarTimes)).toISOString() : null,
+    latest_data_end_at: lastBarTimes.length ? new Date(Math.max(...lastBarTimes)).toISOString() : null,
+    avg_win_rate_pct: round(avgWinRate, 2),
+    weighted_win_rate_pct: round(weightedWinRate, 2),
     total_trades: Number.isFinite(totalTrades) ? totalTrades : 0,
     total_pnl: Number.isFinite(totalPnl) ? round(totalPnl, 5) : 0,
     total_r: Number.isFinite(totalR) ? round(totalR, 5) : 0,
-    best_run_pnl: Number.isFinite(totalPnl) ? round(totalPnl, 5) : null,
-    worst_run_pnl: Number.isFinite(totalPnl) ? round(totalPnl, 5) : null,
-    last_run_id: String(run?.run_id || "").trim() || null,
-    last_run_at: completedAtMs ? new Date(completedAtMs).toISOString() : null,
-    latest_only: true,
+    best_run_pnl: runPnlValues.length ? round(Math.max(...runPnlValues), 5) : null,
+    worst_run_pnl: runPnlValues.length ? round(Math.min(...runPnlValues), 5) : null,
+    last_run_id: String(latestRun?.run_id || "").trim() || null,
+    last_run_at: latestCompletedAt ? new Date(latestCompletedAt).toISOString() : null,
+    latest_only: false,
     dedupe_version: 2,
   };
 }
@@ -1999,51 +2064,7 @@ const RULE_FUNCTION_EVALUATORS = {
 };
 
 function evaluateRule(node, ctx) {
-  if (node === null || node === undefined) return null;
-  if (
-    typeof node === "number" ||
-    typeof node === "string" ||
-    typeof node === "boolean"
-  ) {
-    return node;
-  }
-  if (Array.isArray(node)) {
-    return node.map((item) => evaluateRule(item, ctx));
-  }
-  if (typeof node !== "object") return null;
-  if (typeof node.fn === "string") {
-    const functionName = String(node.fn || "").trim();
-    const evaluator = RULE_FUNCTION_EVALUATORS[functionName];
-    if (!evaluator) return null;
-    const args = Array.isArray(node.args) ? node.args : [];
-    return evaluator(args, ctx, evaluateRule);
-  }
-  const entries = Object.entries(node);
-  if (entries.length !== 1) return null;
-  const [operator, rawValue] = entries[0];
-  const items = Array.isArray(rawValue) ? rawValue : [rawValue];
-  const values = items.map((item) => evaluateRule(item, ctx));
-  switch (operator) {
-    case "var":
-      return valueAtPath(ctx, rawValue);
-    case "and":
-      return strategyEventFunctions.mergeArtifactResults("and", values);
-    case "then":
-      return strategyEventFunctions.mergeArtifactResults("then", values);
-    case "or":
-      return strategyEventFunctions.mergeArtifactResults("or", values);
-    case "not":
-      return !strategyEventFunctions.ruleResultTruthy(values[0]);
-    case "if":
-      for (let i = 0; i < values.length - 1; i += 2) {
-        if (strategyEventFunctions.ruleResultTruthy(values[i])) return values[i + 1];
-      }
-      return values.length % 2 === 1 ? values[values.length - 1] : null;
-    default:
-      return Object.prototype.hasOwnProperty.call(RULE_OPERATOR_EVALUATORS, operator)
-        ? RULE_OPERATOR_EVALUATORS[operator](values, rawValue, ctx)
-        : null;
-  }
+  return evaluateRuleExpression(node, ctx);
 }
 
 function resolveTradePlanFieldValue(value, ctx = null) {

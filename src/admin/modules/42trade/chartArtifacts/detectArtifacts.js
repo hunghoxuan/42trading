@@ -1789,8 +1789,15 @@ function artifactReferenceTime(item = {}) {
 function shouldLimitArtifactType(type = "", family = "") {
   const normalizedType = String(type || "").trim().toLowerCase();
   const normalizedFamily = String(family || "").trim().toLowerCase();
+  if (normalizedFamily === "pattern") return false;
+  if (normalizedFamily === "swing") return false;
   if (normalizedFamily === "trendline") return false;
   if (normalizedFamily === "divergence") return false;
+  if (normalizedFamily === "structure") return false;
+  if (normalizedType === "swing_high" || normalizedType === "swing_low") return false;
+  if (normalizedType === "bos" || normalizedType === "choch") return false;
+  if (normalizedType === "sweep_high" || normalizedType === "sweep_low") return false;
+  if (normalizedType === "liquidity_high" || normalizedType === "liquidity_low") return false;
   return true;
 }
 

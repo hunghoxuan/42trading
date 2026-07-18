@@ -339,7 +339,13 @@ function normalizeRawPlan(p = {}) {
         ? formatTradePriceField(parseNumLoose(chosen.tp), pricePrecision)
         : "";
   const rrRaw = parseNumLoose(
-    src?.execution_plan?.risk_reward ?? src?.rr ?? src?.risk_reward,
+    src?.execution_plan?.tp1?.rr ??
+      src?.execution_plan?.tp1?.risk_reward ??
+      src?.tp1?.rr ??
+      src?.tp1?.risk_reward ??
+      src?.execution_plan?.risk_reward ??
+      src?.rr ??
+      src?.risk_reward,
   );
   let rr = null;
   if (entry != null && sl != null && tpNum != null && entry !== sl) {

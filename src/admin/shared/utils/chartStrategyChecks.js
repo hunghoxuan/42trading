@@ -1,6 +1,7 @@
 import * as sharedArtifactDetection from "../../modules/42trade/chartArtifacts/detectArtifacts.js";
 import * as strategyEventFunctions from "../../modules/42trade/chartArtifacts/strategyEventFunctions.js";
 import * as strategyScanEngine from "../../../shared/utils/strategyScanEngine.js";
+import * as sharedRulesEngine from "../../../shared/rules-engine/index.js";
 
 const { createStrategyScanEngine } = strategyScanEngine;
 
@@ -369,53 +370,7 @@ const RULE_FUNCTION_EVALUATORS = {
 };
 
 function evaluateRule(node, ctx) {
-  if (node === null || node === undefined) return null;
-  if (
-    typeof node === "number" ||
-    typeof node === "string" ||
-    typeof node === "boolean"
-  ) {
-    return node;
-  }
-  if (Array.isArray(node)) {
-    return node.map((item) => evaluateRule(item, ctx));
-  }
-  if (typeof node !== "object") return null;
-  if (typeof node.fn === "string") {
-    const functionName = String(node.fn || "").trim();
-    const evaluator = RULE_FUNCTION_EVALUATORS[functionName];
-    if (!evaluator) return null;
-    const args = Array.isArray(node.args) ? node.args : [];
-    return evaluator(args, ctx, evaluateRule);
-  }
-  const entries = Object.entries(node);
-  if (entries.length !== 1) return null;
-  const [operator, rawValue] = entries[0];
-  const items = Array.isArray(rawValue) ? rawValue : [rawValue];
-  const values = items.map((item) => evaluateRule(item, ctx));
-  switch (operator) {
-    case "var":
-      return valueAtPath(ctx, rawValue);
-    case "and":
-      return strategyEventFunctions.mergeArtifactResults("and", values);
-    case "then":
-      return strategyEventFunctions.mergeArtifactResults("then", values);
-    case "or":
-      return strategyEventFunctions.mergeArtifactResults("or", values);
-    case "not":
-      return !strategyEventFunctions.ruleResultTruthy(values[0]);
-    case "if":
-      for (let index = 0; index < values.length - 1; index += 2) {
-        if (strategyEventFunctions.ruleResultTruthy(values[index])) {
-          return values[index + 1];
-        }
-      }
-      return values.length % 2 === 1 ? values[values.length - 1] : null;
-    default:
-      return Object.prototype.hasOwnProperty.call(RULE_OPERATOR_EVALUATORS, operator)
-        ? RULE_OPERATOR_EVALUATORS[operator](values, rawValue, ctx)
-        : null;
-  }
+  return sharedRulesEngine.evaluateRuleExpression(node, ctx);
 }
 
 function seriesBySource(bars, source = "close") {
@@ -686,6 +641,28 @@ function computeIndicatorSeries(bars, indicator = {}) {
 }
 
 function normalizeStrategyEvents(strategy = {}) {
+  const normalizeEventAction = (action = {}, fallbackDirection = "buy") => {
+    const actionType = String(action?.action || action?.type || "").trim();
+    const direction =
+      actionType === "trade.open.short" ? "sell" :
+      actionType === "trade.open.long" ? "buy" :
+      fallbackDirection;
+    if (actionType === "trade.open.long" || actionType === "trade.open.short") {
+      return {
+        ...action,
+        action: "trade",
+        trade_plan: {
+          direction,
+          type: "market",
+          entry: { var: "bar.close" },
+          ...(action?.trade_plan && typeof action.trade_plan === "object"
+            ? action.trade_plan
+            : {}),
+        },
+      };
+    }
+    return action;
+  };
   if (Array.isArray(strategy?.rules) && strategy.rules.length) {
     return strategy.rules
       .map((rule, ruleIndex) => ({
@@ -697,23 +674,69 @@ function normalizeStrategyEvents(strategy = {}) {
           `Rule ${ruleIndex + 1}`,
         bias: String(rule?.bias || "").trim().toLowerCase(),
         when: rule?.when && typeof rule.when === "object" ? rule.when : null,
-        actions: Array.isArray(rule?.actions) ? rule.actions : [],
+        actions: Array.isArray(rule?.actions)
+          ? rule.actions.map((action) =>
+              normalizeEventAction(
+                action,
+                String(rule?.bias || "").trim().toLowerCase() === "bearish" ? "sell" : "buy",
+              ),
+            )
+          : [],
       }))
       .filter((rule) => rule.when);
   }
-  return (Array.isArray(strategy?.events) ? strategy.events : [])
-    .map((event, eventIndex) => ({
-      id:
-        String(event?.id || `event_${eventIndex + 1}`).trim() ||
-        `event_${eventIndex + 1}`,
-      name:
-        String(event?.name || event?.label || `Event ${eventIndex + 1}`).trim() ||
-        `Event ${eventIndex + 1}`,
-      bias: String(event?.bias || "").trim().toLowerCase(),
-      when: event?.when && typeof event.when === "object" ? event.when : null,
-      actions: Array.isArray(event?.actions) ? event.actions : [],
-    }))
-    .filter((event) => event.when);
+  if (Array.isArray(strategy?.events) && strategy.events.length) {
+    return strategy.events
+      .map((event, eventIndex) => ({
+        id:
+          String(event?.id || `event_${eventIndex + 1}`).trim() ||
+          `event_${eventIndex + 1}`,
+        name:
+          String(event?.name || event?.label || `Event ${eventIndex + 1}`).trim() ||
+          `Event ${eventIndex + 1}`,
+        bias: String(event?.bias || "").trim().toLowerCase(),
+        when: event?.when && typeof event.when === "object" ? event.when : null,
+        actions: Array.isArray(event?.actions)
+          ? event.actions.map((action) =>
+              normalizeEventAction(
+                action,
+                /bear|short|sell/i.test(String(event?.name || event?.id || ""))
+                  ? "sell"
+                  : "buy",
+              ),
+            )
+          : [],
+      }))
+      .filter((event) => event.when);
+  }
+  if (strategy?.rules && typeof strategy.rules === "object" && !Array.isArray(strategy.rules)) {
+    const legacyEvents = [
+      [["bullish", "entry_long"], "Bullish", "buy", "bullish"],
+      [["bearish", "entry_short"], "Bearish", "sell", "bearish"],
+    ];
+    return legacyEvents
+      .map(([ruleKeys, name, direction, id]) => ({
+        id,
+        name,
+        bias: id,
+        when: ruleKeys.map((key) => strategy.rules[key]).find(Boolean) || null,
+        actions: [
+          {
+            id: `${id}_action`,
+            action: "trade",
+            trade_plan: {
+              direction,
+              type: "market",
+              entry: { var: "bar.close" },
+              sl: strategy.rules?.[`stop_loss_${direction === "buy" ? "long" : "short"}`] || null,
+              tp: strategy.rules?.[`take_profit_${direction === "buy" ? "long" : "short"}`] || null,
+            },
+          },
+        ],
+      }))
+      .filter((event) => event.when);
+  }
+  return [];
 }
 
 function buildRuleContext({
@@ -1153,6 +1176,14 @@ export function buildStrategyPlanNote({
   return `${direction} rule match`;
 }
 
+function sanitizeStrategyText(value = "") {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  const normalized = text.toLowerCase();
+  if (normalized === "null" || normalized === "undefined") return "";
+  return text;
+}
+
 function buildClientTradePlanFromAction({
   action = {},
   ctx = {},
@@ -1214,14 +1245,17 @@ function buildClientTradePlanFromAction({
       String(planIndex),
     ].join("|"),
     source: "client_strategy_engine",
-    strategy: String(strategy?.name || strategy?.id || "Strategy").trim() || "Strategy",
+    strategy: sanitizeStrategyText(strategy?.name || strategy?.id || ""),
     strategy_id: String(strategy?.id || strategy?.key || "").trim(),
-    strategy_name: String(strategy?.name || strategy?.id || "Strategy").trim() || "Strategy",
+    strategy_name: sanitizeStrategyText(strategy?.name || strategy?.id || ""),
     event_id: String(event?.id || "").trim(),
-    event_name: String(event?.name || event?.id || "Rule").trim() || "Rule",
-    rule_name: String(event?.name || event?.id || "Rule").trim() || "Rule",
-    rules_checked: `${String(strategy?.name || strategy?.id || "Strategy").trim() || "Strategy"} · ${String(event?.name || event?.id || "Rule").trim() || "Rule"}`,
-    condition: String(event?.name || event?.id || "Rule").trim() || "Rule",
+    event_name: sanitizeStrategyText(event?.name || event?.id || ""),
+    rule_name: sanitizeStrategyText(event?.name || event?.id || ""),
+    rules_checked: buildChartStrategyHitMessage({
+      strategyName: sanitizeStrategyText(strategy?.name || strategy?.id || ""),
+      eventName: sanitizeStrategyText(event?.name || event?.id || ""),
+    }),
+    condition: sanitizeStrategyText(event?.name || event?.id || ""),
     label: String(action?.label || event?.name || strategy?.name || "Trade Plan").trim(),
     direction,
     note: buildStrategyPlanNote({
@@ -1333,9 +1367,9 @@ export function buildChartStrategyHitMessage({
   strategyName = "",
   eventName = "",
 } = {}) {
-  return `${String(strategyName || "Strategy").trim() || "Strategy"} · ${
-    String(eventName || "Rule").trim() || "Rule"
-  }`;
+  const safeStrategy = sanitizeStrategyText(strategyName);
+  const safeEvent = sanitizeStrategyText(eventName);
+  return [safeStrategy, safeEvent].filter(Boolean).join(" · ");
 }
 
 export function buildChartStrategyNotificationPayload(match = {}) {
@@ -1569,6 +1603,24 @@ export function evaluateChartStrategies({
         });
         const ruleResult = evaluateRule(event.when, ctx);
         if (!strategyEventFunctions.ruleResultTruthy(ruleResult)) continue;
+        const ruleEvent = sharedRulesEngine.normalizeRuleEvent({
+          rule: {
+            id: String(event.id || "").trim(),
+            abbr: String(event.abbr || event.short_name || event.id || "").trim(),
+            name: String(event.name || event.id || "Rule").trim(),
+            icon: String(event.icon || "activity").trim(),
+            family: String(event.family || "strategy").trim(),
+            params: {},
+            outputs: { bias: String(event.bias || "").trim().toLowerCase() },
+          },
+          result: ruleResult,
+          ctx: {
+            ...ctx,
+            symbol: String(symbol || strategy?.market?.symbol || "").trim().toUpperCase(),
+            tf: chartTf || strategyTf || tf,
+          },
+          index,
+        });
         if (
           currentBarOnly &&
           strategyEventFunctions.isArtifactResult(ruleResult)
@@ -1590,6 +1642,7 @@ export function evaluateChartStrategies({
           eventPriority: String(event.priority || "").trim(),
           ruleDefinition:
             event?.when && typeof event.when === "object" ? event.when : null,
+          ruleEvent,
           actions: Array.isArray(event.actions) ? event.actions : [],
           barIndex: index,
           barTimeUnix: Number(normalizedBars[index]?.time || 0),
