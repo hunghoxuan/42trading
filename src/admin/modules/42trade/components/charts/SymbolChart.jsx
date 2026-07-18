@@ -5544,6 +5544,7 @@ export default function SymbolChart({
   chartStrategies = EMPTY_ARRAY,
   strategyScanMode = "",
   showStrategyMarkersDefault = false,
+  onStrategyMarkersChange = null,
   allowedRules = null,
   allowedEvents = null,
   allowed_rules = null,
@@ -10074,6 +10075,18 @@ export default function SymbolChart({
     replayBarsByTf,
     strategyCalendarEvents,
   ]);
+  useEffect(() => {
+    if (typeof onStrategyMarkersChange !== "function") return;
+    const objectsByTf =
+      strategyMarkerObjectsByTf && typeof strategyMarkerObjectsByTf === "object"
+        ? strategyMarkerObjectsByTf
+        : {};
+    const total = Object.values(objectsByTf).reduce(
+      (sum, items) => sum + (Array.isArray(items) ? items.length : 0),
+      0,
+    );
+    onStrategyMarkersChange({ objectsByTf, total });
+  }, [onStrategyMarkersChange, strategyMarkerObjectsByTf]);
   useEffect(() => {
     if (Array.isArray(SYMBOL_CHART_STRATEGY_CACHE)) return;
     void loadSymbolChartStrategyCache().catch(() => {});

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../../../app/api";
 import BacktestBarsSelector from "../components/BacktestBarsSelector";
@@ -1469,6 +1469,7 @@ export default function BacktestsPage() {
   const [savingRule, setSavingRule] = useState(false);
   const [testedRuleStrategy, setTestedRuleStrategy] = useState(null);
   const [ruleTestRunKey, setRuleTestRunKey] = useState(0);
+  const [ruleTestMarkerSummary, setRuleTestMarkerSummary] = useState(null);
   const routeAutoRunKeyRef = useRef("");
   const [form, setForm] = useState({
     symbol: routeSymbol || "BTCUSD",
@@ -2752,9 +2753,21 @@ export default function BacktestsPage() {
       return;
     }
     setError("");
+    setRuleTestMarkerSummary({ status: "scanning", total: 0, objectsByTf: {} });
     setTestedRuleStrategy(nextStrategy);
     setRuleTestRunKey((current) => current + 1);
   }
+
+  const handleRuleTestMarkersChange = useCallback((summary = {}) => {
+    setRuleTestMarkerSummary({
+      status: "done",
+      total: Number(summary?.total || 0),
+      objectsByTf:
+        summary?.objectsByTf && typeof summary.objectsByTf === "object"
+          ? summary.objectsByTf
+          : {},
+    });
+  }, []);
 
   async function handleSaveRuleConfig() {
     const payload = buildRuleConfigSavePayload(ruleTester.rule);
@@ -2821,6 +2834,7 @@ export default function BacktestsPage() {
       rule: nextRule,
     }));
     setTestedRuleStrategy(null);
+    setRuleTestMarkerSummary(null);
   }
 
   function handleOpenStrategyBacktest(strategyOrId) {
@@ -3471,6 +3485,7 @@ export default function BacktestsPage() {
               const nextValue = String(event.target.value || "").trim().toUpperCase();
               setRuleTester((prev) => ({ ...prev, symbol: nextValue }));
               setTestedRuleStrategy(null);
+              setRuleTestMarkerSummary(null);
             }}
             searchable
             searchPlaceholder="Filter symbols..."
@@ -3488,6 +3503,7 @@ export default function BacktestsPage() {
             onChange={(event) => {
               setRuleTester((prev) => ({ ...prev, tf: event.target.value }));
               setTestedRuleStrategy(null);
+              setRuleTestMarkerSummary(null);
             }}
           >
             {TIMEFRAME_OPTIONS.map((option) => (
@@ -3512,6 +3528,7 @@ export default function BacktestsPage() {
               ).trim() || ruleTester.bars;
               setRuleTester((prev) => ({ ...prev, bars: nextBars }));
               setTestedRuleStrategy(null);
+              setRuleTestMarkerSummary(null);
             }}
           />
         </div>
@@ -3860,6 +3877,7 @@ export default function BacktestsPage() {
                         onChange={(nextRule) => {
                           setRuleTester((prev) => ({ ...prev, rule: nextRule }));
                           setTestedRuleStrategy(null);
+                          setRuleTestMarkerSummary(null);
                         }}
                       />
                     ) : (
@@ -3906,6 +3924,7 @@ export default function BacktestsPage() {
                     strategyScanMode="backtest"
                     chartStrategies={ruleTesterChartStrategy ? [ruleTesterChartStrategy] : []}
                     allowedRules={ruleTester.rule ? [ruleTester.rule] : null}
+                    onStrategyMarkersChange={handleRuleTestMarkersChange}
                   />
                   <ResponsivePanel
                     title="Test Status"
@@ -3913,9 +3932,13 @@ export default function BacktestsPage() {
                     border="always"
                     bodyClassName="stack-layout"
                   >
-                    <div className="minor-text" style={{ fontSize: 11, lineHeight: 1.5 }}>
+	                    <div className="minor-text" style={{ fontSize: 11, lineHeight: 1.5 }}>
                       {ruleTesterChartStrategy
-                        ? "Rule tested. Matching bars are drawn as chart markers. Replay is available from the chart controls if you want to reveal hits bar by bar."
+                        ? ruleTestMarkerSummary?.status === "scanning"
+                          ? "Scanning loaded bars for rule matches..."
+                          : Number(ruleTestMarkerSummary?.total || 0) > 0
+                            ? `Passed: ${Number(ruleTestMarkerSummary.total)} ${String(ruleTester.rule?.abbr || ruleTester.rule?.name || "rule").trim()} marker${Number(ruleTestMarkerSummary.total) === 1 ? "" : "s"} found in ${ruleTester.symbol} ${timeframeLabel(ruleTester.tf)} / ${ruleTesterBarsCount} bars.`
+                            : `No ${String(ruleTester.rule?.abbr || ruleTester.rule?.name || "rule").trim()} matches found in ${ruleTester.symbol} ${timeframeLabel(ruleTester.tf)} / ${ruleTesterBarsCount} bars.`
                         : "Build a rule and click Test to evaluate all loaded bars and draw markers where the rule is satisfied."}
                     </div>
                   </ResponsivePanel>
