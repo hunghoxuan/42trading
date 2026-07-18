@@ -73,6 +73,22 @@ async function getRule(ruleId = "", configStore = defaultConfigStore) {
   return validation.ok ? { ...validation.rule, kind: "custom" } : null;
 }
 
+async function saveRule(input = {}, configStore = defaultConfigStore) {
+  const validation = validateRulePayload(input);
+  if (!validation.ok) {
+    const error = new Error(validation.errors.join("; ") || "Invalid rule");
+    error.validation_errors = validation.errors;
+    throw error;
+  }
+  const rule = {
+    ...validation.rule,
+    kind: undefined,
+  };
+  delete rule.kind;
+  await configStore.saveRule(rule.id, rule);
+  return { ...rule, kind: "custom" };
+}
+
 function buildExampleRule() {
   return {
     id: "price_crosses_ema_custom",
@@ -103,6 +119,7 @@ function createRuleConfigService({ configStore = defaultConfigStore } = {}) {
     listCustomRules: () => listCustomRules(configStore),
     listRules: () => listRules(configStore),
     getRule: (ruleId) => getRule(ruleId, configStore),
+    saveRule: (input) => saveRule(input, configStore),
     buildExampleRule,
   };
 }
@@ -114,5 +131,6 @@ module.exports = {
   listCustomRules,
   listRules,
   readSchema,
+  saveRule,
   validateRulePayload,
 };

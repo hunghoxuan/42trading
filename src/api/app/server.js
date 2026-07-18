@@ -37815,6 +37815,25 @@ const appHandler = async (req, res) => {
   }
 
   if (
+    req.method === "POST" &&
+    (url.pathname === "/v2/rules" || url.pathname === "/api/rules")
+  ) {
+    const sess = getUiSessionFromReq(req);
+    if (!sess.ok) return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const body = await readJson(req);
+      const item = await ruleConfigService.saveRule(body || {});
+      return json(res, 200, { ok: true, item });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        validation_errors: error?.validation_errors || [],
+      });
+    }
+  }
+
+  if (
     req.method === "GET" &&
     (url.pathname === "/v2/strategies" || url.pathname === "/api/strategies")
   ) {

@@ -103,7 +103,7 @@ var PREDEFINED_RULES = [
   },
   {
     id: "price_rejected_key_level",
-    abbr: "RJ_LVL",
+    abbr: "REJ",
     name: "Price Rejected Key Level",
     icon: "minus",
     family: "key_level",
@@ -115,7 +115,7 @@ var PREDEFINED_RULES = [
   },
   {
     id: "price_breaks_key_level",
-    abbr: "BRK_LVL",
+    abbr: "BRK",
     name: "Price Breaks Key Level",
     icon: "move-up-right",
     family: "key_level",
@@ -127,7 +127,7 @@ var PREDEFINED_RULES = [
   },
   {
     id: "price_breaks_below_key_level",
-    abbr: "BRK_LVL_DN",
+    abbr: "BRK_DN",
     name: "Price Breaks Below Key Level",
     icon: "move-down-right",
     family: "key_level",
@@ -238,8 +238,18 @@ var PREDEFINED_RULES = [
     outputs: { bias: "bearish", marker: "arrow_down" }
   },
   {
+    id: "engulfing",
+    abbr: "ENG",
+    name: "Engulfing",
+    icon: "candlestick-chart",
+    family: "candle_pattern",
+    params: { bias: "" },
+    condition: { fn: "engulfing", args: [] },
+    outputs: { marker: "dot" }
+  },
+  {
     id: "bullish_engulfing",
-    abbr: "B_ENG",
+    abbr: "ENG_B",
     name: "Bullish Engulfing",
     icon: "candlestick-chart",
     family: "candle_pattern",
@@ -249,7 +259,7 @@ var PREDEFINED_RULES = [
   },
   {
     id: "bearish_engulfing",
-    abbr: "S_ENG",
+    abbr: "ENG_S",
     name: "Bearish Engulfing",
     icon: "candlestick-chart",
     family: "candle_pattern",
@@ -269,7 +279,7 @@ var PREDEFINED_RULES = [
   },
   {
     id: "inside_bar",
-    abbr: "INSIDE",
+    abbr: "INSI",
     name: "Inside Bar",
     icon: "candlestick-chart",
     family: "candle_pattern",
@@ -279,7 +289,7 @@ var PREDEFINED_RULES = [
   },
   {
     id: "outside_bar",
-    abbr: "OUTSIDE",
+    abbr: "OUTS",
     name: "Outside Bar",
     icon: "candlestick-chart",
     family: "candle_pattern",
@@ -289,7 +299,7 @@ var PREDEFINED_RULES = [
   },
   {
     id: "liquidity_sweep",
-    abbr: "SWP",
+    abbr: "SW",
     name: "Liquidity Sweep",
     icon: "scan-line",
     family: "structure",
@@ -299,7 +309,7 @@ var PREDEFINED_RULES = [
   },
   {
     id: "bullish_liquidity_sweep",
-    abbr: "SWP_B",
+    abbr: "SW_B",
     name: "Bullish Liquidity Sweep",
     icon: "scan-line",
     family: "structure",
@@ -309,7 +319,7 @@ var PREDEFINED_RULES = [
   },
   {
     id: "bearish_liquidity_sweep",
-    abbr: "SWP_S",
+    abbr: "SW_S",
     name: "Bearish Liquidity Sweep",
     icon: "scan-line",
     family: "structure",
@@ -349,7 +359,7 @@ var PREDEFINED_RULES = [
   },
   {
     id: "change_of_character",
-    abbr: "CHOCH",
+    abbr: "CH",
     name: "Change of Character",
     icon: "shuffle",
     family: "structure",
@@ -359,7 +369,7 @@ var PREDEFINED_RULES = [
   },
   {
     id: "bullish_change_of_character",
-    abbr: "CHOCH_B",
+    abbr: "CH_B",
     name: "Bullish Change of Character",
     icon: "shuffle",
     family: "structure",
@@ -369,7 +379,7 @@ var PREDEFINED_RULES = [
   },
   {
     id: "bearish_change_of_character",
-    abbr: "CHOCH_S",
+    abbr: "CH_S",
     name: "Bearish Change of Character",
     icon: "shuffle",
     family: "structure",

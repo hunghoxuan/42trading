@@ -659,6 +659,9 @@ export function createEmptyRuleDraft(options = {}) {
   const name = normalizeRuleName(options?.name, "Rule");
   return {
     id: String(options?.id || createNodeId("rule")).trim() || createNodeId("rule"),
+    abbr: String(options?.abbr || options?.short_name || "").trim(),
+    icon: String(options?.icon || "").trim(),
+    family: String(options?.family || "").trim(),
     name,
     bias: normalizeRuleBias(options?.bias),
     priority: normalizeRulePriority(options?.priority),
@@ -687,6 +690,9 @@ export function normalizeRuleDraft(rule = {}) {
     inferredBiasFromName || normalizedBias;
   return {
     id: String(rule?.id || createNodeId("rule")).trim() || createNodeId("rule"),
+    abbr: String(rule?.abbr || rule?.short_name || "").trim(),
+    icon: String(rule?.icon || "").trim(),
+    family: String(rule?.family || "").trim(),
     name,
     bias: inferredBias,
     priority: normalizeRulePriority(rule?.priority),
@@ -694,6 +700,9 @@ export function normalizeRuleDraft(rule = {}) {
       rule?.when && typeof rule.when === "object" && !Array.isArray(rule.when)
         ? deepClone(rule.when)
         : { and: [] },
+    outputs: rule?.outputs && typeof rule.outputs === "object" && !Array.isArray(rule.outputs)
+      ? deepClone(rule.outputs)
+      : undefined,
     actions: Array.isArray(rule?.actions) && rule.actions.length
       ? rule.actions.map((action) => normalizeRuleAction(action, name))
       : [],

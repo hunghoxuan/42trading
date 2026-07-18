@@ -409,6 +409,7 @@ function createRuleTestStrategy({
   tf = "",
   ruleTree = null,
   ruleName = "Rule",
+  ruleAbbr = "",
   ruleBias = "neutral",
 } = {}) {
   const when = buildRuleExpressionFromDraft(ruleTree);
@@ -416,6 +417,7 @@ function createRuleTestStrategy({
   const normalizedTf = String(tf || "").trim();
   const chartTf = timeframeLabel(normalizedTf);
   const normalizedBias = String(ruleBias || "neutral").trim().toLowerCase();
+  const markerLabel = String(ruleAbbr || inferRuleAbbr(ruleName)).trim() || "RULE";
   const drawColor =
     normalizedBias === "bullish"
       ? "#22c55e"
@@ -437,15 +439,16 @@ function createRuleTestStrategy({
     },
     events: [
       {
-        id: "rules_test_event",
+        id: normalizeCustomRuleConfigId(ruleAbbr || ruleName || "rules_test_event", "rules_test_event"),
         name: String(ruleName || "Rule").trim() || "Rule",
+        abbr: markerLabel,
         bias: normalizedBias,
         when,
         actions: [
           {
             id: "rules_test_draw",
             action: "draw",
-            label: String(ruleName || "Rule").trim() || "Rule",
+            label: markerLabel,
             color: drawColor,
           },
         ],
@@ -489,6 +492,7 @@ function buildRuleLibraryEntry({
   tree = null,
   symbol = "",
   tf = "",
+  rule = null,
 }) {
   return {
     id: String(id || label || createRuleTestNodeId("library")).trim(),
@@ -497,6 +501,12 @@ function buildRuleLibraryEntry({
     tree,
     symbol: String(symbol || "").trim().toUpperCase(),
     tf: String(tf || "").trim(),
+    rule_id: String(rule?.id || "").trim(),
+    abbr: String(rule?.abbr || rule?.short_name || "").trim(),
+    name: String(rule?.name || label || "").trim(),
+    icon: String(rule?.icon || "").trim(),
+    family: String(rule?.family || "").trim(),
+    outputs: rule?.outputs && typeof rule.outputs === "object" ? cloneJson(rule.outputs) : undefined,
   };
 }
 
@@ -511,10 +521,63 @@ function buildRuleLibraryEntryFromCatalogRule(rule = {}) {
   if (!tree) return null;
   return buildRuleLibraryEntry({
     id: `catalog_${String(rule?.kind || "predefined")}_${String(rule?.id || rule?.abbr || rule?.name || "")}`,
-    label: String(rule?.name || rule?.abbr || rule?.id || "Rule").trim(),
+    label: String(rule?.abbr || rule?.short_name || rule?.name || rule?.id || "Rule").trim(),
     source: String(rule?.kind || "predefined").trim() || "predefined",
     tree,
+    rule,
   });
+}
+
+function normalizeCustomRuleConfigId(value = "", fallback = "custom_rule") {
+  const normalized = String(value || fallback)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 80);
+  return normalized.length >= 3 ? normalized : fallback;
+}
+
+function inferRuleAbbr(value = "", fallback = "RULE") {
+  const raw = String(value || "").trim();
+  if (!raw) return fallback;
+  const compact = raw
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase();
+  if (compact && compact.length <= 16) return compact;
+  const initials = raw
+    .split(/[^a-zA-Z0-9]+/)
+    .map((part) => part.trim()[0])
+    .filter(Boolean)
+    .join("")
+    .toUpperCase();
+  return (initials || compact || fallback).slice(0, 16);
+}
+
+function buildRuleConfigSavePayload(rule = {}) {
+  const normalizedRule = normalizeRuleDraft(rule);
+  const name = String(normalizedRule.name || "Custom Rule").trim() || "Custom Rule";
+  const id = normalizeCustomRuleConfigId(
+    normalizedRule.id && !String(normalizedRule.id).startsWith("rule_")
+      ? normalizedRule.id
+      : name,
+    "custom_rule",
+  );
+  const abbr = inferRuleAbbr(normalizedRule.abbr || name);
+  return {
+    id,
+    abbr,
+    name,
+    icon: String(normalizedRule.icon || "sparkles").trim() || "sparkles",
+    family: String(normalizedRule.family || "custom").trim() || "custom",
+    params: {},
+    condition: normalizedRule.when,
+    outputs: {
+      ...(normalizedRule.outputs || {}),
+      bias: normalizedRule.bias || normalizedRule.outputs?.bias || "neutral",
+    },
+  };
 }
 
 function updateRuleTreeNode(node, targetId, updater) {
@@ -1402,6 +1465,7 @@ export default function BacktestsPage() {
   const [ruleLibraryTab, setRuleLibraryTab] = useState("popular");
   const [ruleCatalog, setRuleCatalog] = useState([]);
   const [loadingRules, setLoadingRules] = useState(false);
+  const [savingRule, setSavingRule] = useState(false);
   const [testedRuleStrategy, setTestedRuleStrategy] = useState(null);
   const [ruleTestRunKey, setRuleTestRunKey] = useState(0);
   const routeAutoRunKeyRef = useRef("");
@@ -2673,6 +2737,7 @@ export default function BacktestsPage() {
       tf: timeframeLabel(ruleTester.tf),
       ruleTree: buildRuleDraftFromExpression(ruleTester.rule?.when),
       ruleName: ruleTester.rule?.name,
+      ruleAbbr: ruleTester.rule?.abbr,
       ruleBias: ruleTester.rule?.bias,
     });
     if (!nextStrategy) {
@@ -2684,6 +2749,38 @@ export default function BacktestsPage() {
     setRuleTestRunKey((current) => current + 1);
   }
 
+  async function handleSaveRuleConfig() {
+    const payload = buildRuleConfigSavePayload(ruleTester.rule);
+    if (!payload.condition || !Object.keys(payload.condition || {}).length) {
+      setError("Build a valid rule before saving.");
+      return;
+    }
+    setSavingRule(true);
+    setError("");
+    try {
+      const result = await api.saveRule(payload);
+      const item = result?.item || payload;
+      await loadRulesCatalog();
+      setRuleTester((prev) => ({
+        ...prev,
+        rule: normalizeRuleDraft({
+          ...prev.rule,
+          id: item.id || payload.id,
+          abbr: item.abbr || payload.abbr,
+          icon: item.icon || payload.icon,
+          family: item.family || payload.family,
+          outputs: item.outputs || payload.outputs,
+          name: item.name || payload.name,
+          when: item.condition || payload.condition,
+        }),
+      }));
+    } catch (saveError) {
+      setError(String(saveError?.message || saveError || "Failed to save rule"));
+    } finally {
+      setSavingRule(false);
+    }
+  }
+
   function handleRuleLibraryPick(item) {
     if (!item?.tree) return;
     const nextTree = cloneRuleTestTreeWithFreshIds(
@@ -2691,7 +2788,12 @@ export default function BacktestsPage() {
     );
     const nextRule = normalizeRuleDraft({
       ...(ruleTester.rule || createEmptyRuleDraft({ name: item.label || "Rule Test", actions: [] })),
-      name: item.label || ruleTester.rule?.name || "Rule Test",
+      id: item.rule_id || ruleTester.rule?.id,
+      abbr: item.abbr || ruleTester.rule?.abbr,
+      icon: item.icon || ruleTester.rule?.icon,
+      family: item.family || ruleTester.rule?.family,
+      outputs: item.outputs || ruleTester.rule?.outputs,
+      name: item.name || item.label || ruleTester.rule?.name || "Rule Test",
       when: buildRuleExpressionFromDraft(nextTree) || { and: [] },
     });
     setRuleEditorTab("edit");
@@ -3403,6 +3505,14 @@ export default function BacktestsPage() {
         </div>
         <button
           type="button"
+          className="secondary-button"
+          onClick={handleSaveRuleConfig}
+          disabled={savingRule}
+        >
+          {savingRule ? "Saving..." : "Save"}
+        </button>
+        <button
+          type="button"
           className="primary-button"
           onClick={handleRuleTesterRun}
         >
@@ -3780,7 +3890,9 @@ export default function BacktestsPage() {
                     showPerCardLayoutControls={false}
                     fillViewportForFourCharts={false}
                     showEventMarkers={false}
+                    showStrategyMarkersDefault
                     chartStrategies={ruleTesterChartStrategy ? [ruleTesterChartStrategy] : []}
+                    allowedRules={ruleTester.rule ? [ruleTester.rule] : null}
                   />
                   <ResponsivePanel
                     title="Test Status"

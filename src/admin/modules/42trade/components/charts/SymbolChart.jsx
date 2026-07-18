@@ -59,6 +59,7 @@ import {
 import {
   buildSuggestedTradeLevels as sharedBuildSuggestedTradeLevels,
 } from "../../../../shared/utils/suggestedTradeLevels.js";
+import { listPredefinedRules } from "../../../../../shared/rules-engine/predefinedRules.js";
 
 const BASE_MODES = ["live", "cache", "svg"];
 const REPLAY_MODE = "replay";
@@ -116,20 +117,105 @@ const LIVE_DEBUG_CRYPTO_PREFIXES = [
   "TON",
   "SHIB",
 ];
-const EVENT_PANEL_CATALOG = [
-  { eventKey: "ENG", direction: "sell" },
-  { eventKey: "PIN", direction: "sell" },
-  { eventKey: "INSI", direction: "neutral" },
-  { eventKey: "OUTS", direction: "neutral" },
-  { eventKey: "BOS", direction: "buy" },
+function normalizeRuleEventKey(value = "") {
+  return String(value || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase();
+}
+
+function ruleEventKeyFromDefinition(rule = {}) {
+  return normalizeRuleEventKey(
+    rule?.abbr || rule?.short_name || rule?.marker_text || rule?.id || rule?.name || "",
+  );
+}
+
+function ruleDirectionFromDefinition(rule = {}) {
+  const raw = String(rule?.outputs?.bias || rule?.params?.bias || "").trim().toLowerCase();
+  if (raw === "bullish" || raw === "buy" || raw === "long") return "buy";
+  if (raw === "bearish" || raw === "sell" || raw === "short") return "sell";
+  return "neutral";
+}
+
+function mergeEventPanelCatalog(entries = []) {
+  const groups = new Map();
+  for (const entry of entries) {
+    const eventKey = normalizeRuleEventKey(entry?.eventKey);
+    if (!eventKey || groups.has(eventKey)) continue;
+    groups.set(eventKey, {
+      eventKey,
+      direction: String(entry?.direction || "neutral").trim().toLowerCase() || "neutral",
+    });
+  }
+  return Array.from(groups.values());
+}
+
+function resolveAllowedRuleEventKey(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const direct = normalizeRuleEventKey(raw);
+  const normalized = raw.toLowerCase();
+  const predefined = listPredefinedRules().find((rule) =>
+    [
+      rule?.id,
+      rule?.abbr,
+      rule?.short_name,
+      rule?.name,
+    ]
+      .map((item) => String(item || "").trim().toLowerCase())
+      .filter(Boolean)
+      .includes(normalized),
+  );
+  return ruleEventKeyFromDefinition(predefined) || direct;
+}
+
+function buildAllowedRuleEventSet(...groups) {
+  const values = groups.flatMap((group) => {
+    if (group == null) return [];
+    return Array.isArray(group) ? group : [group];
+  });
+  if (!values.length) return null;
+  const set = new Set();
+  for (const value of values) {
+    const key =
+      value && typeof value === "object"
+        ? resolveAllowedRuleEventKey(
+            value.abbr ||
+              value.short_name ||
+              value.eventKey ||
+              value.event_key ||
+              value.rule_id ||
+              value.id ||
+              value.name,
+          )
+        : resolveAllowedRuleEventKey(value);
+    if (key) set.add(key);
+  }
+  return set.size ? set : null;
+}
+
+function allowedRuleEventSetHas(allowedSet, eventKey = "") {
+  if (!allowedSet) return true;
+  const key = resolveAllowedRuleEventKey(eventKey);
+  return !key || allowedSet.has(key);
+}
+
+const PREDEFINED_RULE_EVENT_CATALOG = listPredefinedRules()
+  .map((rule) => ({
+    eventKey: ruleEventKeyFromDefinition(rule),
+    direction: ruleDirectionFromDefinition(rule),
+  }))
+  .filter((entry) => entry.eventKey);
+
+const EVENT_PANEL_CATALOG = mergeEventPanelCatalog([
+  ...PREDEFINED_RULE_EVENT_CATALOG,
   { eventKey: "CH", direction: "sell" },
   { eventKey: "SW", direction: "sell" },
   { eventKey: "SH", direction: "sell" },
   { eventKey: "SL", direction: "buy" },
   { eventKey: "DIV", direction: "neutral" },
-  { eventKey: "REJ", direction: "neutral" },
-  { eventKey: "BRK", direction: "neutral" },
-];
+]);
 const LAYER_BOOLEAN_GRID_STYLE = {
   display: "grid",
   gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
@@ -3796,6 +3882,7 @@ function buildRecentArtifactEventsByTf({
   barsByTf = {},
   artifactTfVisibility = {},
   artifactEventVisibility = {},
+  allowedRuleEventKeys = null,
 }) {
   const output = {};
   const recentEventEntriesByTf = {};
@@ -3815,6 +3902,7 @@ function buildRecentArtifactEventsByTf({
       if (itemTfKey && artifactTfVisibility?.[itemTfKey] === false) continue;
       const eventKey = String(item?.marker_text || item?.event_key || "").trim().toUpperCase();
       if (!eventKey) continue;
+      if (!allowedRuleEventSetHas(allowedRuleEventKeys, eventKey)) continue;
       const storedVisible = artifactEventVisibility?.[eventKey];
       const fallbackVisible = defaultArtifactEventVisible(item?.artifact_payload || item);
       if (typeof storedVisible === "boolean" ? !storedVisible : !fallbackVisible) continue;
@@ -3850,6 +3938,7 @@ function buildRecentArtifactEventsByTf({
       .map((item) => {
         const eventKey = artifactMarkerText(item);
         if (!eventKey) return null;
+        if (!allowedRuleEventSetHas(allowedRuleEventKeys, eventKey)) return null;
         const storedVisible = artifactEventVisibility?.[eventKey];
         const fallbackVisible = defaultArtifactEventVisible(item);
         if (typeof storedVisible === "boolean" ? !storedVisible : !fallbackVisible) return null;
@@ -5453,6 +5542,11 @@ export default function SymbolChart({
   autoStartReplay = false,
   externalChartData = null,
   chartStrategies = EMPTY_ARRAY,
+  showStrategyMarkersDefault = false,
+  allowedRules = null,
+  allowedEvents = null,
+  allowed_rules = null,
+  allowed_events = null,
   extraRequestedTimeframes = EMPTY_ARRAY,
   liveBars = true,
   bootstrapLiveBarsOnMount = false,
@@ -5502,6 +5596,10 @@ export default function SymbolChart({
     status: "idle",
   });
   const cleanSym = useMemo(() => normSym(symbol), [symbol]);
+  const allowedRuleEventKeys = useMemo(
+    () => buildAllowedRuleEventSet(allowedRules, allowedEvents, allowed_rules, allowed_events),
+    [allowedRules, allowedEvents, allowed_rules, allowed_events],
+  );
   const chartSessionTradeSid = useMemo(
     () =>
       String(
@@ -5562,7 +5660,9 @@ export default function SymbolChart({
   const [artifactGroupVisibility, setArtifactGroupVisibility] = useState({});
   const [artifactTfVisibility, setArtifactTfVisibility] = useState({});
   const [artifactEventVisibility, setArtifactEventVisibility] = useState({});
-  const [showStrategyMarkers, setShowStrategyMarkers] = useState(false);
+  const [showStrategyMarkers, setShowStrategyMarkers] = useState(() =>
+    Boolean(showStrategyMarkersDefault),
+  );
   const [selectedObjectId, setSelectedObjectId] = useState(null);
   const [editObjects, setEditObjects] = useState(false);
 
@@ -7180,6 +7280,7 @@ export default function SymbolChart({
         barsByTf: isBacktestChartReplay ? replayBarsByTf : master?.bars,
         artifactTfVisibility,
         artifactEventVisibility,
+        allowedRuleEventKeys,
       }),
     [
       rawArtifactObjectsByChartId,
@@ -7189,6 +7290,7 @@ export default function SymbolChart({
       master?.bars,
       artifactTfVisibility,
       artifactEventVisibility,
+      allowedRuleEventKeys,
     ],
   );
   const clientStrategyTradePlansByTf = useMemo(() => {
@@ -9862,6 +9964,7 @@ export default function SymbolChart({
     for (const entry of EVENT_PANEL_CATALOG) {
       const eventKey = String(entry?.eventKey || "").trim();
       if (!eventKey) continue;
+      if (!allowedRuleEventSetHas(allowedRuleEventKeys, eventKey)) continue;
       const direction = String(entry?.direction || "neutral").trim().toLowerCase();
       groups.set(eventKey, {
         eventKey,
@@ -9880,6 +9983,7 @@ export default function SymbolChart({
         if (!isTrueSignalEventItem(item)) continue;
         const eventKey = artifactMarkerText(item);
         if (!eventKey) continue;
+        if (!allowedRuleEventSetHas(allowedRuleEventKeys, eventKey)) continue;
         if (!groups.has(eventKey)) {
           groups.set(eventKey, {
             eventKey,
@@ -9916,7 +10020,7 @@ export default function SymbolChart({
       if (rankDiff !== 0) return rankDiff;
       return String(a.label || "").localeCompare(String(b.label || ""));
     });
-  }, [artifactEventVisibility, sharedArtifactItemsByTf]);
+  }, [allowedRuleEventKeys, artifactEventVisibility, sharedArtifactItemsByTf]);
 
   const strategyMarkerObjectsByTf = useMemo(() => {
     const normalizedStrategies = (Array.isArray(chartStrategies) ? chartStrategies : [])
@@ -9944,11 +10048,18 @@ export default function SymbolChart({
           strategyHitToChartObject(hit, tfKey),
           ...strategyHitContextToChartObjects(hit, tfKey),
         ])
-        .filter(Boolean);
+        .filter(Boolean)
+        .filter((item) =>
+          allowedRuleEventSetHas(
+            allowedRuleEventKeys,
+            item?.marker_text || item?.event_key || item?.artifact_type || "",
+          ),
+        );
     });
     return output;
   }, [
     chartStrategies,
+    allowedRuleEventKeys,
     cleanSym,
     isBacktestChartReplay,
     master?.bars,
@@ -10265,11 +10376,12 @@ export default function SymbolChart({
       if (!item?.is_event) return true;
       const eventKey = artifactMarkerText(item);
       if (!eventKey) return true;
+      if (!allowedRuleEventSetHas(allowedRuleEventKeys, eventKey)) return false;
       const storedVisible = artifactEventVisibility?.[eventKey];
       if (typeof storedVisible === "boolean") return storedVisible;
       return defaultArtifactEventVisible(item);
     },
-    [artifactEventVisibility],
+    [allowedRuleEventKeys, artifactEventVisibility],
   );
 
   const momentumLayerItems = useMemo(
