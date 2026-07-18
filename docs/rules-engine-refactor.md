@@ -37,6 +37,7 @@ flowchart TD
 - Built-in JS rule catalog: `src/shared/rules-engine/predefinedRules.js`
 - Built-in CJS rule catalog: `src/shared/rules-engine/predefinedRules.cjs`
 - Shared module boundary: `src/shared/package.json`
+- Shared CJS generator/check: `scripts/build_shared_cjs.cjs`, `pnpm build:shared-cjs`, `pnpm check:shared-cjs`
 - Custom JSON rule folder: `src/config/rules/`
 - Rule JSON schema: `src/config/schema/rule.json`
 - Strategy JSON folder: `src/config/strategies/`
@@ -117,7 +118,8 @@ flowchart TD
 - `src/shared/strategy-engine` now composes `RuleEvent[]` into strategy signals with `event`, `and`, `or`, `not`, and ordered `then` logic.
 - Backtest event simulation now evaluates chart-emitted `RuleEvent`s through the shared strategy engine and consumes matched `StrategySignal[]` actions for trade execution/event logging.
 - Chart strategy marker adapters now prefer normalized `RuleEvent` fields for marker identity, label, timeframe, family, type, time, and price.
+- Shared `.cjs` files are generated from shared ESM sources via `scripts/build_shared_cjs.cjs`; edit `.js` source files, then run `pnpm build:shared-cjs`.
 
 ## Next Refactor Targets
 
-1. Replace hand-maintained CJS copies with a generated build step where practical.
+1. Add broader API/UI integration coverage for the new shared rule/event/strategy pipeline.

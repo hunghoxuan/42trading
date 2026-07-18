@@ -7,6 +7,8 @@
     "test:verify-webhook-local": "bash tests/verify_webhook_local.sh",
     "test:remote-api": "bash tests/test_remote_api_default.sh",
     "test:remote-ui": "bash tests/test_remote_ui.sh",
+    "build:shared-cjs": "node scripts/build_shared_cjs.cjs",
+    "check:shared-cjs": "node scripts/build_shared_cjs.cjs --check",
     "test:sync-guards": "node --test tests/syncGuards.test.mjs"
   },
   "dependencies": {
