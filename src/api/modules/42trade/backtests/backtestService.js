@@ -15,6 +15,9 @@ const {
 const {
   evaluateRuleExpression,
 } = require("../../../../shared/rules-engine/index.cjs");
+const {
+  evaluateStrategies,
+} = require("../../../../shared/strategy-engine/index.cjs");
 const { normalizeSymbolList } = require("../../../../config/symbolGroups.cjs");
 const sharedArtifactDetection = require("../../../../shared/rules-engine/features/detectArtifacts.cjs");
 const strategyEventFunctions = require("../../../../admin/modules/42trade/chartArtifacts/strategyEventFunctions.cjs");
@@ -2407,6 +2410,52 @@ function normalizeStrategyEventsForSimulation(strategy = {}) {
     }));
 }
 
+function buildStrategySignalDefinitionsForSimulation(strategy = {}) {
+  const strategyId =
+    String(strategy?.id || strategy?.key || "strategy").trim() || "strategy";
+  const strategyName = String(strategy?.name || strategyId).trim() || strategyId;
+  return normalizeStrategyEventsForSimulation(strategy).map((event, index) => {
+    const eventId = String(event?.id || `event_${index + 1}`).trim() || `event_${index + 1}`;
+    return {
+      id: `${strategyId}:${eventId}`,
+      name: `${strategyName} / ${String(event?.name || eventId).trim() || eventId}`,
+      event_logic: { event: eventId },
+      actions: Array.isArray(event?.actions) ? event.actions : [],
+      metadata: {
+        source_strategy_id: strategyId,
+        source_event_id: eventId,
+      },
+    };
+  });
+}
+
+function summarizeStrategySignal(signal = {}) {
+  return {
+    id: String(signal?.id || "").trim(),
+    strategy_id: String(signal?.strategy_id || "").trim(),
+    strategy_name: String(signal?.strategy_name || "").trim(),
+    source_strategy_id: String(signal?.metadata?.source_strategy_id || "").trim(),
+    source_event_id: String(signal?.metadata?.source_event_id || "").trim(),
+    time: Number.isFinite(Number(signal?.time)) ? Number(signal.time) : null,
+    bar_index: Number.isFinite(Number(signal?.bar_index)) ? Number(signal.bar_index) : null,
+    symbol: String(signal?.symbol || "").trim().toUpperCase(),
+    tf: String(signal?.tf || "").trim(),
+    events: Array.isArray(signal?.events) ? signal.events : [],
+    actions: Array.isArray(signal?.actions) ? signal.actions : [],
+  };
+}
+
+function groupStrategySignalsByEventId(signals = []) {
+  const grouped = new Map();
+  for (const signal of Array.isArray(signals) ? signals : []) {
+    const eventId = String(signal?.metadata?.source_event_id || "").trim();
+    if (!eventId) continue;
+    if (!grouped.has(eventId)) grouped.set(eventId, []);
+    grouped.get(eventId).push(summarizeStrategySignal(signal));
+  }
+  return grouped;
+}
+
 function applyEventActionToSignalState(signalState, action = {}) {
   const actionKind = resolveStrategyActionKind(action);
   if (actionKind !== "trade") return;
@@ -2552,6 +2601,8 @@ function simulateRuleBasedStrategy(bars, strategy, options = {}) {
     hitsByBarIndex.get(barIndex).push(hit);
   }
   const eventLog = [];
+  const strategySignalDefinitions = buildStrategySignalDefinitionsForSimulation(strategy);
+  const strategySignalLog = [];
   for (const indicator of Array.isArray(strategy.indicators) ? strategy.indicators : []) {
     if (!indicator?.id) continue;
     indicators[indicator.id] = computeIndicatorSeries(
@@ -2593,7 +2644,15 @@ function simulateRuleBasedStrategy(bars, strategy, options = {}) {
       ctx,
     };
     const hits = hitsByBarIndex.get(i) || [];
+    const strategySignals = evaluateStrategies({
+      events: hits.map((hit) => hit?.ruleEvent).filter(Boolean),
+      strategies: strategySignalDefinitions,
+    }).signals;
+    const signalsByEventId = groupStrategySignalsByEventId(strategySignals);
+    strategySignalLog.push(...strategySignals.map((signal) => summarizeStrategySignal(signal)));
     for (const hit of hits) {
+      const hitStrategySignals = signalsByEventId.get(String(hit?.eventId || "").trim()) || [];
+      const primaryStrategySignal = hitStrategySignals[0] || null;
       const tradePlans = Array.isArray(hit?.tradePlans) ? hit.tradePlans : [];
       let tradePlanCursor = 0;
       for (const action of Array.isArray(hit?.actions) ? hit.actions : []) {
@@ -2621,6 +2680,9 @@ function simulateRuleBasedStrategy(bars, strategy, options = {}) {
         eventLog.push({
           event_id: hit?.eventId || "",
           event_name: hit?.eventName || "",
+          strategy_signal_id: primaryStrategySignal?.id || "",
+          strategy_signal_strategy_id: primaryStrategySignal?.strategy_id || "",
+          strategy_signal_event_id: primaryStrategySignal?.source_event_id || "",
           action_id: action?.id || "",
           action_type: actionKind,
           action: actionKind,
@@ -2647,6 +2709,8 @@ function simulateRuleBasedStrategy(bars, strategy, options = {}) {
           bar_time_unix: Number(bars[i]?.time || 0),
           bar_time: toIsoFromUnixSeconds(bars[i]?.time),
           bar_close: round(Number(bars[i]?.close), 5),
+          rule_event: hit?.ruleEvent || null,
+          strategy_signals: hitStrategySignals,
           artifacts: Array.isArray(hit?.artifacts) ? hit.artifacts : [],
         });
       }
@@ -2655,6 +2719,7 @@ function simulateRuleBasedStrategy(bars, strategy, options = {}) {
   }, options);
   if (options && options.returnDetails && result && typeof result === "object") {
     result.event_log = eventLog;
+    result.strategy_signals = strategySignalLog;
   }
   return result;
 }
@@ -2673,6 +2738,11 @@ function summarizeTrades(trades = [], bars = [], strategy = null, details = {}) 
     0,
   );
   const actionLog = Array.isArray(details.event_log) ? details.event_log : [];
+  const strategySignalCount = new Set(
+    actionLog
+      .map((entry) => String(entry?.strategy_signal_id || "").trim())
+      .filter(Boolean),
+  ).size;
   const triggeredEventCount = new Set(
     actionLog.map(
       (entry) => `${String(entry?.bar_index ?? "")}:${String(entry?.event_id || "")}`,
@@ -2682,6 +2752,7 @@ function summarizeTrades(trades = [], bars = [], strategy = null, details = {}) 
     bars_analyzed: bars.length,
     total_trades: totalTrades,
     generated_signals: totalTrades,
+    strategy_signals: strategySignalCount,
     triggered_events: triggeredEventCount,
     triggered_actions: actionLog.length,
     wins,

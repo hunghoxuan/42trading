@@ -112,11 +112,11 @@ flowchart TD
 - The predefined rule registry starts from fresh detector building blocks: crosses, rejections, EMA/VWAP/key level/MACD/candle/structure rules.
 - `/api/rules` and `/v2/rules` expose predefined JS rules, custom JSON rules, the rule schema, and an example payload.
 - `src/shared/strategy-engine` now composes `RuleEvent[]` into strategy signals with `event`, `and`, `or`, `not`, and ordered `then` logic.
+- Backtest event simulation now evaluates chart-emitted `RuleEvent`s through the shared strategy engine and annotates event logs with `strategy_signal_*` metadata.
 
 ## Next Refactor Targets
 
 1. Move artifact detector implementation bodies from `src/admin/modules/42trade/chartArtifacts` into `src/shared/rules-engine/features`.
 2. Make chart layers render directly from `RuleEvent[]` for detector markers.
-3. Wire existing strategy/backtest execution to `src/shared/strategy-engine`.
-4. Make backtests run the same pipeline: bars to rule events to strategy signals to simulated trades.
-5. Replace generated CJS copies with a single build step or source-of-truth package boundary.
+3. Make backtest trade execution consume `StrategySignal[]` directly instead of using legacy chart hit actions as the execution source.
+4. Replace generated CJS copies with a single build step or source-of-truth package boundary.

@@ -374,6 +374,12 @@ test("simulateStrategy logs triggered events and supports non-trade actions in v
   assert.equal(result.trades[0].action, "BUY");
   assert.equal(Array.isArray(result.event_log), true);
   assert.equal(result.event_log.length, 2);
+  assert.equal(Array.isArray(result.strategy_signals), true);
+  assert.equal(result.strategy_signals.length, 1);
+  assert.equal(result.strategy_signals[0].source_event_id, "long_breakout");
+  assert.equal(result.event_log[0].strategy_signal_event_id, "long_breakout");
+  assert.equal(result.event_log[0].strategy_signal_id, result.strategy_signals[0].id);
+  assert.equal(result.event_log[0].rule_event?.rule_id, "long_breakout");
   assert.deepEqual(
     result.event_log.map((entry) => entry.event_id),
     ["long_breakout", "long_breakout"],
