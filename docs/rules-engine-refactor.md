@@ -113,8 +113,8 @@ flowchart TD
 - `/api/rules` and `/v2/rules` expose predefined JS rules, custom JSON rules, the rule schema, and an example payload.
 - `src/shared/strategy-engine` now composes `RuleEvent[]` into strategy signals with `event`, `and`, `or`, `not`, and ordered `then` logic.
 - Backtest event simulation now evaluates chart-emitted `RuleEvent`s through the shared strategy engine and consumes matched `StrategySignal[]` actions for trade execution/event logging.
+- Chart strategy marker adapters now prefer normalized `RuleEvent` fields for marker identity, label, timeframe, family, type, time, and price.
 
 ## Next Refactor Targets
 
-1. Make chart layers render directly from `RuleEvent[]` for detector markers.
-2. Replace generated CJS copies with a single build step or source-of-truth package boundary.
+1. Replace generated CJS copies with a single build step or source-of-truth package boundary.

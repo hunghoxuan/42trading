@@ -2375,7 +2375,15 @@ function resolveZoneEventMarkerPrice(item = {}, top = null, bottom = null, fallb
   return Number.isFinite(top) ? top : bottom;
 }
 
+function strategyHitRuleEvent(hit = {}) {
+  const event = hit?.ruleEvent || hit?.rule_event;
+  return event && typeof event === "object" && !Array.isArray(event) ? event : {};
+}
+
 function strategyHitMarkerText(hit = {}) {
+  const ruleEvent = strategyHitRuleEvent(hit);
+  const ruleLabel = String(ruleEvent?.artifact?.label || ruleEvent?.abbr || "").trim();
+  if (ruleLabel) return ruleLabel;
   const latestArtifactPayload =
     hit?.latestArtifact?.payload && typeof hit.latestArtifact.payload === "object"
       ? hit.latestArtifact.payload
@@ -2398,15 +2406,20 @@ function strategyHitMarkerText(hit = {}) {
   if (eventName.includes("bos")) return "BOS";
   if (eventName.includes("sweep")) return "SW";
   return (
+    String(ruleEvent?.name || ruleEvent?.rule_id || "").trim() ||
     String(hit?.eventName || hit?.event_name || "").trim() ||
     artifactTypeAbbr(eventName || "strategy").slice(0, 4).toUpperCase()
   );
 }
 
 function strategyHitToChartObject(hit = {}, fallbackTf = "") {
-  const timeSec = Number(hit?.barTimeUnix ?? hit?.bar_time_unix ?? 0);
+  const ruleEvent = strategyHitRuleEvent(hit);
+  const timeSec = Number(ruleEvent?.time ?? hit?.barTimeUnix ?? hit?.bar_time_unix ?? 0);
   if (!Number.isFinite(timeSec) || timeSec <= 0) return null;
-  const sourceTf = String(hit?.sourceTf || hit?.source_tf || hit?.tf || fallbackTf || "").trim();
+  const ruleId = String(ruleEvent?.rule_id || hit?.eventId || hit?.event_id || "strategy")
+    .trim()
+    .toLowerCase();
+  const sourceTf = String(ruleEvent?.tf || hit?.sourceTf || hit?.source_tf || hit?.tf || fallbackTf || "").trim();
   const sourceTfColor = artifactTimeframeColor(sourceTf);
   const latestArtifactGroup = artifactGroupKeyForItem(hit?.latestArtifact || {});
   const baseMarkerColor = String(hit?.markerColor || sourceTfColor || "#38bdf8");
@@ -2415,7 +2428,8 @@ function strategyHitToChartObject(hit = {}, fallbackTf = "") {
       ? brightenHexColor(baseMarkerColor, 0.3)
       : baseMarkerColor;
   const price = Number(
-    hit?.latestArtifact?.price ??
+    ruleEvent?.price ??
+      hit?.latestArtifact?.price ??
       hit?.latestArtifact?.payload?.level ??
       hit?.barClose ??
       hit?.bar_close ??
@@ -2427,19 +2441,22 @@ function strategyHitToChartObject(hit = {}, fallbackTf = "") {
   );
   return {
     id: String(
-      hit?.matchKey ||
+      ruleEvent?.id ||
+        hit?.matchKey ||
         hit?.match_key ||
-        `strategy-${String(hit?.strategyId || "strategy")}-${String(hit?.eventId || "event")}-${timeSec}`,
+        `strategy-${String(hit?.strategyId || "strategy")}-${ruleId}-${timeSec}`,
     ),
     kind: "point",
     type: "STRATEGY",
     label:
+      sanitizeChartText(ruleEvent?.name) ||
+      sanitizeChartText(ruleEvent?.abbr) ||
       sanitizeChartText(hit?.eventName) ||
       sanitizeChartText(hit?.event_name) ||
       sanitizeChartText(hit?.strategyName) ||
       "",
     visible: true,
-    tf: String(hit?.tf || fallbackTf || "").trim(),
+    tf: String(ruleEvent?.tf || hit?.tf || fallbackTf || "").trim(),
     color: markerColor,
     text_color: String(hit?.markerTextColor || markerColor),
     price: Number.isFinite(price) ? price : null,
@@ -2451,8 +2468,8 @@ function strategyHitToChartObject(hit = {}, fallbackTf = "") {
     marker_shape: String(hit?.markerShape || "circle"),
     marker_text: strategyHitMarkerText(hit),
     marker_position: String(hit?.markerPosition || "belowBar"),
-    artifact_family: "strategy",
-    artifact_type: String(hit?.eventId || hit?.event_id || "strategy").trim().toLowerCase(),
+    artifact_family: String(ruleEvent?.family || "strategy").trim().toLowerCase() || "strategy",
+    artifact_type: ruleId || "strategy",
     artifact_group: "strategy",
     source_tf: sourceTf,
     artifact_payload: hit,
@@ -2525,10 +2542,11 @@ function collectStrategyHitLevelReferences(hit = {}) {
 }
 
 function strategyHitContextToChartObjects(hit = {}, fallbackTf = "") {
-  const timeSec = Number(hit?.barTimeUnix ?? hit?.bar_time_unix ?? 0);
+  const ruleEvent = strategyHitRuleEvent(hit);
+  const timeSec = Number(ruleEvent?.time ?? hit?.barTimeUnix ?? hit?.bar_time_unix ?? 0);
   if (!Number.isFinite(timeSec) || timeSec <= 0) return [];
-  const tfKey = String(hit?.tf || fallbackTf || "").trim().toLowerCase();
-  const eventKey = String(hit?.eventId || hit?.event_id || "strategy").trim().toLowerCase();
+  const tfKey = String(ruleEvent?.tf || hit?.tf || fallbackTf || "").trim().toLowerCase();
+  const eventKey = String(ruleEvent?.rule_id || hit?.eventId || hit?.event_id || "strategy").trim().toLowerCase();
   const markerPrice = Number(
     hit?.latestArtifact?.payload?.marker_price ??
       hit?.latestArtifact?.price ??
