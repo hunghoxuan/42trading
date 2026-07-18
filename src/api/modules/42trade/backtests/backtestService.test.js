@@ -6,7 +6,7 @@ const assert = require("node:assert/strict");
 const backtestService = require("./backtestService");
 const chartStrategyChecks = require("../../../../admin/shared/utils/chartStrategyChecks.cjs");
 const sharedArtifactDetection = require("../../../../shared/rules-engine/features/detectArtifacts.cjs");
-const realtimeAnalysis = require("../../../../admin/modules/42trade/chartArtifacts/realtimeAnalysis.cjs");
+const realtimeAnalysis = require("../../../../shared/rules-engine/features/realtimeAnalysis.cjs");
 
 function makeStructureBars() {
   return [

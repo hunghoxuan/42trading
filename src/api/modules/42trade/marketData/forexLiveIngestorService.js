@@ -8,7 +8,7 @@ const marketDataRepo = require("./marketDataRepo");
 const { buildChartTopic, normalizeTimeframe } = require("../realtime/realtimeCore");
 const { loadChartSnapshot } = require("../realtime/chartStreamService");
 const { emitRealtimeTopic } = require("../realtime/realtimeTopicHub");
-const { buildMultiTfAnalysis } = require("../../../../admin/modules/42trade/chartArtifacts/realtimeAnalysis.cjs");
+const { buildMultiTfAnalysis } = require("../../../../shared/rules-engine/features/realtimeAnalysis.cjs");
 
 const ENCRYPTION_ALGO = "aes-256-gcm";
 const ENCRYPTION_KEY_SECRET =

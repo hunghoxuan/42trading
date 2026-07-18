@@ -36,6 +36,7 @@ flowchart TD
 
 - Built-in JS rule catalog: `src/shared/rules-engine/predefinedRules.js`
 - Built-in CJS rule catalog: `src/shared/rules-engine/predefinedRules.cjs`
+- Shared module boundary: `src/shared/package.json`
 - Custom JSON rule folder: `src/config/rules/`
 - Rule JSON schema: `src/config/schema/rule.json`
 - Strategy JSON folder: `src/config/strategies/`
@@ -106,6 +107,7 @@ flowchart TD
 
 - `src/shared/rules-engine/ruleEngine.js` and `.cjs` now own expression evaluation.
 - `src/shared/rules-engine/features/detectArtifacts.js` and `.cjs` own artifact detection; the old admin detector paths are compatibility wrappers.
+- `src/shared/rules-engine/features/strategyEventFunctions.*`, `realtimeAnalysis.*`, and `src/shared/utils/suggestedTradeLevels.*` own strategy-event predicate helpers, realtime analysis, and suggested trade levels; old admin paths are compatibility wrappers.
 - Admin chart strategy checks delegate `evaluateRule` to the shared engine.
 - API backtests delegate `evaluateRule` to the shared engine.
 - Chart strategy hits now include `ruleEvent` for incremental chart adoption.
@@ -117,4 +119,5 @@ flowchart TD
 
 ## Next Refactor Targets
 
-1. Replace generated CJS copies with a single build step or source-of-truth package boundary.
+1. Move `evaluateChartStrategies` out of `src/admin/shared/utils` so API backtests no longer import admin chart strategy checks.
+2. Replace hand-maintained CJS copies with a generated build step where practical.

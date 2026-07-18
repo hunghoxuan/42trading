@@ -20,7 +20,7 @@ const {
 } = require("../../../../shared/strategy-engine/index.cjs");
 const { normalizeSymbolList } = require("../../../../config/symbolGroups.cjs");
 const sharedArtifactDetection = require("../../../../shared/rules-engine/features/detectArtifacts.cjs");
-const strategyEventFunctions = require("../../../../admin/modules/42trade/chartArtifacts/strategyEventFunctions.cjs");
+const strategyEventFunctions = require("../../../../shared/rules-engine/features/strategyEventFunctions.cjs");
 const {
   evaluateChartStrategies,
 } = require("../../../../admin/shared/utils/chartStrategyChecks.cjs");

@@ -1,5 +1,5 @@
 import * as sharedArtifactDetection from "../../../shared/rules-engine/features/detectArtifacts.js";
-import * as strategyEventFunctions from "../../modules/42trade/chartArtifacts/strategyEventFunctions.js";
+import * as strategyEventFunctions from "../../../shared/rules-engine/features/strategyEventFunctions.js";
 import * as strategyScanEngine from "../../../shared/utils/strategyScanEngine.js";
 import * as sharedRulesEngine from "../../../shared/rules-engine/index.js";
 

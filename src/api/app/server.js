@@ -111,7 +111,7 @@ const {
 const { ForexLiveIngestorService } = require("../modules/42trade/marketData/forexLiveIngestorService");
 const {
   buildMultiTfAnalysis,
-} = require("../../admin/modules/42trade/chartArtifacts/realtimeAnalysis.cjs");
+} = require("../../shared/rules-engine/features/realtimeAnalysis.cjs");
 const {
   evaluateChartStrategies,
 } = require("../../admin/shared/utils/chartStrategyChecks.cjs");

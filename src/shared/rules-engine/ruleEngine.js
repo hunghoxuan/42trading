@@ -1,6 +1,6 @@
 "use strict";
 
-import * as strategyEventFunctions from "../../admin/modules/42trade/chartArtifacts/strategyEventFunctions.js";
+import * as strategyEventFunctions from "./features/strategyEventFunctions.js";
 
 function valueAtPath(source, pathName = "") {
   const parts = String(pathName || "")

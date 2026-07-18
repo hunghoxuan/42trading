@@ -1,6 +1,6 @@
 "use strict";
 
-const strategyEventFunctions = require("../../admin/modules/42trade/chartArtifacts/strategyEventFunctions.cjs");
+const strategyEventFunctions = require("./features/strategyEventFunctions.cjs");
 
 function valueAtPath(source, pathName = "") {
   const parts = String(pathName || "")
