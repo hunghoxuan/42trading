@@ -435,7 +435,7 @@ function createRuleTestStrategy({
     },
     indicators: RULE_TEST_INDICATORS,
     metadata: {
-      preview_current_bar_only: true,
+      preview_current_bar_only: false,
     },
     events: [
       {
