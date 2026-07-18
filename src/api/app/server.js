@@ -21,6 +21,7 @@ const studioDomain = require("../modules/studio/service");
 const marketDataDomain = require("../modules/42trade/marketData");
 const backtestsDomain = require("../modules/42trade/backtests");
 const strategiesDomain = require("../modules/42trade/strategies");
+const rulesDomain = require("../modules/42trade/rules");
 const { createConfigStore } = require("../shared/config/configStore");
 const { createMt5PythonBridgeClient } = require("../shared/clients/mt5PythonBridgeClient");
 const tradesDomain = require("../modules/42trade/trades0");
@@ -123,6 +124,7 @@ const {
 } = marketDataDomain;
 const backtestService = backtestsDomain.backtestService;
 const strategyConfigService = strategiesDomain.strategyConfigService;
+const ruleConfigService = rulesDomain.ruleConfigService;
 const systemConfigStore = createConfigStore();
 const { tradesRepo } = tradesDomain;
 const tradeArtifactSync = tradesDomain.tradeArtifactSync;
@@ -37775,6 +37777,35 @@ const appHandler = async (req, res) => {
       const userId = uiEffectiveUserId(req, url, null) || CFG.mt5DefaultUserId;
       const result = await backtestService.listBacktestRuns(userId);
       return json(res, 200, result);
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    (url.pathname === "/v2/rules" || url.pathname === "/api/rules")
+  ) {
+    const sess = getUiSessionFromReq(req);
+    if (!sess.ok) return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const [items, custom, schema] = await Promise.all([
+        ruleConfigService.listRules(),
+        ruleConfigService.listCustomRules(),
+        ruleConfigService.readSchema(),
+      ]);
+      const predefined = items.filter((item) => item.kind === "predefined");
+      return json(res, 200, {
+        ok: true,
+        items,
+        predefined,
+        custom,
+        example: ruleConfigService.buildExampleRule(),
+        schema,
+      });
     } catch (error) {
       return json(res, 400, {
         ok: false,

@@ -1,0 +1,23 @@
+{
+  "id": "price_crosses_ema_custom",
+  "abbr": "PX_EMA",
+  "name": "Price Crosses EMA",
+  "icon": "crosshair",
+  "family": "moving_average",
+  "params": {
+    "side": "above",
+    "source": "close",
+    "ema_length": 20
+  },
+  "condition": {
+    "crosses_above": [
+      { "var": "bar.close" },
+      { "var": "indicators.ema_20" }
+    ]
+  },
+  "outputs": {
+    "bias": "bullish",
+    "marker": "arrow_up",
+    "severity": "medium"
+  }
+}

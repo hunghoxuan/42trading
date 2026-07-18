@@ -1196,6 +1196,7 @@ export const api = {
   saveBacktest: (payload = {}) => post("/api/backtests/save", payload),
   getBacktest: (runId) => get(`/api/backtests/${encodeURIComponent(runId)}`),
   deleteBacktest: (runId) => del(`/api/backtests/${encodeURIComponent(runId)}`),
+  listRules: () => get("/api/rules"),
   listStrategies: () => get("/api/strategies"),
   listAvailableStrategies: () => get("/api/strategies"),
   getStrategy: (strategyId) => get(`/api/strategies/${encodeURIComponent(strategyId)}`),

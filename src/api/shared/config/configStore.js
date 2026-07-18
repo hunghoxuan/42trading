@@ -51,6 +51,7 @@ function createConfigStore(options = {}) {
     if (kind === "root") return path.join(rootDir, `${id}.json`);
     if (kind === "schema") return path.join(rootDir, "schema", `${id}.json`);
     if (kind === "strategy") return path.join(rootDir, "strategies", `${id}.json`);
+    if (kind === "rule") return path.join(rootDir, "rules", `${id}.json`);
     throw new Error(`Unsupported config kind "${kind}"`);
   }
 
@@ -78,8 +79,9 @@ function createConfigStore(options = {}) {
     return value;
   }
 
-  async function listStrategyKeys() {
-    const dirPath = path.join(rootDir, "strategies");
+  async function listKeys(kind) {
+    const dirName = kind === "rule" ? "rules" : "strategies";
+    const dirPath = path.join(rootDir, dirName);
     const entries = await fsp.readdir(dirPath, { withFileTypes: true });
     return entries
       .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
@@ -132,10 +134,22 @@ function createConfigStore(options = {}) {
     async saveStrategy(name, value) {
       return saveFileBackedDocument("strategy", name, value);
     },
+    async getRule(name, options = {}) {
+      return loadFileBackedDocument("rule", name, options);
+    },
+    async saveRule(name, value) {
+      return saveFileBackedDocument("rule", name, value);
+    },
     async listStrategies(options = {}) {
-      const keys = await listStrategyKeys();
+      const keys = await listKeys("strategy");
       return Promise.all(
         keys.map((key) => this.getStrategy(key, { ...options, refresh: true })),
+      );
+    },
+    async listRules(options = {}) {
+      const keys = await listKeys("rule");
+      return Promise.all(
+        keys.map((key) => this.getRule(key, { ...options, refresh: true })),
       );
     },
   };
