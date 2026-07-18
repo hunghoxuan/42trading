@@ -29,6 +29,7 @@ import {
   normalizeStrategyCatalog,
 } from "../../../shared/utils/strategyCatalog";
 import TradePriceInline from "../components/TradePriceInline";
+import { listPredefinedRules } from "../../../../shared/rules-engine/predefinedRules.js";
 
 function formatNumber(value, digits = 2) {
   const num = Number(value);
@@ -1527,9 +1528,15 @@ export default function BacktestsPage() {
         : Array.isArray(res?.rules)
           ? res.rules
           : [];
-      setRuleCatalog(items);
+      setRuleCatalog(items.length ? items : listPredefinedRules().map((rule) => ({
+        ...rule,
+        kind: "predefined",
+      })));
     } catch {
-      setRuleCatalog([]);
+      setRuleCatalog(listPredefinedRules().map((rule) => ({
+        ...rule,
+        kind: "predefined",
+      })));
     } finally {
       setLoadingRules(false);
     }
@@ -2775,7 +2782,12 @@ export default function BacktestsPage() {
         }),
       }));
     } catch (saveError) {
-      setError(String(saveError?.message || saveError || "Failed to save rule"));
+      const status = Number(saveError?.apiRequest?.status || saveError?.apiResponse?.status || 0);
+      setError(
+        status === 404
+          ? "Rule save endpoint is unavailable. Restart the API server so /api/rules is loaded, then try Save again."
+          : String(saveError?.message || saveError || "Failed to save rule"),
+      );
     } finally {
       setSavingRule(false);
     }
