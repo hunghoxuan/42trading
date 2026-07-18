@@ -5601,11 +5601,6 @@ export default function SymbolChart({
     () => buildAllowedRuleEventSet(allowedRules, allowedEvents, allowed_rules, allowed_events),
     [allowedRules, allowedEvents, allowed_rules, allowed_events],
   );
-  const effectiveStrategyScanMode = useMemo(() => {
-    const normalized = String(strategyScanMode || "").trim().toLowerCase();
-    if (normalized === "backtest" || normalized === "live") return normalized;
-    return isBacktestChartReplay ? "backtest" : "live";
-  }, [isBacktestChartReplay, strategyScanMode]);
   const chartSessionTradeSid = useMemo(
     () =>
       String(
@@ -6836,6 +6831,11 @@ export default function SymbolChart({
     return lastTime + Math.max(1, Number(replayPrimaryTfSeconds) || 1) - 1;
   }, [primaryReplayBars, replayPrimaryTfSeconds, requestedReplayEndTimeSec]);
   const isBacktestChartReplay = replayEnabledInChart;
+  const effectiveStrategyScanMode = useMemo(() => {
+    const normalized = String(strategyScanMode || "").trim().toLowerCase();
+    if (normalized === "backtest" || normalized === "live") return normalized;
+    return isBacktestChartReplay ? "backtest" : "live";
+  }, [isBacktestChartReplay, strategyScanMode]);
   const effectiveMultiTfAnalysisByTf = useMemo(() => {
     if (isBacktestChartReplay) {
       return sharedEngineAnalysisByTf &&
