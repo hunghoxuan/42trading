@@ -114,7 +114,7 @@ const {
 } = require("../../shared/rules-engine/features/realtimeAnalysis.cjs");
 const {
   evaluateChartStrategies,
-} = require("../../admin/shared/utils/chartStrategyChecks.cjs");
+} = require("../../shared/utils/chartStrategyChecks.cjs");
 const settingsStore = settingsDomain.settingsStore;
 const barsStorage = marketDataDomain.marketDataRepo;
 const marketDataAuditService = marketDataDomain.marketDataAuditService;

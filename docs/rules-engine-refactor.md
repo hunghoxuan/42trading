@@ -108,7 +108,8 @@ flowchart TD
 - `src/shared/rules-engine/ruleEngine.js` and `.cjs` now own expression evaluation.
 - `src/shared/rules-engine/features/detectArtifacts.js` and `.cjs` own artifact detection; the old admin detector paths are compatibility wrappers.
 - `src/shared/rules-engine/features/strategyEventFunctions.*`, `realtimeAnalysis.*`, and `src/shared/utils/suggestedTradeLevels.*` own strategy-event predicate helpers, realtime analysis, and suggested trade levels; old admin paths are compatibility wrappers.
-- Admin chart strategy checks delegate `evaluateRule` to the shared engine.
+- `src/shared/utils/chartStrategyChecks.*` owns chart strategy scanning/trade-plan extraction; old admin paths are compatibility wrappers.
+- Chart strategy checks delegate `evaluateRule` to the shared engine.
 - API backtests delegate `evaluateRule` to the shared engine.
 - Chart strategy hits now include `ruleEvent` for incremental chart adoption.
 - The predefined rule registry starts from fresh detector building blocks: crosses, rejections, EMA/VWAP/key level/MACD/candle/structure rules.
@@ -119,5 +120,4 @@ flowchart TD
 
 ## Next Refactor Targets
 
-1. Move `evaluateChartStrategies` out of `src/admin/shared/utils` so API backtests no longer import admin chart strategy checks.
-2. Replace hand-maintained CJS copies with a generated build step where practical.
+1. Replace hand-maintained CJS copies with a generated build step where practical.

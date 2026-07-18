@@ -23,7 +23,7 @@ const sharedArtifactDetection = require("../../../../shared/rules-engine/feature
 const strategyEventFunctions = require("../../../../shared/rules-engine/features/strategyEventFunctions.cjs");
 const {
   evaluateChartStrategies,
-} = require("../../../../admin/shared/utils/chartStrategyChecks.cjs");
+} = require("../../../../shared/utils/chartStrategyChecks.cjs");
 const { safePathPart, userRootDir } = objectStore;
 
 const BACKTESTS_DIRNAME = "backtests";

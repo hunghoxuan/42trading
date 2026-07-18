@@ -4,7 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const backtestService = require("./backtestService");
-const chartStrategyChecks = require("../../../../admin/shared/utils/chartStrategyChecks.cjs");
+const chartStrategyChecks = require("../../../../shared/utils/chartStrategyChecks.cjs");
 const sharedArtifactDetection = require("../../../../shared/rules-engine/features/detectArtifacts.cjs");
 const realtimeAnalysis = require("../../../../shared/rules-engine/features/realtimeAnalysis.cjs");
 
