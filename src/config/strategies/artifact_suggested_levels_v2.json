@@ -1,8 +1,8 @@
 {
-  "key": "artifact_suggested_levels_v1",
-  "name": "PA Levels v1",
+  "key": "artifact_suggested_levels_v2",
+  "name": "PA Levels v2",
   "kind": "preset",
-  "description": "Price-action trigger strategy that reuses the shared chart artifact scoring logic to derive SL and TP.",
+  "description": "Price-action trigger strategy that reuses the shared chart artifact scoring logic to derive SL and TP from the second-closest suggested key levels.",
   "engine_version": "42trade.strategy.v2",
   "status": "active",
   "market": {
@@ -11,8 +11,8 @@
   "params": {
     "reward_rr_floor": 1.5,
     "suggested_level_tfs": "all",
-    "suggested_sl_rank": 1,
-    "suggested_tp_rank": 1
+    "suggested_sl_rank": 2,
+    "suggested_tp_rank": 2
   },
   "indicators": [],
   "rules": [

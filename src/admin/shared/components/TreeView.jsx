@@ -31,6 +31,7 @@ function TreeBranch({
   getItemMeta,
   getItemHeaderMeta,
   getItemDisabled,
+  getItemIcon,
   onItemClick,
   onSelectionChange,
   onToggleItem,
@@ -50,6 +51,9 @@ function TreeBranch({
   const label = getItemLabel(item);
   const meta = getItemMeta(item);
   const headerMeta = getItemHeaderMeta(item);
+  const icon = getItemIcon
+    ? getItemIcon(item, { depth, hasChildren })
+    : "";
 
   const handleItemClick = useCallback(() => {
     if (isDisabled) return;
@@ -93,7 +97,14 @@ function TreeBranch({
           disabled={isDisabled}
         >
           <div className="tree-view__header">
-            {!hasChildren ? (
+            {icon ? (
+              <span
+                className={`tree-view__icon${hasChildren ? " is-folder" : " is-file"}`}
+                aria-hidden="true"
+              >
+                {icon}
+              </span>
+            ) : !hasChildren ? (
               <span className="tree-view__marker is-leaf" aria-hidden="true" />
             ) : null}
             <div className="tree-view__label">{label}</div>
@@ -119,6 +130,7 @@ function TreeBranch({
               getItemMeta={getItemMeta}
               getItemHeaderMeta={getItemHeaderMeta}
               getItemDisabled={getItemDisabled}
+              getItemIcon={getItemIcon}
               onItemClick={onItemClick}
               onSelectionChange={onSelectionChange}
               onToggleItem={onToggleItem}
@@ -141,6 +153,7 @@ export default function TreeView({
   getItemMeta = () => null,
   getItemHeaderMeta = () => "",
   getItemDisabled = () => false,
+  getItemIcon = null,
   onItemClick = null,
   onSelectionChange = null,
   onExpandedIdsChange = null,
@@ -199,6 +212,7 @@ export default function TreeView({
           getItemMeta={getItemMeta}
           getItemHeaderMeta={getItemHeaderMeta}
           getItemDisabled={getItemDisabled}
+          getItemIcon={getItemIcon}
           onItemClick={onItemClick}
           onSelectionChange={onSelectionChange}
           onToggleItem={handleToggleItem}

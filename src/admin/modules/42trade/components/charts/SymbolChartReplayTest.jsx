@@ -36,6 +36,9 @@ import {
   mergeViewportArtifactObjects,
 } from "../../../../shared/utils/symbolChartStreaming.js";
 import {
+  resolveConfirmedPostEventDirection,
+} from "../../../../shared/utils/chartStrategyChecks";
+import {
   resolveTradeChartRenderBars,
   resolveTradeFetchBarsCount,
   resolveTradeFetchEndTimeSec,
@@ -1625,7 +1628,29 @@ function artifactLevelLabel(item = {}, fallbackTf = "") {
   return artifactInlineLabel(item, fallbackTf);
 }
 
+function artifactFullLabel(item = {}) {
+  if (item?.is_event) {
+    const groupKey = artifactGroupKeyForItem(item);
+    const eventKey = artifactMarkerText(item);
+    const baseLabel =
+      groupKey === "ob"
+        ? "OB"
+        : groupKey === "bb"
+          ? "BB"
+          : groupKey === "fvg"
+            ? "FVG"
+            : groupKey === "ifvg"
+              ? "iFVG"
+              : "";
+    if (baseLabel && eventKey) return `${baseLabel} ${eventKey}`;
+  }
+  return artifactInlineLabel(item);
+}
+
 function artifactMarkerText(item = {}) {
+  const eventKey = String(item?.event_key || "").trim().toLowerCase();
+  if (eventKey === "reject") return "REJ";
+  if (eventKey === "breakout") return "BRK";
   const type = artifactDisplayTypeKey(item);
   if (type === "bos") return "BOS";
   if (type === "choch") return "CH";
@@ -2002,6 +2027,14 @@ function formatObjectLabel(type, rawLabel) {
 }
 
 function artifactColorForItem(item = {}) {
+  if (item?.is_event) {
+    const direction = resolveArtifactConfirmedDirection(item);
+    return direction === "sell"
+      ? "#ef4444"
+      : direction === "buy"
+        ? "#22c55e"
+        : "rgba(148, 163, 184, 0.38)";
+  }
   const timeframeColor = artifactTimeframeColor(item?.timeframe || item?.tf || item?.source_tf);
   if (timeframeColor) return timeframeColor;
   const group = artifactGroupKeyForItem(item);
@@ -2206,12 +2239,43 @@ function resolveZoneEventMarkerPrice(item = {}, top = null, bottom = null, fallb
   return Number.isFinite(top) ? top : bottom;
 }
 
-function artifactItemToChartObject(item = {}, fallbackTf = "") {
+function resolveArtifactConfirmedDirection(item = {}, bars = [], timeframe = "") {
+  if (!(Array.isArray(bars) && bars.length)) return "neutral";
+  const eventTimeSec =
+    Number(item?.event_time ?? item?.anchor_time ?? item?.bar_end ?? item?.bar_start ?? item?.time) ||
+    null;
+  const eventPrice =
+    Number(item?.payload?.marker_price ?? item?.price ?? item?.payload?.level) || null;
+  return resolveConfirmedPostEventDirection({
+    bars,
+    eventTimeSec,
+    timeframe,
+    eventPrice,
+  });
+}
+
+function markerShapeForConfirmedDirection(direction = "neutral") {
+  if (direction === "sell") return "arrowDown";
+  if (direction === "buy") return "arrowUp";
+  return "circle";
+}
+
+function eventMarkerSizeForConfirmedDirection(direction = "neutral") {
+  return direction === "neutral" ? 2.2 : 4;
+}
+
+function markerPositionForConfirmedDirection(direction = "neutral") {
+  if (direction === "sell") return "aboveBar";
+  return "belowBar";
+}
+
+function artifactItemToChartObject(item = {}, fallbackTf = "", barsByTf = null) {
   if (!item || typeof item !== "object") return null;
   const family = String(item.family || "").trim().toLowerCase();
   const type = String(item.type || "").trim();
   const label = String(item.label || item.type || "").trim();
   const tf = String(item.timeframe || fallbackTf || "").trim();
+  const barsForTf = Array.isArray(barsByTf?.[tf]) ? barsByTf[tf] : [];
   const color = artifactColorForItem(item);
   const groupKey = artifactGroupKeyForItem(item);
   const timeSec =
@@ -2337,6 +2401,7 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
       artifact_payload: item,
     };
     if (groupKey !== "divergence") return segment;
+    const divergenceDirection = resolveArtifactConfirmedDirection(item, barsForTf, tf);
     return [
       segment,
       {
@@ -2353,11 +2418,9 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
         anchorPrice: toPrice,
         line_style: "dot",
         line_width: 0.1,
-        marker_shape: String(item?.direction || item?.payload?.divergence_class || "").toLowerCase().includes("bear")
-          ? "arrowDown"
-          : "arrowUp",
+        marker_shape: markerShapeForConfirmedDirection(divergenceDirection),
         marker_text: "DIV",
-        marker_position: String(item?.direction || "").toLowerCase() === "sell" ? "aboveBar" : "belowBar",
+        marker_position: markerPositionForConfirmedDirection(divergenceDirection),
         artifact_family: family,
         artifact_type: `${type}_point`,
         artifact_group: groupKey,
@@ -2415,11 +2478,7 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
       artifact_payload: item,
     };
     const eventTimeSec = Number(item?.event_time ?? item?.anchor_time ?? item?.bar_end) || null;
-    const eventDirection = String(
-      item?.event_direction || item?.direction || item?.payload?.bias || item?.subtype || "",
-    )
-      .trim()
-      .toLowerCase();
+    const eventDirection = resolveArtifactConfirmedDirection(item, barsForTf, tf);
     const zoneEventMarkerText = artifactMarkerText(item);
     const eventPrice = resolveZoneEventMarkerPrice(
       item,
@@ -2433,32 +2492,32 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
       Number.isFinite(eventTimeSec) &&
       Number.isFinite(eventPrice)
     ) {
+      const eventColor =
+        eventDirection === "sell"
+          ? "#ef4444"
+          : eventDirection === "buy"
+            ? "#22c55e"
+            : "rgba(148, 163, 184, 0.38)";
       return [
         zoneObject,
         {
           id: `${String(item.id || `${family}-${type}-${eventTimeSec}`)}:event`,
           kind: "point",
           type: type.toUpperCase() || "POINT",
-          label: artifactInlineLabel(item, tf),
+          label: artifactFullLabel({ ...item, artifact_type: `${type}_event`, is_event: true }),
           visible: true,
           tf,
-          color,
+          color: eventColor,
           price: eventPrice,
           time: eventTimeSec,
           anchorTimeMs: eventTimeSec * 1000,
           anchorPrice: eventPrice,
           line_style: "dot",
           line_width: 0.1,
-          marker_shape:
-            eventDirection === "sell" || eventDirection === "bearish"
-              ? "arrowDown"
-              : "arrowUp",
+          marker_shape: markerShapeForConfirmedDirection(eventDirection),
           marker_text: zoneEventMarkerText,
-          marker_position:
-            eventDirection === "sell" || eventDirection === "bearish"
-              ? "aboveBar"
-              : "belowBar",
-          marker_size: 4,
+          marker_position: markerPositionForConfirmedDirection(eventDirection),
+          marker_size: eventMarkerSizeForConfirmedDirection(eventDirection),
           artifact_family: family,
           artifact_type: `${type}_event`,
           artifact_group: groupKey,
@@ -2475,11 +2534,15 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
 
   if (family === "pattern" || family === "structure") {
     if (!Number.isFinite(price) || !Number.isFinite(timeSec)) return null;
-    const direction = String(
-      item?.direction || item?.payload?.bias || item?.subtype || "",
-    )
-      .trim()
-      .toLowerCase();
+    const direction = resolveArtifactConfirmedDirection(item, barsForTf, tf);
+    const pointColor =
+      item?.is_event === true
+        ? direction === "sell"
+          ? "#ef4444"
+          : direction === "buy"
+            ? "#22c55e"
+            : "rgba(148, 163, 184, 0.38)"
+        : color;
     const basePoint = {
       id: String(item.id || `${family}-${type}-${timeSec}`),
       kind: "point",
@@ -2487,18 +2550,17 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
       label: artifactInlineLabel(item, tf),
       visible: true,
       tf,
-      color,
+      color: pointColor,
       price,
       time: timeSec,
       anchorTimeMs: timeSec * 1000,
       anchorPrice: price,
       line_style: "dot",
       line_width: 0.1,
-      marker_shape:
-        direction === "sell" || direction === "bearish" ? "arrowDown" : "arrowUp",
+      marker_shape: markerShapeForConfirmedDirection(direction),
       marker_text: artifactMarkerText(item),
-      marker_position:
-        direction === "sell" || direction === "bearish" ? "aboveBar" : "belowBar",
+      marker_position: markerPositionForConfirmedDirection(direction),
+      marker_size: eventMarkerSizeForConfirmedDirection(direction),
       artifact_family: family,
       artifact_type: type,
       artifact_group: groupKey,
@@ -2569,11 +2631,11 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
   return null;
 }
 
-export function artifactEnvelopeToChartObjects(artifacts, fallbackTf = "") {
+export function artifactEnvelopeToChartObjects(artifacts, fallbackTf = "", barsByTf = null) {
   const items = Array.isArray(artifacts?.items) ? artifacts.items : [];
   return items
     .flatMap((item) => {
-      const mapped = artifactItemToChartObject(item, fallbackTf);
+      const mapped = artifactItemToChartObject(item, fallbackTf, barsByTf);
       return Array.isArray(mapped) ? mapped : [mapped];
     })
     .filter(Boolean);
@@ -6644,7 +6706,7 @@ export default function SymbolChart({
       if (artifactRequestSeqRef.current[chartScopeKey] !== nextSeq) return null;
       const artifacts = response?.artifacts;
       const nextObjects = limitArtifactObjectsNearLastBar(
-        artifactEnvelopeToChartObjects(artifacts, tfKey),
+        artifactEnvelopeToChartObjects(artifacts, tfKey, barsByTf),
         bars,
       ).map((item) => {
         const groupKey = artifactGroupKeyForItem(item);
@@ -7807,7 +7869,7 @@ export default function SymbolChart({
       };
       if (artifactRequestSeqRef.current[chartScopeKey] !== nextSeq) return null;
       const nextObjects = limitArtifactObjectsNearLastBar(
-        artifactEnvelopeToChartObjects(response.artifacts, tfKey),
+        artifactEnvelopeToChartObjects(response.artifacts, tfKey, barsByTf),
         replaySourceBars,
       ).map((item) => {
         const groupKey = artifactGroupKeyForItem(item);
@@ -7984,7 +8046,7 @@ export default function SymbolChart({
       const envelope = envelopesByTf?.[tfKey];
       const stateForTf = nextEngineState?.byTf?.[tfKey];
       const nextObjects = limitArtifactObjectsNearLastBar(
-        artifactEnvelopeToChartObjects(envelope, tfKey),
+        artifactEnvelopeToChartObjects(envelope, tfKey, barsByTf),
         replaySourceBars,
       ).map((item) => {
         const groupKey = artifactGroupKeyForItem(item);
@@ -8800,7 +8862,11 @@ export default function SymbolChart({
             />
           ) : null}
           {isCacheLikeMode && (
-            <div style={{ position: "relative" }}>
+            <div
+              style={{ position: "relative", zIndex: showIndicatorsMenu ? 90 : "auto" }}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+            >
               <button
                 className="secondary-button"
                 style={{
@@ -8821,6 +8887,8 @@ export default function SymbolChart({
               </button>
               {showIndicatorsMenu && (
                 <div
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onClick={(event) => event.stopPropagation()}
                   style={{
                     position: "absolute",
                     top: "calc(100% + 8px)",
@@ -8836,6 +8904,8 @@ export default function SymbolChart({
                     background: "rgba(9,15,28,0.96)",
                     boxShadow: "0 18px 48px rgba(0,0,0,0.28)",
                     padding: 12,
+                    pointerEvents: "auto",
+                    isolation: "isolate",
                   }}
                 >
                   <div

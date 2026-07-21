@@ -54,6 +54,9 @@ const INDICATOR_LINE_STYLE = {
     sma20: "rgba(96, 165, 250, 0.28)",
     sma50: "rgba(249, 115, 22, 0.26)",
     sma200: "rgba(34, 197, 94, 0.24)",
+    ema20: "rgba(56, 189, 248, 0.36)",
+    ema50: "rgba(251, 113, 133, 0.32)",
+    ema200: "rgba(132, 204, 22, 0.28)",
     vwap: "rgba(14, 165, 233, 0.28)",
     bbMid: "rgba(148, 163, 184, 0.24)",
     bbUpper: "rgba(244, 114, 182, 0.22)",
@@ -1225,7 +1228,7 @@ function resolvePresetTradeViewportWindow(
   const trailingStartSec = endTimeSec - requestedWindowBars * tfSec;
   const startTimeSec =
     Number.isFinite(createdAtSec) && createdAtSec > 0
-      ? Math.min(createdAtSec, trailingStartSec)
+      ? createdAtSec
       : trailingStartSec;
 
   let fromIndex = candles.findIndex((bar) => Number(bar?.time) >= startTimeSec);
@@ -1766,32 +1769,125 @@ function renderArtifactTooltipMetaHtml(tfRaw = "", typeRaw = "") {
   );
 }
 
-function renderCompactArtifactTooltipHtml({
-  title = "",
+function mapEventKeyToTooltipToken(value = "") {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "";
+  if (raw === "reject") return "REJ";
+  if (raw === "breakout") return "BRK";
+  return raw.replaceAll("_", " ").toUpperCase();
+}
+
+function isGenericEventTooltipToken(value = "") {
+  const normalized = String(value || "").trim().toUpperCase();
+  return normalized === "EVENT" || normalized === "ARTIFACT";
+}
+
+function resolveCompactArtifactTokens({
+  label = "",
   tf = "",
   type = "",
+  group = "",
+  family = "",
   direction = "",
-  priceText = "",
+  markerText = "",
+  eventKey = "",
+  isEvent = false,
 } = {}) {
-  const safeTitle = escapeTooltipHtml(title || "Marker");
-  const metaHtml = renderArtifactTooltipMetaHtml(tf, type).replace(
-    "margin-top:6px;",
-    "margin-top:0;",
+  const rawLabel = compactTooltipText(label, "");
+  const fallbackArtifact = compactTooltipText(
+    formatSharedObjectLabel(type || group || family || "", rawLabel || markerText || ""),
+    "Artifact",
   );
-  const safePrice = escapeTooltipHtml(String(priceText || "").trim() || "-");
-  const biasVisual = resolveArtifactBiasVisual(direction, type);
-  const titleColor = biasVisual?.fg || "#f8fafc";
-  const priceColor = biasVisual?.fg || "#e2e8f0";
+  const markerToken = compactTooltipText(markerText, "").toUpperCase();
+  const eventTokenFromKey = mapEventKeyToTooltipToken(eventKey);
+  const normalizedFamily = String(family || "").trim().toLowerCase();
+  const normalizedGroup = String(group || "").trim().toLowerCase();
+  const normalizedType = String(type || "").trim().toLowerCase();
+  let artifactToken = fallbackArtifact;
+  if (markerToken && artifactToken.toUpperCase().endsWith(` ${markerToken}`)) {
+    artifactToken = artifactToken.slice(0, -markerToken.length).trim();
+  }
+  if (!artifactToken || artifactToken.toUpperCase() === markerToken) {
+    artifactToken = compactTooltipText(
+      formatSharedObjectLabel(type || group || family || "", ""),
+      artifactToken || markerToken || "Artifact",
+    );
+  }
+
+  let eventToken = "";
+  if (normalizedFamily === "pattern" || normalizedGroup === "patterns") {
+    eventToken = "PATTERN";
+  } else if (markerToken && markerToken !== artifactToken.toUpperCase()) {
+    eventToken = markerToken;
+  } else if (eventTokenFromKey && eventTokenFromKey !== artifactToken.toUpperCase()) {
+    eventToken = eventTokenFromKey;
+  } else {
+    if (
+      normalizedGroup === "ob" ||
+      normalizedGroup === "fvg" ||
+      normalizedGroup === "ifvg" ||
+      normalizedGroup === "bb" ||
+      normalizedGroup === "support" ||
+      normalizedGroup === "resistance" ||
+      normalizedGroup === "demand" ||
+      normalizedGroup === "supply" ||
+      normalizedType.includes("ob") ||
+      normalizedType.includes("fvg")
+    ) {
+      eventToken = isEvent ? "EVENT" : "ZONE";
+    } else if (normalizedGroup === "trendline") {
+      eventToken = "TL";
+    } else if (normalizedGroup === "divergence") {
+      eventToken = "DIV";
+    } else if (normalizedFamily === "structure") {
+      eventToken = "STRUCT";
+    }
+  }
+
+  if (isGenericEventTooltipToken(eventToken)) {
+    eventToken = "";
+  }
+  if (eventToken && eventToken === artifactToken.toUpperCase()) {
+    eventToken = "";
+  }
+
+  const tfToken = displayIntervalLabel(tf);
+  const tfColor = artifactPaletteColorForTf(tf);
+  const biasVisual = resolveArtifactBiasVisual(direction, type || group);
+  return {
+    artifactToken: compactTooltipText(artifactToken, "Artifact"),
+    eventToken: compactTooltipText(eventToken, ""),
+    tfToken: compactTooltipText(tfToken, ""),
+    tfColor,
+    directionIcon: String(biasVisual?.icon || "").trim(),
+    directionColor: String(biasVisual?.fg || "#94a3b8").trim(),
+  };
+}
+
+function renderCompactArtifactTooltipHtml(meta = {}) {
+  const {
+    artifactToken,
+    eventToken,
+    tfToken,
+    tfColor,
+    directionIcon,
+    directionColor,
+  } = resolveCompactArtifactTokens(meta);
+  const segments = [
+    `<span style="color:#f8fafc;font-size:10px;font-weight:700;line-height:1.05;">${escapeTooltipHtml(artifactToken)}</span>`,
+    eventToken
+      ? `<span style="color:#f8fafc;font-size:10px;font-weight:700;line-height:1.05;">${escapeTooltipHtml(eventToken)}</span>`
+      : "",
+    tfToken
+      ? `<span style="color:${tfColor};font-size:10px;font-weight:700;line-height:1.05;">${escapeTooltipHtml(tfToken)}</span>`
+      : "",
+    directionIcon
+      ? `<span style="color:${directionColor};font-size:10px;font-weight:700;line-height:1.05;">${escapeTooltipHtml(directionIcon)}</span>`
+      : "",
+  ].filter(Boolean);
   return (
-    `<div style="min-width:0;max-width:240px;">` +
-    `<div style="display:flex;align-items:center;justify-content:flex-start;align-content:flex-start;gap:4px;flex-wrap:wrap;">` +
-    `<div style="font-size:11px;font-weight:700;line-height:1.1;color:${titleColor};">${safeTitle}</div>` +
-    metaHtml +
-    `</div>` +
-    `<div style="margin-top:3px;display:flex;align-items:baseline;gap:5px;">` +
-    `<div style="font-size:9px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:#64748b;">Price</div>` +
-    `<div style="font-size:11px;line-height:1.2;color:${priceColor};">${safePrice}</div>` +
-    `</div>` +
+    `<div style="min-width:0;max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">` +
+    segments.join(`<span style="color:#64748b;font-size:10px;font-weight:700;line-height:1.05;"> · </span>`) +
     `</div>`
   );
 }
@@ -1849,6 +1945,74 @@ function renderTooltipCardHtml({ title = "", subtitle = "", subtitleHtml = "", s
     safeSubtitle +
     safeSubtitleHtml +
     safeSections +
+    `</div>`
+  );
+}
+
+function formatCompactRuleValue(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "";
+  if (Math.abs(numeric) >= 1000) {
+    return numeric.toLocaleString("en-US", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    });
+  }
+  if (Math.abs(numeric) >= 1) {
+    return numeric.toLocaleString("en-US", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 4,
+    });
+  }
+  return numeric.toLocaleString("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 6,
+  });
+}
+
+function buildCompactRuleDetail(hit = {}) {
+  const ruleEvent = hit?.ruleEvent && typeof hit.ruleEvent === "object" ? hit.ruleEvent : {};
+  const eventId = String(hit?.eventId || ruleEvent?.rule_id || "").trim().toLowerCase();
+  const family = String(ruleEvent?.family || "").trim().toLowerCase();
+  const priceText = formatCompactRuleValue(ruleEvent?.price);
+
+  if (eventId.includes("breaks_below_key_level")) {
+    return priceText ? `Crossed below ${priceText}` : "Crossed below key level";
+  }
+  if (eventId.includes("breaks_key_level")) {
+    return priceText ? `Crossed ${priceText}` : "Crossed key level";
+  }
+  if (eventId.includes("rejected_key_level")) {
+    return priceText ? `Rejected ${priceText}` : "Rejected key level";
+  }
+  if (eventId.includes("retests_key_level")) {
+    return priceText ? `Retested ${priceText}` : "Retested key level";
+  }
+  if (eventId.includes("ema_fast_crosses_ema_slow")) return "EMA fast crossed EMA slow";
+  if (eventId.includes("price_crosses_ema")) return "Crossed EMA";
+  if (eventId.includes("price_rejected_ema")) return "Rejected EMA";
+  if (eventId.includes("price_crosses_below_vwap")) return "Crossed below VWAP";
+  if (eventId.includes("price_crosses_vwap")) return "Crossed VWAP";
+  if (eventId.includes("price_rejected_vwap")) return "Rejected VWAP";
+  if (eventId.includes("macd_cross_down")) return "MACD crossed down";
+  if (eventId.includes("macd_cross")) return "MACD crossed";
+  if (family === "key_level") return priceText ? `Level ${priceText}` : "Key level";
+  if (family === "moving_average") return "Moving-average signal";
+  if (family === "vwap") return "VWAP signal";
+  if (family === "momentum") return "Momentum signal";
+
+  return compactTooltipText(hit?.eventName || ruleEvent?.name, "");
+}
+
+function renderCompactRuleTooltipHtml({ title = "", detail = "" } = {}) {
+  const safeTitle = escapeTooltipHtml(title || "Rule");
+  const safeDetail = String(detail || "").trim()
+    ? `<div style="margin-top:2px;font-size:11px;line-height:1.2;color:#94a3b8;">${escapeTooltipHtml(detail)}</div>`
+    : "";
+  return (
+    `<div style="min-width:0;max-width:210px;">` +
+    `<div style="font-size:12px;font-weight:700;line-height:1.1;color:#f8fafc;">${safeTitle}</div>` +
+    safeDetail +
     `</div>`
   );
 }
@@ -2342,6 +2506,9 @@ const INDICATOR_GROUPS = [
       { key: "sma20", label: "SMA (20)", color: "#60a5fa" },
       { key: "sma50", label: "SMA (50)", color: "#f97316" },
       { key: "sma200", label: "SMA (200)", color: "#22c55e" },
+      { key: "ema20", label: "EMA (20)", color: "#38bdf8" },
+      { key: "ema50", label: "EMA (50)", color: "#fb7185" },
+      { key: "ema200", label: "EMA (200)", color: "#84cc16" },
       { key: "vwap", label: "VWAP", color: "#0ea5e9" },
       { key: "bbMid", label: "BB Mid", color: "#94a3b8" },
       { key: "bbUpper", label: "BB Upper", color: "#f472b6" },
@@ -2376,6 +2543,9 @@ const DEFAULT_INDICATOR_VISIBILITY = {
   sma20: true,
   sma50: true,
   sma200: true,
+  ema20: false,
+  ema50: false,
+  ema200: false,
   vwap: false,
   bbMid: false,
   bbUpper: false,
@@ -2677,6 +2847,9 @@ function buildIndicatorSeries(bars) {
     sma20: buildLineSeriesFromBars(bars, 20),
     sma50: buildLineSeriesFromBars(bars, 50),
     sma200: buildLineSeriesFromBars(bars, 200),
+    ema20: buildEmaSeriesFromBars(bars, 20),
+    ema50: buildEmaSeriesFromBars(bars, 50),
+    ema200: buildEmaSeriesFromBars(bars, 200),
     vwap: buildVwapSeriesFromBars(bars),
     bbMid,
     bbUpper,
@@ -2722,6 +2895,9 @@ function normalizeIndicatorPayload(rawIndicators) {
     sma20: normalizeIndicatorLineSeries(rawIndicators.sma20),
     sma50: normalizeIndicatorLineSeries(rawIndicators.sma50),
     sma200: normalizeIndicatorLineSeries(rawIndicators.sma200),
+    ema20: normalizeIndicatorLineSeries(rawIndicators.ema20),
+    ema50: normalizeIndicatorLineSeries(rawIndicators.ema50),
+    ema200: normalizeIndicatorLineSeries(rawIndicators.ema200),
     vwap: normalizeIndicatorLineSeries(rawIndicators.vwap),
     bbMid: normalizeIndicatorLineSeries(rawIndicators.bbMid),
     bbUpper: normalizeIndicatorLineSeries(rawIndicators.bbUpper),
@@ -4484,69 +4660,16 @@ export default function TradeSignalChart({
         : payload?.artifact_payload && typeof payload.artifact_payload === "object"
           ? payload.artifact_payload
           : payload || {};
-      const artifactList = (Array.isArray(hit?.artifacts) ? hit.artifacts : [])
-        .map((item) => {
-          const type = compactTooltipText(item?.type || item?.artifact_type || "", "");
-          const bias = compactTooltipText(item?.direction || item?.payload?.bias || "", "");
-          const tf = compactTooltipText(item?.timeframe || item?.tf || item?.source_tf || "", "");
-          return [type, bias, tf].filter(Boolean).join(" · ");
-        })
-        .filter(Boolean);
-      const sections = [
-        { label: "Strategy", value: compactTooltipText(hit?.strategyName, "Strategy") },
-        {
-          label: "Description",
-          value: compactTooltipText(hit?.strategyDescription, ""),
-        },
-        { label: "Rule", value: compactTooltipText(hit?.eventName, "Rule") },
-        {
-          label: "Priority",
-          value: compactTooltipText(hit?.eventPriority, ""),
-        },
-        {
-          label: "Decision",
-          value:
-            compactTooltipText(
-              hit?.eventBias || hit?.bias || hit?.markerDirection || "",
-              "",
-            ) ||
-            "No explicit decision bias",
-        },
-        {
-          label: "Logic",
-          value:
-            summarizeRuleExpression(hit?.ruleDefinition) ||
-            compactTooltipText(hit?.displayText, "No stored rule logic"),
-        },
-        {
-          label: "Actions",
-          value: summarizeMarkerActions(hit?.actions) || "No actions attached",
-        },
-        {
-          label: "Matched Artifacts",
-          value: artifactList.length ? artifactList.join("\n") : "No artifact matches attached",
-        },
-        {
-          label: "Rule Meta",
-          value: compactTooltipText(hit?.ruleMeta, "No rule meta"),
-        },
-        {
-          label: "When",
-          value: formatMarkerTimeLabel(hit?.barTimeUnix),
-        },
-      ];
-      return renderTooltipCardHtml({
-        title: `${compactTooltipText(hit?.markerText || hit?.eventName, "Rule")} · ${compactTooltipText(hit?.strategyName, "Strategy")}`,
-        subtitle: [
-          compactTooltipText(hit?.symbol, ""),
-          compactTooltipText(hit?.sourceTf || hit?.tf, ""),
-        ]
-          .filter(Boolean)
-          .join(" · "),
-        sections,
+      const shortName = compactTooltipText(
+        hit?.ruleEvent?.abbr || hit?.markerText || hit?.eventName,
+        "Rule",
+      );
+      return renderCompactRuleTooltipHtml({
+        title: shortName,
+        detail: buildCompactRuleDetail(hit),
       });
     },
-    [formatMarkerTimeLabel, summarizeMarkerActions, summarizeRuleExpression],
+    [],
   );
   const buildSharedArtifactTooltipHtml = useCallback(
     (obj = {}) => {
@@ -4554,74 +4677,24 @@ export default function TradeSignalChart({
         obj?.artifact_payload && typeof obj.artifact_payload === "object"
           ? obj.artifact_payload
           : obj || {};
-      const title = compactTooltipText(
-        formatSharedObjectLabel(
-          obj?.artifact_type || obj?.type || payload?.type || "",
-          obj?.label || payload?.label || obj?.marker_text || obj?.type || payload?.type || "Artifact",
-        ),
-        "Artifact",
-      );
       const tf = obj?.source_tf || obj?.tf || payload?.timeframe || payload?.tf || "";
-      const displayTitle = stripArtifactTitleTfSuffix(title, tf);
       const type = obj?.artifact_type || obj?.type || obj?.artifact_group || payload?.type || "";
-      const lifecycleState = String(
-        payload?.payload?.lifecycle_state || payload?.lifecycle_state || obj?.status_reason || "",
-      )
-        .trim()
-        .toLowerCase();
-      const statusVisual = resolveArtifactStatusVisual(
-        payload?.status || obj?.status || "",
-        lifecycleState,
-      );
-      const biasVisual = resolveArtifactBiasVisual(
-        payload?.direction || payload?.subtype || payload?.payload?.bias || "",
-        payload?.type || obj?.artifact_type || obj?.type || "",
-      );
-      const barsWidth = Number(payload?.bars_width ?? payload?.payload?.bars_width);
-      const direction = compactTooltipText(
-        payload?.direction || payload?.subtype || payload?.payload?.bias || "",
-        "",
-      );
-      const kind = String(obj?.kind || "").trim().toLowerCase();
-      const price = Number(obj?.price ?? obj?.anchorPrice ?? payload?.price);
-      const low = Number(obj?.price_bottom ?? obj?.anchorPrice2 ?? payload?.price_low);
-      const high = Number(obj?.price_top ?? obj?.anchorPrice ?? payload?.price_high);
-      const startTimeSec = toEpochSec(obj?.time ?? obj?.anchorTimeMs ?? payload?.bar_start);
-      const endTimeSec = toEpochSec(obj?.time2 ?? obj?.anchorTimeMs2 ?? payload?.bar_end);
-      const metaRow = [
-        renderArtifactTooltipMetaHtml(tf, "").replace("margin-top:6px;", "margin-top:0;"),
-        renderTooltipBadgeHtml(statusVisual.icon, statusVisual),
-        lifecycleState
-          ? renderTooltipBadgeHtml(formatArtifactLifecycleLabel(lifecycleState), {
-              fg: "#cbd5e1",
-              bg: "rgba(30, 41, 59, 0.72)",
-              border: "rgba(148, 163, 184, 0.18)",
-            })
-          : "",
-      ]
-        .filter(Boolean)
-        .join("");
-      const biasRow =
-        direction && biasVisual
-          ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;">${compactTooltipStatChip({
-              icon: biasVisual.icon,
-              value: "",
-              fg: biasVisual.fg,
-              bg: biasVisual.bg,
-              border: biasVisual.border,
-            })}</div>`
-          : "";
-      return (
-        `<div style="min-width:0;max-width:250px;">` +
-        `<div style="display:flex;align-items:center;justify-content:space-between;gap:4px;flex-wrap:wrap;">` +
-        `<div style="font-size:8px;font-weight:700;line-height:1;color:#f8fafc;">${escapeTooltipHtml(displayTitle)}</div>` +
-        `<div style="display:flex;align-items:center;gap:2px;flex-wrap:wrap;">${metaRow}</div>` +
-        `</div>` +
-        biasRow +
-        `</div>`
-      );
+      return renderCompactArtifactTooltipHtml({
+        label: obj?.label || payload?.label || obj?.marker_text || obj?.type || payload?.type || "Artifact",
+        tf,
+        type,
+        group: obj?.artifact_group || payload?.group || "",
+        family: obj?.artifact_family || payload?.family || "",
+        direction: payload?.event_direction || payload?.direction || payload?.subtype || payload?.payload?.bias || "",
+        markerText: obj?.marker_text || payload?.marker_text || "",
+        eventKey: obj?.event_key || payload?.event_key || "",
+        isEvent:
+          obj?.is_event === true ||
+          payload?.is_event === true ||
+          String(type).trim().toLowerCase().endsWith("_event"),
+      });
     },
-    [formatMarkerTimeLabel],
+    [],
   );
   const overlayTrade = useMemo(() => {
     if (!normalizedTrades.length) return null;
@@ -4713,7 +4786,10 @@ export default function TradeSignalChart({
   const tradeViewportAnchors = useMemo(
     () => ({
       firstAnchorTimeSec:
-        normalizedCreatedAtEpochSec,
+        (Number.isFinite(Number(effectiveOpenedAtEpochSec)) &&
+        Number(effectiveOpenedAtEpochSec) > 0
+          ? Number(effectiveOpenedAtEpochSec)
+          : null) ?? normalizedCreatedAtEpochSec,
       lastAnchorTimeSec:
         effectiveClosedAtEpochSec > 0
           ? effectiveClosedAtEpochSec
@@ -4722,6 +4798,7 @@ export default function TradeSignalChart({
     }),
     [
       effectiveClosedAtEpochSec,
+      effectiveOpenedAtEpochSec,
       normalizedCreatedAtEpochSec,
     ],
   );
@@ -5360,11 +5437,18 @@ export default function TradeSignalChart({
             priceText: formatPriceWithPrecision(p, pricePrecisionRef.current),
             sourceTf: ln?.source_tf || ln?.tf || "",
             artifactType: ln?.artifact_type || ln?.type || "",
+            artifactGroup: ln?.artifact_group || "",
+            artifactFamily: ln?.artifact_family || "",
             direction:
               ln?.artifact_payload?.event_direction ||
               ln?.artifact_payload?.direction ||
               ln?.direction ||
               "",
+            markerText: ln?.marker_text || "",
+            eventKey: ln?.event_key || "",
+            isEvent:
+              ln?.is_event === true ||
+              String(ln?.artifact_type || ln?.type || "").trim().toLowerCase().endsWith("_event"),
           });
         });
       }
@@ -5521,11 +5605,18 @@ export default function TradeSignalChart({
             priceText: formatPriceWithPrecision(price, pricePrecisionRef.current),
             sourceTf: obj?.source_tf || obj?.tf || "",
             artifactType: obj?.artifact_type || obj?.type || obj?.artifact_group || "",
+            artifactGroup: obj?.artifact_group || "",
+            artifactFamily: obj?.artifact_family || "",
             direction:
               obj?.artifact_payload?.event_direction ||
               obj?.artifact_payload?.direction ||
               obj?.direction ||
               "",
+            markerText: obj?.marker_text || "",
+            eventKey: obj?.event_key || obj?.artifact_payload?.event_key || "",
+            isEvent:
+              obj?.is_event === true ||
+              String(obj?.artifact_type || obj?.type || "").trim().toLowerCase().endsWith("_event"),
           });
           registerSharedArtifactHover({
             points: [
@@ -6217,12 +6308,15 @@ export default function TradeSignalChart({
             side: effectiveSide,
             kind: "opened",
           });
-          const openedMarkerPrice = resolveEventMarkerAnchorPrice(
-            candles,
-            effectiveOpenedAtEpochSec,
-            openedMarkerStyle.chartPosition,
-            effectiveEntryPrice,
-          );
+          const openedMarkerPrice =
+            Number.isFinite(Number(effectiveEntryPrice))
+              ? Number(effectiveEntryPrice)
+              : resolveEventMarkerAnchorPrice(
+                  candles,
+                  effectiveOpenedAtEpochSec,
+                  openedMarkerStyle.chartPosition,
+                  effectiveEntryPrice,
+                );
           const openedMarkerPrimitive = new EventTimeMarkerPrimitive({
             timeSec: Number(openedTs),
             price: Number(openedMarkerPrice),
@@ -6320,6 +6414,7 @@ export default function TradeSignalChart({
           closeStatus: effectiveCloseStatus,
           pnlRealized: effectivePnlRealized,
           exitPrice: effectiveExitPrice,
+          exitPriceRaw: overlayTrade?.exitPriceRaw,
           tpPrice: tpPrice ?? tp1Price,
           slPrice,
         });
@@ -6328,16 +6423,18 @@ export default function TradeSignalChart({
             closeStatus: effectiveCloseStatus,
             pnlRealized: effectivePnlRealized,
             exitPrice: effectiveExitPrice,
+            exitPriceRaw: overlayTrade?.exitPriceRaw,
             tpPrice: tpPrice ?? tp1Price,
             slPrice,
           },
           computePriceBoundsFromBars(candles),
         );
-        const resolvedCloseBadgePrice = Number.isFinite(Number(effectiveExitPrice))
-          ? Number(effectiveExitPrice)
-          : closeLine?.value ??
-            resolvedCloseLinePrice ??
-            (Number.isFinite(Number(effectiveEntryPrice))
+        const resolvedCloseBadgePrice =
+          closeLine?.value ??
+          resolvedCloseLinePrice ??
+          (Number.isFinite(Number(effectiveExitPrice))
+            ? Number(effectiveExitPrice)
+            : Number.isFinite(Number(effectiveEntryPrice))
               ? Number(effectiveEntryPrice)
               : null);
         const closeAxisLabel = resolveTradeLevelRLabel({
@@ -6360,12 +6457,15 @@ export default function TradeSignalChart({
             pnlRealized: effectivePnlRealized,
             kind: "close",
           });
-          const closeMarkerPrice = resolveEventMarkerAnchorPrice(
-            candles,
-            effectiveClosedAtEpochSec,
-            closeMarkerStyle.chartPosition,
-            resolvedCloseBadgePrice,
-          );
+          const closeMarkerPrice =
+            Number.isFinite(Number(resolvedCloseBadgePrice))
+              ? Number(resolvedCloseBadgePrice)
+              : resolveEventMarkerAnchorPrice(
+                  candles,
+                  effectiveClosedAtEpochSec,
+                  closeMarkerStyle.chartPosition,
+                  resolvedCloseBadgePrice,
+                );
           const closeMarkerPrimitive = new EventTimeMarkerPrimitive({
             timeSec: Number(closeTs),
             price: Number(closeMarkerPrice),
@@ -6678,6 +6778,33 @@ export default function TradeSignalChart({
           priceLineVisible: false,
           lastValueVisible: false,
           visible: Boolean(effectiveIndicatorVisibility.sma200),
+          crosshairMarkerVisible: false,
+        }),
+        ema20: chart.addSeries(LineSeries, {
+          color: INDICATOR_LINE_STYLE.colors.ema20,
+          lineWidth: INDICATOR_LINE_STYLE.width,
+          lineStyle: LineStyle.Solid,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          visible: Boolean(effectiveIndicatorVisibility.ema20),
+          crosshairMarkerVisible: false,
+        }),
+        ema50: chart.addSeries(LineSeries, {
+          color: INDICATOR_LINE_STYLE.colors.ema50,
+          lineWidth: INDICATOR_LINE_STYLE.width,
+          lineStyle: LineStyle.Solid,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          visible: Boolean(effectiveIndicatorVisibility.ema50),
+          crosshairMarkerVisible: false,
+        }),
+        ema200: chart.addSeries(LineSeries, {
+          color: INDICATOR_LINE_STYLE.colors.ema200,
+          lineWidth: INDICATOR_LINE_STYLE.width,
+          lineStyle: LineStyle.Solid,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          visible: Boolean(effectiveIndicatorVisibility.ema200),
           crosshairMarkerVisible: false,
         }),
         vwap: chart.addSeries(LineSeries, {
@@ -7044,7 +7171,7 @@ export default function TradeSignalChart({
       // --- Fixed artifact note (top-right) ---
       const tooltipEl = document.createElement("div");
       tooltipEl.style.cssText =
-        `display:none;position:absolute;z-index:100;top:6px;right:10px;left:auto;background:transparent;color:${theme.text};padding:0;border-radius:0;font-size:8px;pointer-events:none;white-space:normal;border:none;box-shadow:none;max-width:250px;`;
+        `display:none;position:absolute;z-index:100;top:6px;right:60px;left:auto;background:transparent;color:${theme.text};padding:0;border-radius:0;font-size:8px;pointer-events:none;white-space:normal;border:none;box-shadow:none;max-width:190px;`;
       chartElement.appendChild(tooltipEl);
       const handleVisibleRangeChange = () => {
         window.requestAnimationFrame(refreshPlanDragHandles);
@@ -7105,11 +7232,15 @@ export default function TradeSignalChart({
         if (closest) {
           tooltipEl.style.display = "block";
           tooltipEl.innerHTML = renderCompactArtifactTooltipHtml({
-            title: compactTooltipText(closest.label, "Price line"),
+            label: compactTooltipText(closest.label, "Artifact"),
             tf: closest.sourceTf || "",
             type: closest.artifactType || "",
+            group: closest.artifactGroup || "",
+            family: closest.artifactFamily || "",
             direction: closest.direction || "",
-            priceText: compactTooltipText(closest.priceText, "-"),
+            markerText: closest.markerText || "",
+            eventKey: closest.eventKey || "",
+            isEvent: closest.isEvent === true,
           });
         } else {
           tooltipEl.style.display = "none";
@@ -7478,12 +7609,15 @@ export default function TradeSignalChart({
                   side: effectiveSide,
                   kind: "opened",
                 });
-                const openedMarkerPrice = resolveEventMarkerAnchorPrice(
-                  candles,
-                  effectiveOpenedAtEpochSec,
-                  openedMarkerStyle.chartPosition,
-                  effectiveEntryPrice,
-                );
+                const openedMarkerPrice =
+                  Number.isFinite(Number(effectiveEntryPrice))
+                    ? Number(effectiveEntryPrice)
+                    : resolveEventMarkerAnchorPrice(
+                        candles,
+                        effectiveOpenedAtEpochSec,
+                        openedMarkerStyle.chartPosition,
+                        effectiveEntryPrice,
+                      );
                 const openedMarkerPrimitive = new EventTimeMarkerPrimitive({
                   timeSec: Number(openedTs),
                   price: Number(openedMarkerPrice),
@@ -7517,6 +7651,7 @@ export default function TradeSignalChart({
                 closeStatus: effectiveCloseStatus,
                 pnlRealized: effectivePnlRealized,
                 exitPrice: effectiveExitPrice,
+                exitPriceRaw: overlayTrade?.exitPriceRaw,
                 tpPrice: tpPrice ?? tp1Price,
                 slPrice,
               });
@@ -7525,14 +7660,18 @@ export default function TradeSignalChart({
                   closeStatus: effectiveCloseStatus,
                   pnlRealized: effectivePnlRealized,
                   exitPrice: effectiveExitPrice,
+                  exitPriceRaw: overlayTrade?.exitPriceRaw,
                   tpPrice: tpPrice ?? tp1Price,
                   slPrice,
                 },
                 computePriceBoundsFromBars(candles),
               );
-              const resolvedCloseBadgePrice = Number.isFinite(Number(effectiveExitPrice))
-                ? Number(effectiveExitPrice)
-                : closeLine?.value ?? resolvedCloseLinePrice;
+              const resolvedCloseBadgePrice =
+                closeLine?.value ??
+                resolvedCloseLinePrice ??
+                (Number.isFinite(Number(effectiveExitPrice))
+                  ? Number(effectiveExitPrice)
+                  : null);
               const closeAxisLabel = resolveTradeLevelRLabel({
                 kind: "close",
                 entryPrice: effectiveEntryPrice,
@@ -7552,12 +7691,15 @@ export default function TradeSignalChart({
                   pnlRealized: effectivePnlRealized,
                   kind: "close",
                 });
-                const closeMarkerPrice = resolveEventMarkerAnchorPrice(
-                  candles,
-                  effectiveClosedAtEpochSec,
-                  closeMarkerStyle.chartPosition,
-                  resolvedCloseBadgePrice,
-                );
+                const closeMarkerPrice =
+                  Number.isFinite(Number(resolvedCloseBadgePrice))
+                    ? Number(resolvedCloseBadgePrice)
+                    : resolveEventMarkerAnchorPrice(
+                        candles,
+                        effectiveClosedAtEpochSec,
+                        closeMarkerStyle.chartPosition,
+                        resolvedCloseBadgePrice,
+                      );
                 const closeMarkerPrimitive = new EventTimeMarkerPrimitive({
                   timeSec: Number(closeTs),
                   price: Number(closeMarkerPrice),

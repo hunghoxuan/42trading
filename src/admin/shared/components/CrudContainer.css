@@ -16,7 +16,7 @@
 .crud-toolbar--top {
   border: 1px solid var(--border);
   border-radius: 14px;
-  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  background: var(--surface);
   padding: 14px 18px;
 }
 
@@ -62,6 +62,7 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  background: var(--surface);
 }
 
 .crud-container__panel .responsive-panel__header {
@@ -71,6 +72,12 @@
 .crud-container__panel-body.responsive-panel__body {
   flex: 1 1 auto;
   min-height: 0;
+  background: var(--surface);
+}
+
+.crud-container__panel--list.responsive-panel,
+.crud-container__panel--detail.responsive-panel {
+  background: var(--surface);
 }
 
 .crud-container__close {

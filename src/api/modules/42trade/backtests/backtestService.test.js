@@ -146,6 +146,159 @@ test("simulateStrategy uses the same trade plan core as chart strategy scan", ()
   assert.equal(Number(backtestPlan.tp), Number(chartPlan.tp));
 });
 
+test("simulateStrategy rejects trades that violate market metadata min stop pips", () => {
+  const bars = [
+    { time: 60, open: 1.1, high: 1.101, low: 1.099, close: 1.1, volume: 10 },
+    { time: 120, open: 1.1, high: 1.101, low: 1.099, close: 1.1, volume: 10 },
+    { time: 180, open: 1.1, high: 1.103, low: 1.099, close: 1.102, volume: 10 },
+  ];
+  const strategy = {
+    id: "min_stop_test",
+    name: "Min Stop Test",
+    engine_version: "42trade.strategy.v2",
+    indicators: [],
+    events: [
+      {
+        id: "buy_once",
+        name: "Buy Once",
+        when: { "==": [{ var: "bar.time" }, 120] },
+        actions: [
+          {
+            id: "buy",
+            action: "trade",
+            trade_plan: {
+              direction: "buy",
+              type: "market",
+              entry: "bar.close",
+              sl: 1.0995,
+              tp: 1.103,
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  const result = backtestService.__test.simulateStrategy(bars, strategy, {
+    tf: "1m",
+    symbol: "EURUSD",
+    returnDetails: true,
+    marketMetadata: {
+      symbol: "EURUSD",
+      pip_size: 0.0001,
+      min_stop_pips: 15,
+      spread_pips: 0,
+    },
+  });
+
+  assert.equal(result.trades.length, 0);
+  assert.equal(result.execution_options.min_stop_pips, 15);
+});
+
+test("simulateStrategy fills limit orders only after price touches the limit", () => {
+  const bars = [
+    { time: 60, open: 100, high: 100.5, low: 99.8, close: 100, volume: 10 },
+    { time: 120, open: 100, high: 100.5, low: 99.5, close: 100.2, volume: 10 },
+    { time: 180, open: 100.2, high: 100.3, low: 98.8, close: 99.2, volume: 10 },
+    { time: 240, open: 99.2, high: 101.5, low: 99, close: 101.2, volume: 10 },
+  ];
+  const strategy = {
+    id: "limit_fill_test",
+    name: "Limit Fill Test",
+    engine_version: "42trade.strategy.v2",
+    indicators: [],
+    events: [
+      {
+        id: "buy_limit_once",
+        name: "Buy Limit Once",
+        when: { "==": [{ var: "bar.time" }, 120] },
+        actions: [
+          {
+            id: "buy_limit",
+            action: "trade",
+            trade_plan: {
+              direction: "buy",
+              type: "limit",
+              entry: 99,
+              sl: 98,
+              tp: 101,
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  const result = backtestService.__test.simulateStrategy(bars, strategy, {
+    tf: "1m",
+    symbol: "BTCUSD",
+    returnDetails: true,
+    marketMetadata: {
+      symbol: "BTCUSD",
+      pip_size: 1,
+      spread_pips: 0,
+    },
+  });
+
+  assert.equal(result.trades.length, 1);
+  assert.equal(result.trades[0].order_type, "limit");
+  assert.equal(result.trades[0].entry_time_unix, 180);
+  assert.equal(result.trades[0].exit_reason, "tp");
+});
+
+test("simulateStrategy does not fill or settle limit orders on the signal bar", () => {
+  const bars = [
+    { time: 60, open: 100, high: 100.2, low: 99.8, close: 100, volume: 10 },
+    { time: 120, open: 100, high: 101.2, low: 98.8, close: 101, volume: 10 },
+    { time: 180, open: 101, high: 100.4, low: 98.9, close: 99.4, volume: 10 },
+    { time: 240, open: 99.4, high: 101.4, low: 99.2, close: 101.1, volume: 10 },
+  ];
+  const strategy = {
+    id: "limit_no_signal_bar_fill_test",
+    name: "Limit No Signal Bar Fill Test",
+    engine_version: "42trade.strategy.v2",
+    indicators: [],
+    events: [
+      {
+        id: "buy_limit_once",
+        name: "Buy Limit Once",
+        when: { "==": [{ var: "bar.time" }, 120] },
+        actions: [
+          {
+            id: "buy_limit",
+            action: "trade",
+            trade_plan: {
+              direction: "buy",
+              type: "limit",
+              entry: 99,
+              sl: 98,
+              tp: 101,
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  const result = backtestService.__test.simulateStrategy(bars, strategy, {
+    tf: "1m",
+    symbol: "BTCUSD",
+    returnDetails: true,
+    marketMetadata: {
+      symbol: "BTCUSD",
+      pip_size: 1,
+      spread_pips: 0,
+    },
+  });
+
+  assert.equal(result.trades.length, 1);
+  assert.equal(result.trades[0].order_type, "limit");
+  assert.equal(result.trades[0].signal_bar_time, "1970-01-01T00:02:00.000Z");
+  assert.equal(result.trades[0].entry_time_unix, 180);
+  assert.equal(result.trades[0].exit_time_unix, 240);
+  assert.equal(result.trades[0].exit_reason, "tp");
+});
+
 test("realtime analysis derives phase and artifact buckets from timeframe bars", () => {
   const analysis = realtimeAnalysis.buildTfAnalysis({
     bars: makeStructureBars(),

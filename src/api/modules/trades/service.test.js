@@ -99,6 +99,45 @@ test("trades service exposes broker sync operations", async () => {
   assert.equal(loaded.trade.broker_trade_id, "7001");
 });
 
+test("trades service filters plural execution statuses and deletes by sid", async () => {
+  const service = createTradesService({
+    sqlitePath: tempSqlitePath("service-delete"),
+    objectStore: { provider: "sqlite" },
+    sourceStorageBackend: "sqlite",
+  });
+
+  await service.upsertTrade({
+    sid: "TRD_DEL_REJECTED",
+    user_id: "user",
+    trade_id: "TRD_DEL_REJECTED",
+    symbol: "BTCUSD",
+    action: "BUY",
+    execution_status: "REJECTED",
+  });
+  await service.upsertTrade({
+    sid: "TRD_DEL_PENDING",
+    user_id: "user",
+    trade_id: "TRD_DEL_PENDING",
+    symbol: "BTCUSD",
+    action: "BUY",
+    execution_status: "PENDING",
+  });
+
+  const rejected = await service.listTrades({
+    user_id: "user",
+    execution_statuses: ["ERROR", "REJECTED"],
+    page: 1,
+    pageSize: 10,
+  });
+  const deleted = await service.deleteTradesBySids("user", ["TRD_DEL_REJECTED"]);
+  const remaining = await service.listTrades({ user_id: "user", page: 1, pageSize: 10 });
+
+  assert.equal(rejected.total, 1);
+  assert.equal(rejected.items[0].sid, "TRD_DEL_REJECTED");
+  assert.equal(deleted.deleted, 1);
+  assert.deepEqual(remaining.items.map((item) => item.sid), ["TRD_DEL_PENDING"]);
+});
+
 test("trades service exposes dashboard aggregates", async () => {
   const service = createTradesService({
     sqlitePath: tempSqlitePath("service-dashboard"),

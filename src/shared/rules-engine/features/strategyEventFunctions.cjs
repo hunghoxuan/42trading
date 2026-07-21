@@ -2696,7 +2696,9 @@ function buildSuggestedTradeLevels({
   activeTf = "",
   selectedTfs = [],
   artifactItemsByTf = {},
-  minRr = 1.5
+  minRr = 1.5,
+  stopLevelRank = 1,
+  targetLevelRank = 1
 }) {
   const entry = Number(entryPrice);
   if (!Number.isFinite(entry) || entry <= 0) return { tp: null, sl: null };
@@ -2704,6 +2706,8 @@ function buildSuggestedTradeLevels({
   const anchor = Number.isFinite(reference) && reference > 0 ? reference : entry;
   const upperSide = String(side || "BUY").trim().toUpperCase();
   const targetMinRr = Math.max(1, Number(minRr) || 1.5);
+  const normalizedStopRank = Math.max(1, Math.round(Number(stopLevelRank) || 1));
+  const normalizedTargetRank = Math.max(1, Math.round(Number(targetLevelRank) || 1));
   const stopCandidates = [];
   const targetCandidates = [];
   const tfList = Array.isArray(selectedTfs) ? selectedTfs : [];
@@ -2781,15 +2785,16 @@ function buildSuggestedTradeLevels({
     if (Math.abs(distanceDelta) > 1e-6) return distanceDelta;
     return b.score - a.score;
   });
-  const chosenStop = sortedStops[0] || null;
+  const chosenStop = sortedStops[normalizedStopRank - 1] || sortedStops[0] || null;
   if (!chosenStop) return { tp: null, sl: null };
   const bufferedStop = applyTradeStopBuffer(entry, chosenStop.price, upperSide);
   const risk = upperSide === "BUY" ? entry - bufferedStop : bufferedStop - entry;
   if (!(risk > 0)) return { tp: null, sl: null };
-  const chosenTarget = sortedTargets.find((candidate) => {
+  const qualifyingTargets = sortedTargets.filter((candidate) => {
     const reward = upperSide === "BUY" ? candidate.price - entry : entry - candidate.price;
     return reward / risk >= targetMinRr;
-  }) || sortedTargets[0] || null;
+  });
+  const chosenTarget = qualifyingTargets[normalizedTargetRank - 1] || qualifyingTargets[0] || sortedTargets[normalizedTargetRank - 1] || sortedTargets[0] || null;
   const rawTarget = chosenTarget?.price ?? null;
   const finalTarget = applyTradeTargetTrim({
     entry,
@@ -3005,7 +3010,7 @@ function buildArtifactItemsByTfForSuggestedLevels(ctx = {}) {
   });
   return artifactItemsByTf;
 }
-function resolveSuggestedTradeLevelsForContext(direction = "buy", tfSelection = "all", minRr = 1.5, ctx = {}) {
+function resolveSuggestedTradeLevelsForContext(direction = "buy", tfSelection = "all", minRr = 1.5, stopLevelRank = 1, targetLevelRank = 1, ctx = {}) {
   const entry = resolvePriceActionEntry(ctx);
   if (!Number.isFinite(entry) || entry <= 0) return { sl: null, tp: null };
   const artifactItemsByTf = buildArtifactItemsByTfForSuggestedLevels(ctx);
@@ -3021,7 +3026,9 @@ function resolveSuggestedTradeLevelsForContext(direction = "buy", tfSelection = 
     activeTf: currentTimeframe(ctx),
     selectedTfs,
     artifactItemsByTf,
-    minRr
+    minRr,
+    stopLevelRank,
+    targetLevelRank
   });
 }
 function matchArtifactBias(item = {}, requestedBias = "") {
@@ -3090,6 +3097,14 @@ function filterArtifactsBeforeCurrentBar(items = [], ctx = {}) {
   const currentTime = Number(currentBar?.time || 0);
   return (Array.isArray(items) ? items : []).filter((item) => Number(item?.anchor_time ?? item?.bar_end ?? item?.bar_start ?? 0) <= currentTime).sort(
     (left, right) => Number(left?.anchor_time ?? left?.bar_end ?? left?.bar_start ?? 0) - Number(right?.anchor_time ?? right?.bar_end ?? right?.bar_start ?? 0)
+  );
+}
+function filterArtifactsAtCurrentBar(items = [], ctx = {}) {
+  const currentBar = resolveCurrentBar(ctx);
+  const currentTime = Number(currentBar?.time || 0);
+  if (!Number.isFinite(currentTime) || currentTime <= 0) return [];
+  return filterArtifactsBeforeCurrentBar(items, ctx).filter(
+    (item) => Number(item?.anchor_time ?? item?.bar_end ?? item?.bar_start ?? 0) === currentTime
   );
 }
 function normalizeLevel(value) {
@@ -3399,8 +3414,8 @@ function findCurrentBarLevelMatch(functionName = "", level = null, ctx = {}, pre
     source_artifact_type: String(bestMatch?.sourceEntry?.sourceType || "").trim()
   });
 }
-function latestArtifactByType({ types = [], bias = "", ctx = {} }) {
-  const items = filterArtifactsBeforeCurrentBar(selectArtifactsForContext(ctx), ctx).filter(
+function currentBarArtifactByType({ types = [], bias = "", ctx = {} }) {
+  const items = filterArtifactsAtCurrentBar(selectArtifactsForContext(ctx), ctx).filter(
     (item) => (Array.isArray(types) ? types : [types]).includes(String(item?.type || "").trim().toLowerCase()) && matchArtifactBias(item, bias)
   );
   return buildArtifactResult(
@@ -3412,7 +3427,7 @@ function latestArtifactByType({ types = [], bias = "", ctx = {} }) {
 function latestBreakoutMatch(level = null, ctx = {}) {
   const normalizedLevel = normalizeLevel(level);
   if (!Number.isFinite(normalizedLevel)) {
-    const structural = latestArtifactByType({ types: ["bos"], ctx });
+    const structural = currentBarArtifactByType({ types: ["bos"], ctx });
     return structural ? buildArtifactResult("breakout", structural.matches, structural.meta) : false;
   }
   return findLevelMatches("breakout", normalizedLevel, ctx, ({ bar, prev, level: target }) => {
@@ -3471,7 +3486,7 @@ function latestReversalMatch(level = null, ctx = {}) {
       confirmation: "rejection"
     });
   }
-  const choch = latestArtifactByType({ types: ["choch"], ctx });
+  const choch = currentBarArtifactByType({ types: ["choch"], ctx });
   if (choch) return buildArtifactResult("reversal", choch.matches, { timeframe, source: "choch" });
   const patternMatches = Array.from(patterns.values()).slice(-5);
   return buildArtifactResult("reversal", patternMatches, { timeframe, source: "pattern" });
@@ -3585,6 +3600,8 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
       evaluatedArgs2[0],
       evaluatedArgs2[1],
       evaluatedArgs2[2],
+      evaluatedArgs2[3],
+      evaluatedArgs2[4] ?? evaluatedArgs2[3],
       ctx
     ).sl;
   }
@@ -3594,6 +3611,8 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
       evaluatedArgs2[0],
       evaluatedArgs2[1],
       evaluatedArgs2[2],
+      evaluatedArgs2[3],
+      evaluatedArgs2[4] ?? evaluatedArgs2[3],
       ctx
     ).tp;
   }
@@ -3684,7 +3703,9 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
       case "has_sweep":
         return buildArtifactResult(
           lowerName,
-          resultMatches(latestArtifactByType({ types: ["sweep_high", "sweep_low"], bias: biasArg, ctx: nextCtx })),
+          resultMatches(
+            currentBarArtifactByType({ types: ["sweep_high", "sweep_low"], bias: biasArg, ctx: nextCtx })
+          ),
           { timeframe, bias: biasArg }
         );
       case "breakout":
@@ -3693,7 +3714,7 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
         return buildArtifactResult(
           lowerName,
           resultMatches(
-            latestArtifactByType({
+            currentBarArtifactByType({
               types: ["bullish_pin_bar", "bearish_pin_bar"],
               bias: biasArg,
               ctx: nextCtx
@@ -3705,7 +3726,7 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
         return buildArtifactResult(
           lowerName,
           resultMatches(
-            latestArtifactByType({
+            currentBarArtifactByType({
               types: ["bullish_engulfing", "bearish_engulfing"],
               bias: biasArg,
               ctx: nextCtx
@@ -3716,27 +3737,27 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
       case "inside_bar":
         return buildArtifactResult(
           lowerName,
-          resultMatches(latestArtifactByType({ types: ["inside_bar"], ctx: nextCtx })),
+          resultMatches(currentBarArtifactByType({ types: ["inside_bar"], ctx: nextCtx })),
           { timeframe }
         );
       case "outside_bar":
         return buildArtifactResult(
           lowerName,
-          resultMatches(latestArtifactByType({ types: ["outside_bar"], ctx: nextCtx })),
+          resultMatches(currentBarArtifactByType({ types: ["outside_bar"], ctx: nextCtx })),
           { timeframe }
         );
       case "bos":
       case "has_bos":
         return buildArtifactResult(
           lowerName,
-          resultMatches(latestArtifactByType({ types: ["bos"], bias: biasArg, ctx: nextCtx })),
+          resultMatches(currentBarArtifactByType({ types: ["bos"], bias: biasArg, ctx: nextCtx })),
           { timeframe, bias: biasArg }
         );
       case "choch":
       case "has_choch":
         return buildArtifactResult(
           lowerName,
-          resultMatches(latestArtifactByType({ types: ["choch"], bias: biasArg, ctx: nextCtx })),
+          resultMatches(currentBarArtifactByType({ types: ["choch"], bias: biasArg, ctx: nextCtx })),
           { timeframe, bias: biasArg }
         );
       case "reversal":

@@ -12,6 +12,7 @@ import DashboardPage from "../modules/42trade/pages/DashboardPage";
 import ChartSnapshotsPage from "../modules/42trade/pages/ai/ChartSnapshotsPage";
 import AiNewsPage from "../modules/42trade/pages/ai/AiNewsPage";
 import TradesPage from "../modules/42trade/pages/trades/TradesPage";
+import MarketDataPage from "../modules/42trade/pages/trades/MarketDataPage";
 import TempTradesPage from "../modules/42trade/pages/trades/TempTradesPage";
 import BacktestsPage from "../modules/42trade/pages/BacktestsPage";
 import ReplayArtifactsTestPage from "../modules/42trade/pages/ReplayArtifactsTestPage";
@@ -413,6 +414,7 @@ export default function App() {
     { to: `${prefix}/dashboard`, label: "Dashboard", permission: "pages.dashboard" },
     { to: `${prefix}/analyze`, label: "Analyze", permission: "pages.ai.analyze" },
     { to: `${prefix}/backtests`, label: "Backtests", permission: "pages.backtests" },
+    { to: `${prefix}/market_data`, label: "Market Data" },
     { to: `${prefix}/filled`, label: `Positions${countBadge("FILLED", source)}` },
     { to: `${prefix}/pending`, label: `Orders${countBadge("PENDING", source)}` },
     { to: `${prefix}/closed`, label: `Closed${countBadge("CLOSED", source)}` },
@@ -1452,6 +1454,14 @@ export default function App() {
                 element={<LegacyTradesRedirect />}
               />
               <Route
+                path="/trades/symbols"
+                element={<Navigate to="/trades/market_data" replace />}
+              />
+              <Route
+                path="/trades/market_data"
+                element={guardPageElement("pages.trades", <MarketDataPage />)}
+              />
+              <Route
                 path="/trades/:status"
                 element={guardPageElement("pages.trades", <TradesPage />)}
               />
@@ -1706,7 +1716,12 @@ export default function App() {
                 path="/system/logs"
                 element={guardPageElement(
                   "pages.system.logs",
-                  <SystemBrowserPage mode="logs" title="System Logs" authUser={authUser} />,
+                  <SystemBrowserPage
+                    mode="logs"
+                    title="System Logs"
+                    authUser={authUser}
+                    showFiles
+                  />,
                 )}
               />
               <Route

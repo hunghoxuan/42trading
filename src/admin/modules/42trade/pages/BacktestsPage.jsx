@@ -1,8 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  startTransition,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../../../app/api";
 import BacktestBarsSelector from "../components/BacktestBarsSelector";
-import BacktestSummaryMetaRow from "../components/BacktestSummaryMetaRow";
 import RuleBuilder, {
   createEmptyRuleDraft,
   normalizeRuleDraft,
@@ -51,12 +58,30 @@ function timeframeLabel(tfRaw) {
 }
 
 const BACKTEST_TF_SEQUENCE = ["1m", "5m", "15m", "1h", "4h", "1d"];
+const BACKTEST_TF_MATRIX_SEQUENCE = ["1d", "4h", "1h", "15m", "5m", "1m"];
+const BACKTEST_TRADES_RENDER_STEP = 120;
 
 function higherBacktestTimeframes(tfRaw = "") {
   const normalizedTf = timeframeLabel(tfRaw);
   const startIndex = BACKTEST_TF_SEQUENCE.indexOf(normalizedTf);
   if (startIndex < 0) return [];
   return BACKTEST_TF_SEQUENCE.slice(startIndex + 1);
+}
+
+function sortBacktestMatrixTimeframes(timeframes = []) {
+  const unique = [
+    ...new Set(
+      (Array.isArray(timeframes) ? timeframes : []).map((tf) => timeframeLabel(tf)),
+    ),
+  ];
+  return unique.sort((left, right) => {
+    const leftIndex = BACKTEST_TF_MATRIX_SEQUENCE.indexOf(timeframeLabel(left));
+    const rightIndex = BACKTEST_TF_MATRIX_SEQUENCE.indexOf(timeframeLabel(right));
+    if (leftIndex >= 0 && rightIndex >= 0) return leftIndex - rightIndex;
+    if (leftIndex >= 0) return -1;
+    if (rightIndex >= 0) return 1;
+    return String(left).localeCompare(String(right));
+  });
 }
 
 function strategyStatusMeta(strategy = {}) {
@@ -128,6 +153,16 @@ function pickInitialTradeSid(trades = []) {
 
 function tradeTimeframeKey(trade = {}) {
   return timeframeLabel(trade?.tf || trade?.timeframe || "");
+}
+
+function tradeStrategyKey(trade = {}) {
+  return String(
+    trade?.strategy_id ||
+      trade?.strategy_key ||
+      trade?.strategy ||
+      trade?.strategy_name ||
+      "",
+  ).trim();
 }
 
 const LEFT_TABS = [
@@ -579,6 +614,15 @@ function buildRuleConfigSavePayload(rule = {}) {
       bias: normalizedRule.bias || normalizedRule.outputs?.bias || "neutral",
     },
   };
+}
+
+function stripRuleActions(rule = {}) {
+  const normalizedRule =
+    !rule || typeof rule !== "object" || Array.isArray(rule)
+      ? normalizeRuleDraft({ name: "Rule Test", actions: [] })
+      : normalizeRuleDraft(rule);
+  const { actions: _actions, ...rest } = normalizedRule;
+  return rest;
 }
 
 function updateRuleTreeNode(node, targetId, updater) {
@@ -1039,21 +1083,13 @@ function resolveRequestedStrategyId(strategyId = "", options = []) {
     (item) => String(item?.key || item?.id || "").trim() === requested,
   );
   if (exact) return requested;
-  if (requested.endsWith("_custom")) {
-    const baseId = requested.slice(0, -7);
-    const fallback = available.find(
-      (item) => String(item?.key || item?.id || "").trim() === baseId,
-    );
-    if (fallback) return baseId;
-    return baseId;
-  }
   return requested;
 }
 
 function resolveCustomStrategyBaseId(strategyId = "") {
   const requested = String(strategyId || "").trim();
   if (!requested) return "";
-  return requested.endsWith("_custom") ? requested.slice(0, -7) : requested;
+  return requested;
 }
 
 function editorHashActive(location) {
@@ -1120,22 +1156,6 @@ function formatBacktestDataRange(run = {}, summaryOverride = null) {
   return startLabel || endLabel || "";
 }
 
-function formatEventArtifactLabel(item = {}) {
-  const type = String(item?.type || item?.artifact_type || "artifact")
-    .trim()
-    .toUpperCase();
-  const subtype = String(item?.subtype || item?.payload?.bias || "")
-    .trim()
-    .toUpperCase();
-  return subtype ? `${type} ${subtype}` : type;
-}
-
-function formatBacktestEventTime(value) {
-  const sec = Number(value);
-  if (!Number.isFinite(sec) || sec <= 0) return "";
-  return new Date(sec * 1000).toLocaleString();
-}
-
 function formatBacktestDateTimeLabel(value) {
   if (!value) return "";
   const date = new Date(value);
@@ -1194,22 +1214,43 @@ function normalizeTimeframeSelection(form = {}, fallback = "") {
   return single ? [single] : [];
 }
 
+function roundNumber(value, digits = 2) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 0;
+  const factor = 10 ** Math.max(0, Number(digits) || 0);
+  return Math.round(num * factor) / factor;
+}
+
 function formatBatchCellCompact(cell = null) {
   if (!cell) return "-";
   if (Number(cell?.completed || 0) <= 0 && Number(cell?.failed || 0) <= 0) return "-";
   if (Number(cell?.completed || 0) <= 0 && Number(cell?.failed || 0) > 0) return "Failed";
-  return [
-    `${Math.round(Number(cell?.total_trades || 0))}T`,
-    `WR ${formatNumber(cell?.win_rate_pct || 0, 0)}%`,
-    `RR ${formatNumber(cell?.total_r || 0, 1)}`,
-  ].join(" · ");
+  const plannedAvailable = Number(cell?.planned_outcome_samples || 0) > 0;
+  const realizedValue = Number((cell?.total_realized_r ?? cell?.total_r) || 0);
+  const plannedValue = Number(cell?.total_planned_outcome_r || 0);
+  const toneClass = (value) =>
+    value > 0 ? "money-pos" : value < 0 ? "money-neg" : "money-neutral";
+  return (
+    <>
+      <span className="money-neutral">{`(${Math.round(Number(cell?.total_trades || 0))}t)`}</span>{" "}
+      <span className="money-neutral">{`${formatNumber(cell?.win_rate_pct || 0, 0)}%`}</span>{" "}
+      <span className={toneClass(realizedValue)}>{`${formatNumber(realizedValue, 1)}r`}</span>
+      <span className="money-neutral">/</span>
+      <span className={plannedAvailable ? toneClass(plannedValue) : "money-neutral"}>
+        {plannedAvailable ? `${formatNumber(plannedValue, 1)}r` : "-"}
+      </span>
+    </>
+  );
 }
 
 function buildMetricsMatrixCell({
   tf = "",
   totalTrades = 0,
   winRatePct = 0,
-  totalR = 0,
+  totalRealizedR = 0,
+  totalPlannedOutcomeR = 0,
+  plannedOutcomeSamples = 0,
+  symbols = [],
 } = {}) {
   return {
     tf: timeframeLabel(tf),
@@ -1217,7 +1258,376 @@ function buildMetricsMatrixCell({
     failed: 0,
     total_trades: Math.max(0, Number(totalTrades) || 0),
     win_rate_pct: Number(winRatePct) || 0,
-    total_r: Number(totalR) || 0,
+    total_realized_r: Number(totalRealizedR) || 0,
+    total_planned_outcome_r: Number(totalPlannedOutcomeR) || 0,
+    planned_outcome_samples: Math.max(0, Number(plannedOutcomeSamples) || 0),
+    total_r: Number(totalRealizedR) || 0,
+    symbols: Array.isArray(symbols) ? symbols.filter(Boolean) : [],
+  };
+}
+
+function buildClientBatchBacktestResult({
+  payload = {},
+  sessionResults = [],
+  sessionFailures = [],
+  strategies = [],
+  symbols = [],
+  timeframes = [],
+  limit = 0,
+} = {}) {
+  const strategyLabelById = new Map(
+    (Array.isArray(strategies) ? strategies : []).map((strategy) => {
+      const id = String(strategy?.key || strategy?.id || "").trim();
+      return [id, String(strategy?.name || id || "Strategy").trim()];
+    }),
+  );
+  const requestedSymbols = normalizeSelectionList(symbols).map((symbol) =>
+    symbol.toUpperCase(),
+  );
+  const requestedTimeframes = normalizeSelectionList(timeframes);
+  const requestedStrategies = normalizeSelectionList(
+    (Array.isArray(strategies) ? strategies : []).map(
+      (strategy) => strategy?.key || strategy?.id,
+    ),
+  );
+  const matrix = new Map();
+  const rows = [];
+  const combinedTrades = [];
+  const combinedEvents = [];
+  const firstBarTimes = [];
+  const lastBarTimes = [];
+  const barsAnalyzedValues = [];
+  let completed = 0;
+  let failed = 0;
+  let totalTrades = 0;
+  let totalPnl = 0;
+  let totalRealizedR = 0;
+  let totalPlannedOutcomeR = 0;
+  let totalPlannedOutcomeSamples = 0;
+  let weightedWins = 0;
+
+  const ensureMatrixCell = (strategyId, tf) => {
+    const strategyKey = String(strategyId || "").trim();
+    const tfKey = String(tf || "").trim();
+    const comboKey = `${strategyKey}:${tfKey}`;
+    if (!matrix.has(comboKey)) {
+      matrix.set(comboKey, {
+        strategy_id: strategyKey,
+        strategy_name: strategyLabelById.get(strategyKey) || strategyKey || "Strategy",
+        tf: tfKey,
+        total_trades: 0,
+        total_pnl: 0,
+        total_realized_r: 0,
+        total_planned_outcome_r: 0,
+        planned_outcome_samples: 0,
+        total_r: 0,
+        weighted_wins: 0,
+        completed: 0,
+        failed: 0,
+        symbols: new Set(),
+      });
+    }
+    return matrix.get(comboKey);
+  };
+
+  for (const entry of Array.isArray(sessionResults) ? sessionResults : []) {
+    const result = entry?.result || {};
+    const run = result?.run || {};
+    const summary =
+      result?.summary && typeof result.summary === "object"
+        ? result.summary
+        : run?.summary && typeof run.summary === "object"
+          ? run.summary
+          : {};
+    const strategyId = String(entry?.strategyKey || run?.strategy_key || run?.strategy_id || "").trim();
+    const strategyName = String(
+      run?.strategy_name || strategyLabelById.get(strategyId) || strategyId || "Strategy",
+    ).trim();
+    const symbol = String(entry?.symbol || run?.symbol || "").trim().toUpperCase();
+    const tf = String(entry?.tf || run?.tf || "").trim();
+    const resultTrades = Array.isArray(result?.trades) ? result.trades : [];
+    const fallbackTrades = resultTrades.filter((trade) => trade && typeof trade === "object");
+    const fallbackTradeCount = fallbackTrades.length;
+    const fallbackWins = fallbackTrades.filter((trade) => {
+      const resultLabel = String(trade?.result || "").trim().toLowerCase();
+      if (resultLabel === "win") return true;
+      if (resultLabel === "loss" || resultLabel === "flat") return false;
+      return Number(trade?.pnl_realized ?? trade?.pnl ?? 0) > 0;
+    }).length;
+    const fallbackPnl = fallbackTrades.reduce(
+      (sum, trade) => sum + Number(trade?.pnl_realized ?? trade?.pnl ?? 0),
+      0,
+    );
+    const fallbackRealizedR = fallbackTrades.reduce((sum, trade) => {
+      const rawR = Number(
+        trade?.realized_r ??
+          trade?.r_multiple ??
+          trade?.rr_realized ??
+          trade?.rr ??
+          0,
+      );
+      return sum + (Number.isFinite(rawR) ? rawR : 0);
+    }, 0);
+    const fallbackPlannedOutcomeR = fallbackTrades.reduce((sum, trade) => {
+      const rawR = Number(trade?.planned_outcome_r ?? 0);
+      return sum + (Number.isFinite(rawR) ? rawR : 0);
+    }, 0);
+    const fallbackPlannedOutcomeSamples = fallbackTrades.filter((trade) =>
+      Object.prototype.hasOwnProperty.call(trade || {}, "planned_outcome_r"),
+    ).length;
+    const summaryTradeCount = Math.max(0, Number(summary?.total_trades || 0));
+    const hasSummaryTradeCount =
+      Object.prototype.hasOwnProperty.call(summary, "total_trades") && summaryTradeCount > 0;
+    const hasAnySummaryTradeMetric = [
+      "total_trades",
+      "win_rate_pct",
+      "total_pnl",
+      "total_realized_r",
+      "total_r",
+      "total_planned_outcome_r",
+    ].some((key) => Object.prototype.hasOwnProperty.call(summary, key));
+    const useSummaryMetrics = hasSummaryTradeCount || (!fallbackTradeCount && hasAnySummaryTradeMetric);
+    const rowTrades = useSummaryMetrics ? summaryTradeCount : fallbackTradeCount;
+    const rowWinRate = useSummaryMetrics
+      ? Number(summary?.win_rate_pct || 0)
+      : rowTrades
+        ? (fallbackWins / rowTrades) * 100
+        : 0;
+    const rowPnl = useSummaryMetrics ? Number(summary?.total_pnl || 0) : fallbackPnl;
+    const rowRealizedR = useSummaryMetrics
+      ? Number((summary?.total_realized_r ?? summary?.total_r) || 0)
+      : fallbackRealizedR;
+    const summaryHasPlannedOutcome =
+      (summary &&
+        typeof summary === "object" &&
+        Object.prototype.hasOwnProperty.call(summary, "total_planned_outcome_r")) ||
+      fallbackPlannedOutcomeSamples > 0;
+    const rowPlannedOutcomeR = useSummaryMetrics
+      ? Number(summary?.total_planned_outcome_r || 0)
+      : fallbackPlannedOutcomeR;
+    const firstBarAt = String(summary?.first_bar_at || "").trim();
+    const lastBarAt = String(summary?.last_bar_at || "").trim();
+    const barsAnalyzed = Number(summary?.bars_analyzed || 0);
+    const comboKey = `${strategyId}:${tf}`;
+    const cell = ensureMatrixCell(strategyId, tf);
+    completed += 1;
+    totalTrades += rowTrades;
+    totalPnl += Number.isFinite(rowPnl) ? rowPnl : 0;
+    totalRealizedR += Number.isFinite(rowRealizedR) ? rowRealizedR : 0;
+    totalPlannedOutcomeR += Number.isFinite(rowPlannedOutcomeR) ? rowPlannedOutcomeR : 0;
+    totalPlannedOutcomeSamples += summaryHasPlannedOutcome ? 1 : 0;
+    weightedWins += Number.isFinite(rowWinRate) ? (rowWinRate / 100) * rowTrades : 0;
+    if (firstBarAt) firstBarTimes.push(firstBarAt);
+    if (lastBarAt) lastBarTimes.push(lastBarAt);
+    if (Number.isFinite(barsAnalyzed) && barsAnalyzed > 0) {
+      barsAnalyzedValues.push(barsAnalyzed);
+    }
+    cell.total_trades += rowTrades;
+    cell.total_pnl += Number.isFinite(rowPnl) ? rowPnl : 0;
+    cell.total_realized_r += Number.isFinite(rowRealizedR) ? rowRealizedR : 0;
+    cell.total_planned_outcome_r += Number.isFinite(rowPlannedOutcomeR)
+      ? rowPlannedOutcomeR
+      : 0;
+    cell.planned_outcome_samples += summaryHasPlannedOutcome
+      ? useSummaryMetrics
+        ? 1
+        : fallbackPlannedOutcomeSamples
+      : 0;
+    cell.total_r += Number.isFinite(rowRealizedR) ? rowRealizedR : 0;
+    cell.weighted_wins += Number.isFinite(rowWinRate) ? (rowWinRate / 100) * rowTrades : 0;
+    cell.completed += 1;
+    if (symbol) cell.symbols.add(symbol);
+    combinedTrades.push(
+      ...((Array.isArray(result?.trades) ? result.trades : []).map((trade) => ({
+        ...trade,
+        symbol,
+        tf,
+        timeframe: tf,
+        strategy_id: strategyId,
+        strategy_key: strategyId,
+        strategy_name: strategyName,
+        batch_combo_key: comboKey,
+      }))),
+    );
+    combinedEvents.push(
+      ...((Array.isArray(result?.events) ? result.events : []).map((event) => ({
+        ...event,
+        symbol,
+        tf,
+        timeframe: tf,
+        strategy_id: strategyId,
+        strategy_key: strategyId,
+        strategy_name: strategyName,
+        batch_combo_key: comboKey,
+      }))),
+    );
+    rows.push({
+      status: "completed",
+      strategy_id: strategyId,
+      strategy_name: strategyName,
+      symbol,
+      tf,
+      total_trades: rowTrades,
+      win_rate_pct: Number.isFinite(rowWinRate) ? roundNumber(rowWinRate, 2) : 0,
+      total_pnl: Number.isFinite(rowPnl) ? roundNumber(rowPnl, 5) : 0,
+      total_realized_r: Number.isFinite(rowRealizedR) ? roundNumber(rowRealizedR, 5) : 0,
+      total_planned_outcome_r: Number.isFinite(rowPlannedOutcomeR)
+        ? roundNumber(rowPlannedOutcomeR, 5)
+        : 0,
+      planned_outcome_available: summaryHasPlannedOutcome,
+      total_r: Number.isFinite(rowRealizedR) ? roundNumber(rowRealizedR, 5) : 0,
+    });
+  }
+
+  for (const entry of Array.isArray(sessionFailures) ? sessionFailures : []) {
+    const strategyId = String(entry?.strategyKey || "").trim();
+    const tf = String(entry?.tf || "").trim();
+    const symbol = String(entry?.symbol || "").trim().toUpperCase();
+    const cell = ensureMatrixCell(strategyId, tf);
+    failed += 1;
+    cell.failed += 1;
+    if (symbol) cell.symbols.add(symbol);
+    rows.push({
+      status: "failed",
+      strategy_id: strategyId,
+      strategy_name: strategyLabelById.get(strategyId) || strategyId || "Strategy",
+      symbol,
+      tf,
+      error: String(entry?.error || "Backtest failed"),
+    });
+  }
+
+  combinedTrades.sort(compareTradeReplayAsc);
+  combinedEvents.sort((left, right) => {
+    const leftTime = Number(left?.bar_time_unix || 0);
+    const rightTime = Number(right?.bar_time_unix || 0);
+    if (leftTime !== rightTime) return leftTime - rightTime;
+    return String(left?.event_id || "").localeCompare(String(right?.event_id || ""));
+  });
+
+  const firstBarAt = firstBarTimes
+    .map((value) => toTimeMs(value))
+    .filter((value) => Number.isFinite(value))
+    .sort((a, b) => a - b)[0];
+  const lastBarAt = lastBarTimes
+    .map((value) => toTimeMs(value))
+    .filter((value) => Number.isFinite(value))
+    .sort((a, b) => b - a)[0];
+  const matrixRows = requestedStrategies.map((strategyId) => {
+    const cells = requestedTimeframes.map((tf) => {
+      const cell = matrix.get(`${strategyId}:${tf}`) || null;
+      const cellTrades = Number(cell?.total_trades || 0);
+      return {
+        tf,
+        completed: Number(cell?.completed || 0),
+        failed: Number(cell?.failed || 0),
+        total_trades: cellTrades,
+        total_pnl: roundNumber(cell?.total_pnl || 0, 5),
+        total_realized_r: roundNumber((cell?.total_realized_r ?? cell?.total_r) || 0, 5),
+        total_planned_outcome_r: roundNumber(cell?.total_planned_outcome_r || 0, 5),
+        planned_outcome_samples: Number(cell?.planned_outcome_samples || 0),
+        total_r: roundNumber(cell?.total_r || 0, 5),
+        win_rate_pct: cellTrades
+          ? roundNumber((Number(cell?.weighted_wins || 0) / cellTrades) * 100, 2)
+          : 0,
+        symbols: Array.from(cell?.symbols || []),
+      };
+    });
+    return {
+      strategy_id: strategyId,
+      strategy_name: strategyLabelById.get(strategyId) || strategyId || "Strategy",
+      cells,
+    };
+  });
+  const wins = combinedTrades.filter((trade) => trade?.result === "win").length;
+  const losses = combinedTrades.filter((trade) => trade?.result === "loss").length;
+  const flats = combinedTrades.filter((trade) => trade?.result === "flat").length;
+  const summary = {
+    bars_analyzed: barsAnalyzedValues.length ? Math.max(...barsAnalyzedValues) : 0,
+    total_trades: totalTrades,
+    generated_signals: totalTrades,
+    wins,
+    losses,
+    flats,
+    win_rate_pct: totalTrades ? roundNumber((weightedWins / totalTrades) * 100, 2) : 0,
+    total_pnl: roundNumber(totalPnl, 5),
+    average_pnl: totalTrades ? roundNumber(totalPnl / totalTrades, 5) : 0,
+    total_realized_r: roundNumber(totalRealizedR, 5),
+    average_realized_r: totalTrades ? roundNumber(totalRealizedR / totalTrades, 5) : 0,
+    total_planned_outcome_r: roundNumber(totalPlannedOutcomeR, 5),
+    planned_outcome_samples: totalPlannedOutcomeSamples,
+    average_planned_outcome_r: totalTrades
+      ? roundNumber(totalPlannedOutcomeR / totalTrades, 5)
+      : 0,
+    total_r: roundNumber(totalRealizedR, 5),
+    average_r: totalTrades ? roundNumber(totalRealizedR / totalTrades, 5) : 0,
+    strategy_key: requestedStrategies.length === 1 ? requestedStrategies[0] : "batch_mix",
+    strategy_id: requestedStrategies.length === 1 ? requestedStrategies[0] : "batch_mix",
+    strategy_name:
+      requestedStrategies.length === 1
+        ? strategyLabelById.get(requestedStrategies[0]) || requestedStrategies[0] || "Strategy"
+        : `${requestedStrategies.length} Strategies Mixed`,
+    first_bar_at: firstBarAt ? new Date(firstBarAt).toISOString() : null,
+    last_bar_at: lastBarAt ? new Date(lastBarAt).toISOString() : null,
+  };
+  const now = new Date().toISOString();
+  const run = {
+    run_id: `client_batch_${Date.now()}`,
+    symbol: requestedSymbols.length === 1 ? requestedSymbols[0] : "MULTI",
+    tf: requestedTimeframes.length === 1 ? requestedTimeframes[0] : "multi",
+    limit,
+    direction: String(payload.direction || "all").trim().toLowerCase(),
+    session: String(payload.session || "Any").trim() || "Any",
+    one_r_value: Number(payload.one_r_value || 0) || null,
+    status: failed && !completed ? "failed" : "completed",
+    strategy_key: summary.strategy_key,
+    strategy_id: summary.strategy_id,
+    strategy_name: summary.strategy_name,
+    started_at: now,
+    completed_at: now,
+    updated_at: now,
+    ephemeral: true,
+    batch_mix: true,
+    selection: {
+      symbols: requestedSymbols,
+      timeframes: requestedTimeframes,
+      strategy_ids: requestedStrategies,
+    },
+    summary,
+  };
+  return {
+    ok: true,
+    run,
+    summary,
+    trades: combinedTrades,
+    events: combinedEvents,
+    strategies,
+    report: {
+      generated_at: now,
+      selection: {
+        symbols: requestedSymbols,
+        timeframes: requestedTimeframes,
+        strategy_ids: requestedStrategies,
+      },
+      matrix_timeframes: requestedTimeframes,
+      matrix_rows: matrixRows,
+      totals: {
+        strategies: requestedStrategies.length,
+        symbols: requestedSymbols.length,
+        timeframes: requestedTimeframes.length,
+        combinations: requestedStrategies.length * requestedSymbols.length * requestedTimeframes.length,
+        completed,
+        failed,
+        total_trades: totalTrades,
+        total_pnl: roundNumber(totalPnl, 5),
+        total_realized_r: roundNumber(totalRealizedR, 5),
+        total_planned_outcome_r: roundNumber(totalPlannedOutcomeR, 5),
+        planned_outcome_samples: totalPlannedOutcomeSamples,
+        total_r: roundNumber(totalRealizedR, 5),
+        weighted_win_rate_pct: totalTrades ? roundNumber((weightedWins / totalTrades) * 100, 2) : 0,
+      },
+      rows,
+    },
   };
 }
 
@@ -1444,9 +1854,14 @@ export default function BacktestsPage() {
   const [loadingRuns, setLoadingRuns] = useState(true);
   const [loadingStrategies, setLoadingStrategies] = useState(false);
   const [running, setRunning] = useState(false);
+  const [backtestRunProgress, setBacktestRunProgress] = useState(null);
   const [savingRun, setSavingRun] = useState(false);
   const [error, setError] = useState("");
   const [batchReport, setBatchReport] = useState(null);
+  const [resultFilterTf, setResultFilterTf] = useState("all");
+  const [resultFilterStrategy, setResultFilterStrategy] = useState("all");
+  const [resultChartLoaded, setResultChartLoaded] = useState(false);
+  const [resultChartLoadKey, setResultChartLoadKey] = useState(0);
   const [replayPlaying, setReplayPlaying] = useState(false);
   const [replaySpeedMs, setReplaySpeedMs] = useState(200);
   const [replayStartTradeSid, setReplayStartTradeSid] = useState("");
@@ -1457,13 +1872,16 @@ export default function BacktestsPage() {
     tf: "5",
     bars: "1000",
     one_r_value: "100",
-    rule: createEmptyRuleDraft({
-      name: "Rule Test",
-      actions: [],
-    }),
+    rule: stripRuleActions(
+      createEmptyRuleDraft({
+        name: "Rule Test",
+        actions: [],
+      }),
+    ),
   });
   const [ruleEditorTab, setRuleEditorTab] = useState("edit");
   const [ruleLibraryTab, setRuleLibraryTab] = useState("popular");
+  const [ruleLibraryQuery, setRuleLibraryQuery] = useState("");
   const [ruleCatalog, setRuleCatalog] = useState([]);
   const [loadingRules, setLoadingRules] = useState(false);
   const [savingRule, setSavingRule] = useState(false);
@@ -1589,10 +2007,15 @@ export default function BacktestsPage() {
 
   useEffect(() => {
     if (!routeStrategyId) return;
+    const routeStrategyBaseId = resolveCustomStrategyBaseId(routeStrategyId);
     const existsInCatalog =
       strategies.some((item) => String(item?.key || item?.id || "").trim() === routeStrategyId) ||
+      strategies.some((item) => String(item?.key || item?.id || "").trim() === routeStrategyBaseId) ||
       customStrategies.some(
         (item) => String(item?.key || item?.id || "").trim() === routeStrategyId,
+      ) ||
+      customStrategies.some(
+        (item) => String(item?.key || item?.id || "").trim() === routeStrategyBaseId,
       );
     if (existsInCatalog) return;
     void loadRouteStrategy(routeStrategyId);
@@ -1600,9 +2023,7 @@ export default function BacktestsPage() {
 
   useEffect(() => {
     if (!editorHashActive({ hash: locationHash })) return;
-    if (activeTab !== "strategies") {
-      setActiveTab("strategies");
-    }
+    setActiveTab((current) => (current === "strategies" ? current : "strategies"));
     const preferredStrategyId = routeStrategyCandidateId || routeStrategyId || DEFAULT_EDIT_STRATEGY_ID;
     if (!preferredStrategyId) return;
     setSelectedStrategyId((current) => {
@@ -1617,41 +2038,40 @@ export default function BacktestsPage() {
             strategy_key: preferredStrategyId,
           },
     );
-  }, [activeTab, locationHash, routeStrategyCandidateId, routeStrategyId]);
+  }, [locationHash, routeStrategyCandidateId, routeStrategyId]);
 
   useEffect(() => {
     if (locationHash === "#rules") {
-      if (activeTab !== "rules") {
-        setActiveTab("rules");
-      }
+      setActiveTab((current) => (current === "rules" ? current : "rules"));
       return;
     }
     if (locationHash === "#history") {
-      if (activeTab !== "history") {
-        setActiveTab("history");
-      }
+      setActiveTab((current) => (current === "history" ? current : "history"));
       return;
     }
-  }, [activeTab, locationHash]);
+  }, [locationHash]);
 
   useEffect(() => {
     const nextStrategyId = String(routeStrategyCandidateId || routeStrategyId || "").trim();
     const nextSymbol = routeSymbol;
     const nextTf = routeTf;
     if (!nextStrategyId && !nextSymbol && !nextTf) return;
-    if (nextStrategyId && selectedStrategyId !== nextStrategyId) {
+    const strategySelectionCleared =
+      Array.isArray(form?.strategy_keys) &&
+      form.strategy_keys.length === 0 &&
+      !String(form?.strategy_key || "").trim();
+    if (nextStrategyId && selectedStrategyId !== nextStrategyId && !strategySelectionCleared) {
       setDraftStrategySeed(null);
       setSelectedStrategyId(nextStrategyId);
     }
     setForm((prev) => {
       const next = { ...prev };
-      if (nextStrategyId) {
-        next.strategy_key = nextStrategyId;
+      if (nextStrategyId && !strategySelectionCleared) {
         const currentStrategyKeys = normalizeStrategySelection(prev);
-        next.strategy_keys =
-          currentStrategyKeys.length > 1 && currentStrategyKeys.includes(nextStrategyId)
-            ? currentStrategyKeys
-            : [nextStrategyId];
+        if (!currentStrategyKeys.length) {
+          next.strategy_key = nextStrategyId;
+          next.strategy_keys = [nextStrategyId];
+        }
       }
       if (nextSymbol) {
         next.symbol = nextSymbol;
@@ -1678,6 +2098,7 @@ export default function BacktestsPage() {
     setSelectedRunId("");
     setSelectedTradeSid("");
     setBatchReport(null);
+    setBacktestRunProgress(null);
   }, [routeRunId, routeStrategyId]);
 
   useEffect(() => {
@@ -1695,10 +2116,12 @@ export default function BacktestsPage() {
       params.get("tf") || params.get("timeframe") || "",
       "",
     );
-    if (activeTab !== "backtest") {
-      setActiveTab("backtest");
-    }
-    if (nextStrategyId && selectedStrategyId !== nextStrategyId) {
+    setActiveTab((current) => (current === "backtest" ? current : "backtest"));
+    const strategySelectionCleared =
+      Array.isArray(form?.strategy_keys) &&
+      form.strategy_keys.length === 0 &&
+      !String(form?.strategy_key || "").trim();
+    if (nextStrategyId && selectedStrategyId !== nextStrategyId && !strategySelectionCleared) {
       setDraftStrategySeed(null);
       setSelectedStrategyId(nextStrategyId);
     }
@@ -1706,13 +2129,12 @@ export default function BacktestsPage() {
       const next = {
         ...prev,
       };
-      if (nextStrategyId) {
-        next.strategy_key = nextStrategyId;
+      if (nextStrategyId && !strategySelectionCleared) {
         const currentStrategyKeys = normalizeStrategySelection(prev);
-        next.strategy_keys =
-          currentStrategyKeys.length > 1 && currentStrategyKeys.includes(nextStrategyId)
-            ? currentStrategyKeys
-            : [nextStrategyId];
+        if (!currentStrategyKeys.length) {
+          next.strategy_key = nextStrategyId;
+          next.strategy_keys = [nextStrategyId];
+        }
       }
       if (nextSymbol) {
         next.symbol = nextSymbol;
@@ -1729,7 +2151,7 @@ export default function BacktestsPage() {
       const nextJson = JSON.stringify(next);
       return prevJson === nextJson ? prev : next;
     });
-  }, [activeTab, locationSearch, routeStrategyCandidateId, routeStrategyId, selectedStrategyId]);
+  }, [locationSearch, routeStrategyCandidateId, routeStrategyId, selectedStrategyId]);
 
   useEffect(() => {
     if (routeRunId && routeRunId !== selectedRunId) {
@@ -1770,9 +2192,6 @@ export default function BacktestsPage() {
   const activeTrades = Array.isArray(activeRunDetail?.trades)
     ? activeRunDetail.trades
     : [];
-  const activeEvents = Array.isArray(activeRunDetail?.events)
-    ? activeRunDetail.events
-    : [];
   const activeBatchReport = activeRunDetail?.report || batchReport || null;
   const strategyOptions = useMemo(
     () =>
@@ -1809,6 +2228,12 @@ export default function BacktestsPage() {
     [draftStrategySeed, selectedExistingStrategy, selectedStrategyId],
   );
   const activeChartStrategy = useMemo(() => {
+    if (resultFilterStrategy && resultFilterStrategy !== "all") {
+      const filteredStrategy = allStrategies.find(
+        (item) => String(item.key || item.id || "").trim() === resultFilterStrategy,
+      );
+      if (filteredStrategy) return filteredStrategy;
+    }
     if (selectedStrategy) return selectedStrategy;
     const activeRunStrategyId = String(
       activeRun?.strategy_key || activeRun?.strategy_id || "",
@@ -1820,7 +2245,13 @@ export default function BacktestsPage() {
           String(item.key || item.id || "").trim() === activeRunStrategyId,
       ) || null
     );
-  }, [activeRun?.strategy_id, activeRun?.strategy_key, allStrategies, selectedStrategy]);
+  }, [
+    activeRun?.strategy_id,
+    activeRun?.strategy_key,
+    allStrategies,
+    resultFilterStrategy,
+    selectedStrategy,
+  ]);
   const symbolOptions = useMemo(() => {
     const known = new Set();
     for (const values of Object.values(SYSTEM_SYMBOL_GROUP_PRESETS)) {
@@ -1857,7 +2288,7 @@ export default function BacktestsPage() {
     [ruleTestRunKey, testedRuleStrategy],
   );
   const ruleTesterExpressionJson = useMemo(
-    () => JSON.stringify(ruleTester.rule || {}, null, 2),
+    () => JSON.stringify(stripRuleActions(ruleTester.rule), null, 2),
     [ruleTester.rule],
   );
   const ruleLibraryItems = useMemo(() => {
@@ -2089,35 +2520,28 @@ export default function BacktestsPage() {
   const visibleRuleLibraryItems = useMemo(
     () =>
       ruleLibraryItems.filter((item) =>
-        ruleLibraryTab === "strategy"
+        (ruleLibraryTab === "strategy"
           ? item.source === "strategy"
-          : item.source !== "strategy",
+          : item.source !== "strategy") &&
+        (!String(ruleLibraryQuery || "").trim() ||
+          [
+            item.label,
+            item.name,
+            item.abbr,
+            item.source,
+            item.rule_id,
+          ]
+            .map((value) => String(value || "").toLowerCase())
+            .some((value) =>
+              value.includes(String(ruleLibraryQuery || "").trim().toLowerCase()),
+            )),
       ),
-    [ruleLibraryItems, ruleLibraryTab],
+    [ruleLibraryItems, ruleLibraryQuery, ruleLibraryTab],
   );
   const sortedActiveTrades = useMemo(
     () => [...activeTrades].sort(compareTradeReplayAsc),
     [activeTrades],
   );
-  const effectiveTradeSid = replayPlaying
-    ? String(replayActiveTradeSid || replayStartTradeSid || selectedTradeSid || "")
-    : String(selectedTradeSid || "");
-  const selectedTrade = useMemo(
-    () =>
-      sortedActiveTrades.find((trade) => String(trade?.sid || "") === effectiveTradeSid) ||
-      sortedActiveTrades[0] ||
-      null,
-    [effectiveTradeSid, sortedActiveTrades],
-  );
-  const activeChartSymbol = String(
-    selectedTrade?.symbol || activeRun?.symbol || form.symbol || "",
-  )
-    .trim()
-    .toUpperCase();
-  const activeChartTf = String(
-    selectedTrade?.tf || selectedTrade?.timeframe || activeRun?.tf || form.tf || "1",
-  ).trim();
-  const activeChartTfKey = timeframeLabel(activeChartTf);
   const activeRunTimeframes = useMemo(() => {
     const preferred = Array.isArray(activeBatchReport?.matrix_timeframes)
       ? activeBatchReport.matrix_timeframes
@@ -2140,14 +2564,116 @@ export default function BacktestsPage() {
     form.tf,
     sortedActiveTrades,
   ]);
-  const filteredActiveTrades = useMemo(() => {
-    if (!sortedActiveTrades.length) return [];
-    if (!activeChartTfKey || activeChartTfKey === "-") return sortedActiveTrades;
-    const scoped = sortedActiveTrades.filter(
-      (trade) => tradeTimeframeKey(trade) === activeChartTfKey,
+  const resultStrategyOptions = useMemo(() => {
+    const byId = new Map();
+    const addStrategy = (idRaw, labelRaw) => {
+      const id = String(idRaw || "").trim();
+      if (!id || byId.has(id)) return;
+      byId.set(id, String(labelRaw || id).trim() || id);
+    };
+    (Array.isArray(activeRun?.selection?.strategy_ids)
+      ? activeRun.selection.strategy_ids
+      : []
+    ).forEach((id) => {
+      const strategy = allStrategies.find(
+        (item) => String(item?.key || item?.id || "").trim() === String(id || "").trim(),
+      );
+      addStrategy(id, strategy?.name || id);
+    });
+    sortedActiveTrades.forEach((trade) =>
+      addStrategy(tradeStrategyKey(trade), trade?.strategy_name || tradeStrategyKey(trade)),
     );
-    return scoped.length ? scoped : sortedActiveTrades;
-  }, [activeChartTfKey, sortedActiveTrades]);
+    if (activeRun?.strategy_id || activeRun?.strategy_key) {
+      addStrategy(
+        activeRun?.strategy_id || activeRun?.strategy_key,
+        activeRun?.strategy_name || activeRun?.strategy_id || activeRun?.strategy_key,
+      );
+    }
+    return Array.from(byId.entries()).map(([id, label]) => ({ id, label }));
+  }, [
+    activeRun?.selection?.strategy_ids,
+    activeRun?.strategy_id,
+    activeRun?.strategy_key,
+    activeRun?.strategy_name,
+    allStrategies,
+    sortedActiveTrades,
+  ]);
+  const resultFilteredTrades = useMemo(() => {
+    const tfFilter = String(resultFilterTf || "all").trim();
+    const strategyFilter = String(resultFilterStrategy || "all").trim();
+    return sortedActiveTrades.filter((trade) => {
+      const tfOk = tfFilter === "all" || tradeTimeframeKey(trade) === tfFilter;
+      const strategyOk =
+        strategyFilter === "all" || tradeStrategyKey(trade) === strategyFilter;
+      return tfOk && strategyOk;
+    });
+  }, [resultFilterStrategy, resultFilterTf, sortedActiveTrades]);
+  useEffect(() => {
+    if (resultFilterTf !== "all" && !activeRunTimeframes.includes(resultFilterTf)) {
+      setResultFilterTf("all");
+    }
+    if (
+      resultFilterStrategy !== "all" &&
+      !resultStrategyOptions.some((item) => item.id === resultFilterStrategy)
+    ) {
+      setResultFilterStrategy("all");
+    }
+  }, [activeRunTimeframes, resultFilterStrategy, resultFilterTf, resultStrategyOptions]);
+  const chartFilterSignature = [
+    activeRun?.run_id || "",
+    resultFilterTf,
+    resultFilterStrategy,
+  ].join("|");
+  useEffect(() => {
+    setResultChartLoaded(Boolean(activeRun && activeRunTimeframes.length === 1));
+    setResultChartLoadKey((value) => value + 1);
+  }, [activeRun?.run_id, activeRunTimeframes.length, chartFilterSignature]);
+  const effectiveTradeSid = replayPlaying
+    ? String(replayActiveTradeSid || replayStartTradeSid || selectedTradeSid || "")
+    : String(selectedTradeSid || "");
+  const selectedTrade = useMemo(
+    () =>
+      resultFilteredTrades.find((trade) => String(trade?.sid || "") === effectiveTradeSid) ||
+      resultFilteredTrades[0] ||
+      null,
+    [effectiveTradeSid, resultFilteredTrades],
+  );
+  const activeChartSymbol = String(
+    selectedTrade?.symbol || activeRun?.symbol || form.symbol || "",
+  )
+    .trim()
+    .toUpperCase();
+  const activeChartTf = String(
+    selectedTrade?.tf || selectedTrade?.timeframe || activeRun?.tf || form.tf || "1",
+  ).trim();
+  const activeChartTfKey = timeframeLabel(activeChartTf);
+  const selectedResultTf = String(resultFilterTf || "all").trim();
+  const selectedResultStrategy = String(resultFilterStrategy || "all").trim();
+  const chartTimeframes = useMemo(() => {
+    if (activeRunTimeframes.length === 1) return activeRunTimeframes;
+    if (selectedResultTf && selectedResultTf !== "all") return [selectedResultTf];
+    if (selectedResultStrategy && selectedResultStrategy !== "all") {
+      return activeRunTimeframes;
+    }
+    return [];
+  }, [activeRunTimeframes, selectedResultStrategy, selectedResultTf]);
+  const canLoadResultChart =
+    Boolean(activeRun) &&
+    chartTimeframes.length > 0 &&
+    (
+      selectedResultTf !== "all" ||
+      selectedResultStrategy !== "all" ||
+      resultStrategyOptions.length <= 1 ||
+      activeRunTimeframes.length === 1
+    );
+  const filteredActiveTrades = useMemo(() => {
+    if (!resultFilteredTrades.length) return [];
+    return resultFilteredTrades;
+  }, [resultFilteredTrades]);
+  const deferredFilteredActiveTrades = useDeferredValue(filteredActiveTrades);
+  const [visibleTradeCount, setVisibleTradeCount] = useState(
+    BACKTEST_TRADES_RENDER_STEP,
+  );
   const activeChartTradeLabel = String(
     selectedTrade?.strategy_name ||
       selectedTrade?.strategy_key ||
@@ -2184,30 +2710,53 @@ export default function BacktestsPage() {
   const tradesByTimeframe = useMemo(() => {
     const grouped = new Map();
     activeRunTimeframes.forEach((tf) => grouped.set(tf, []));
-    sortedActiveTrades.forEach((trade) => {
+    resultFilteredTrades.forEach((trade) => {
       const tfKey = tradeTimeframeKey(trade);
       if (!grouped.has(tfKey)) grouped.set(tfKey, []);
       grouped.get(tfKey).push(trade);
     });
     return grouped;
-  }, [activeRunTimeframes, sortedActiveTrades]);
+  }, [activeRunTimeframes, resultFilteredTrades]);
   const metricsMatrixModel = useMemo(() => {
     if (
       Array.isArray(activeBatchReport?.matrix_rows) &&
       activeBatchReport.matrix_rows.length
     ) {
-      return {
-        timeframes: (Array.isArray(activeBatchReport?.matrix_timeframes)
+      const tfFilter = String(resultFilterTf || "all").trim();
+      const strategyFilter = String(resultFilterStrategy || "all").trim();
+      const sourceTimeframes = sortBacktestMatrixTimeframes(
+        (Array.isArray(activeBatchReport?.matrix_timeframes)
           ? activeBatchReport.matrix_timeframes
           : activeRunTimeframes
         ).map((tf) => timeframeLabel(tf)),
-        rows: activeBatchReport.matrix_rows,
+      );
+      const timeframes =
+        tfFilter === "all"
+          ? sourceTimeframes
+          : sourceTimeframes.filter((tf) => tf === tfFilter);
+      const rows = activeBatchReport.matrix_rows
+        .filter((row) => {
+          const rowStrategyId = String(row?.strategy_id || row?.strategy_name || "").trim();
+          return strategyFilter === "all" || rowStrategyId === strategyFilter;
+        })
+        .map((row) => ({
+          ...row,
+          cells: (Array.isArray(row?.cells) ? row.cells : []).filter((cell) => {
+            const cellTf = timeframeLabel(cell?.tf);
+            return tfFilter === "all" || cellTf === tfFilter;
+          }),
+        }));
+      return {
+        timeframes,
+        rows,
       };
     }
     if (!activeRun) return { timeframes: [], rows: [] };
-    const resolvedTfs = activeRunTimeframes.length
-      ? activeRunTimeframes
-      : [timeframeLabel(activeRun?.tf || form.tf || "1")];
+    const resolvedTfs = sortBacktestMatrixTimeframes(
+      activeRunTimeframes.length
+        ? activeRunTimeframes
+        : [timeframeLabel(activeRun?.tf || form.tf || "1")],
+    );
     const strategyName =
       String(
         activeRun?.strategy_name ||
@@ -2226,28 +2775,39 @@ export default function BacktestsPage() {
           strategy_name: strategyName,
           cells: resolvedTfs.map((tf) => {
             const tfTrades = tradesByTimeframe.get(tf) || [];
-            const closedTradeLike = tfTrades.filter((trade) => {
-              const status = String(trade?.execution_status || "").trim().toUpperCase();
-              return ["CLOSED", "FILLED", "REJECTED", "CANCELLED", "OPEN", "PENDING", "NEW", "DRAFT"].includes(status);
-            });
+            const closedTradeLike = tfTrades.filter(Boolean);
             const totalTrades = closedTradeLike.length;
             const wins = closedTradeLike.filter(
-              (trade) => Number(trade?.pnl_realized ?? trade?.pnl ?? 0) > 0,
+              (trade) =>
+                String(trade?.result || "").trim().toLowerCase() === "win" ||
+                Number(trade?.pnl_realized ?? trade?.pnl ?? 0) > 0,
             ).length;
             const winRatePct = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
-            const totalR = closedTradeLike.reduce((sum, trade) => {
-              const rawR =
-                Number(trade?.r_multiple) ||
-                Number(trade?.rr_realized) ||
-                Number(trade?.rr) ||
-                0;
+            const totalRealizedR = closedTradeLike.reduce((sum, trade) => {
+              const rawR = Number(
+                trade?.realized_r ??
+                  trade?.r_multiple ??
+                  trade?.rr_realized ??
+                  trade?.rr ??
+                  0,
+              );
               return sum + (Number.isFinite(rawR) ? rawR : 0);
             }, 0);
+            const totalPlannedOutcomeR = closedTradeLike.reduce((sum, trade) => {
+              const rawR = Number(trade?.planned_outcome_r ?? 0);
+              return sum + (Number.isFinite(rawR) ? rawR : 0);
+            }, 0);
+            const plannedOutcomeSamples = closedTradeLike.filter((trade) =>
+              Object.prototype.hasOwnProperty.call(trade || {}, "planned_outcome_r"),
+            ).length;
             return buildMetricsMatrixCell({
               tf,
               totalTrades,
               winRatePct,
-              totalR,
+              totalRealizedR,
+              totalPlannedOutcomeR,
+              symbols: [String(activeRun?.symbol || form.symbol || "").trim().toUpperCase()].filter(Boolean),
+              plannedOutcomeSamples,
             });
           }),
         },
@@ -2259,26 +2819,22 @@ export default function BacktestsPage() {
     activeRun,
     activeRunTimeframes,
     form.tf,
+    resultFilterStrategy,
+    resultFilterTf,
     tradesByTimeframe,
   ]);
-  const visibleBacktestEvents = useMemo(() => {
-    if (!activeEvents.length) return [];
-    const tradeTimeMs =
-      toTimeMs(
-        selectedTrade?.created_at ||
-          selectedTrade?.signal_bar_time ||
-          selectedTrade?.opened_at ||
-          selectedTrade?.closed_at ||
-          null,
-      ) || null;
-    const scoped = tradeTimeMs
-      ? activeEvents.filter((entry) => {
-          const eventTimeMs = Number(entry?.bar_time_unix) * 1000;
-          return Number.isFinite(eventTimeMs) && eventTimeMs <= tradeTimeMs;
-        })
-      : activeEvents;
-    return scoped.slice(-12).reverse();
-  }, [activeEvents, selectedTrade]);
+  const metricsMatrixHeaderSymbol = useMemo(() => {
+    if (Array.isArray(activeBatchReport?.selection?.symbols) && activeBatchReport.selection.symbols.length === 1) {
+      return String(activeBatchReport.selection.symbols[0] || "").trim().toUpperCase();
+    }
+    if (activeRun?.symbol) {
+      return String(activeRun.symbol || "").trim().toUpperCase();
+    }
+    if (form.symbol) {
+      return String(form.symbol || "").trim().toUpperCase();
+    }
+    return "SYMBOL";
+  }, [activeBatchReport?.selection?.symbols, activeRun?.symbol, form.symbol]);
   const selectedStrategyRuns = useMemo(
     () =>
       runs.filter((run) =>
@@ -2292,7 +2848,7 @@ export default function BacktestsPage() {
     [form.strategy_key, runs, selectedExistingStrategy, selectedStrategyKeys],
   );
   const replaySummary = useMemo(() => {
-    if (!replayPlaying || !replayProgress || !activeSummary) return null;
+    if (!replayPlaying || !replayProgress) return null;
     const replayTimeSec = Number(replayProgress.clockTimeSec);
     if (!Number.isFinite(replayTimeSec) || replayTimeSec <= 0) return null;
     const replayTimeMs = replayTimeSec * 1000;
@@ -2307,6 +2863,25 @@ export default function BacktestsPage() {
       (sum, trade) => sum + Number(trade?.pnl_realized || 0),
       0,
     );
+    const totalRealizedR = closedTrades.reduce(
+      (sum, trade) =>
+        sum +
+        Number(
+          trade?.realized_r ??
+            trade?.r_multiple ??
+            trade?.rr_realized ??
+            trade?.rr ??
+            0,
+        ),
+      0,
+    );
+    const totalPlannedOutcomeR = closedTrades.reduce(
+      (sum, trade) => sum + Number(trade?.planned_outcome_r || 0),
+      0,
+    );
+    const plannedOutcomeSamples = closedTrades.filter((trade) =>
+      Object.prototype.hasOwnProperty.call(trade || {}, "planned_outcome_r"),
+    ).length;
     const winRate = closedTrades.length ? (wins / closedTrades.length) * 100 : 0;
     const startLabel = formatBacktestSummaryPoint(activeSummary?.first_bar_at);
     const endLabel = formatBacktestSummaryPoint(replayTimeMs);
@@ -2317,42 +2892,253 @@ export default function BacktestsPage() {
           : activeSummaryRangeLabel,
       totalTrades: closedTrades.length,
       totalPnl,
-      totalRr:
-        Number.isFinite(totalPnl) &&
-        Number.isFinite(oneRValue) &&
-        oneRValue > 0
-          ? totalPnl / oneRValue
-          : null,
+      totalRealizedR,
+      totalPlannedOutcomeR,
+      plannedOutcomeSamples,
       winRate,
     };
   }, [
-    activeSummary,
     activeSummaryRangeLabel,
-    oneRValue,
     replayPlaying,
     replayProgress,
     filteredActiveTrades,
   ]);
+  const filteredSummary = useMemo(() => {
+    const closedTrades = filteredActiveTrades.filter(Boolean);
+    const wins = closedTrades.filter(
+      (trade) =>
+        String(trade?.result || "").trim().toLowerCase() === "win" ||
+        Number(trade?.pnl_realized ?? trade?.pnl ?? 0) > 0,
+    ).length;
+    const totalPnl = closedTrades.reduce(
+      (sum, trade) => sum + Number(trade?.pnl_realized ?? trade?.pnl ?? 0),
+      0,
+    );
+    const totalRealizedR = closedTrades.reduce(
+      (sum, trade) =>
+        sum +
+        Number(
+          trade?.realized_r ??
+            trade?.r_multiple ??
+            trade?.rr_realized ??
+            trade?.rr ??
+            0,
+        ),
+      0,
+    );
+    const totalPlannedOutcomeR = closedTrades.reduce(
+      (sum, trade) => sum + Number(trade?.planned_outcome_r || 0),
+      0,
+    );
+    const plannedOutcomeSamples = closedTrades.filter((trade) =>
+      Object.prototype.hasOwnProperty.call(trade || {}, "planned_outcome_r"),
+    ).length;
+    return {
+      totalTrades: closedTrades.length,
+      winRate: closedTrades.length ? (wins / closedTrades.length) * 100 : 0,
+      totalPnl,
+      totalRealizedR,
+      totalPlannedOutcomeR,
+      plannedOutcomeSamples,
+    };
+  }, [filteredActiveTrades]);
   const summaryRangeText =
     replaySummary?.rangeLabel || activeSummaryRangeLabel || activeDataRangeLabel || "-";
-  const summaryTradesCount =
-    replaySummary ? replaySummary.totalTrades : activeSummary?.total_trades || 0;
-  const summaryRrValue = replaySummary ? replaySummary.totalRr : activeTotalRr;
+  const summaryTradesCount = replaySummary
+    ? replaySummary.totalTrades
+    : filteredSummary.totalTrades;
+  const summaryRealizedRValue = replaySummary
+    ? replaySummary.totalRealizedR
+    : filteredSummary.totalRealizedR;
+  const summaryPlannedOutcomeRValue = replaySummary
+    ? replaySummary.totalPlannedOutcomeR
+    : filteredSummary.totalPlannedOutcomeR;
+  const summaryPlannedOutcomeAvailable = replaySummary
+    ? Number(replaySummary?.plannedOutcomeSamples || 0) > 0
+    : Number(filteredSummary?.plannedOutcomeSamples || 0) > 0;
   const summaryWinRateValue = replaySummary
     ? replaySummary.winRate
-    : activeSummary?.win_rate_pct || 0;
+    : filteredSummary.winRate;
   const summaryTotalPnlValue = replaySummary
     ? replaySummary.totalPnl
-    : activeSummary?.total_pnl || 0;
+    : filteredSummary.totalPnl;
   const activeRunSummaryTitle = [
     `${Math.round(Number(summaryTradesCount || 0))} trades`,
     `WR ${formatNumber(summaryWinRateValue, 0)}%`,
-    `RR ${formatNumber(summaryRrValue, 1)}`,
+    `Real ${formatNumber(summaryRealizedRValue, 1)}r`,
+    `Plan ${summaryPlannedOutcomeAvailable ? `${formatNumber(summaryPlannedOutcomeRValue, 1)}r` : "-"}`,
     `$${formatNumber(summaryTotalPnlValue, 0)}`,
     summaryRangeText,
   ]
     .filter(Boolean)
     .join(" · ");
+  const resultPanelHeaderContent = (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        flexWrap: "nowrap",
+        width: "100%",
+        minWidth: 0,
+      }}
+    >
+      <div className="panel-label" style={{ flex: "0 0 auto" }}>
+        Result
+      </div>
+      {ephemeralRunDetail ? (
+        <>
+          <input
+            type="text"
+            value={ephemeralRunSaveName}
+            onChange={(event) => setEphemeralRunSaveName(event.target.value)}
+            className="text-input"
+            placeholder="Backtest name"
+            style={{
+              flex: "0 1 280px",
+              minWidth: 140,
+              maxWidth: 320,
+              height: 28,
+              fontSize: 11,
+            }}
+          />
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={savingRun}
+            onClick={handleSaveRun}
+            style={{ minHeight: 28, padding: "0 9px", fontSize: 10 }}
+          >
+            {savingRun ? "Saving..." : "Save"}
+          </button>
+        </>
+      ) : (
+        <>
+          <InputComboSelect
+            value={selectedRunId || ""}
+            onChange={(event) => {
+              const nextRunId = String(event.target.value || "").trim();
+              if (!nextRunId) return;
+              setEphemeralRunDetail(null);
+              setSelectedRunId(nextRunId);
+              navigate(`/backtests/${encodeURIComponent(nextRunId)}`);
+            }}
+            searchable
+            searchPlaceholder="Filter strategy runs..."
+            style={{ flex: "0 1 300px", minWidth: 160, maxWidth: 340, height: 28, fontSize: 11 }}
+          >
+            {selectedStrategyRuns.map((run) => (
+              <option key={run.run_id} value={run.run_id}>
+                {formatRunSelectorLabel(run)}
+              </option>
+            ))}
+          </InputComboSelect>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => setActiveTab("history")}
+            style={{ minHeight: 28, padding: "0 9px", fontSize: 10 }}
+            title="Open History tab"
+          >
+            &gt;&gt;
+          </button>
+        </>
+      )}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          flexWrap: "nowrap",
+          marginLeft: "auto",
+          justifyContent: "flex-end",
+          minWidth: 0,
+          flex: "0 1 auto",
+        }}
+      >
+        <label
+          className="field-label"
+          style={{
+            display: "flex",
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 5,
+            flex: "0 0 auto",
+          }}
+        >
+          <span>TF</span>
+          <InputComboSelect
+            value={resultFilterTf}
+            onChange={(event) => setResultFilterTf(event.target.value)}
+            style={{ minWidth: 70, height: 28, fontSize: 11 }}
+          >
+            <option value="all">All TFs</option>
+            {activeRunTimeframes.map((tf) => (
+              <option key={tf} value={tf}>
+                {tf}
+              </option>
+            ))}
+          </InputComboSelect>
+        </label>
+        <label
+          className="field-label"
+          style={{
+            display: "flex",
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 5,
+            flex: "0 1 auto",
+            minWidth: 0,
+          }}
+        >
+          <span>Strategy</span>
+          <InputComboSelect
+            value={resultFilterStrategy}
+            onChange={(event) => setResultFilterStrategy(event.target.value)}
+            searchable
+            searchPlaceholder="Filter strategies..."
+            style={{ minWidth: 150, maxWidth: 190, height: 28, fontSize: 11 }}
+          >
+            <option value="all">All Strategies</option>
+            {resultStrategyOptions.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.label}
+              </option>
+            ))}
+          </InputComboSelect>
+        </label>
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={!canLoadResultChart}
+          onClick={() => {
+            setResultChartLoaded(true);
+            setResultChartLoadKey((value) => value + 1);
+          }}
+          style={{
+            minHeight: 28,
+            minWidth: 32,
+            width: 32,
+            padding: 0,
+            fontSize: 14,
+            lineHeight: 1,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flex: "0 0 auto",
+          }}
+          title={
+            canLoadResultChart
+              ? "Refresh chart for the selected TF and/or strategy"
+              : "Select a TF or a strategy to load a chart"
+          }
+          aria-label="Refresh chart"
+        >
+          ↻
+        </button>
+      </div>
+    </div>
+  );
   const backtestReplayConfig = useMemo(
     () => ({
       enabled: true,
@@ -2396,16 +3182,29 @@ export default function BacktestsPage() {
       filteredActiveTrades,
     ],
   );
-  const batchMetricsPanel = Array.isArray(metricsMatrixModel?.rows) &&
+  const openMetricsChartView = useCallback(
+    ({ tf = "all", strategyId = "all" } = {}) => {
+      const requestedTf = String(tf || "all").trim() || "all";
+      const nextTf =
+        requestedTf === "all" ? "all" : timeframeLabel(requestedTf) || "all";
+      const nextStrategyId = String(strategyId || "all").trim() || "all";
+      setActiveTab("backtest");
+      setResultFilterTf(nextTf);
+      setResultFilterStrategy(nextStrategyId);
+      setSelectedTradeSid("");
+      setReplayPlaying(false);
+      setReplayStartTradeSid("");
+      setReplayActiveTradeSid("");
+      setReplayProgress(null);
+      setResultChartLoaded(true);
+      setResultChartLoadKey((value) => value + 1);
+    },
+    [],
+  );
+  const batchMetricsTable = Array.isArray(metricsMatrixModel?.rows) &&
     metricsMatrixModel.rows.length ? (
-      <ResponsivePanel
-        title="Metrics Result"
-        showToggle={false}
-        border="always"
-        bodyClassName="stack-layout"
-      >
         <div style={{ overflowX: "auto" }}>
-          <table className="table-dense" style={{ minWidth: 620, fontSize: 11 }}>
+          <table className="table-dense" style={{ minWidth: 620, fontSize: 11, marginTop: 2 }}>
             <thead>
               <tr>
                 <th style={{ textAlign: "left", fontSize: 10, fontWeight: 700 }}>Strategy</th>
@@ -2413,8 +3212,34 @@ export default function BacktestsPage() {
                   ? metricsMatrixModel.timeframes
                   : []
                 ).map((tf) => (
-                  <th key={tf} style={{ textAlign: "left", fontSize: 10, fontWeight: 700 }}>
-                    {timeframeLabel(tf)}
+                  <th
+                    key={tf}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => openMetricsChartView({ tf })}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      openMetricsChartView({ tf });
+                    }}
+                    style={{
+                      textAlign: "left",
+                      fontSize: 10,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      userSelect: "none",
+                    }}
+                    title={`Open ${metricsMatrixHeaderSymbol} ${timeframeLabel(tf)} chart with all strategies`}
+                  >
+                    <span
+                      style={{
+                        color: "inherit",
+                        font: "inherit",
+                        fontWeight: "inherit",
+                      }}
+                    >
+                      {`${metricsMatrixHeaderSymbol} ${timeframeLabel(tf)}`}
+                    </span>
                   </th>
                 ))}
               </tr>
@@ -2422,14 +3247,72 @@ export default function BacktestsPage() {
             <tbody>
               {metricsMatrixModel.rows.map((row) => (
                 <tr key={row.strategy_id || row.strategy_name}>
-                  <td style={{ fontWeight: 700, fontSize: 11 }}>{row.strategy_name || row.strategy_id}</td>
+                  <td
+                    role="button"
+                    tabIndex={0}
+                    onClick={() =>
+                      openMetricsChartView({
+                        tf: "all",
+                        strategyId: row.strategy_id || row.strategy_name || "all",
+                      })
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      openMetricsChartView({
+                        tf: "all",
+                        strategyId: row.strategy_id || row.strategy_name || "all",
+                      });
+                    }}
+                    style={{
+                      fontWeight: 700,
+                      fontSize: 11,
+                      cursor: "pointer",
+                      userSelect: "none",
+                    }}
+                    title={`Open all TF charts for ${row.strategy_name || row.strategy_id}`}
+                  >
+                    <span
+                      style={{
+                        color: "inherit",
+                        font: "inherit",
+                        fontWeight: "inherit",
+                      }}
+                    >
+                      {row.strategy_name || row.strategy_id}
+                    </span>
+                  </td>
                   {(Array.isArray(row.cells) ? row.cells : []).map((cell) => (
-                    <td key={`${row.strategy_id || row.strategy_name}:${cell.tf}`} style={{ fontSize: 11 }}>
+                    <td
+                      key={`${row.strategy_id || row.strategy_name}:${cell.tf}`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() =>
+                        openMetricsChartView({
+                          tf: cell.tf,
+                          strategyId: row.strategy_id || row.strategy_name || "all",
+                        })
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" && event.key !== " ") return;
+                        event.preventDefault();
+                        openMetricsChartView({
+                          tf: cell.tf,
+                          strategyId: row.strategy_id || row.strategy_name || "all",
+                        });
+                      }}
+                      style={{
+                        fontSize: 11,
+                        cursor: "pointer",
+                        userSelect: "none",
+                      }}
+                      title={`Open ${metricsMatrixHeaderSymbol} ${timeframeLabel(cell.tf)} chart for ${row.strategy_name || row.strategy_id}`}
+                    >
                       <span
                         className={
-                          Number(cell?.total_r || 0) > 0
+                          Number(cell?.total_realized_r ?? cell?.total_r ?? 0) > 0
                             ? "money-pos"
-                            : Number(cell?.total_r || 0) < 0
+                            : Number(cell?.total_realized_r ?? cell?.total_r ?? 0) < 0
                               ? "money-neg"
                               : "money-neutral"
                         }
@@ -2443,7 +3326,6 @@ export default function BacktestsPage() {
             </tbody>
           </table>
         </div>
-      </ResponsivePanel>
     ) : null;
 
   useEffect(() => {
@@ -2454,7 +3336,30 @@ export default function BacktestsPage() {
   }, [selectedRunId]);
 
   useEffect(() => {
+    setVisibleTradeCount(BACKTEST_TRADES_RENDER_STEP);
+  }, [activeRun?.run_id, resultFilterStrategy, resultFilterTf]);
+
+  const visibleTradeItems = useMemo(
+    () =>
+      deferredFilteredActiveTrades.slice(
+        0,
+        Math.max(BACKTEST_TRADES_RENDER_STEP, Number(visibleTradeCount) || 0),
+      ),
+    [deferredFilteredActiveTrades, visibleTradeCount],
+  );
+
+  useEffect(() => {
     if (selectedStrategyId === "__new__") return;
+    const strategySelectionCleared =
+      Array.isArray(form?.strategy_keys) &&
+      form.strategy_keys.length === 0 &&
+      !String(form?.strategy_key || "").trim();
+    if (strategySelectionCleared) {
+      if (selectedStrategyId) {
+        setSelectedStrategyId("");
+      }
+      return;
+    }
     const routePreferredId = String(resolvedRouteStrategyId || routeStrategyId || "").trim();
     const preferredId = String(routePreferredId || selectedStrategyId || form.strategy_key || "").trim();
     const exists = allStrategies.some(
@@ -2576,7 +3481,13 @@ export default function BacktestsPage() {
       { replace: false },
     );
     try {
-      const requestedStrategyKeys = selectedStrategyKeys.length
+      const strategySelectionCleared =
+        Array.isArray(form?.strategy_keys) &&
+        form.strategy_keys.length === 0 &&
+        !String(form?.strategy_key || "").trim();
+      const requestedStrategyKeys = strategySelectionCleared
+        ? []
+        : selectedStrategyKeys.length
         ? selectedStrategyKeys
         : [String(
             selectedStrategy?.key ||
@@ -2584,6 +3495,9 @@ export default function BacktestsPage() {
               form.strategy_key ||
               DEFAULT_BACKTEST_STRATEGY_ID,
           ).trim()];
+      if (!requestedStrategyKeys.filter(Boolean).length) {
+        throw new Error("Select at least one strategy before running a backtest.");
+      }
       const requestedTimeframes = selectedTimeframes.length
         ? selectedTimeframes
         : [String(form.tf || "1").trim()];
@@ -2605,24 +3519,82 @@ export default function BacktestsPage() {
         persist: false,
         one_r_value: form.one_r_value,
       };
-      const res =
-        requestedStrategyKeys.length > 1 || requestedTimeframes.length > 1
-          ? await api.runBacktestBatch({
+      const sessions = requestedStrategyKeys.flatMap((strategyKey) =>
+        [form.symbol].flatMap((symbol) =>
+          requestedTimeframes.map((tf) => ({
+            strategyKey,
+            symbol,
+            tf,
+          })),
+        ),
+      );
+      let res = null;
+      if (sessions.length > 1) {
+        const sessionResults = [];
+        const sessionFailures = [];
+        for (const [index, session] of sessions.entries()) {
+          setBacktestRunProgress({
+            completed: index,
+            total: sessions.length,
+            label: `${session.symbol} ${timeframeLabel(session.tf)}`,
+          });
+          try {
+            const result = await api.runBacktest({
               ...payload,
-              symbols: [form.symbol],
-            })
-          : await api.runBacktest(payload);
+              symbol: session.symbol,
+              strategy_key: session.strategyKey,
+              strategy_id: session.strategyKey,
+              strategy_keys: [session.strategyKey],
+              strategy_ids: [session.strategyKey],
+              tf: session.tf,
+              tfs: [session.tf],
+              timeframes: [session.tf],
+            });
+            sessionResults.push({ ...session, result });
+          } catch (sessionError) {
+            sessionFailures.push({
+              ...session,
+              error: String(sessionError?.message || sessionError || "Backtest failed"),
+            });
+          }
+        }
+        setBacktestRunProgress({
+          completed: sessions.length,
+          total: sessions.length,
+          label: "Finalizing",
+        });
+        const selectedStrategiesForBatch = requestedStrategyKeys.map((strategyKey) => {
+          const found = allStrategies.find(
+            (item) => String(item?.key || item?.id || "").trim() === strategyKey,
+          );
+          return found || { key: strategyKey, id: strategyKey, name: strategyKey };
+        });
+        res = buildClientBatchBacktestResult({
+          payload,
+          sessionResults,
+          sessionFailures,
+          strategies: selectedStrategiesForBatch,
+          symbols: [form.symbol],
+          timeframes: requestedTimeframes,
+          limit: payload.limit,
+        });
+      } else {
+        res = await api.runBacktest(payload);
+      }
       if (res) {
-        setEphemeralRunDetail(res);
-        setBatchReport(res?.report || null);
-        setSelectedRunDetail(null);
-        setSelectedRunId("");
-        setEphemeralRunSaveName(buildEphemeralRunSaveName(res));
-        setSelectedTradeSid(pickInitialTradeSid(res?.trades));
+        startTransition(() => {
+          setEphemeralRunDetail(res);
+          setBatchReport(res?.report || null);
+          setSelectedRunDetail(null);
+          setSelectedRunId("");
+          setEphemeralRunSaveName(buildEphemeralRunSaveName(res));
+          setSelectedTradeSid(pickInitialTradeSid(res?.trades));
+        });
       }
     } catch (runError) {
       setError(String(runError?.message || runError || "Backtest failed"));
     } finally {
+      setBacktestRunProgress(null);
       setRunning(false);
     }
   }
@@ -2761,7 +3733,8 @@ export default function BacktestsPage() {
   const handleRuleTestMarkersChange = useCallback((summary = {}) => {
     setRuleTestMarkerSummary({
       status: "done",
-      total: Number(summary?.total || 0),
+      total: Number(summary?.resultCount ?? summary?.total ?? 0),
+      rawTotal: Number(summary?.total || 0),
       objectsByTf:
         summary?.objectsByTf && typeof summary.objectsByTf === "object"
           ? summary.objectsByTf
@@ -2783,7 +3756,7 @@ export default function BacktestsPage() {
       await loadRulesCatalog();
       setRuleTester((prev) => ({
         ...prev,
-        rule: normalizeRuleDraft({
+        rule: stripRuleActions(normalizeRuleDraft({
           ...prev.rule,
           id: item.id || payload.id,
           abbr: item.abbr || payload.abbr,
@@ -2792,7 +3765,7 @@ export default function BacktestsPage() {
           outputs: item.outputs || payload.outputs,
           name: item.name || payload.name,
           when: item.condition || payload.condition,
-        }),
+        })),
       }));
     } catch (saveError) {
       const status = Number(saveError?.apiRequest?.status || saveError?.apiResponse?.status || 0);
@@ -2811,7 +3784,7 @@ export default function BacktestsPage() {
     const nextTree = cloneRuleTestTreeWithFreshIds(
       ensureRuleTestRootGroup(cloneJson(item.tree)),
     );
-    const nextRule = normalizeRuleDraft({
+    const nextRule = stripRuleActions(normalizeRuleDraft({
       ...(ruleTester.rule || createEmptyRuleDraft({ name: item.label || "Rule Test", actions: [] })),
       id: item.rule_id || ruleTester.rule?.id,
       abbr: item.abbr || ruleTester.rule?.abbr,
@@ -2820,7 +3793,7 @@ export default function BacktestsPage() {
       outputs: item.outputs || ruleTester.rule?.outputs,
       name: item.name || item.label || ruleTester.rule?.name || "Rule Test",
       when: buildRuleExpressionFromDraft(nextTree) || { and: [] },
-    });
+    }));
     setRuleEditorTab("edit");
     setRuleTester((prev) => ({
       ...prev,
@@ -2924,6 +3897,10 @@ export default function BacktestsPage() {
     setSelectedStrategyId(String(item?.id || sourceId || ""));
     if (item?.id) {
       setForm((prev) => ({ ...prev, strategy_key: String(item.id) }));
+      navigate(
+        buildBacktestsStrategyUrl(String(item.id), "#edit", backtestsBasePath),
+        { replace: false },
+      );
     }
     return item;
   }
@@ -2940,6 +3917,10 @@ export default function BacktestsPage() {
     setSelectedStrategyId(String(item?.id || nextPayload.id || ""));
     if (item?.id) {
       setForm((prev) => ({ ...prev, strategy_key: String(item.id) }));
+      navigate(
+        buildBacktestsStrategyUrl(String(item.id), "#edit", backtestsBasePath),
+        { replace: false },
+      );
     }
     return item;
   }
@@ -3025,13 +4006,12 @@ export default function BacktestsPage() {
               searchable
               onChange={(event) => {
                 const nextValues = normalizeSelectionList(event?.target?.values);
-                if (!nextValues.length) return;
                 setForm((prev) => ({
                   ...prev,
-                  strategy_key: nextValues[0],
+                  strategy_key: nextValues[0] || "",
                   strategy_keys: nextValues,
                 }));
-                setSelectedStrategyId(nextValues[0]);
+                setSelectedStrategyId(nextValues[0] || "");
               }}
             >
               {strategyOptions.map((item) => (
@@ -3168,7 +4148,14 @@ export default function BacktestsPage() {
             disabled={running || !form.symbol}
             style={{ flex: "1 1 auto" }}
           >
-            {running ? "Running..." : "Run Backtest"}
+            {running && backtestRunProgress?.total
+              ? `Running ${Math.min(
+                  Number(backtestRunProgress.completed || 0) + 1,
+                  Number(backtestRunProgress.total || 0),
+                )}/${backtestRunProgress.total}`
+              : running
+                ? "Running..."
+                : "Run Backtest"}
           </button>
         </div>
       </div>
@@ -3270,10 +4257,19 @@ export default function BacktestsPage() {
                     </span>
                   </span>
                   <span>
-                    RR{" "}
+                    Real{" "}
                     <span style={{ fontWeight: 700 }}>
-                      {Number.isFinite(oneRValue) && oneRValue > 0
-                        ? formatNumber(pnl / oneRValue, 2)
+                      {formatNumber(
+                        run?.summary?.total_realized_r ?? run?.summary?.total_r ?? 0,
+                        1,
+                      )}r
+                    </span>
+                  </span>
+                  <span>
+                    Plan{" "}
+                    <span style={{ fontWeight: 700 }}>
+                      {Object.prototype.hasOwnProperty.call(run?.summary || {}, "total_planned_outcome_r")
+                        ? `${formatNumber(run?.summary?.total_planned_outcome_r || 0, 1)}r`
                         : "-"}
                     </span>
                   </span>
@@ -3298,13 +4294,23 @@ export default function BacktestsPage() {
         const backtestSummary = normalizeStrategyBacktestSummary(item);
         const totalTrades = Math.round(Number(backtestSummary?.total_trades || 0));
         const weightedWinRate = Number(backtestSummary?.weighted_win_rate_pct || 0);
-        const totalR = Number(backtestSummary?.total_r || 0);
+        const totalRealizedR = Number(
+          backtestSummary?.total_realized_r ?? backtestSummary?.total_r ?? 0,
+        );
+        const totalPlannedOutcomeR = Number(
+          backtestSummary?.total_planned_outcome_r || 0,
+        );
+        const plannedOutcomeAvailable = Object.prototype.hasOwnProperty.call(
+          backtestSummary || {},
+          "total_planned_outcome_r",
+        );
         const backtestRangeLabel = formatStrategyBacktestRange(backtestSummary);
         const backtestTitle = backtestSummary
           ? [
               `${totalTrades} trades`,
               `WR ${formatNumber(weightedWinRate, 0)}%`,
-              `RR ${formatNumber(totalR, 1)}`,
+              `Real ${formatNumber(totalRealizedR, 1)}r`,
+              `Plan ${plannedOutcomeAvailable ? `${formatNumber(totalPlannedOutcomeR, 1)}r` : "-"}`,
               backtestRangeLabel ? `Data ${backtestRangeLabel}` : "",
             ]
               .filter(Boolean)
@@ -3410,12 +4416,21 @@ export default function BacktestsPage() {
                         </span>
                       </span>
                       <span>
-                        RR{" "}
+                        Real{" "}
                         <span
-                          className={totalR >= 0 ? "money-pos" : "money-neg"}
+                          className={totalRealizedR >= 0 ? "money-pos" : "money-neg"}
                           style={{ fontWeight: 700 }}
                         >
-                          {formatNumber(totalR, 1)}
+                          {formatNumber(totalRealizedR, 1)}r
+                        </span>
+                      </span>
+                      <span>
+                        Plan{" "}
+                        <span
+                          className={totalPlannedOutcomeR >= 0 ? "money-pos" : "money-neg"}
+                          style={{ fontWeight: 700 }}
+                        >
+                          {formatNumber(totalPlannedOutcomeR, 1)}r
                         </span>
                       </span>
                       {backtestRangeLabel ? <span>Data {backtestRangeLabel}</span> : null}
@@ -3560,21 +4575,31 @@ export default function BacktestsPage() {
           justifyContent: "space-between",
           gap: 8,
           width: "100%",
+          flexWrap: "wrap",
         }}
       >
-        <div className="minor-text" style={{ fontSize: 11 }}>Rule Library</div>
-        <TabBar
-          value={ruleLibraryTab}
-          options={[
-            { value: "popular", label: "Popular" },
-            { value: "strategy", label: "Strategy" },
-          ]}
-          onChange={(nextValue) =>
-            setRuleLibraryTab(String(nextValue || "popular"))
-          }
-          size="sm"
-          ariaLabel="Rule library tabs"
-        />
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", width: "100%" }}>
+          <input
+            type="text"
+            className="input"
+            value={ruleLibraryQuery}
+            onChange={(event) => setRuleLibraryQuery(event.target.value)}
+            placeholder="Search rules..."
+            style={{ flex: "1 1 220px", minWidth: 0, height: 32 }}
+          />
+          <TabBar
+            value={ruleLibraryTab}
+            options={[
+              { value: "popular", label: "Popular" },
+              { value: "strategy", label: "Strategy" },
+            ]}
+            onChange={(nextValue) =>
+              setRuleLibraryTab(String(nextValue || "popular"))
+            }
+            size="sm"
+            ariaLabel="Rule library tabs"
+          />
+        </div>
       </div>
       <ListItems className="list-items--rule-library">
         {visibleRuleLibraryItems.length ? (
@@ -3619,7 +4644,9 @@ export default function BacktestsPage() {
               ? "No strategy-derived rules available yet."
               : loadingRules
                 ? "Loading rule catalog..."
-                : "No predefined or custom rules available."}
+                : String(ruleLibraryQuery || "").trim()
+                  ? "No rules match this search."
+                  : "No predefined or custom rules available."}
           </div>
         )}
       </ListItems>
@@ -3638,101 +4665,13 @@ export default function BacktestsPage() {
             {runnerControls}
           </ResponsivePanel>
           <ResponsivePanel
-            headerContent={
-              ephemeralRunDetail ? (
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    width: "100%",
-                  }}
-                >
-                  <input
-                    type="text"
-                    value={ephemeralRunSaveName}
-                    onChange={(event) => setEphemeralRunSaveName(event.target.value)}
-                    className="text-input"
-                    placeholder="Backtest name"
-                    style={{ flex: "1 1 auto", minWidth: 0 }}
-                  />
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={savingRun}
-                    onClick={handleSaveRun}
-                    style={{ minHeight: 32, padding: "0 10px", fontSize: 11, flex: "0 0 auto" }}
-                  >
-                    {savingRun ? "Saving..." : "Save"}
-                  </button>
-                </div>
-              ) : (
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    width: "100%",
-                  }}
-                >
-                  <InputComboSelect
-                    value={selectedRunId || ""}
-                    onChange={(event) => {
-                      const nextRunId = String(event.target.value || "").trim();
-                      if (!nextRunId) return;
-                      setEphemeralRunDetail(null);
-                      setSelectedRunId(nextRunId);
-                      navigate(`/backtests/${encodeURIComponent(nextRunId)}`);
-                    }}
-                    searchable
-                    searchPlaceholder="Filter strategy runs..."
-                    style={{ flex: "1 1 auto", minWidth: 0 }}
-                  >
-                    {selectedStrategyRuns.map((run) => (
-                      <option key={run.run_id} value={run.run_id}>
-                        {formatRunSelectorLabel(run)}
-                      </option>
-                    ))}
-                  </InputComboSelect>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    onClick={() => setActiveTab("history")}
-                    style={{ minHeight: 32, padding: "0 10px", fontSize: 11, flex: "0 0 auto" }}
-                    title="Open History tab"
-                  >
-                    &gt;&gt;
-                  </button>
-                </div>
-              )
-            }
             showToggle={false}
             border="always"
             bodyClassName="stack-layout"
           >
-            {activeRun ? (
-              <BacktestSummaryMetaRow
-                leadLabel={`${Math.round(Number(summaryTradesCount || 0))} trades`}
-                winRateValue={summaryWinRateValue}
-                rrValue={summaryRrValue}
-                totalPnlValue={summaryTotalPnlValue}
-                rangeLabel={summaryRangeText}
-                title={activeRunSummaryTitle}
-              />
-            ) : (
-              <div className="empty-state">
-                {loadingRuns ? "Loading strategy runs..." : "No strategy runs found."}
-              </div>
-            )}
-          </ResponsivePanel>
-          <ResponsivePanel
-            showToggle={false}
-            border="always"
-            bodyClassName="stack-layout"
-          >
-            {activeRun && sortedActiveTrades.length ? (
+            {activeRun && filteredActiveTrades.length ? (
               <ListItems className="list-items--run-trades">
-                {sortedActiveTrades.map((trade) => (
+                {visibleTradeItems.map((trade) => (
                   <TradeListCard
                     key={trade.sid}
                     trade={trade}
@@ -3741,10 +4680,28 @@ export default function BacktestsPage() {
                     onClick={() => setSelectedTradeSid(String(trade?.sid || ""))}
                   />
                 ))}
+                {deferredFilteredActiveTrades.length > visibleTradeItems.length ? (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() =>
+                      setVisibleTradeCount((current) =>
+                        current + BACKTEST_TRADES_RENDER_STEP,
+                      )
+                    }
+                    style={{ minHeight: 32, padding: "0 10px", fontSize: 11 }}
+                  >
+                    {`Show more trades (${visibleTradeItems.length}/${deferredFilteredActiveTrades.length})`}
+                  </button>
+                ) : null}
               </ListItems>
             ) : (
               <div className="empty-state">
-                {activeRun ? "No trades found for this run." : "Select a run to inspect trades."}
+                {activeRun
+                  ? sortedActiveTrades.length
+                    ? "No trades match the selected result filters."
+                    : "No trades found for this run."
+                  : "Select a run to inspect trades."}
               </div>
             )}
           </ResponsivePanel>
@@ -3875,7 +4832,10 @@ export default function BacktestsPage() {
                         showActions={false}
                         currentTimeframeLabel={timeframeLabel(ruleTester.tf)}
                         onChange={(nextRule) => {
-                          setRuleTester((prev) => ({ ...prev, rule: nextRule }));
+                          setRuleTester((prev) => ({
+                            ...prev,
+                            rule: stripRuleActions(nextRule),
+                          }));
                           setTestedRuleStrategy(null);
                           setRuleTestMarkerSummary(null);
                         }}
@@ -3899,6 +4859,36 @@ export default function BacktestsPage() {
                       </div>
                     )}
                   </ResponsivePanel>
+                  {ruleTestMarkerSummary ? (
+                    <ResponsivePanel
+                      title="Test Result"
+                      showToggle={false}
+                      border="always"
+                      bodyClassName="stack-layout"
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 12,
+                          flexWrap: "wrap",
+                          fontSize: 11,
+                        }}
+                      >
+                        <div style={{ fontWeight: 700 }}>
+                          Results: {Number(ruleTestMarkerSummary?.total || 0)}
+                        </div>
+                        <div className="minor-text" style={{ fontSize: 11, lineHeight: 1.5 }}>
+                          {ruleTestMarkerSummary?.status === "scanning"
+                            ? "Scanning loaded bars for rule matches..."
+                            : Number(ruleTestMarkerSummary?.total || 0) > 0
+                              ? `Found ${Number(ruleTestMarkerSummary.total)} ${String(ruleTester.rule?.abbr || ruleTester.rule?.name || "rule").trim()} match${Number(ruleTestMarkerSummary.total) === 1 ? "" : "es"} in ${ruleTester.symbol} ${timeframeLabel(ruleTester.tf)} / ${ruleTesterBarsCount} bars.`
+                              : `No ${String(ruleTester.rule?.abbr || ruleTester.rule?.name || "rule").trim()} matches in ${ruleTester.symbol} ${timeframeLabel(ruleTester.tf)} / ${ruleTesterBarsCount} bars.`}
+                        </div>
+                      </div>
+                    </ResponsivePanel>
+                  ) : null}
                   <SymbolChart
                     key={`rules:${ruleTester.symbol}:${ruleTester.tf}:${ruleTesterBarsCount}:${ruleTestRunKey}`}
                     symbol={ruleTester.symbol}
@@ -3926,159 +4916,116 @@ export default function BacktestsPage() {
                     allowedRules={ruleTester.rule ? [ruleTester.rule] : null}
                     onStrategyMarkersChange={handleRuleTestMarkersChange}
                   />
-                  <ResponsivePanel
-                    title="Test Status"
-                    showToggle={false}
-                    border="always"
-                    bodyClassName="stack-layout"
-                  >
-	                    <div className="minor-text" style={{ fontSize: 11, lineHeight: 1.5 }}>
-                      {ruleTesterChartStrategy
-                        ? ruleTestMarkerSummary?.status === "scanning"
-                          ? "Scanning loaded bars for rule matches..."
-                          : Number(ruleTestMarkerSummary?.total || 0) > 0
-                            ? `Passed: ${Number(ruleTestMarkerSummary.total)} ${String(ruleTester.rule?.abbr || ruleTester.rule?.name || "rule").trim()} marker${Number(ruleTestMarkerSummary.total) === 1 ? "" : "s"} found in ${ruleTester.symbol} ${timeframeLabel(ruleTester.tf)} / ${ruleTesterBarsCount} bars.`
-                            : `No ${String(ruleTester.rule?.abbr || ruleTester.rule?.name || "rule").trim()} matches found in ${ruleTester.symbol} ${timeframeLabel(ruleTester.tf)} / ${ruleTesterBarsCount} bars.`
-                        : "Build a rule and click Test to evaluate all loaded bars and draw markers where the rule is satisfied."}
-                    </div>
-                  </ResponsivePanel>
                 </div>
               ) : !activeRun ? (
                 <div className="empty-state">SELECT A RUN TO INSPECT DETAILS</div>
               ) : (
                 <div className="stack-layout" style={{ gap: 14 }}>
-                  <SymbolChart
-                    key={`backtest-chart:${activeRun?.run_id || "run"}`}
-                    symbol={activeChartSymbol}
-                    showSymbolTfBadge={false}
-                    timeframes={activeRunTimeframes}
-                    extraRequestedTimeframes={activeRunTimeframes.flatMap((tf) =>
-                      higherBacktestTimeframes(tf),
-                    )}
-                    liveBars={false}
-                    bootstrapLiveBarsOnMount
-                    defaultMode="cache"
-                    syncModeWithLocationHash={false}
-                    initialGridCols={1}
-                    initialBarsCount={1000}
-                    provider="ICMARKETS"
-                    skipFetch={false}
-                    autoLoadOnMount
-                    showAnalyzeButton={false}
-                    showTradeButton={true}
-                    showSnapshotButton={true}
-                    showEditButton={false}
-                    showPerCardLayoutControls={false}
-                    fillViewportForFourCharts={false}
-                    tradeSid={selectedTrade?.sid || ""}
-                    hasTradePlan={Boolean(selectedTrade)}
-                    showEventMarkers={Boolean(sortedActiveTrades.length)}
-                    side={selectedTrade?.action || ""}
-                    action={selectedTrade?.action || ""}
-                    entryPrice={selectedTrade?.entry || null}
-                    slPrice={selectedTrade?.sl || null}
-                    tpPrice={selectedTrade?.tp || null}
-                    createdAt={
-                      selectedTrade?.created_at ||
-                      selectedTrade?.signal_bar_time ||
-                      selectedTrade?.opened_at ||
-                      null
-                    }
-                    openedAt={selectedTrade?.opened_at || null}
-                    closedAt={selectedTrade?.closed_at || null}
-                    closeStatus={selectedTrade?.execution_status || ""}
-                    exitPrice={selectedTrade?.exit_price || null}
-                    pnlRealized={selectedTrade?.pnl_realized || null}
-                    tradeLabel={activeChartTradeLabel}
-                    trades={sortedActiveTrades}
-                    animateTradeViewport
-                    anchorToTradeTime={Boolean(
-                      backtestReplayConfig?.enabled && backtestReplayConfig?.playing,
-                    )}
-                    onReplayActiveTradeChange={(tradeSid) => {
-                      if (!tradeSid) return;
-                      setReplayActiveTradeSid(String(tradeSid));
-                    }}
-                    onReplayProgressChange={setReplayProgress}
-                    backtestReplay={backtestReplayConfig}
-                    chartStrategies={activeChartStrategy ? [activeChartStrategy] : []}
-                  />
-                  {batchMetricsPanel}
                   <ResponsivePanel
-                    title="Strategy Events"
+                    headerContent={resultPanelHeaderContent}
                     showToggle={false}
                     border="always"
                     bodyClassName="stack-layout"
                   >
-                    {visibleBacktestEvents.length ? (
-                      <ListItems className="list-items--strategy-events">
-                        {visibleBacktestEvents.map((entry, index) => {
-                          const artifacts = Array.isArray(entry?.artifacts)
-                            ? entry.artifacts
-                            : [];
-                          return (
-                            <div
-                              key={`${entry?.event_id || "event"}:${entry?.bar_time_unix || index}:${index}`}
-                              className="strategy-event-card"
-                            >
-                              <div
-                                style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  justifyContent: "space-between",
-                                  gap: 8,
-                                  flexWrap: "wrap",
-                                }}
-                              >
-                                <strong style={{ fontSize: 12 }}>
-                                  {entry?.event_name || entry?.event_id || "Event"}
-                                </strong>
-                                <span className="minor-text" style={{ fontSize: 11 }}>
-                                  {formatBacktestEventTime(entry?.bar_time_unix)}
-                                </span>
-                              </div>
-                              <div className="minor-text" style={{ fontSize: 11, marginTop: 4 }}>
-                                {String(entry?.action_type || entry?.action || "action").trim() || "action"} · close {formatNumber(entry?.bar_close, 5)}
-                              </div>
-                              {artifacts.length ? (
-                                <div
-                                  style={{
-                                    display: "flex",
-                                    flexWrap: "wrap",
-                                    gap: 6,
-                                    marginTop: 8,
-                                  }}
-                                >
-                                  {artifacts.slice(0, 6).map((item, artifactIndex) => (
-                                    <span
-                                      key={`${item?.id || item?.type || artifactIndex}`}
-                                      className="minor-text"
-                                      title={`${formatEventArtifactLabel(item)} @ ${formatNumber(item?.price, 5)}`}
-                                      style={{
-                                        display: "inline-flex",
-                                        alignItems: "center",
-                                        padding: "3px 8px",
-                                        borderRadius: 999,
-                                        border: "1px solid rgba(56, 189, 248, 0.28)",
-                                        background: "rgba(56, 189, 248, 0.08)",
-                                        fontSize: 10,
-                                      }}
-                                    >
-                                      {formatEventArtifactLabel(item)}
-                                    </span>
-                                  ))}
-                                </div>
-                              ) : null}
-                            </div>
-                          );
-                        })}
-                      </ListItems>
-                    ) : (
-                      <div className="empty-state">
-                        No strategy events available for this run yet.
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        flexWrap: "wrap",
+                        fontSize: 11,
+                        lineHeight: 1.2,
+                      }}
+                    >
+                      <span style={{ fontWeight: 700 }}>
+                        {`${Math.round(Number(summaryTradesCount || 0))} trades`}
+                      </span>
+                      <span className="money-neg">{`WR ${formatNumber(summaryWinRateValue, 0)}%`}</span>
+                      <span className="money-pos">{`Real ${formatNumber(summaryRealizedRValue, 1)}r`}</span>
+                      <span className={summaryPlannedOutcomeAvailable ? "money-pos" : "money-neutral"}>
+                        {`Plan ${summaryPlannedOutcomeAvailable ? `${formatNumber(summaryPlannedOutcomeRValue, 1)}r` : "-"}`}
+                      </span>
+                      <span
+                        className={
+                          Number(summaryTotalPnlValue || 0) > 0
+                            ? "money-pos"
+                            : Number(summaryTotalPnlValue || 0) < 0
+                              ? "money-neg"
+                              : "money-neutral"
+                        }
+                      >
+                        {`$${formatNumber(summaryTotalPnlValue, 0)}`}
+                      </span>
+                      <span className="minor-text">{summaryRangeText}</span>
+                    </div>
+                    {batchMetricsTable ? (
+                      <div
+                        style={{
+                          paddingTop: 4,
+                          borderTop: "1px solid rgba(148,163,184,0.12)",
+                        }}
+                      >
+                        {batchMetricsTable}
                       </div>
-                    )}
+                    ) : null}
                   </ResponsivePanel>
+                  {resultChartLoaded && chartTimeframes.length ? (
+                    <SymbolChart
+                      key={`backtest-chart:${activeRun?.run_id || "run"}:${chartTimeframes.join(",")}:${resultFilterStrategy}:${resultChartLoadKey}`}
+                      symbol={activeChartSymbol}
+                      showSymbolTfBadge
+                      timeframes={chartTimeframes}
+                      extraRequestedTimeframes={chartTimeframes.flatMap((tf) =>
+                        higherBacktestTimeframes(tf),
+                      )}
+                      liveBars={false}
+                      bootstrapLiveBarsOnMount
+                      defaultMode="cache"
+                      syncModeWithLocationHash={false}
+                      initialGridCols={1}
+                      initialBarsCount={1000}
+                      provider="ICMARKETS"
+                      skipFetch={false}
+                      autoLoadOnMount
+                      showAnalyzeButton={false}
+                      showTradeButton={true}
+                      showSnapshotButton={true}
+                      showEditButton={false}
+                      showPerCardLayoutControls={false}
+                      fillViewportForFourCharts={false}
+                      tradeSid={selectedTrade?.sid || ""}
+                      hasTradePlan={Boolean(selectedTrade)}
+                      showEventMarkers={Boolean(deferredFilteredActiveTrades.length)}
+                      side={selectedTrade?.action || ""}
+                      action={selectedTrade?.action || ""}
+                      entryPrice={selectedTrade?.entry || null}
+                      slPrice={selectedTrade?.sl || null}
+                      tpPrice={selectedTrade?.tp || null}
+                      createdAt={
+                        selectedTrade?.created_at ||
+                        selectedTrade?.signal_bar_time ||
+                        selectedTrade?.opened_at ||
+                        null
+                      }
+                      openedAt={selectedTrade?.opened_at || null}
+                      closedAt={selectedTrade?.closed_at || null}
+                      closeStatus={selectedTrade?.execution_status || ""}
+                      exitPrice={selectedTrade?.exit_price || null}
+                      pnlRealized={selectedTrade?.pnl_realized || null}
+                      tradeLabel={activeChartTradeLabel}
+                      trades={deferredFilteredActiveTrades}
+                      animateTradeViewport
+                      anchorToTradeTime={Boolean(
+                        backtestReplayConfig?.enabled && backtestReplayConfig?.playing,
+                      )}
+                      onReplayActiveTradeChange={(tradeSid) => {
+                        if (!tradeSid) return;
+                        setReplayActiveTradeSid(String(tradeSid));
+                      }}
+                      onReplayProgressChange={setReplayProgress}
+                      backtestReplay={backtestReplayConfig}
+                    />
+                  ) : null}
                 </div>
               )}
             </div>

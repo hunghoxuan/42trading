@@ -1,9 +1,12 @@
 import * as sharedArtifactDetection from "../rules-engine/features/detectArtifacts.js";
+import { buildTfAnalysis } from "../rules-engine/features/realtimeAnalysis.js";
 import * as strategyEventFunctions from "../rules-engine/features/strategyEventFunctions.js";
 import * as strategyScanEngine from "./strategyScanEngine.js";
 import * as sharedRulesEngine from "../rules-engine/index.js";
 
 const { createStrategyScanEngine } = strategyScanEngine;
+const POST_EVENT_CONFIRM_MIN_BARS = 6;
+const POST_EVENT_CONFIRM_MAX_BARS = 12;
 
 function valueAtPath(source, pathName = "") {
   const parts = String(pathName || "")
@@ -371,6 +374,75 @@ const RULE_FUNCTION_EVALUATORS = {
 
 function evaluateRule(node, ctx) {
   return sharedRulesEngine.evaluateRuleExpression(node, ctx);
+}
+
+function roundRuleContextLevelKey(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "";
+  return num.toFixed(6);
+}
+
+function extractRuleContextArtifactLevels(item = {}) {
+  const candidates = [
+    item?.price,
+    item?.payload?.level,
+    item?.payload?.source_swing_price,
+    item?.payload?.swept_swing_price,
+    item?.payload?.mitigation_price,
+    item?.price_high,
+    item?.price_low,
+  ]
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+  return Array.from(new Set(candidates.map((value) => roundRuleContextLevelKey(value))))
+    .map((key) => Number(key))
+    .filter((value) => Number.isFinite(value));
+}
+
+function resolveRuleContextKeyLevel({
+  bar = null,
+  derivedArtifacts = [],
+} = {}) {
+  const supportedTypes = new Set([
+    "liquidity_high",
+    "liquidity_low",
+    "fvg",
+    "ob",
+    "support",
+    "demand",
+    "pdh",
+    "pdl",
+  ]);
+  const currentTime = Number(bar?.time || 0);
+  const currentClose = Number(bar?.close);
+  const recentArtifacts = (Array.isArray(derivedArtifacts) ? derivedArtifacts : [])
+    .filter((item) => {
+      const type = String(item?.type || "").trim().toLowerCase();
+      if (!supportedTypes.has(type)) return false;
+      const itemTime = Number(
+        item?.anchor_time ?? item?.bar_end ?? item?.bar_start ?? item?.time ?? 0,
+      );
+      return !Number.isFinite(currentTime) || currentTime <= 0 || itemTime <= currentTime;
+    })
+    .slice(-12)
+    .reverse();
+  const levels = [];
+  const seen = new Set();
+  for (const item of recentArtifacts) {
+    for (const level of extractRuleContextArtifactLevels(item)) {
+      const key = roundRuleContextLevelKey(level);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      levels.push(level);
+    }
+  }
+  if (!levels.length) return null;
+  if (!Number.isFinite(currentClose)) return levels[0];
+  return [...levels].sort((left, right) => {
+    const leftDistance = Math.abs(Number(left) - currentClose);
+    const rightDistance = Math.abs(Number(right) - currentClose);
+    return leftDistance - rightDistance;
+  })[0];
 }
 
 function seriesBySource(bars, source = "close") {
@@ -758,6 +830,20 @@ function buildRuleContext({
   analysis = null,
   tf = "",
 }) {
+  const previewContext =
+    strategy?.metadata?.preview_context &&
+    typeof strategy.metadata.preview_context === "object" &&
+    !Array.isArray(strategy.metadata.preview_context)
+      ? strategy.metadata.preview_context
+      : {};
+  const inferredKeyLevel = resolveRuleContextKeyLevel({
+    bar: bars[index] || null,
+    derivedArtifacts,
+  });
+  const previewLevels =
+    previewContext?.levels && typeof previewContext.levels === "object" && !Array.isArray(previewContext.levels)
+      ? previewContext.levels
+      : {};
   return {
     bar: bars[index] || null,
     prev: bars[index - 1] || null,
@@ -782,15 +868,13 @@ function buildRuleContext({
       strategy?.risk && typeof strategy.risk === "object"
         ? strategy.risk
         : {},
+    ...previewContext,
     indicators: currentIndicators || {},
     prev_indicators: prevIndicators || {},
-    ...(
-      strategy?.metadata?.preview_context &&
-      typeof strategy.metadata.preview_context === "object" &&
-      !Array.isArray(strategy.metadata.preview_context)
-        ? strategy.metadata.preview_context
-        : {}
-    ),
+    levels: {
+      ...previewLevels,
+      ...(Number.isFinite(Number(inferredKeyLevel)) ? { key: Number(inferredKeyLevel) } : {}),
+    },
   };
 }
 
@@ -1395,72 +1479,119 @@ export function buildChartStrategyNotificationPayload(match = {}) {
   };
 }
 
+function averageCandleRange(bars = []) {
+  const values = (Array.isArray(bars) ? bars : [])
+    .map((bar) => {
+      const high = Number(bar?.high);
+      const low = Number(bar?.low);
+      return Number.isFinite(high) && Number.isFinite(low) ? Math.max(0, high - low) : null;
+    })
+    .filter((value) => Number.isFinite(value));
+  if (!values.length) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+export function resolveConfirmedPostEventDirection({
+  bars = [],
+  eventTimeSec = null,
+  eventIndex = null,
+  timeframe = "",
+  eventPrice = null,
+  minBars = POST_EVENT_CONFIRM_MIN_BARS,
+  maxBars = POST_EVENT_CONFIRM_MAX_BARS,
+} = {}) {
+  const normalizedBars = (Array.isArray(bars) ? bars : []).filter(
+    (bar) =>
+      Number.isFinite(Number(bar?.time)) &&
+      Number.isFinite(Number(bar?.open)) &&
+      Number.isFinite(Number(bar?.high)) &&
+      Number.isFinite(Number(bar?.low)) &&
+      Number.isFinite(Number(bar?.close)),
+  );
+  if (!normalizedBars.length) return "neutral";
+
+  const resolvedIndex =
+    Number.isInteger(eventIndex) && eventIndex >= 0 && eventIndex < normalizedBars.length
+      ? eventIndex
+      : normalizedBars.findIndex(
+          (bar) => Number(bar?.time || 0) === Number(eventTimeSec || 0),
+        );
+  if (resolvedIndex < 0) return "neutral";
+
+  const futureBars = normalizedBars.slice(
+    resolvedIndex,
+    Math.min(normalizedBars.length, resolvedIndex + Math.max(2, Number(maxBars) || 0)),
+  );
+  if (futureBars.length < Math.max(2, Number(minBars) || 0)) return "neutral";
+
+  const analysis = buildTfAnalysis({
+    bars: futureBars,
+    timeframe,
+  });
+  const bias = String(analysis?.bias || "").trim().toLowerCase();
+  const trend = String(analysis?.trend || "").trim().toLowerCase();
+  const biasScore = Number(analysis?.bias_score || 0);
+  const trendScore = Number(analysis?.trend_score || 0);
+  const referencePrice = Number.isFinite(Number(eventPrice))
+    ? Number(eventPrice)
+    : Number(normalizedBars[resolvedIndex]?.close);
+  const lastClose = Number(futureBars[futureBars.length - 1]?.close);
+  const moveThreshold = Math.max(
+    averageCandleRange(futureBars) * 0.6,
+    Math.abs(referencePrice || lastClose || 0) * 0.0005,
+  );
+  const movedUp =
+    Number.isFinite(referencePrice) &&
+    Number.isFinite(lastClose) &&
+    lastClose > referencePrice + moveThreshold;
+  const movedDown =
+    Number.isFinite(referencePrice) &&
+    Number.isFinite(lastClose) &&
+    lastClose < referencePrice - moveThreshold;
+
+  if (
+    bias === "bullish" &&
+    trend === "up" &&
+    biasScore >= 2 &&
+    trendScore >= 3 &&
+    movedUp
+  ) {
+    return "buy";
+  }
+  if (
+    bias === "bearish" &&
+    trend === "down" &&
+    biasScore <= -2 &&
+    trendScore <= -3 &&
+    movedDown
+  ) {
+    return "sell";
+  }
+  return "neutral";
+}
+
 function resolveStrategyMarkerMeta(
   actions = [],
   fallbackEventName = "",
   fallbackBias = "",
   latestArtifact = null,
+  options = {},
 ) {
-  const normalizedActionTypes = (Array.isArray(actions) ? actions : [])
-    .map((action) => String(action?.action || action?.type || "").trim().toLowerCase())
-    .filter(Boolean);
-  const normalizedDirections = (Array.isArray(actions) ? actions : [])
-    .map((action) => String(action?.trade_plan?.direction || "").trim().toLowerCase())
-    .filter(Boolean);
   const explicitColor = (Array.isArray(actions) ? actions : [])
     .map((action) => String(action?.color || "").trim())
     .find(Boolean);
-  const artifactDirection = String(
-    latestArtifact?.direction ||
-      latestArtifact?.payload?.bias ||
-      latestArtifact?.subtype ||
-      "",
-  )
-    .trim()
-    .toLowerCase();
-  const eventHint = String(fallbackEventName || "").trim().toLowerCase();
-  const biasHint = String(fallbackBias || "").trim().toLowerCase();
-  const combinedHints = [
-    ...normalizedActionTypes,
-    ...normalizedDirections,
-    artifactDirection,
-    eventHint,
-    biasHint,
-  ].join(" ");
-  const bullishHint =
-    /\bbull\b|\bbullish\b|\bbuy\b|\blong\b|\bentry long\b/.test(combinedHints);
-  const bearishHint =
-    /\bbear\b|\bbearish\b|\bsell\b|\bshort\b|\bentry short\b/.test(combinedHints);
-  if (explicitColor && bullishHint) {
-    return {
-      direction: "up",
-      color: explicitColor,
-      shape: "arrowUp",
-      position: "belowBar",
-    };
-  }
-  if (explicitColor && bearishHint) {
-    return {
-      direction: "down",
-      color: explicitColor,
-      shape: "arrowDown",
-      position: "aboveBar",
-    };
-  }
-  if (
-    (
-      normalizedActionTypes.some(
-        (type) =>
-          type === "trade.open.long" ||
-          type === "trade.close.short",
-      ) ||
-      (
-        normalizedActionTypes.some((type) => type === "trade") &&
-        normalizedDirections.some((direction) => ["buy", "long", "bull"].includes(direction))
-      )
-    ) ||
-    bullishHint
-  ) {
+  const confirmedDirection = resolveConfirmedPostEventDirection({
+    bars: options?.bars,
+    eventTimeSec: options?.eventTimeSec,
+    eventIndex: options?.eventIndex,
+    timeframe: options?.timeframe,
+    eventPrice:
+      options?.eventPrice ??
+      latestArtifact?.price ??
+      latestArtifact?.payload?.level ??
+      null,
+  });
+  if (confirmedDirection === "buy") {
     return {
       direction: "up",
       color: explicitColor || "#22c55e",
@@ -1468,20 +1599,7 @@ function resolveStrategyMarkerMeta(
       position: "belowBar",
     };
   }
-  if (
-    (
-      normalizedActionTypes.some(
-        (type) =>
-          type === "trade.open.short" ||
-          type === "trade.close.long",
-      ) ||
-      (
-        normalizedActionTypes.some((type) => type === "trade") &&
-        normalizedDirections.some((direction) => ["sell", "short", "bear"].includes(direction))
-      )
-    ) ||
-    bearishHint
-  ) {
+  if (confirmedDirection === "sell") {
     return {
       direction: "down",
       color: explicitColor || "#ef4444",
@@ -1489,25 +1607,9 @@ function resolveStrategyMarkerMeta(
       position: "aboveBar",
     };
   }
-  if (/\bbear\b|\bbearish\b|\bdown\b/.test(combinedHints)) {
-    return {
-      direction: "down",
-      color: "#ef4444",
-      shape: "arrowDown",
-      position: "aboveBar",
-    };
-  }
-  if (/\bbull\b|\bbullish\b|\bup\b/.test(combinedHints)) {
-    return {
-      direction: "up",
-      color: "#22c55e",
-      shape: "arrowUp",
-      position: "belowBar",
-    };
-  }
   return {
-    direction: "up",
-    color: "#38bdf8",
+    direction: "neutral",
+    color: explicitColor || "#38bdf8",
     shape: "circle",
     position: "belowBar",
   };
@@ -1523,6 +1625,7 @@ export function evaluateChartStrategies({
   scanMode = "live",
   skipConditions = true,
   newsEvents = [],
+  runtimeState: runtimeStateInput = {},
 } = {}) {
   const normalizedBars = Array.isArray(bars) ? bars : [];
   const normalizedStrategies = (Array.isArray(strategies) ? strategies : []).filter(
@@ -1585,6 +1688,7 @@ export function evaluateChartStrategies({
         const barTimeUnix = Number(normalizedBars[index]?.time || 0);
         const currentSession = inferSessionName(barTimeUnix);
         const runtimeState = {
+          ...(runtimeStateInput && typeof runtimeStateInput === "object" ? runtimeStateInput : {}),
           atr: atrValues[index],
           session: currentSession,
           signalsInSession: sessionSignalCounts.get(currentSession) || 0,
@@ -1650,7 +1754,12 @@ export function evaluateChartStrategies({
           strategyDescription: String(strategy?.description || "").trim(),
           eventId: String(event.id || "").trim(),
           eventName: String(event.name || event.id || "Rule").trim() || "Rule",
-          eventBias: String(event.bias || "").trim(),
+          eventBias: String(
+            event.bias ||
+              event.outputs?.bias ||
+              ruleEvent?.bias ||
+              "",
+          ).trim(),
           eventPriority: String(event.priority || "").trim(),
           ruleDefinition:
             event?.when && typeof event.when === "object" ? event.when : null,
@@ -1722,8 +1831,19 @@ export function evaluateChartStrategies({
           const markerMeta = resolveStrategyMarkerMeta(
             hit.actions,
             hit.eventName,
-            event.bias,
+            hit.eventBias || hit.ruleEvent?.bias || event.bias || event.outputs?.bias || "",
             hit.latestArtifact,
+            {
+              bars: normalizedBars,
+              eventIndex: index,
+              eventTimeSec: hit.barTimeUnix,
+              timeframe: chartTf || strategyTf || tf,
+              eventPrice:
+                hit.latestArtifact?.price ??
+                hit.latestArtifact?.payload?.level ??
+                hit.barClose ??
+                null,
+            },
           );
           hit.displayText = buildChartStrategyHitMessage(hit);
           hit.markerText = hit.strategyName;

@@ -1,0 +1,130 @@
+.json-tree-view {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 10px;
+}
+
+.json-tree-view__title,
+.json-tree-view__section-title {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.json-tree-view__section,
+.json-tree-view__root {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.json-tree-view__section {
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.json-tree-view__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px;
+}
+
+.json-tree-view__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.json-tree-view__field--wide {
+  grid-column: 1 / -1;
+}
+
+.json-tree-view__label {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.json-tree-view__pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.json-tree-view__pill {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  padding: 2px 7px;
+  border: 1px solid rgba(248, 250, 252, 0.24);
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.08);
+  color: #f8fafc;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.25;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.json-tree-view__text-value,
+.json-tree-view__text-chip {
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.38;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.json-tree-view__text-chip {
+  display: inline-flex;
+  padding: 2px 0;
+}
+
+.json-tree-view__pill--good {
+  color: #22c55e;
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.12);
+}
+
+.json-tree-view__pill--bad {
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.json-tree-view__pill--warn {
+  color: #facc15;
+  border-color: rgba(250, 204, 21, 0.45);
+  background: rgba(250, 204, 21, 0.12);
+}
+
+.json-tree-view__inline-json {
+  padding: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.45);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.json-tree-view__array {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.json-tree-view__array-item {
+  min-width: 0;
+}

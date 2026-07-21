@@ -971,16 +971,12 @@ function buildDefaultDraft(exampleStrategy, defaults = {}) {
   const base = normalizeEditorStrategy(exampleStrategy);
   const timestamp = Date.now();
   const baseId = sanitizeStrategyId(base.id || base.key || "");
-  const editableId =
-    base.kind && base.kind !== "custom"
-      ? sanitizeStrategyId(`${baseId || "custom_strategy"}_custom`)
-      : baseId;
   const baseConditions =
     base.conditions && typeof base.conditions === "object" && !Array.isArray(base.conditions)
       ? base.conditions
       : {};
   return {
-    id: editableId || `custom_strategy_${timestamp}`,
+    id: baseId || `custom_strategy_${timestamp}`,
     name: base.name || "New Custom Strategy",
     description: base.description || "",
     engine_version: "42trade.strategy.v2",
@@ -2213,17 +2209,20 @@ export default function StrategyEditorPanel({
     const nextTab = getEditorTabFromHash(defaultTab);
     const nextDraft =
       nextTab === "edit"
-        ? buildDefaultDraft(
-            strategy || exampleStrategy,
-            strategy
-              ? {}
-              : {
+        ? isNewDraft
+          ? buildDefaultDraft(exampleStrategy, {
+              symbol: defaultSymbol,
+              tf: defaultTf,
+            })
+          : normalizeEditorStrategy(
+              strategy ||
+                buildDefaultDraft(exampleStrategy, {
                   symbol: defaultSymbol,
                   tf: defaultTf,
-                },
-          )
+                }),
+            )
         : strategy
-      ? normalizeEditorStrategy(strategy)
+          ? normalizeEditorStrategy(strategy)
           : buildDefaultDraft(exampleStrategy, {
               symbol: defaultSymbol,
               tf: defaultTf,
@@ -2251,7 +2250,7 @@ export default function StrategyEditorPanel({
   useEffect(() => {
     if (activeTab !== "edit") return;
     if (!isPreset) return;
-    const nextDraft = buildDefaultDraft(strategy || exampleStrategy, {});
+    const nextDraft = normalizeEditorStrategy(strategy || exampleStrategy);
     setDraft(nextDraft);
     setJsonText(prettyJson(buildPersistedStrategy(nextDraft)));
     setDescriptionVisible(hasDataValue(nextDraft?.description));
@@ -2579,12 +2578,19 @@ export default function StrategyEditorPanel({
                 <BacktestSummaryMetaRow
                   leadLabel={`${Math.round(Number(backtestSummary?.total_trades || 0))} trades`}
                   winRateValue={backtestSummary?.weighted_win_rate_pct}
-                  rrValue={backtestSummary?.total_r}
+                  realizedRValue={backtestSummary?.total_realized_r ?? backtestSummary?.total_r}
+                  plannedOutcomeRValue={backtestSummary?.total_planned_outcome_r}
+                  plannedOutcomeAvailable={Object.prototype.hasOwnProperty.call(backtestSummary || {}, "total_planned_outcome_r")}
                   rangeLabel={formatBacktestSummaryRange(backtestSummary)}
                   title={[
                     `${Math.round(Number(backtestSummary?.total_trades || 0))} trades`,
                     `WR ${formatBacktestSummaryNumber(backtestSummary?.weighted_win_rate_pct, 0)}%`,
-                    `RR ${formatBacktestSummaryNumber(backtestSummary?.total_r, 1)}`,
+                    `Real ${formatBacktestSummaryNumber(backtestSummary?.total_realized_r ?? backtestSummary?.total_r, 1)}r`,
+                    `Plan ${
+                      Object.prototype.hasOwnProperty.call(backtestSummary || {}, "total_planned_outcome_r")
+                        ? `${formatBacktestSummaryNumber(backtestSummary?.total_planned_outcome_r, 1)}r`
+                        : "-"
+                    }`,
                     formatBacktestSummaryRange(backtestSummary),
                   ]
                     .filter(Boolean)
@@ -2621,7 +2627,7 @@ export default function StrategyEditorPanel({
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
+                  gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
                   gap: 10,
                 }}
               >
@@ -2631,7 +2637,20 @@ export default function StrategyEditorPanel({
                   { label: "TFs", value: batchReport?.totals?.timeframes },
                   { label: "Trades", value: batchReport?.totals?.total_trades },
                   { label: "WR %", value: formatBatchMetric(batchReport?.totals?.weighted_win_rate_pct, 1) },
-                  { label: "RR", value: formatBatchMetric(batchReport?.totals?.total_r, 1) },
+                  {
+                    label: "Real r",
+                    value: formatBatchMetric(
+                      batchReport?.totals?.total_realized_r ?? batchReport?.totals?.total_r,
+                      1,
+                    ),
+                  },
+                  {
+                    label: "Plan r",
+                    value:
+                      Number(batchReport?.totals?.planned_outcome_samples || 0) > 0
+                        ? formatBatchMetric(batchReport?.totals?.total_planned_outcome_r, 1)
+                        : "-",
+                  },
                 ].map((item) => (
                   <div
                     key={item.label}
@@ -2703,16 +2722,20 @@ export default function StrategyEditorPanel({
                       style={{
                         fontSize: 11,
                         color:
-                          Number(row?.total_r || 0) > 0
+                          Number(row?.total_realized_r ?? row?.total_r ?? 0) > 0
                             ? "#34d399"
-                            : Number(row?.total_r || 0) < 0
+                            : Number(row?.total_realized_r ?? row?.total_r ?? 0) < 0
                               ? "#f87171"
                               : "var(--text-muted, #94a3b8)",
                       }}
                     >
                       {row?.status === "failed"
                         ? "-"
-                        : `R ${formatBatchMetric(row?.total_r, 1)} · PnL ${formatBatchMetric(row?.total_pnl, 2)}`}
+                        : `Real ${formatBatchMetric(row?.total_realized_r ?? row?.total_r, 1)}r · Plan ${
+                            row?.planned_outcome_available
+                              ? `${formatBatchMetric(row?.total_planned_outcome_r, 1)}r`
+                              : "-"
+                          } · PnL ${formatBatchMetric(row?.total_pnl, 2)}`}
                     </div>
                   </div>
                 ))}
@@ -2902,12 +2925,17 @@ export default function StrategyEditorPanel({
                       }
                     />
                   </label>
-                  <label className="stack-layout" style={{ gap: 6 }}>
+                  <label
+                    className="stack-layout"
+                    style={{ gap: 6, gridColumn: "1 / -1" }}
+                  >
                     <span className="minor-text">Description</span>
-                    <input
+                    <textarea
                       className="input"
                       value={draft?.description || ""}
                       readOnly={isPreset}
+                      rows={3}
+                      style={{ width: "100%", minWidth: 0, resize: "vertical" }}
                       onChange={(event) =>
                         updateDraft((base) => ({
                           ...base,

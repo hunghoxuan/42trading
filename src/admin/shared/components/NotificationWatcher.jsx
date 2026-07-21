@@ -10,6 +10,7 @@ import {
 import { showToast } from "./ToastContainer";
 import { NotificationFacade } from "../../modules/42trade/services/NotificationFacade";
 import { realtimeClient } from "../../modules/42trade/realtime/realtimeClientSingleton";
+import { resultStatusToToastType } from "../utils/activityResult.js";
 
 window.__tickerFilledTrades = window.__tickerFilledTrades || [];
 window.__tickerMessages = window.__tickerMessages || [];
@@ -172,11 +173,12 @@ export default function NotificationWatcher() {
         showToast({
           message: hubMeta.message || formatNotificationLine(normalizedEntry),
           fullMessage: hubMeta.fullMessage || p.message || "",
-          type: p.type,
+          type: resultStatusToToastType(normalizedEntry?.result?.status || p.type),
           position: p.position || "bottom-right",
           sourceType: hubMeta.sourceType,
           sourceId: hubMeta.sourceId,
-          status: hubMeta.status,
+          status: String(normalizedEntry?.result?.status || hubMeta.status || "").toUpperCase(),
+          result: normalizedEntry?.result,
         });
       }
 

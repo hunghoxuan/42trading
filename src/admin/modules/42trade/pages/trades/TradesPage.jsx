@@ -642,11 +642,12 @@ export default function TradesPage() {
     }
   }, [cronSettings, selectedCronName]);
 
-  async function handleRunCron() {
-    if (!selectedCronName) return;
+  async function handleRunCron(cronNameOverride = "") {
+    const cronName = String(cronNameOverride || selectedCronName || "").trim();
+    if (!cronName) return;
     setRunCronLoading(true);
     try {
-      await api.runCron(selectedCronName);
+      await api.runCron(cronName);
     } catch (e) {
       setError(e?.message || "Failed to run cron");
     } finally {

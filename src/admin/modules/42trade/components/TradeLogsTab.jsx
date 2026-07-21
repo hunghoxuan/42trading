@@ -1,15 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../../../app/api";
-import { SmartContent } from "../../../shared/components/SmartContent.jsx";
-import { showDateTime } from "../../../shared/utils/format";
-
-function fmtSize(bytes) {
-  const size = Number(bytes || 0);
-  if (!Number.isFinite(size) || size <= 0) return "";
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
+import LogsComponent, {
+  compactLogPayloadSummary,
+} from "../../../shared/components/LogsComponent.jsx";
+import { formatRelativeDateTime, showDateTime } from "../../../shared/utils/format";
 
 function looksJsonFile(fileName = "", mimeType = "") {
   return (
@@ -18,11 +12,33 @@ function looksJsonFile(fileName = "", mimeType = "") {
   );
 }
 
-export default function TradeLogsTab({ tradeSid, emptyText = "No log files found." }) {
+function eventLabel(event = {}) {
+  return (
+    event.event_type ||
+    event.type ||
+    event.action ||
+    event.status ||
+    event.name ||
+    event.kind ||
+    "EVENT"
+  );
+}
+
+function eventTime(event = {}) {
+  return event.event_time || event.created_at || event.updated_at || event.time || "";
+}
+
+export default function TradeLogsTab({
+  tradeSid,
+  emptyText = "No log files found.",
+  apiScope = "",
+  events = [],
+}) {
   const [files, setFiles] = useState([]);
   const [contents, setContents] = useState({});
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
 
   const loadLogs = useCallback(
@@ -37,7 +53,8 @@ export default function TradeLogsTab({ tradeSid, emptyText = "No log files found
       else setLoading(true);
       setError("");
       try {
-        const listRes = await api.tradeLogs(tradeSid);
+        const apiOptions = apiScope ? { scope: apiScope } : {};
+        const listRes = await api.tradeLogs(tradeSid, apiOptions);
         const nextFiles = Array.isArray(listRes?.files) ? listRes.files : [];
         setFiles(nextFiles);
 
@@ -46,7 +63,7 @@ export default function TradeLogsTab({ tradeSid, emptyText = "No log files found
             const name = String(file?.name || "").trim();
             if (!name) return null;
             try {
-              const contentRes = await api.tradeLogContent(tradeSid, name);
+              const contentRes = await api.tradeLogContent(tradeSid, name, apiOptions);
               return [name, contentRes || null];
             } catch (contentError) {
               return [
@@ -75,155 +92,185 @@ export default function TradeLogsTab({ tradeSid, emptyText = "No log files found
         else setLoading(false);
       }
     },
-    [tradeSid],
+    [apiScope, tradeSid],
   );
 
   useEffect(() => {
     loadLogs();
   }, [loadLogs]);
 
-  const sections = useMemo(
+  const logRows = useMemo(
     () =>
-      files.map((file) => {
-        const name = String(file?.name || "").trim();
+      files.map((file, index) => {
+        const name = String(file?.name || "").trim() || `log-${index + 1}`;
         const content = contents[name] || null;
-        return { file, name, content };
+        const parsedJson = content?.parsed_json;
+        const textContent = content?.content == null ? "" : String(content.content);
+        const contentError = String(content?.error || "").trim();
+        const payload = contentError
+          ? { error: contentError }
+          : parsedJson || textContent || {};
+        return {
+          id: `file:${name}`,
+          source: "TRADE LOG",
+          title: looksJsonFile(name, file?.mime_type) ? "JSON_FILE" : "TEXT_FILE",
+          status: "INFO",
+          summary: name,
+          info:
+            contentError ||
+            (parsedJson
+              ? compactLogPayloadSummary(parsedJson)
+              : textContent.slice(0, 180)) ||
+            "Empty file",
+          time: file?.updated_at || file?.created_at || "",
+          size: file?.size_bytes || 0,
+          payload,
+        };
       }),
-    [files, contents],
+    [contents, files],
   );
 
-  return (
-    <div style={{ padding: "8px 0" }}>
+  const eventRows = useMemo(
+    () =>
+      (Array.isArray(events) ? events : []).map((event, index) => ({
+        id: `event:${event?.id || event?.event_id || eventTime(event) || index}`,
+        source: "TRADE EVENT",
+        title: String(eventLabel(event)).toUpperCase(),
+        status:
+          event.execution_status ||
+          event.dispatch_status ||
+          event.level ||
+          "INFO",
+        summary:
+          event.message ||
+          event.reason ||
+          compactLogPayloadSummary(event),
+        info: compactLogPayloadSummary(event),
+        time: eventTime(event),
+        size: 0,
+        payload: event || {},
+      })),
+    [events],
+  );
+
+  const rows = useMemo(() => [...logRows, ...eventRows], [eventRows, logRows]);
+  const toolbar = useMemo(
+    () => (
       <div
         style={{
           display: "flex",
           alignItems: "center",
           gap: 8,
           flexWrap: "wrap",
-          marginBottom: 12,
-          padding: "6px 10px",
-          background: "rgba(255,255,255,0.02)",
-          borderRadius: 8,
-          border: "1px solid var(--border)",
         }}
       >
-        <span className="minor-text" style={{ fontSize: 11 }}>
-          {files.length} log file{files.length !== 1 ? "s" : ""}
+        <span className="minor-text">
+          {files.length} log file{files.length !== 1 ? "s" : ""} • {eventRows.length} event{eventRows.length !== 1 ? "s" : ""}
         </span>
-        <button
-          className="secondary-button"
-          onClick={() => loadLogs({ background: true })}
-          disabled={loading || refreshing || !tradeSid}
-          style={{ marginLeft: "auto" }}
-        >
-          {refreshing ? "Refreshing..." : "Refresh"}
-        </button>
+        <span className="minor-text">
+          {rows.length ? `Latest ${rows.length} items` : "No activity yet"}
+        </span>
       </div>
+    ),
+    [eventRows.length, files.length, rows.length],
+  );
 
-      {error ? (
-        <div
-          className="minor-text"
-          style={{ color: "#ef4444", fontSize: 10, marginBottom: 8 }}
-        >
-          {error}
-        </div>
-      ) : null}
+  const handleDeleteAll = useCallback(async () => {
+    if (!tradeSid || deleting || files.length <= 0) return;
+    const confirmed = window.confirm(
+      `Delete all ${files.length} log file${files.length !== 1 ? "s" : ""} for trade ${tradeSid}?`,
+    );
+    if (!confirmed) return;
+    setDeleting(true);
+    setError("");
+    try {
+      await api.deleteTradeLogs(tradeSid, apiScope ? { scope: apiScope } : {});
+      await loadLogs({ background: false });
+    } catch (err) {
+      setError(err?.message || "Failed to delete trade logs.");
+    } finally {
+      setDeleting(false);
+    }
+  }, [apiScope, deleting, files.length, loadLogs, tradeSid]);
 
-      {loading ? (
-        <div
-          className="minor-text"
-          style={{ fontSize: 11, padding: 16, textAlign: "center" }}
-        >
-          Loading logs...
-        </div>
-      ) : sections.length === 0 ? (
-        <div
-          className="minor-text"
-          style={{ fontSize: 11, padding: 16, textAlign: "center" }}
-        >
-          {emptyText}
-        </div>
-      ) : (
-        <div style={{ display: "grid", gap: 12 }}>
-          {sections.map(({ file, name, content }) => {
-            const parsedJson = content?.parsed_json;
-            const contentError = String(content?.error || "").trim();
-            const textContent =
-              content?.content == null ? "" : String(content.content);
-            const isJson = looksJsonFile(name, file?.mime_type);
+  const columns = useMemo(
+    () => [
+      {
+        accessorKey: "time",
+        header: "Time",
+        size: 180,
+        cell: ({ row }) => {
+          const value = row.original.time;
+          const status = String(row.original.status || "INFO").toUpperCase();
+          return (
+            <div className="cell-wrap">
+              <span className="cell-major time-ago">
+                {formatRelativeDateTime(value) || "—"}
+              </span>
+              <span className="cell-minor" style={{ fontSize: 10, fontWeight: 800 }}>
+                {status}
+              </span>
+            </div>
+          );
+        },
+      },
+      {
+        accessorKey: "title",
+        header: "Message",
+        size: 360,
+        cell: ({ row }) => (
+          <div className="cell-wrap">
+            <span style={{ fontWeight: 800, letterSpacing: "0.02em", fontSize: 11 }}>
+              {row.original.title || "EVENT"}
+            </span>
+            <span className="cell-minor">{row.original.summary || "—"}</span>
+          </div>
+        ),
+      },
+      {
+        accessorKey: "info",
+        header: "Info",
+        size: 420,
+        cell: ({ row }) => (
+          <div className="cell-wrap">
+            <span className="cell-major">{row.original.info || "—"}</span>
+          </div>
+        ),
+      },
+    ],
+    [],
+  );
 
-            return (
-              <section
-                key={name}
-                style={{
-                  border: "1px solid var(--border)",
-                  borderRadius: 10,
-                  overflow: "hidden",
-                  background: "rgba(255,255,255,0.02)",
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "10px 12px",
-                    borderBottom: "1px solid var(--border)",
-                    background: "rgba(255,255,255,0.03)",
-                    flexWrap: "wrap",
-                  }}
-                >
-                  <strong style={{ fontSize: 12 }}>{name}</strong>
-                  {file?.mime_type ? (
-                    <span className="minor-text" style={{ fontSize: 10 }}>
-                      {file.mime_type}
-                    </span>
-                  ) : null}
-                  {file?.size_bytes ? (
-                    <span className="minor-text" style={{ fontSize: 10 }}>
-                      {fmtSize(file.size_bytes)}
-                    </span>
-                  ) : null}
-                  {file?.updated_at ? (
-                    <span
-                      className="minor-text"
-                      style={{ fontSize: 10, marginLeft: "auto" }}
-                    >
-                      {showDateTime(file.updated_at)}
-                    </span>
-                  ) : null}
-                </div>
-                <div style={{ padding: 12 }}>
-                  {contentError ? (
-                    <div className="minor-text" style={{ color: "#ef4444" }}>
-                      {contentError}
-                    </div>
-                  ) : parsedJson && typeof parsedJson === "object" ? (
-                    <SmartContent content={parsedJson} mode="readonly" showCopy />
-                  ) : textContent ? (
-                    <pre
-                      style={{
-                        margin: 0,
-                        whiteSpace: "pre-wrap",
-                        wordBreak: "break-word",
-                        fontFamily:
-                          "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                        fontSize: 12,
-                        lineHeight: 1.55,
-                        color: isJson ? "var(--text)" : "inherit",
-                      }}
-                    >
-                      {textContent}
-                    </pre>
-                  ) : (
-                    <div className="minor-text">Empty file.</div>
-                  )}
-                </div>
-              </section>
-            );
-          })}
-        </div>
-      )}
+  return (
+    <div style={{ padding: "8px 0" }}>
+      <LogsComponent
+        rows={rows}
+        columns={columns}
+        loading={loading}
+        refreshing={refreshing}
+        error={error}
+        emptyText={emptyText}
+        title="Activity"
+        subtitle="Click a log row to inspect the full payload"
+        toolbar={toolbar}
+        headerActions={
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={handleDeleteAll}
+            disabled={!tradeSid || deleting || loading || files.length <= 0}
+            title={files.length > 0 ? "Delete all log files" : "No log files to delete"}
+          >
+            {deleting ? "Deleting..." : "Delete All"}
+          </button>
+        }
+        onRefresh={() => loadLogs({ background: true })}
+        refreshDisabled={!tradeSid}
+        getDetailTitle={(row) => row?.title || "Log Detail"}
+        getDetailSubtitle={(row) =>
+          row?.time ? `${showDateTime(row.time)} • ${String(row.status || "INFO").toUpperCase()}` : "Select a log row to inspect the full payload"
+        }
+      />
     </div>
   );
 }

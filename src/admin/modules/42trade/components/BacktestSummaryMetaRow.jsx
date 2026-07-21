@@ -15,6 +15,9 @@ export default function BacktestSummaryMetaRow({
   leadTone = "var(--muted)",
   winRateValue = null,
   rrValue = null,
+  realizedRValue = null,
+  plannedOutcomeRValue = null,
+  plannedOutcomeAvailable = true,
   totalPnlValue = null,
   rangeLabel = "",
   title = "",
@@ -22,7 +25,10 @@ export default function BacktestSummaryMetaRow({
   const resolvedLead = String(leadLabel || "").trim();
   const resolvedRange = String(rangeLabel || "").trim();
   const safeWinRate = Number(winRateValue);
-  const safeRr = Number(rrValue);
+  const safeRealizedR = Number(
+    realizedRValue ?? rrValue,
+  );
+  const safePlannedOutcomeR = Number(plannedOutcomeRValue);
   const safeTotalPnl = Number(totalPnlValue);
 
   return (
@@ -50,11 +56,21 @@ export default function BacktestSummaryMetaRow({
       <span
         style={{
           fontWeight: 700,
-          color: metricColor(safeRr, 0),
+          color: metricColor(safeRealizedR, 0),
         }}
       >
-        RR {formatSummaryNumber(safeRr, 1)}
+        Real {formatSummaryNumber(safeRealizedR, 1)}r
       </span>
+      {plannedOutcomeAvailable ? (
+        <span
+          style={{
+            fontWeight: 700,
+            color: metricColor(safePlannedOutcomeR, 0),
+          }}
+        >
+          Plan {Number.isFinite(safePlannedOutcomeR) ? formatSummaryNumber(safePlannedOutcomeR, 1) : "-"}{Number.isFinite(safePlannedOutcomeR) ? "r" : ""}
+        </span>
+      ) : null}
       {Number.isFinite(safeTotalPnl) ? (
         <span
           style={{

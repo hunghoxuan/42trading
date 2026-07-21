@@ -73,7 +73,8 @@ function resolveBrowserRoot({ scope, userId = "", userDataRoot, serverLogDir, pr
   throw new Error("Unsupported browser scope.");
 }
 
-function buildDirectoryTree(rootDir, label, currentRelative = "") {
+function buildDirectoryTree(rootDir, label, currentRelative = "", options = {}) {
+  const includeFiles = Boolean(options.includeFiles);
   if (!fs.existsSync(rootDir)) {
     return {
       name: path.basename(label) || label,
@@ -89,19 +90,44 @@ function buildDirectoryTree(rootDir, label, currentRelative = "") {
     .readdirSync(target, { withFileTypes: true })
     .sort((a, b) => a.name.localeCompare(b.name));
   const directoryEntries = entries.filter((entry) => entry.isDirectory());
-  const fileCount = entries.filter((entry) => entry.isFile()).length;
+  const fileEntries = entries.filter((entry) => entry.isFile());
+  const fileCount = fileEntries.length;
   return {
     name: currentRelative ? path.basename(currentRelative) : label,
     path: currentRelative,
     meta: fileCount ? `${fileCount} files` : "folder",
     right: "",
     type: "directory",
-    children: directoryEntries.map((entry) => {
-      const nextRelative = safeRelativePath(
-        path.posix.join(currentRelative.replace(/\\/g, "/"), entry.name),
-      );
-      return buildDirectoryTree(rootDir, label, nextRelative);
-    }),
+    children: [
+      ...directoryEntries.map((entry) => {
+        const nextRelative = safeRelativePath(
+          path.posix.join(currentRelative.replace(/\\/g, "/"), entry.name),
+        );
+        return buildDirectoryTree(rootDir, label, nextRelative, options);
+      }),
+      ...(includeFiles
+        ? fileEntries.map((entry) => {
+            const nextRelative = safeRelativePath(
+              path.posix.join(currentRelative.replace(/\\/g, "/"), entry.name),
+            );
+            const fullPath = path.join(target, entry.name);
+            const stat = fs.statSync(fullPath);
+            return {
+              name: entry.name,
+              path: nextRelative,
+              meta: `${stat.size} B`,
+              right: "",
+              type: "file",
+              kind:
+                path.extname(entry.name).replace(/^\./, "").toLowerCase() ||
+                "file",
+              size: stat.size,
+              updated_at: stat.mtime.toISOString(),
+              children: [],
+            };
+          })
+        : []),
+    ],
   };
 }
 
@@ -366,6 +392,40 @@ function deleteFile(rootDir, relativeFile = "") {
   if (fs.existsSync(target)) fs.unlinkSync(target);
 }
 
+function sanitizeUploadFileName(raw = "") {
+  const normalized = String(raw || "")
+    .trim()
+    .replace(/\\/g, "/")
+    .split("/")
+    .pop();
+  const safe = String(normalized || "")
+    .replace(/[<>:"/\\|?*\u0000-\u001F]+/g, "_")
+    .replace(/\s+/g, " ")
+    .trim();
+  return safe || "upload.bin";
+}
+
+function writeUploadedFile(rootDir, relativeDir = "", fileName = "", data = Buffer.alloc(0)) {
+  const directory = ensureChildPath(rootDir, relativeDir).target;
+  fs.mkdirSync(directory, { recursive: true });
+  const safeName = sanitizeUploadFileName(fileName);
+  let nextPath = path.join(directory, safeName);
+  if (fs.existsSync(nextPath)) {
+    const ext = path.extname(safeName);
+    const base = path.basename(safeName, ext);
+    nextPath = path.join(directory, `${base}_${Date.now()}${ext}`);
+  }
+  fs.writeFileSync(nextPath, data);
+  const stat = fs.statSync(nextPath);
+  return {
+    name: path.basename(nextPath),
+    path: safeRelativePath(path.posix.join(safeRelativePath(relativeDir), path.basename(nextPath))),
+    size: stat.size,
+    updated_at: stat.mtime.toISOString(),
+    kind: path.extname(nextPath).replace(/^\./, "").toLowerCase() || "file",
+  };
+}
+
 function resolveDownloadFile(rootDir, relativeFile = "") {
   return ensureChildPath(rootDir, relativeFile).target;
 }
@@ -377,4 +437,5 @@ module.exports = {
   readFileContent,
   resolveBrowserRoot,
   resolveDownloadFile,
+  writeUploadedFile,
 };

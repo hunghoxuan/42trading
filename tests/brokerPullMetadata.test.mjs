@@ -47,7 +47,7 @@ test("normalizeTradeMetadata drops enumerated-string metadata objects", () => {
 test("broker pull includes strategy in broker task payloads", () => {
   assert.match(
     serverSource,
-    /strategy:\s*t\.strategy\s*\?\?\s*normalizedMetadata\.strategy\s*\?\?\s*normalizedMetadata\.strategy_name\s*\?\?\s*normalizedMetadata\.trade_plan\?\.strategy\s*\?\?\s*null/,
+    /strategy:\s*nullLikeEmpty\(t\.strategy\)\s*\|\|\s*nullLikeEmpty\(normalizedMetadata\.strategy\)\s*\|\|\s*nullLikeEmpty\(normalizedMetadata\.strategy_name\)\s*\|\|\s*nullLikeEmpty\(normalizedMetadata\.trade_plan\?\.strategy\)\s*\|\|\s*""/,
   );
 });
 
@@ -61,6 +61,13 @@ test("broker sync falls back to cTrader label for strategy when label looks sema
 test("cTrader client uses strategy text as label instead of forcing magic number", () => {
   assert.match(
     cTraderSource,
-    /var strategyLabel = GetJsonValue\(json, "strategy"\);[\s\S]*var label = BuildBrokerLabel\(strategyLabel\);/,
+    /var strategyLabel = GetJsonValue\(json, "strategy"\);[\s\S]*var entryModelLabel = GetJsonValue\(json, "entry_model"\);[\s\S]*var label = BuildBrokerLabel\(strategyLabel, entryModelLabel\);/,
+  );
+});
+
+test("server null-like strategy helper strips literal null text", () => {
+  assert.match(
+    serverSource,
+    /function nullLikeEmpty\(value,\s*fallback = ""\)\s*\{[\s\S]*text\.toLowerCase\(\) === "null"/,
   );
 });

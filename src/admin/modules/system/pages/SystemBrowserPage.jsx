@@ -4,69 +4,18 @@ import PageHeader from "../../../shared/components/PageHeader";
 import AdminPageToolbar, {
   AdminToolbarGroup,
 } from "../../../shared/components/AdminPageToolbar";
-import CrudContainer from "../../../shared/components/CrudContainer";
+import FolderComponent from "../../../shared/components/FolderComponent.jsx";
+import LogsComponent from "../../../shared/components/LogsComponent.jsx";
 import PaginationBar from "../../../shared/components/PaginationBar";
 import ResponsivePanel from "../../../shared/components/ResponsivePanel";
-import SmartContent from "../../../shared/components/SmartContent.jsx";
 import TreeView from "../../../shared/components/TreeView";
 import "./SystemToolsPages.css";
 
-function formatBytes(value) {
-  const size = Number(value || 0);
-  if (!Number.isFinite(size) || size <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  const index = Math.min(
-    units.length - 1,
-    Math.floor(Math.log(size) / Math.log(1024)),
-  );
-  const amount = size / Math.pow(1024, index);
-  return `${amount.toFixed(index === 0 ? 0 : 2)} ${units[index]}`;
-}
-
-function formatDate(value) {
-  if (!value) return "-";
-  try {
-    return new Date(value).toLocaleString();
-  } catch {
-    return String(value);
-  }
-}
-
-function inferPreviewMode(item = {}, detail = null) {
-  const fileName = String(item?.name || item?.path || "").trim().toLowerCase();
-  const mimeType = String(
-    detail?.mime_type || detail?.mimeType || detail?.content_type || "",
-  )
-    .trim()
-    .toLowerCase();
-  if (
-    mimeType.startsWith("image/") ||
-    /\.(png|jpe?g|gif|webp|bmp|svg|ico|avif)$/i.test(fileName)
-  ) {
-    return "image";
-  }
-  if (
-    mimeType.startsWith("video/") ||
-    /\.(mp4|webm|mov|m4v|ogg)$/i.test(fileName)
-  ) {
-    return "video";
-  }
-  if (
-    mimeType.includes("html") ||
-    /\.(html?|xhtml)$/i.test(fileName)
-  ) {
-    return "html";
-  }
-  if (
-    detail?.kind === "text" ||
-    mimeType.startsWith("text/") ||
-    mimeType.includes("json") ||
-    /\.(txt|json|md|markdown|csv|log|yaml|yml|xml|js|jsx|ts|tsx|css|scss)$/i.test(fileName)
-  ) {
-    return "text";
-  }
-  return "binary";
-}
+const FOLDER_BULK_ACTIONS = [
+  { value: "", label: "Bulk Action..." },
+  { value: "download_all", label: "Download All" },
+  { value: "delete_all", label: "Delete All" },
+];
 
 function collectTreePaths(node, bucket = []) {
   if (!node || typeof node !== "object") return bucket;
@@ -77,10 +26,142 @@ function collectTreePaths(node, bucket = []) {
   return bucket;
 }
 
+function isFileNode(node) {
+  return String(node?.type || "").toLowerCase() === "file";
+}
+
+function getParentPath(relativePath = "") {
+  const parts = String(relativePath || "")
+    .replace(/\\/g, "/")
+    .split("/")
+    .filter(Boolean);
+  parts.pop();
+  return parts.join("/");
+}
+
+function getFileExtension(name = "") {
+  const match = String(name || "").match(/\.([^.]+)$/);
+  return match ? match[1].toLowerCase() : "file";
+}
+
+function getSystemTreeIcon(node) {
+  if (isFileNode(node)) return getFileExtension(node?.name || node?.path);
+  return "";
+}
+
+function parseJsonSafely(value) {
+  if (value == null || value === "") return null;
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeSystemLogLine(line = "", index = 0, item = {}) {
+  const raw = String(line || "");
+  const standardMatch = raw.match(/^\[([^\]]+)\]\s+\[([^\]]+)\]\s+\[([^\]]+)\]\s+(.*)$/);
+  if (!standardMatch) {
+    return {
+      id: `${item.path || item.name || "log"}:${index}`,
+      source: item.name || item.path || "LOG",
+      entryType: "LOG",
+      status: "",
+      title: item.name || "Log",
+      summary: raw.slice(0, 220) || "-",
+      time: item.updated_at || "",
+      size: item.size || 0,
+      payload: { file: item.path || item.name || "", line: index + 1, message: raw },
+    };
+  }
+
+  const [, timestamp, level, source, message] = standardMatch;
+  return {
+    id: `${item.path || item.name || "log"}:${index}`,
+    source: item.name || source || "LOG",
+    entryType: source || "LOG",
+    status: level || "",
+    title: source || item.name || "Log",
+    summary: message || "-",
+    time: timestamp || item.updated_at || "",
+    size: item.size || 0,
+    payload: {
+      file: item.path || item.name || "",
+      line: index + 1,
+      timestamp,
+      level,
+      source,
+      message,
+      raw,
+    },
+  };
+}
+
+function buildSystemLogRows(item, detail) {
+  if (!item?.path || !detail) return [];
+  const content = detail?.content;
+  const parsedJson = parseJsonSafely(content);
+  const sourceName = item.name || detail.name || item.path || "Log";
+
+  if (Array.isArray(parsedJson)) {
+    return parsedJson.map((entry, index) => ({
+      id: `${item.path}:${index}`,
+      source: sourceName,
+      entryType: entry?.entry_type || entry?.entryType || entry?.event || "JSON",
+      status: entry?.status || entry?.level || entry?.result || "",
+      title: entry?.name || entry?.event || sourceName,
+      summary: entry?.message || entry?.summary || sourceName,
+      time: entry?.updated_at || entry?.created_at || entry?.timestamp || detail.updated_at || "",
+      size: detail.size || item.size || 0,
+      payload: entry,
+    }));
+  }
+
+  if (parsedJson && typeof parsedJson === "object") {
+    return [
+      {
+        id: item.path,
+        source: sourceName,
+        entryType:
+          parsedJson.entry_type ||
+          parsedJson.entryType ||
+          parsedJson.event ||
+          getFileExtension(sourceName),
+        status: parsedJson.status || parsedJson.level || parsedJson.result || "",
+        title: parsedJson.name || parsedJson.event || sourceName,
+        summary: parsedJson.message || parsedJson.summary || sourceName,
+        time:
+          parsedJson.updated_at ||
+          parsedJson.created_at ||
+          parsedJson.timestamp ||
+          detail.updated_at ||
+          "",
+        size: detail.size || item.size || 0,
+        payload: parsedJson,
+      },
+    ];
+  }
+
+  const text =
+    typeof content === "string" ? content : JSON.stringify(content ?? "", null, 2);
+  return String(text || "")
+    .split(/\r?\n/)
+    .filter((line) => line.trim())
+    .slice(-500)
+    .reverse()
+    .map((line, index) => normalizeSystemLogLine(line, index, {
+      ...item,
+      updated_at: detail.updated_at || item.updated_at || "",
+      size: detail.size || item.size || 0,
+    }));
+}
+
 export default function SystemBrowserPage({
   mode = "files",
   title = "Files",
   authUser = null,
+  showFiles = false,
 }) {
   const canChooseUser = mode === "files";
   const defaultUserId = useMemo(
@@ -91,12 +172,13 @@ export default function SystemBrowserPage({
   const [tree, setTree] = useState(null);
   const [treeMeta, setTreeMeta] = useState("");
   const [selectedDir, setSelectedDir] = useState("");
+  const [selectedTreeId, setSelectedTreeId] = useState("");
   const [expandedPaths, setExpandedPaths] = useState([""]);
   const [items, setItems] = useState([]);
   const [selectedItem, setSelectedItem] = useState(null);
+  const [selectedItemIds, setSelectedItemIds] = useState(() => new Set());
   const [detailOpen, setDetailOpen] = useState(true);
   const [detail, setDetail] = useState(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
@@ -104,6 +186,9 @@ export default function SystemBrowserPage({
   const [loadingTree, setLoadingTree] = useState(false);
   const [loadingList, setLoadingList] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [bulkAction, setBulkAction] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -111,11 +196,16 @@ export default function SystemBrowserPage({
   async function loadTree() {
     try {
       setLoadingTree(true);
-      const out = await api.systemBrowserTree(mode, canChooseUser ? userId : "");
+      const out = await api.systemBrowserTree(
+        mode,
+        canChooseUser ? userId : "",
+        showFiles,
+      );
       const nextTree = out?.tree || null;
       setTree(nextTree);
       setTreeMeta(String(out?.meta || ""));
       setSelectedDir(String(out?.initialPath || ""));
+      setSelectedTreeId(String(out?.initialPath || ""));
       setExpandedPaths(collectTreePaths(nextTree, [""]));
       if (canChooseUser && out?.user_id && !userId) {
         setUserId(String(out.user_id));
@@ -141,6 +231,14 @@ export default function SystemBrowserPage({
       });
       const rows = Array.isArray(out?.items) ? out.items : [];
       setItems(rows);
+      setSelectedItemIds((previous) => {
+        const next = new Set();
+        const source = previous instanceof Set ? previous : new Set();
+        rows.forEach((row) => {
+          if (source.has(row.path)) next.add(row.path);
+        });
+        return next;
+      });
       setTotal(Number(out?.total || 0));
       if (selectedItem) {
         const nextSelected = rows.find((row) => row.path === selectedItem.path) || null;
@@ -177,7 +275,7 @@ export default function SystemBrowserPage({
 
   useEffect(() => {
     loadTree();
-  }, [mode, userId]);
+  }, [mode, showFiles, userId]);
 
   useEffect(() => {
     setPage(1);
@@ -196,51 +294,55 @@ export default function SystemBrowserPage({
   }, [selectedItem?.path]);
 
   useEffect(() => {
-    setPreviewOpen(false);
-  }, [selectedItem?.path]);
+    setSelectedItemIds(new Set());
+  }, [mode, userId, selectedDir, query, page, pageSize]);
 
-  const itemColumns = useMemo(
-    () => [
-      {
-        accessorKey: "name",
-        header: "Name",
-        cell: ({ row }) => (
-          <div className="system-tool-table__primary">
-            <div className="system-tool-table__title">{row.original?.name || "-"}</div>
-          </div>
-        ),
-      },
-      {
-        accessorKey: "kind",
-        header: "Type",
-        cell: ({ row }) => row.original?.kind || "file",
-      },
-      {
-        accessorKey: "size",
-        header: "Size",
-        cell: ({ row }) => formatBytes(row.original?.size),
-      },
-      {
-        accessorKey: "updated_at",
-        header: "Updated",
-        cell: ({ row }) => formatDate(row.original?.updated_at),
-      },
-    ],
-    [],
-  );
+  async function downloadBrowserFile(item) {
+    if (!item?.path) return;
+    const blob = await api.systemBrowserDownload({
+      scope: mode,
+      userId: canChooseUser ? userId : "",
+      file: item.path,
+    });
+    const href = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    anchor.download = item.name || "download";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(href);
+  }
+
+  async function deleteBrowserFile(item, options = {}) {
+    if (!item?.path) return;
+    const requireConfirm = options.confirm !== false;
+    if (requireConfirm) {
+      const ok = window.confirm(`Delete ${item.name || item.path}?`);
+      if (!ok) return;
+    }
+    await api.systemBrowserDelete({
+      scope: mode,
+      userId: canChooseUser ? userId : "",
+      file: item.path,
+    });
+    if (selectedItem?.path === item.path) {
+      setSelectedItem(null);
+      setDetail(null);
+    }
+    setSelectedItemIds((previous) => {
+      const next = new Set(previous instanceof Set ? previous : []);
+      next.delete(item.path);
+      return next;
+    });
+  }
 
   async function handleDelete() {
     if (!selectedItem?.path) return;
     const ok = window.confirm(`Delete ${selectedItem.name}?`);
     if (!ok) return;
     try {
-      await api.systemBrowserDelete({
-        scope: mode,
-        userId: canChooseUser ? userId : "",
-        file: selectedItem.path,
-      });
-      setSelectedItem(null);
-      setDetail(null);
+      await deleteBrowserFile(selectedItem, { confirm: false });
       await loadList();
       await loadTree();
     } catch (err) {
@@ -251,21 +353,61 @@ export default function SystemBrowserPage({
   async function handleDownload() {
     if (!selectedItem?.path) return;
     try {
-      const blob = await api.systemBrowserDownload({
-        scope: mode,
-        userId: canChooseUser ? userId : "",
-        file: selectedItem.path,
-      });
-      const href = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = href;
-      anchor.download = selectedItem.name || "download";
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(href);
+      await downloadBrowserFile(selectedItem);
     } catch (err) {
       setError(err?.message || "Failed to download file.");
+    }
+  }
+
+  async function handleUpload(file) {
+    if (!file) return;
+    try {
+      setUploading(true);
+      await api.systemBrowserUpload({
+        scope: mode,
+        userId: canChooseUser ? userId : "",
+        dir: selectedDir,
+        file,
+      });
+      await loadList();
+      await loadTree();
+      setError("");
+    } catch (err) {
+      setError(err?.message || "Failed to upload file.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleBulkAction(action) {
+    const normalizedAction = String(action || "").trim().toLowerCase();
+    if (!normalizedAction) return;
+    const targetItems =
+      selectedItemIds.size > 0
+        ? items.filter((item) => selectedItemIds.has(item.path))
+        : items;
+    if (!targetItems.length) return;
+    try {
+      setBulkBusy(true);
+      if (normalizedAction === "download_all") {
+        for (const item of targetItems) {
+          // Sequential downloads keep the browser behavior predictable.
+          // eslint-disable-next-line no-await-in-loop
+          await downloadBrowserFile(item);
+        }
+      } else if (normalizedAction === "delete_all") {
+        for (const item of targetItems) {
+          // eslint-disable-next-line no-await-in-loop
+          await deleteBrowserFile(item, { confirm: false });
+        }
+        await loadList();
+        await loadTree();
+      }
+      setError("");
+    } catch (err) {
+      setError(err?.message || "Failed bulk action.");
+    } finally {
+      setBulkBusy(false);
     }
   }
 
@@ -279,10 +421,12 @@ export default function SystemBrowserPage({
     return `/api/system/browser/download?${params.toString()}`;
   }, [canChooseUser, mode, selectedItem?.path, userId]);
 
-  const selectedItemPreviewMode = useMemo(
-    () => inferPreviewMode(selectedItem, detail),
-    [detail, selectedItem],
+  const selectedLogRows = useMemo(
+    () => (mode === "logs" ? buildSystemLogRows(selectedItem, detail) : []),
+    [detail, mode, selectedItem],
   );
+
+  const showSelectedLogFile = mode === "logs" && Boolean(selectedItem?.path);
 
   return (
     <section className="system-tool-page">
@@ -333,7 +477,7 @@ export default function SystemBrowserPage({
               <TreeView
                 className="system-tool-tree"
                 items={[tree]}
-                selectedId={selectedDir}
+                selectedId={selectedTreeId || selectedDir}
                 expandedIds={expandedPaths}
                 onExpandedIdsChange={setExpandedPaths}
                 ariaLabel={`${title} tree`}
@@ -342,10 +486,23 @@ export default function SystemBrowserPage({
                   Array.isArray(node?.children) ? node.children : []
                 }
                 getItemLabel={(node) => node?.name || "/"}
+                getItemIcon={getSystemTreeIcon}
                 getItemHeaderMeta={() => ""}
                 getItemMeta={() => null}
                 onSelectionChange={(node, pathValue) => {
                   const nextPath = String(pathValue || node?.path || "");
+                  setSelectedTreeId(nextPath);
+                  if (isFileNode(node)) {
+                    setSelectedDir(getParentPath(nextPath));
+                    setSelectedItem({
+                      ...node,
+                      name: node?.name || nextPath.split("/").pop() || nextPath,
+                      path: nextPath,
+                      kind: node?.kind || getFileExtension(node?.name || nextPath),
+                    });
+                    setDetailOpen(true);
+                    return;
+                  }
                   setSelectedDir(nextPath);
                   setSelectedItem(null);
                   setDetail(null);
@@ -357,16 +514,82 @@ export default function SystemBrowserPage({
           </div>
         </ResponsivePanel>
 
-        <CrudContainer
-          className="db-manager-crud system-tool-browser-crud"
-          sameHeight={false}
-          detailVisible={Boolean(selectedItem)}
-          detailOpen={detailOpen}
-          onDetailOpenChange={setDetailOpen}
-          detailCloseButton
-          list={{
-            title: "Items",
-            headerActions: (
+        {showSelectedLogFile ? (
+          <LogsComponent
+            className="db-manager-crud system-tool-browser-crud"
+            rows={selectedLogRows}
+            loading={loadingDetail}
+            title={selectedItem?.name || "Log File"}
+            subtitle={selectedItem?.path || ""}
+            emptyText={loadingDetail ? "Loading log file..." : "No log entries found."}
+            onRefresh={() => loadDetail(selectedItem)}
+            headerActions={
+              <button
+                type="button"
+                className="secondary-button logs-component__icon-button"
+                onClick={handleDownload}
+                disabled={!selectedItem?.path}
+                aria-label="Download log file"
+                title="Download"
+              >
+                ↓
+              </button>
+            }
+          />
+        ) : (
+          <FolderComponent
+            className="db-manager-crud system-tool-browser-crud"
+            items={items}
+            selectedItem={selectedItem}
+            detail={detail}
+            loadingList={loadingList}
+            loadingDetail={loadingDetail}
+            detailOpen={detailOpen}
+            onDetailOpenChange={setDetailOpen}
+            onSelectItem={(item) => {
+              setSelectedTreeId(item?.path || selectedDir);
+              setSelectedItem(item);
+            }}
+            selectedItemIds={selectedItemIds}
+            onSelectedItemIdsChange={setSelectedItemIds}
+            onDownload={handleDownload}
+            onDelete={handleDelete}
+            onDownloadItem={downloadBrowserFile}
+            onDeleteItem={async (item) => {
+              try {
+                await deleteBrowserFile(item);
+                await loadList();
+                await loadTree();
+                setError("");
+              } catch (err) {
+                setError(err?.message || "Failed to delete file.");
+              }
+            }}
+            onUploadFile={mode === "files" ? handleUpload : null}
+            uploadDisabled={uploading || mode !== "files"}
+            uploadLabel={uploading ? "Uploading..." : "Upload"}
+            onBulkAction={handleBulkAction}
+            onBulkActionChange={setBulkAction}
+            bulkAction={bulkAction}
+            bulkActionItems={FOLDER_BULK_ACTIONS}
+            bulkActionLoading={bulkBusy}
+            bulkActionButtonText="RUN"
+            getBulkActionConfirmOptions={(action) => {
+              const targetCount =
+                selectedItemIds.size > 0 ? selectedItemIds.size : items.length;
+              if (action === "delete_all") {
+                return {
+                  title: "Delete files?",
+                  message: `Delete ${targetCount} file(s)? This cannot be undone.`,
+                  confirmLabel: "Delete",
+                  tone: "danger",
+                };
+              }
+              return null;
+            }}
+            selectedItemPreviewUrl={selectedItemPreviewUrl}
+            onDeleteAll={null}
+            listHeaderActions={
               <PaginationBar
                 page={page}
                 pages={totalPages}
@@ -375,121 +598,9 @@ export default function SystemBrowserPage({
                 onPageChange={setPage}
                 label={`Page ${page} / ${totalPages}`}
               />
-            ),
-            panelClassName: "db-manager-rows-panel system-tool-main",
-            tableProps: {
-              columns: itemColumns,
-              data: items,
-              loading: loadingList,
-              emptyText: "No items in this folder.",
-              className: "events-table events-table--compact system-tool-browser-table",
-              onRowClick: (item) => setSelectedItem(item),
-              getRowId: (item) => item?.path || item?.name,
-              selectedRowId: selectedItem?.path || null,
-            },
-          }}
-          detail={{
-            title: "",
-            subtitle: "",
-            headerActions: selectedItem ? (
-              <>
-                <button type="button" className="secondary-button" onClick={handleDownload}>
-                  Download
-                </button>
-                <button type="button" className="danger-button" onClick={handleDelete}>
-                  Delete
-                </button>
-              </>
-            ) : null,
-            panelClassName: "system-tool-detail",
-            children: selectedItem ? (
-              <div className="system-tool-panel__body system-tool-panel__body--scroll">
-                <div className="system-tool-detail__content">
-                  {!loadingDetail &&
-                  selectedItemPreviewMode === "image" &&
-                  selectedItemPreviewUrl ? (
-                    <button
-                      type="button"
-                      className="system-tool-image-preview"
-                      onClick={() => setPreviewOpen(true)}
-                      title="Open large preview"
-                    >
-                      <img
-                        src={selectedItemPreviewUrl}
-                        alt={selectedItem?.name || "Preview"}
-                        className="system-tool-image-preview__img"
-                      />
-                    </button>
-                  ) : null}
-                  {loadingDetail ? (
-                    <div className="minor-text">Loading content...</div>
-                  ) : (
-                    <>
-                      {selectedItemPreviewMode === "image" ? (
-                        <div className="system-tool-image-preview__meta minor-text">
-                          IMAGE • {formatBytes(detail?.size || selectedItem?.size || 0)}
-                        </div>
-                      ) : null}
-                      {selectedItemPreviewMode !== "image" &&
-                      selectedItemPreviewMode !== "binary" ? (
-                        <SmartContent
-                          mode={selectedItemPreviewMode}
-                          content={
-                            selectedItemPreviewMode === "video"
-                              ? {
-                                  src: selectedItemPreviewUrl,
-                                }
-                              : detail?.content || ""
-                          }
-                          fileName={selectedItem?.name || ""}
-                          mimeType={
-                            detail?.mime_type || detail?.mimeType || detail?.content_type || ""
-                          }
-                          sizeBytes={detail?.size || selectedItem?.size || 0}
-                          showInfo
-                          showCopy={
-                            selectedItemPreviewMode === "text" ||
-                            selectedItemPreviewMode === "html"
-                          }
-                        />
-                      ) : null}
-                    </>
-                  )}
-                  <dl className="system-tool-kv">
-                    <dt>Name</dt>
-                    <dd>{selectedItem.name}</dd>
-                    <dt>Path</dt>
-                    <dd className="system-tool-code">{selectedItem.path}</dd>
-                    <dt>Size</dt>
-                    <dd>{formatBytes(detail?.size || selectedItem.size)}</dd>
-                    <dt>Updated</dt>
-                    <dd>{formatDate(detail?.updated_at || selectedItem.updated_at)}</dd>
-                  </dl>
-                </div>
-              </div>
-            ) : null,
-          }}
-        />
-
-        {previewOpen && selectedItemPreviewUrl ? (
-          <button
-            type="button"
-            className="system-tool-image-modal"
-            onClick={() => setPreviewOpen(false)}
-            aria-label="Close image preview"
-          >
-            <div
-              className="system-tool-image-modal__content"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <img
-                src={selectedItemPreviewUrl}
-                alt={selectedItem?.name || "Preview"}
-                className="system-tool-image-modal__img"
-              />
-            </div>
-          </button>
-        ) : null}
+            }
+          />
+        )}
       </div>
     </section>
   );

@@ -10,6 +10,7 @@ import {
   clearNotificationEntries,
   saveNotificationEntries,
 } from "./NotificationManager.js";
+import { normalizeActivityResult } from "../../../shared/utils/activityResult.js";
 
 var MAX = HUB_MAX_VISIBLE,
   TTL = HUB_TTL_MS,
@@ -77,9 +78,14 @@ function emit(evt, sub, pay) {
     var now = Date.now();
     var payloadMessage = String((pay && pay.message) || "").trim();
     var payloadType = String((pay && pay.type) || "info").trim().toLowerCase();
+    var payloadResult = normalizeActivityResult(pay || {}, {
+      ok: !((pay && pay.ok) === false),
+    });
     var payloadStatus =
-      String((pay && pay.status) || "").trim().toLowerCase() ||
-      (payloadType === "error" ? "error" : "ok");
+      String((pay && pay.status) || payloadResult.status || "")
+        .trim()
+        .toLowerCase() ||
+      (payloadType === "error" ? "error" : "info");
     var payloadEventId =
       String((pay && pay.requestId) || "").trim() ||
       [
@@ -105,8 +111,8 @@ function emit(evt, sub, pay) {
         status: payloadStatus,
         createdAt: Number(new Date((pay && pay.t) || now).getTime()) || now,
         completedAt: Number(new Date((pay && pay.t) || now).getTime()) || now,
-        message: payloadMessage,
-        extra: payloadMessage,
+        message: String(payloadResult.message || payloadMessage || "").trim(),
+        extra: String(payloadResult.message || payloadMessage || "").trim(),
         event: String((pay && pay.event) || evt || ""),
         level: payloadType,
         source: "server",
@@ -119,6 +125,7 @@ function emit(evt, sub, pay) {
           Number((pay && pay.db_duration_ms) || (pay && pay.dbDurationMs) || 0) ||
           null,
         data: pay || {},
+        result: payloadResult,
         meta: pay || {},
         error:
           payloadStatus === "error"
@@ -135,10 +142,14 @@ function emit(evt, sub, pay) {
         requestId: reqId,
         type: "snapshot",
         symbol: symbol,
-        status: "ok",
+        status: "info",
         createdAt: now,
         completedAt: now,
         extra: timeframe ? "TF: " + timeframe : "",
+        result: normalizeActivityResult(
+          { message: timeframe ? "TF: " + timeframe : "Snapshot created", processed: 1 },
+          { ok: true },
+        ),
         data: pay || {},
         meta: pay || {},
       });
@@ -160,10 +171,14 @@ function emit(evt, sub, pay) {
         requestId: reqIdNews,
         type: "news_alert",
         symbol: String((pay && pay.news_type) || "NEWS").toUpperCase(),
-        status: "ok",
+        status: "info",
         createdAt: nowNews,
         completedAt: nowNews,
         extra: symbols ? title + " • " + symbols : title,
+        result: normalizeActivityResult(
+          { message: symbols ? title + " • " + symbols : title, processed: 1 },
+          { ok: true },
+        ),
         data: pay || {},
         meta: pay || {},
       });
@@ -201,6 +216,20 @@ function track(type, pay, fetchFn) {
     symbol: sym,
     status: "running",
     createdAt: Date.now(),
+    result: {
+      status: "running",
+      message: "Running",
+      processed: 0,
+      created: 0,
+      updated: 0,
+      deleted: 0,
+      skipped: 0,
+      created_ids: [],
+      updated_ids: [],
+      deleted_ids: [],
+      affected_ids: [],
+      errors: [],
+    },
     meta: pay,
   };
   var list = load();
@@ -212,8 +241,9 @@ function track(type, pay, fetchFn) {
 
   var p = fetchFn()
     .then(function (d) {
-      entry.status = "ok";
+      entry.status = "info";
       entry.data = d;
+      entry.result = normalizeActivityResult(d || {}, { ok: true });
       entry.completedAt = Date.now();
       entry.durationMs = Math.max(0, entry.completedAt - entry.createdAt);
       if (d && typeof d === "object") {
@@ -238,6 +268,14 @@ function track(type, pay, fetchFn) {
     .catch(function (e) {
       entry.status = "error";
       entry.error = (e && e.message) || String(e);
+      entry.result = normalizeActivityResult(
+        {
+          ok: false,
+          message: entry.error,
+          errors: [{ code: "request_failed", message: entry.error }],
+        },
+        { ok: false },
+      );
       entry.completedAt = Date.now();
       entry.durationMs = Math.max(0, entry.completedAt - entry.createdAt);
       if (e && e.apiTiming) {
@@ -267,14 +305,19 @@ function track(type, pay, fetchFn) {
 function done(entry) {
   var icon = ICONS[entry.type] || "🔔";
   var msg, evType;
-  if (entry.status === "ok") {
-    msg = icon + " " + entry.type + ": " + (entry.symbol || "done");
+  var resultStatus = String((entry && entry.result && entry.result.status) || entry.status || "")
+    .trim()
+    .toLowerCase();
+  var displayMessage =
+    (entry && entry.result && entry.result.message) || entry.message || entry.error || "";
+  if (resultStatus === "info" || resultStatus === "success" || resultStatus === "ok") {
+    msg = displayMessage || icon + " " + entry.type + ": " + (entry.symbol || "done");
     evType = "info";
-  } else if (entry.status === "no_data") {
-    msg = icon + " " + entry.type + ": " + (entry.symbol || "") + " - no data";
+  } else if (resultStatus === "warn" || resultStatus === "warning" || entry.status === "no_data") {
+    msg = displayMessage || icon + " " + entry.type + ": " + (entry.symbol || "") + " - no data";
     evType = "warning";
   } else {
-    msg = icon + " " + entry.type + " failed: " + (entry.error || "error");
+    msg = displayMessage || icon + " " + entry.type + " failed: " + (entry.error || "error");
     evType = "error";
   }
   emit("SYSTEM_EVENT", "api_complete", {

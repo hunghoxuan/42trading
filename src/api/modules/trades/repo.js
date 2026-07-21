@@ -13,7 +13,8 @@ const SOURCE_SYSTEM = "42trade_trades";
 
 function text(value, fallback = "") {
   const out = String(value ?? "").trim();
-  return out || fallback;
+  if (!out || out.toLowerCase() === "null") return fallback;
+  return out;
 }
 
 function clone(value) {
@@ -76,6 +77,28 @@ function uniqStrings(values = []) {
         .filter(Boolean),
     ),
   ];
+}
+
+function normalizeFilterList(value, normalize = (item) => text(item)) {
+  const raw = Array.isArray(value)
+    ? value
+    : value === undefined || value === null || value === ""
+      ? []
+      : [value];
+  return [
+    ...new Set(
+      raw
+        .map((item) => normalize(item))
+        .map((item) => text(item))
+        .filter(Boolean),
+    ),
+  ];
+}
+
+function matchesAnyFilterValue(trade = {}, field = "", values = [], normalize = (item) => text(item)) {
+  const wanted = normalizeFilterList(values, normalize);
+  if (!wanted.length) return true;
+  return wanted.includes(normalize(trade[field]));
 }
 
 function toIso(value, fallback = new Date().toISOString()) {
@@ -346,8 +369,30 @@ function matchesTradeFilters(trade = {}, filters = {}) {
     return normalized(trade[field]) === normalized(value);
   };
   if (!exact("user_id", filters.user_id || filters.userId)) return false;
-  if (!exact("account_id", filters.account_id || filters.accountId)) return false;
-  if (!exact("source_id", filters.source_id || filters.sourceId)) return false;
+  if (
+    !matchesAnyFilterValue(
+      trade,
+      "account_id",
+      [
+        ...(Array.isArray(filters.account_ids) ? filters.account_ids : []),
+        filters.account_id || filters.accountId,
+      ],
+    )
+  ) {
+    return false;
+  }
+  if (
+    !matchesAnyFilterValue(
+      trade,
+      "source_id",
+      [
+        ...(Array.isArray(filters.source_ids) ? filters.source_ids : []),
+        filters.source_id || filters.sourceId,
+      ],
+    )
+  ) {
+    return false;
+  }
   if (
     !exact("dispatch_status", filters.dispatch_status, (x) =>
       text(x).toUpperCase(),
@@ -356,14 +401,44 @@ function matchesTradeFilters(trade = {}, filters = {}) {
     return false;
   }
   if (
-    !exact("execution_status", filters.execution_status, (x) =>
-      text(x).toUpperCase(),
+    !matchesAnyFilterValue(
+      trade,
+      "execution_status",
+      [
+        ...(Array.isArray(filters.execution_statuses) ? filters.execution_statuses : []),
+        ...(Array.isArray(filters.statuses) ? filters.statuses : []),
+        filters.execution_status || filters.executionStatus || filters.status,
+      ],
+      (x) => tradesCanonicalStatus(x),
     )
   ) {
     return false;
   }
-  if (!exact("symbol", filters.symbol, (x) => text(x).toUpperCase())) return false;
-  if (!exact("action", filters.action || filters.side, (x) => text(x).toUpperCase())) {
+  if (
+    !matchesAnyFilterValue(
+      trade,
+      "symbol",
+      [
+        ...(Array.isArray(filters.symbols) ? filters.symbols : []),
+        filters.symbol,
+      ],
+      (x) => text(x).toUpperCase(),
+    )
+  ) {
+    return false;
+  }
+  if (
+    !matchesAnyFilterValue(
+      trade,
+      "action",
+      [
+        ...(Array.isArray(filters.actions) ? filters.actions : []),
+        ...(Array.isArray(filters.directions) ? filters.directions : []),
+        filters.action || filters.side,
+      ],
+      (x) => text(x).toUpperCase(),
+    )
+  ) {
     return false;
   }
   if (!exact("entry_model", filters.entry_model)) return false;
@@ -1490,6 +1565,22 @@ function createTradesRepo(options = {}) {
       };
     },
 
+    async deleteTradesBySids(userId, sids = []) {
+      const safeSids = uniqStrings(sids);
+      if (!safeSids.length) return { ok: true, deleted: 0, sids: [] };
+      let deleted = 0;
+      for (const sid of safeSids) {
+        const existing = await loadTradeBySid(sid);
+        if (existing && !matchesTradeFilters(existing, { user_id: userId || existing.user_id })) {
+          continue;
+        }
+        const result = await repo.deleteEntity(TRADES_SCOPE, TRADE_ENTITY_TYPE, sid);
+        const changes = Number(result?.changes ?? result?.rowCount ?? 0);
+        if (changes > 0 || existing) deleted += 1;
+      }
+      return { ok: true, deleted, sids: safeSids };
+    },
+
     async countTradesByExecutionStatus(filters = {}) {
       const all = (await listAllTradesRaw()).filter((item) =>
         matchesTradeFilters(item, filters),
@@ -2130,6 +2221,15 @@ function createTradesRepo(options = {}) {
           const nextExecutionStatus = String(it.execution_status || "")
             .trim()
             .toUpperCase();
+          const nextOrderType =
+            preservedOrderType ||
+            normalizeOrderTypeValue(it.order_type) ||
+            existing.order_type ||
+            null;
+          const shouldSyncPendingEntry =
+            nextExecutionStatus === "PENDING" &&
+            nextOrderType !== "market" &&
+            Number.isFinite(Number(it.entry));
           const consumeLease =
             clearRejectedDispatch ||
             String(existing.dispatch_status || "").toUpperCase() === "LEASED";
@@ -2163,12 +2263,11 @@ function createTradesRepo(options = {}) {
               broker_margin: Number(it.margin ?? existing.broker_margin ?? 0),
               broker_tp_pnl: it.tp_pnl ?? existing.broker_tp_pnl ?? null,
               broker_sl_pnl: it.sl_pnl ?? existing.broker_sl_pnl ?? null,
+              entry: shouldSyncPendingEntry
+                ? Number(it.entry)
+                : existing.entry ?? null,
               entry_exec: it.entry ?? existing.entry_exec ?? null,
-              order_type:
-                preservedOrderType ||
-                normalizeOrderTypeValue(it.order_type) ||
-                existing.order_type ||
-                null,
+              order_type: nextOrderType,
               close_reason: isTerminalExecutionStatus(nextExecutionStatus)
                 ? it.close_reason || existing.close_reason || null
                 : null,
@@ -2400,6 +2499,8 @@ function createTradesRepo(options = {}) {
         if (!latest) continue;
         const oldStatus = oldRow.execution_status || null;
         const newStatus = latest.execution_status;
+        const oldEntry = Number.isFinite(Number(oldRow.entry)) ? Number(oldRow.entry) : null;
+        const newEntry = Number.isFinite(Number(latest.entry)) ? Number(latest.entry) : null;
         const oldSl = Number.isFinite(Number(oldRow.sl)) ? Number(oldRow.sl) : null;
         const newSl = latest.sl ?? null;
         const oldTp = Number.isFinite(Number(oldRow.tp)) ? Number(oldRow.tp) : null;
@@ -2408,12 +2509,14 @@ function createTradesRepo(options = {}) {
           oldRow.has_partial === "true" || oldRow.has_partial === true;
         const newHasPartial = Boolean(latest.metadata?.has_partial);
         const statusChanged = !oldStatus || oldStatus !== newStatus;
+        const entryChanged =
+          oldEntry !== null && newEntry !== null && Math.abs(oldEntry - newEntry) > 0.000001;
         const slChanged =
           oldSl !== null && newSl !== null && Math.abs(oldSl - newSl) > 0.000001;
         const tpChanged =
           oldTp !== null && newTp !== null && Math.abs(oldTp - newTp) > 0.000001;
         const partialChanged = oldHasPartial !== newHasPartial;
-        if (statusChanged || slChanged || tpChanged || partialChanged) {
+        if (statusChanged || entryChanged || slChanged || tpChanged || partialChanged) {
           tradeUpdates.push({
             sid,
             symbol: latest.symbol,
@@ -2421,6 +2524,8 @@ function createTradesRepo(options = {}) {
             broker_pnl: latest.broker_pnl,
             broker_pips: latest.broker_pips,
             execution_status: latest.execution_status,
+            entry: newEntry,
+            entry_before: oldEntry,
             sl: newSl,
             sl_before: oldSl,
             tp: newTp,

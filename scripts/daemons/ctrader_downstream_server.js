@@ -13,6 +13,13 @@ function envStr(v, fallback = "") {
   return s ? s : fallback;
 }
 
+function cleanText(v, fallback = "") {
+  if (v === undefined || v === null) return fallback;
+  const s = String(v).trim();
+  if (!s || s.toLowerCase() === "null") return fallback;
+  return s;
+}
+
 function asNum(v, fallback = NaN) {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
@@ -32,6 +39,7 @@ const CFG = {
   accountNumber: envStr(process.env.CTRADER_ACCOUNT_NUMBER),
   unitsPerLot: Math.max(1, Number(process.env.CTRADER_UNITS_PER_LOT || 100000)),
   minVolumeUnits: Math.max(1, Number(process.env.CTRADER_MIN_VOLUME_UNITS || 1000)),
+  minStopPips: asNum(process.env.CTRADER_MIN_STOP_PIPS, null),
 };
 
 let tokenState = {
@@ -308,6 +316,9 @@ async function fetchSymbolCalibration(reqBody = {}) {
       digits,
       spread,
       commission_per_lot: commissionPerLot,
+      min_stop_pips: CFG.minStopPips,
+      min_stop_price_distance:
+        pipSize !== null && CFG.minStopPips !== null ? pipSize * CFG.minStopPips : null,
     },
     raw_symbol: symbolRow || null,
   };
@@ -385,21 +396,21 @@ function normalizeIncomingTask(reqBody = {}) {
     sl: Number.isFinite(sl) ? sl : null,
     tp: Number.isFinite(tp) ? tp : null,
     volume: Number.isFinite(volume) && volume > 0 ? volume : null,
-    strategy: String(signal.strategy || signal.strategy_name || "").trim(),
-    note: String(signal.note || "").trim(),
+    strategy: cleanText(signal.strategy || signal.strategy_name),
+    note: cleanText(signal.note),
     accountId: String(reqBody.account_id || signal.account_id || CFG.accountId || "").trim(),
   };
 }
 
 function buildBrokerLabel(strategy = "", fallbackId = "") {
-  const candidate = String(strategy || "").trim().replace(/\s+/g, " ");
+  const candidate = cleanText(strategy).replace(/\s+/g, " ");
   if (candidate) return candidate.slice(0, 50);
   return envStr(fallbackId || `sig_${Date.now()}`).slice(0, 50);
 }
 
 function buildBrokerComment(signalId = "", note = "") {
   const sid = envStr(signalId);
-  const detail = String(note || "").trim().replace(/\s+/g, " ");
+  const detail = cleanText(note).replace(/\s+/g, " ");
   const combined = [sid, detail].filter(Boolean).join(" | ");
   return combined.slice(0, 100);
 }

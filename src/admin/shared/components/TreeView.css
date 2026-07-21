@@ -112,6 +112,31 @@
   background: rgba(100, 116, 139, 0.36);
 }
 
+.tree-view__icon {
+  flex: 0 0 auto;
+  min-width: 28px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 6px;
+  padding: 2px 5px;
+  color: #aebbd0;
+  font-size: 8px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  text-align: center;
+}
+
+.tree-view__icon.is-folder {
+  text-transform: uppercase;
+  background: rgba(51, 65, 85, 0.5);
+}
+
+.tree-view__icon.is-file {
+  text-transform: lowercase;
+  background: rgba(15, 23, 42, 0.64);
+  color: #7f91aa;
+}
+
 .tree-view__label {
   min-width: 0;
   font-size: 12px;

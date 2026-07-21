@@ -27,7 +27,8 @@ __export(chartStrategyChecks_exports, {
   buildStrategyPlanNote: () => buildStrategyPlanNote,
   collectContextualStrategyTradePlans: () => collectContextualStrategyTradePlans,
   evaluateChartStrategies: () => evaluateChartStrategies,
-  groupArtifactsBySourceTf: () => groupArtifactsBySourceTf
+  groupArtifactsBySourceTf: () => groupArtifactsBySourceTf,
+  resolveConfirmedPostEventDirection: () => resolveConfirmedPostEventDirection
 });
 module.exports = __toCommonJS(chartStrategyChecks_exports);
 
@@ -2695,7 +2696,9 @@ function buildSuggestedTradeLevels({
   activeTf = "",
   selectedTfs = [],
   artifactItemsByTf = {},
-  minRr = 1.5
+  minRr = 1.5,
+  stopLevelRank = 1,
+  targetLevelRank = 1
 }) {
   const entry = Number(entryPrice);
   if (!Number.isFinite(entry) || entry <= 0) return { tp: null, sl: null };
@@ -2703,6 +2706,8 @@ function buildSuggestedTradeLevels({
   const anchor = Number.isFinite(reference) && reference > 0 ? reference : entry;
   const upperSide = String(side || "BUY").trim().toUpperCase();
   const targetMinRr = Math.max(1, Number(minRr) || 1.5);
+  const normalizedStopRank = Math.max(1, Math.round(Number(stopLevelRank) || 1));
+  const normalizedTargetRank = Math.max(1, Math.round(Number(targetLevelRank) || 1));
   const stopCandidates = [];
   const targetCandidates = [];
   const tfList = Array.isArray(selectedTfs) ? selectedTfs : [];
@@ -2780,15 +2785,16 @@ function buildSuggestedTradeLevels({
     if (Math.abs(distanceDelta) > 1e-6) return distanceDelta;
     return b.score - a.score;
   });
-  const chosenStop = sortedStops[0] || null;
+  const chosenStop = sortedStops[normalizedStopRank - 1] || sortedStops[0] || null;
   if (!chosenStop) return { tp: null, sl: null };
   const bufferedStop = applyTradeStopBuffer(entry, chosenStop.price, upperSide);
   const risk = upperSide === "BUY" ? entry - bufferedStop : bufferedStop - entry;
   if (!(risk > 0)) return { tp: null, sl: null };
-  const chosenTarget = sortedTargets.find((candidate) => {
+  const qualifyingTargets = sortedTargets.filter((candidate) => {
     const reward = upperSide === "BUY" ? candidate.price - entry : entry - candidate.price;
     return reward / risk >= targetMinRr;
-  }) || sortedTargets[0] || null;
+  });
+  const chosenTarget = qualifyingTargets[normalizedTargetRank - 1] || qualifyingTargets[0] || sortedTargets[normalizedTargetRank - 1] || sortedTargets[0] || null;
   const rawTarget = chosenTarget?.price ?? null;
   const finalTarget = applyTradeTargetTrim({
     entry,
@@ -3004,7 +3010,7 @@ function buildArtifactItemsByTfForSuggestedLevels(ctx = {}) {
   });
   return artifactItemsByTf;
 }
-function resolveSuggestedTradeLevelsForContext(direction = "buy", tfSelection = "all", minRr = 1.5, ctx = {}) {
+function resolveSuggestedTradeLevelsForContext(direction = "buy", tfSelection = "all", minRr = 1.5, stopLevelRank = 1, targetLevelRank = 1, ctx = {}) {
   const entry = resolvePriceActionEntry(ctx);
   if (!Number.isFinite(entry) || entry <= 0) return { sl: null, tp: null };
   const artifactItemsByTf = buildArtifactItemsByTfForSuggestedLevels(ctx);
@@ -3020,7 +3026,9 @@ function resolveSuggestedTradeLevelsForContext(direction = "buy", tfSelection = 
     activeTf: currentTimeframe(ctx),
     selectedTfs,
     artifactItemsByTf,
-    minRr
+    minRr,
+    stopLevelRank,
+    targetLevelRank
   });
 }
 function matchArtifactBias(item = {}, requestedBias = "") {
@@ -3089,6 +3097,14 @@ function filterArtifactsBeforeCurrentBar(items = [], ctx = {}) {
   const currentTime = Number(currentBar?.time || 0);
   return (Array.isArray(items) ? items : []).filter((item) => Number(item?.anchor_time ?? item?.bar_end ?? item?.bar_start ?? 0) <= currentTime).sort(
     (left, right) => Number(left?.anchor_time ?? left?.bar_end ?? left?.bar_start ?? 0) - Number(right?.anchor_time ?? right?.bar_end ?? right?.bar_start ?? 0)
+  );
+}
+function filterArtifactsAtCurrentBar(items = [], ctx = {}) {
+  const currentBar = resolveCurrentBar(ctx);
+  const currentTime = Number(currentBar?.time || 0);
+  if (!Number.isFinite(currentTime) || currentTime <= 0) return [];
+  return filterArtifactsBeforeCurrentBar(items, ctx).filter(
+    (item) => Number(item?.anchor_time ?? item?.bar_end ?? item?.bar_start ?? 0) === currentTime
   );
 }
 function normalizeLevel(value) {
@@ -3398,8 +3414,8 @@ function findCurrentBarLevelMatch(functionName = "", level = null, ctx = {}, pre
     source_artifact_type: String(bestMatch?.sourceEntry?.sourceType || "").trim()
   });
 }
-function latestArtifactByType({ types = [], bias = "", ctx = {} }) {
-  const items = filterArtifactsBeforeCurrentBar(selectArtifactsForContext(ctx), ctx).filter(
+function currentBarArtifactByType({ types = [], bias = "", ctx = {} }) {
+  const items = filterArtifactsAtCurrentBar(selectArtifactsForContext(ctx), ctx).filter(
     (item) => (Array.isArray(types) ? types : [types]).includes(String(item?.type || "").trim().toLowerCase()) && matchArtifactBias(item, bias)
   );
   return buildArtifactResult(
@@ -3411,7 +3427,7 @@ function latestArtifactByType({ types = [], bias = "", ctx = {} }) {
 function latestBreakoutMatch(level = null, ctx = {}) {
   const normalizedLevel = normalizeLevel(level);
   if (!Number.isFinite(normalizedLevel)) {
-    const structural = latestArtifactByType({ types: ["bos"], ctx });
+    const structural = currentBarArtifactByType({ types: ["bos"], ctx });
     return structural ? buildArtifactResult("breakout", structural.matches, structural.meta) : false;
   }
   return findLevelMatches("breakout", normalizedLevel, ctx, ({ bar, prev, level: target }) => {
@@ -3470,7 +3486,7 @@ function latestReversalMatch(level = null, ctx = {}) {
       confirmation: "rejection"
     });
   }
-  const choch = latestArtifactByType({ types: ["choch"], ctx });
+  const choch = currentBarArtifactByType({ types: ["choch"], ctx });
   if (choch) return buildArtifactResult("reversal", choch.matches, { timeframe, source: "choch" });
   const patternMatches = Array.from(patterns.values()).slice(-5);
   return buildArtifactResult("reversal", patternMatches, { timeframe, source: "pattern" });
@@ -3584,6 +3600,8 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
       evaluatedArgs2[0],
       evaluatedArgs2[1],
       evaluatedArgs2[2],
+      evaluatedArgs2[3],
+      evaluatedArgs2[4] ?? evaluatedArgs2[3],
       ctx
     ).sl;
   }
@@ -3593,6 +3611,8 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
       evaluatedArgs2[0],
       evaluatedArgs2[1],
       evaluatedArgs2[2],
+      evaluatedArgs2[3],
+      evaluatedArgs2[4] ?? evaluatedArgs2[3],
       ctx
     ).tp;
   }
@@ -3683,7 +3703,9 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
       case "has_sweep":
         return buildArtifactResult(
           lowerName,
-          resultMatches(latestArtifactByType({ types: ["sweep_high", "sweep_low"], bias: biasArg, ctx: nextCtx })),
+          resultMatches(
+            currentBarArtifactByType({ types: ["sweep_high", "sweep_low"], bias: biasArg, ctx: nextCtx })
+          ),
           { timeframe, bias: biasArg }
         );
       case "breakout":
@@ -3692,7 +3714,7 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
         return buildArtifactResult(
           lowerName,
           resultMatches(
-            latestArtifactByType({
+            currentBarArtifactByType({
               types: ["bullish_pin_bar", "bearish_pin_bar"],
               bias: biasArg,
               ctx: nextCtx
@@ -3704,7 +3726,7 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
         return buildArtifactResult(
           lowerName,
           resultMatches(
-            latestArtifactByType({
+            currentBarArtifactByType({
               types: ["bullish_engulfing", "bearish_engulfing"],
               bias: biasArg,
               ctx: nextCtx
@@ -3715,27 +3737,27 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
       case "inside_bar":
         return buildArtifactResult(
           lowerName,
-          resultMatches(latestArtifactByType({ types: ["inside_bar"], ctx: nextCtx })),
+          resultMatches(currentBarArtifactByType({ types: ["inside_bar"], ctx: nextCtx })),
           { timeframe }
         );
       case "outside_bar":
         return buildArtifactResult(
           lowerName,
-          resultMatches(latestArtifactByType({ types: ["outside_bar"], ctx: nextCtx })),
+          resultMatches(currentBarArtifactByType({ types: ["outside_bar"], ctx: nextCtx })),
           { timeframe }
         );
       case "bos":
       case "has_bos":
         return buildArtifactResult(
           lowerName,
-          resultMatches(latestArtifactByType({ types: ["bos"], bias: biasArg, ctx: nextCtx })),
+          resultMatches(currentBarArtifactByType({ types: ["bos"], bias: biasArg, ctx: nextCtx })),
           { timeframe, bias: biasArg }
         );
       case "choch":
       case "has_choch":
         return buildArtifactResult(
           lowerName,
-          resultMatches(latestArtifactByType({ types: ["choch"], bias: biasArg, ctx: nextCtx })),
+          resultMatches(currentBarArtifactByType({ types: ["choch"], bias: biasArg, ctx: nextCtx })),
           { timeframe, bias: biasArg }
         );
       case "reversal":
@@ -4407,6 +4429,8 @@ function normalizeRuleEvent({ rule = {}, result = true, ctx = {}, index = 0 } = 
 
 // src/shared/utils/chartStrategyChecks.js
 var { createStrategyScanEngine: createStrategyScanEngine2 } = strategyScanEngine_exports;
+var POST_EVENT_CONFIRM_MIN_BARS = 6;
+var POST_EVENT_CONFIRM_MAX_BARS = 12;
 function normalizeTfKey4(tfRaw = "") {
   const raw = String(tfRaw || "").trim().toLowerCase();
   if (!raw) return "";
@@ -4421,6 +4445,65 @@ function normalizeTfKey4(tfRaw = "") {
 }
 function evaluateRule(node, ctx) {
   return evaluateRuleExpression(node, ctx);
+}
+function roundRuleContextLevelKey(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "";
+  return num.toFixed(6);
+}
+function extractRuleContextArtifactLevels(item = {}) {
+  const candidates = [
+    item?.price,
+    item?.payload?.level,
+    item?.payload?.source_swing_price,
+    item?.payload?.swept_swing_price,
+    item?.payload?.mitigation_price,
+    item?.price_high,
+    item?.price_low
+  ].map((value) => Number(value)).filter((value) => Number.isFinite(value));
+  return Array.from(new Set(candidates.map((value) => roundRuleContextLevelKey(value)))).map((key) => Number(key)).filter((value) => Number.isFinite(value));
+}
+function resolveRuleContextKeyLevel({
+  bar = null,
+  derivedArtifacts = []
+} = {}) {
+  const supportedTypes = /* @__PURE__ */ new Set([
+    "liquidity_high",
+    "liquidity_low",
+    "fvg",
+    "ob",
+    "support",
+    "demand",
+    "pdh",
+    "pdl"
+  ]);
+  const currentTime = Number(bar?.time || 0);
+  const currentClose = Number(bar?.close);
+  const recentArtifacts = (Array.isArray(derivedArtifacts) ? derivedArtifacts : []).filter((item) => {
+    const type = String(item?.type || "").trim().toLowerCase();
+    if (!supportedTypes.has(type)) return false;
+    const itemTime = Number(
+      item?.anchor_time ?? item?.bar_end ?? item?.bar_start ?? item?.time ?? 0
+    );
+    return !Number.isFinite(currentTime) || currentTime <= 0 || itemTime <= currentTime;
+  }).slice(-12).reverse();
+  const levels = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const item of recentArtifacts) {
+    for (const level of extractRuleContextArtifactLevels(item)) {
+      const key = roundRuleContextLevelKey(level);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      levels.push(level);
+    }
+  }
+  if (!levels.length) return null;
+  if (!Number.isFinite(currentClose)) return levels[0];
+  return [...levels].sort((left, right) => {
+    const leftDistance = Math.abs(Number(left) - currentClose);
+    const rightDistance = Math.abs(Number(right) - currentClose);
+    return leftDistance - rightDistance;
+  })[0];
 }
 function seriesBySource(bars, source = "close") {
   return (Array.isArray(bars) ? bars : []).map(
@@ -4744,6 +4827,12 @@ function buildRuleContext({
   analysis = null,
   tf = ""
 }) {
+  const previewContext = strategy?.metadata?.preview_context && typeof strategy.metadata.preview_context === "object" && !Array.isArray(strategy.metadata.preview_context) ? strategy.metadata.preview_context : {};
+  const inferredKeyLevel = resolveRuleContextKeyLevel({
+    bar: bars[index] || null,
+    derivedArtifacts
+  });
+  const previewLevels = previewContext?.levels && typeof previewContext.levels === "object" && !Array.isArray(previewContext.levels) ? previewContext.levels : {};
   return {
     bar: bars[index] || null,
     prev: bars[index - 1] || null,
@@ -4756,9 +4845,13 @@ function buildRuleContext({
     multiTf: multiTf && typeof multiTf === "object" && !Array.isArray(multiTf) ? multiTf : {},
     params: strategy?.params && typeof strategy.params === "object" ? strategy.params : {},
     risk: strategy?.risk && typeof strategy.risk === "object" ? strategy.risk : {},
+    ...previewContext,
     indicators: currentIndicators || {},
     prev_indicators: prevIndicators || {},
-    ...strategy?.metadata?.preview_context && typeof strategy.metadata.preview_context === "object" && !Array.isArray(strategy.metadata.preview_context) ? strategy.metadata.preview_context : {}
+    levels: {
+      ...previewLevels,
+      ...Number.isFinite(Number(inferredKeyLevel)) ? { key: Number(inferredKeyLevel) } : {}
+    }
   };
 }
 function buildMultiTfContextEntries(multiTfBars = null, currentTf = "") {
@@ -5263,43 +5356,71 @@ function buildChartStrategyNotificationPayload(match = {}) {
     page: "chart_analysis"
   };
 }
-function resolveStrategyMarkerMeta(actions = [], fallbackEventName = "", fallbackBias = "", latestArtifact = null) {
-  const normalizedActionTypes = (Array.isArray(actions) ? actions : []).map((action) => String(action?.action || action?.type || "").trim().toLowerCase()).filter(Boolean);
-  const normalizedDirections = (Array.isArray(actions) ? actions : []).map((action) => String(action?.trade_plan?.direction || "").trim().toLowerCase()).filter(Boolean);
+function averageCandleRange(bars = []) {
+  const values = (Array.isArray(bars) ? bars : []).map((bar) => {
+    const high = Number(bar?.high);
+    const low = Number(bar?.low);
+    return Number.isFinite(high) && Number.isFinite(low) ? Math.max(0, high - low) : null;
+  }).filter((value) => Number.isFinite(value));
+  if (!values.length) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+function resolveConfirmedPostEventDirection({
+  bars = [],
+  eventTimeSec = null,
+  eventIndex = null,
+  timeframe = "",
+  eventPrice = null,
+  minBars = POST_EVENT_CONFIRM_MIN_BARS,
+  maxBars = POST_EVENT_CONFIRM_MAX_BARS
+} = {}) {
+  const normalizedBars = (Array.isArray(bars) ? bars : []).filter(
+    (bar) => Number.isFinite(Number(bar?.time)) && Number.isFinite(Number(bar?.open)) && Number.isFinite(Number(bar?.high)) && Number.isFinite(Number(bar?.low)) && Number.isFinite(Number(bar?.close))
+  );
+  if (!normalizedBars.length) return "neutral";
+  const resolvedIndex = Number.isInteger(eventIndex) && eventIndex >= 0 && eventIndex < normalizedBars.length ? eventIndex : normalizedBars.findIndex(
+    (bar) => Number(bar?.time || 0) === Number(eventTimeSec || 0)
+  );
+  if (resolvedIndex < 0) return "neutral";
+  const futureBars = normalizedBars.slice(
+    resolvedIndex,
+    Math.min(normalizedBars.length, resolvedIndex + Math.max(2, Number(maxBars) || 0))
+  );
+  if (futureBars.length < Math.max(2, Number(minBars) || 0)) return "neutral";
+  const analysis = buildTfAnalysis({
+    bars: futureBars,
+    timeframe
+  });
+  const bias = String(analysis?.bias || "").trim().toLowerCase();
+  const trend = String(analysis?.trend || "").trim().toLowerCase();
+  const biasScore = Number(analysis?.bias_score || 0);
+  const trendScore = Number(analysis?.trend_score || 0);
+  const referencePrice = Number.isFinite(Number(eventPrice)) ? Number(eventPrice) : Number(normalizedBars[resolvedIndex]?.close);
+  const lastClose = Number(futureBars[futureBars.length - 1]?.close);
+  const moveThreshold = Math.max(
+    averageCandleRange(futureBars) * 0.6,
+    Math.abs(referencePrice || lastClose || 0) * 5e-4
+  );
+  const movedUp = Number.isFinite(referencePrice) && Number.isFinite(lastClose) && lastClose > referencePrice + moveThreshold;
+  const movedDown = Number.isFinite(referencePrice) && Number.isFinite(lastClose) && lastClose < referencePrice - moveThreshold;
+  if (bias === "bullish" && trend === "up" && biasScore >= 2 && trendScore >= 3 && movedUp) {
+    return "buy";
+  }
+  if (bias === "bearish" && trend === "down" && biasScore <= -2 && trendScore <= -3 && movedDown) {
+    return "sell";
+  }
+  return "neutral";
+}
+function resolveStrategyMarkerMeta(actions = [], fallbackEventName = "", fallbackBias = "", latestArtifact = null, options = {}) {
   const explicitColor = (Array.isArray(actions) ? actions : []).map((action) => String(action?.color || "").trim()).find(Boolean);
-  const artifactDirection = String(
-    latestArtifact?.direction || latestArtifact?.payload?.bias || latestArtifact?.subtype || ""
-  ).trim().toLowerCase();
-  const eventHint = String(fallbackEventName || "").trim().toLowerCase();
-  const biasHint = String(fallbackBias || "").trim().toLowerCase();
-  const combinedHints = [
-    ...normalizedActionTypes,
-    ...normalizedDirections,
-    artifactDirection,
-    eventHint,
-    biasHint
-  ].join(" ");
-  const bullishHint = /\bbull\b|\bbullish\b|\bbuy\b|\blong\b|\bentry long\b/.test(combinedHints);
-  const bearishHint = /\bbear\b|\bbearish\b|\bsell\b|\bshort\b|\bentry short\b/.test(combinedHints);
-  if (explicitColor && bullishHint) {
-    return {
-      direction: "up",
-      color: explicitColor,
-      shape: "arrowUp",
-      position: "belowBar"
-    };
-  }
-  if (explicitColor && bearishHint) {
-    return {
-      direction: "down",
-      color: explicitColor,
-      shape: "arrowDown",
-      position: "aboveBar"
-    };
-  }
-  if (normalizedActionTypes.some(
-    (type) => type === "trade.open.long" || type === "trade.close.short"
-  ) || normalizedActionTypes.some((type) => type === "trade") && normalizedDirections.some((direction) => ["buy", "long", "bull"].includes(direction)) || bullishHint) {
+  const confirmedDirection = resolveConfirmedPostEventDirection({
+    bars: options?.bars,
+    eventTimeSec: options?.eventTimeSec,
+    eventIndex: options?.eventIndex,
+    timeframe: options?.timeframe,
+    eventPrice: options?.eventPrice ?? latestArtifact?.price ?? latestArtifact?.payload?.level ?? null
+  });
+  if (confirmedDirection === "buy") {
     return {
       direction: "up",
       color: explicitColor || "#22c55e",
@@ -5307,9 +5428,7 @@ function resolveStrategyMarkerMeta(actions = [], fallbackEventName = "", fallbac
       position: "belowBar"
     };
   }
-  if (normalizedActionTypes.some(
-    (type) => type === "trade.open.short" || type === "trade.close.long"
-  ) || normalizedActionTypes.some((type) => type === "trade") && normalizedDirections.some((direction) => ["sell", "short", "bear"].includes(direction)) || bearishHint) {
+  if (confirmedDirection === "sell") {
     return {
       direction: "down",
       color: explicitColor || "#ef4444",
@@ -5317,25 +5436,9 @@ function resolveStrategyMarkerMeta(actions = [], fallbackEventName = "", fallbac
       position: "aboveBar"
     };
   }
-  if (/\bbear\b|\bbearish\b|\bdown\b/.test(combinedHints)) {
-    return {
-      direction: "down",
-      color: "#ef4444",
-      shape: "arrowDown",
-      position: "aboveBar"
-    };
-  }
-  if (/\bbull\b|\bbullish\b|\bup\b/.test(combinedHints)) {
-    return {
-      direction: "up",
-      color: "#22c55e",
-      shape: "arrowUp",
-      position: "belowBar"
-    };
-  }
   return {
-    direction: "up",
-    color: "#38bdf8",
+    direction: "neutral",
+    color: explicitColor || "#38bdf8",
     shape: "circle",
     position: "belowBar"
   };
@@ -5349,7 +5452,8 @@ function evaluateChartStrategies({
   multiTfBars = null,
   scanMode = "live",
   skipConditions = true,
-  newsEvents = []
+  newsEvents = [],
+  runtimeState: runtimeStateInput = {}
 } = {}) {
   const normalizedBars = Array.isArray(bars) ? bars : [];
   const normalizedStrategies = (Array.isArray(strategies) ? strategies : []).filter(
@@ -5409,6 +5513,7 @@ function evaluateChartStrategies({
         const barTimeUnix = Number(normalizedBars[index]?.time || 0);
         const currentSession = inferSessionName(barTimeUnix);
         const runtimeState = {
+          ...(runtimeStateInput && typeof runtimeStateInput === "object" ? runtimeStateInput : {}),
           atr: atrValues[index],
           session: currentSession,
           signalsInSession: sessionSignalCounts.get(currentSession) || 0,
@@ -5465,7 +5570,9 @@ function evaluateChartStrategies({
           strategyDescription: String(strategy?.description || "").trim(),
           eventId: String(event.id || "").trim(),
           eventName: String(event.name || event.id || "Rule").trim() || "Rule",
-          eventBias: String(event.bias || "").trim(),
+          eventBias: String(
+            event.bias || event.outputs?.bias || ruleEvent?.bias || ""
+          ).trim(),
           eventPriority: String(event.priority || "").trim(),
           ruleDefinition: event?.when && typeof event.when === "object" ? event.when : null,
           ruleEvent,
@@ -5527,8 +5634,15 @@ function evaluateChartStrategies({
           const markerMeta = resolveStrategyMarkerMeta(
             hit.actions,
             hit.eventName,
-            event.bias,
-            hit.latestArtifact
+            hit.eventBias || hit.ruleEvent?.bias || event.bias || event.outputs?.bias || "",
+            hit.latestArtifact,
+            {
+              bars: normalizedBars,
+              eventIndex: index,
+              eventTimeSec: hit.barTimeUnix,
+              timeframe: chartTf || strategyTf || tf,
+              eventPrice: hit.latestArtifact?.price ?? hit.latestArtifact?.payload?.level ?? hit.barClose ?? null
+            }
           );
           hit.displayText = buildChartStrategyHitMessage(hit);
           hit.markerText = hit.strategyName;
@@ -5621,5 +5735,6 @@ function collectContextualStrategyTradePlans({
   buildStrategyPlanNote,
   collectContextualStrategyTradePlans,
   evaluateChartStrategies,
-  groupArtifactsBySourceTf
+  groupArtifactsBySourceTf,
+  resolveConfirmedPostEventDirection
 });

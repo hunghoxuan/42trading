@@ -1,6 +1,10 @@
 import { NotificationFacade } from "../modules/42trade/services/NotificationFacade";
 import { formatNonJsonApiResponseError } from "../shared/utils/apiErrors.js";
 import * as authPolicy from "../shared/utils/authPolicy.js";
+import {
+  normalizeActivityResult,
+  resultStatusToToastType,
+} from "../shared/utils/activityResult.js";
 
 const ENV_API_BASE = String(import.meta.env.VITE_API_BASE || "").trim();
 const ENV_API_PROXY_TARGET = String(
@@ -281,8 +285,10 @@ function buildResponseTiming(res, data, clientDurationMs) {
 
 function attachResponseMeta(data, meta, timing) {
   if (!data || typeof data !== "object" || Array.isArray(data)) return data;
+  const result = normalizeActivityResult(data, { ok: data?.ok !== false });
   return {
     ...data,
+    result,
     _timing: {
       ...(data._timing && typeof data._timing === "object" ? data._timing : {}),
       ...timing,
@@ -316,15 +322,24 @@ function dispatchApiResponseNotification(data, meta) {
       : null;
   if (!notification) return;
   try {
+    const result = normalizeActivityResult(data, { ok: data?.ok !== false });
     const detail = {
       ...notification,
+      result,
+      type:
+        notification.type ||
+        resultStatusToToastType(result.status),
+      status: notification.status || result.status,
+      message: String(notification.message || result.message || "").trim(),
       data:
         notification.data && typeof notification.data === "object"
           ? {
               ...notification.data,
+              result,
               _request: meta,
             }
           : {
+              result,
               _request: meta,
             },
     };
@@ -356,6 +371,14 @@ function recordApiError(meta, message) {
       dbDurationMs: meta.timing?.db_ms ?? null,
       extra: `${meta.method} ${meta.path}`,
       error: message,
+      result: normalizeActivityResult(
+        {
+          ok: false,
+          message,
+          errors: [{ code: "api_error", message }],
+        },
+        { ok: false },
+      ),
       data: {
         method: meta.method,
         path: meta.path,
@@ -455,6 +478,10 @@ async function requestJson(
     try {
       const reqHeaders = { ...headers };
       applyRuntimeHeaders(reqHeaders);
+      const isFormDataBody = typeof FormData !== "undefined" && body instanceof FormData;
+      if (isFormDataBody) {
+        delete reqHeaders["Content-Type"];
+      }
       const options = {
         method,
         signal: ctrl.signal,
@@ -462,7 +489,9 @@ async function requestJson(
         headers: reqHeaders,
       };
       if (cache) options.cache = cache;
-      if (body !== undefined) options.body = JSON.stringify(body || {});
+      if (body !== undefined) {
+        options.body = isFormDataBody ? body : JSON.stringify(body || {});
+      }
       return await fetch(url, options);
     } catch (err) {
       if (err?.name === "AbortError") {
@@ -1310,6 +1339,19 @@ export const api = {
     get(
       `/mt5/filters/symbols${userId ? `?user_id=${encodeURIComponent(userId)}` : ""}`,
     ),
+  brokerSymbolMetadata: (params = {}) => {
+    const symbol = String(params?.symbol || "").trim();
+    const query = buildQueryString({
+      provider: params?.provider,
+      account_id: params?.account_id || params?.accountId,
+    });
+    const path = symbol
+      ? `/api/broker/symbol-metadata/${encodeURIComponent(symbol)}`
+      : "/api/broker/symbol-metadata";
+    return get(query ? `${path}?${query}` : path);
+  },
+  brokerSymbolMetadataCalibrate: (payload = {}) =>
+    post("/api/broker/symbol-metadata/calibrate", payload),
   filtersAdvanced: (userId = "") =>
     get(
       `/mt5/filters/advanced${userId ? `?user_id=${encodeURIComponent(userId)}` : ""}`,
@@ -1407,9 +1449,10 @@ export const api = {
   createEvent: (payload = {}) => post("/mt5/api/events/create", payload),
   deleteEvents: () => post("/mt5/api/events/delete", {}),
   systemSources: () => get("/api/system/sources"),
-  systemBrowserTree: (scope = "files", userId = "") => {
+  systemBrowserTree: (scope = "files", userId = "", showFiles = false) => {
     const q = new URLSearchParams({ scope: String(scope || "files") });
     if (userId) q.set("userId", String(userId));
+    if (showFiles) q.set("showFiles", "true");
     return get(`/api/system/browser/tree?${q.toString()}`);
   },
   systemBrowserList: ({
@@ -1447,6 +1490,21 @@ export const api = {
     });
     if (userId) q.set("userId", String(userId));
     return getBlob(`/api/system/browser/download?${q.toString()}`);
+  },
+  systemBrowserUpload: async ({
+    scope = "files",
+    userId = "",
+    dir = "",
+    file,
+  } = {}) => {
+    const params = new URLSearchParams({
+      scope: String(scope || "files"),
+      dir: String(dir || ""),
+    });
+    if (userId) params.set("userId", String(userId));
+    const form = new FormData();
+    form.append("file", file);
+    return post(`/api/system/browser/upload?${params.toString()}`, form);
   },
   systemLogFile: (source, id, file, limit = 200) =>
     get(
@@ -1609,11 +1667,17 @@ export const api = {
       await get(buildV2TradePath(tradeSid, "/snapshots", options)),
       options,
     ),
-  tradeLogs: (tradeId) =>
-    get(buildV2TradePath(tradeId, "/logs")),
-  tradeLogContent: (tradeId, fileName) =>
+  tradeLogs: (tradeId, options = {}) =>
+    get(buildV2TradePath(tradeId, "/logs", options)),
+  deleteTradeLogs: (tradeId, options = {}) =>
+    del(buildV2TradePath(tradeId, "/logs", options)),
+  tradeLogContent: (tradeId, fileName, options = {}) =>
     get(
-      buildV2TradePath(tradeId, `/logs/${encodeURIComponent(fileName)}/content`),
+      buildV2TradePath(
+        tradeId,
+        `/logs/${encodeURIComponent(fileName)}/content`,
+        options,
+      ),
     ),
   chartSnapshotsDelete: (payload = {}) =>
     post("/api/chart/snapshots/delete", payload),

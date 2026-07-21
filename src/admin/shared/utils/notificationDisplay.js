@@ -1,3 +1,5 @@
+import { normalizeActivityResult } from "./activityResult.js";
+
 function cleanText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
@@ -48,18 +50,20 @@ export function normalizeServerEntry(item) {
   var eventName = String((item && item.event) || "");
   var message = String((item && item.message) || "");
   var errorText = String((item && item.error) || "");
-  var resultText = String((item && item.result) || "");
   var level = String((item && item.type) || "info");
   var payload = (item && item.data) || item || {};
-  var inferredStatus =
-    String((item && item.status) || "").trim().toLowerCase() ||
-    (String(level).toLowerCase() === "error" ||
-    errorText.trim() ||
-    (resultText && resultText.trim().toLowerCase() === "error") ||
-    /\b(fail(?:ed)?|error)\b/i.test(eventName) ||
-    /\b(fail(?:ed)?|error)\b/i.test(message)
-      ? "error"
-      : "ok");
+  var result = normalizeActivityResult(
+    {
+      ...(payload && typeof payload === "object" ? payload : {}),
+      ...(item && typeof item === "object" ? item : {}),
+      message:
+        String((item && item.message) || "").trim() ||
+        String((payload && payload.message) || "").trim(),
+      error: errorText,
+    },
+    { ok: item?.ok !== false },
+  );
+  var inferredStatus = String(result.status || "").trim().toLowerCase() || "info";
   var requestId =
     String(
       (item && (item.request_id || item.requestId)) ||
@@ -78,12 +82,12 @@ export function normalizeServerEntry(item) {
     requestId: requestId,
     type: eventTypeToHubType(eventName),
     status: inferredStatus,
-    result: resultText || inferredStatus,
+    result: result,
     createdAt: createdAt,
     completedAt: createdAt,
     symbol: String((item && item.symbol) || ""),
-    extra: message,
-    message: message,
+    extra: String(result.message || message || "").trim(),
+    message: String(result.message || message || "").trim(),
     event: eventName,
     level: level,
     source: "server",
@@ -123,19 +127,22 @@ export function normalizeServerEntry(item) {
 }
 
 function normalizeResultLabel(entry) {
-  var rawStatus = String((entry && entry.status) || "").trim().toLowerCase();
+  var rawStatus = String(
+    (entry && entry.result && entry.result.status) || (entry && entry.status) || "",
+  )
+    .trim()
+    .toLowerCase();
   var level = String((entry && entry.level) || "").trim().toLowerCase();
   if (rawStatus === "running") return "warning";
   if (
     rawStatus === "error" ||
-    rawStatus === "failed" ||
-    rawStatus === "fail" ||
     level === "error" ||
     cleanText(entry && entry.error)
   ) {
     return "fail";
   }
-  if (level === "warning" || rawStatus === "warning") return "warning";
+  if (level === "warning" || rawStatus === "warning" || rawStatus === "warn")
+    return "warning";
   return "ok";
 }
 
@@ -146,8 +153,12 @@ function normalizeSourceTypeLabel(value) {
 }
 
 export function isErrorEntry(entry) {
-  var status = String((entry && entry.status) || "").trim().toLowerCase();
-  if (status === "error" || status === "failed") return true;
+  var status = String(
+    (entry && entry.result && entry.result.status) || (entry && entry.status) || "",
+  )
+    .trim()
+    .toLowerCase();
+  if (status === "error") return true;
   var level = String((entry && entry.level) || "").trim().toLowerCase();
   if (level === "error") return true;
   var errorText = cleanText(entry && entry.error);

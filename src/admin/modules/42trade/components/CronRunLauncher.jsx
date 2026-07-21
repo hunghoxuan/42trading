@@ -25,7 +25,7 @@ export default function CronRunLauncher({
           items={normalizedItems}
           selectedItems={value}
           onSelectedItemsChange={onChange}
-          onClick={() => onRun?.()}
+          onClick={(nextValue) => onRun?.(nextValue)}
           buttonText={loading ? runningLabel : runLabel}
           disabled={!hasItems || disabled}
           loading={loading}

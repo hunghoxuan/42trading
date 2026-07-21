@@ -1,8 +1,8 @@
 {
-  "key": "artifact_suggested_levels_v1",
-  "name": "PA Levels v1",
+  "key": "artifact_suggested_levels_v2_limit_body_mid",
+  "name": "PA Levels v2 LMT Mid",
   "kind": "preset",
-  "description": "Price-action trigger strategy that reuses the shared chart artifact scoring logic to derive SL and TP.",
+  "description": "Clone of Artifact Suggested Levels v2 that places buy/sell limit orders at the midpoint of the latest candle body instead of entering market at close.",
   "engine_version": "42trade.strategy.v2",
   "status": "active",
   "market": {
@@ -11,14 +11,14 @@
   "params": {
     "reward_rr_floor": 1.5,
     "suggested_level_tfs": "all",
-    "suggested_sl_rank": 1,
-    "suggested_tp_rank": 1
+    "suggested_sl_rank": 2,
+    "suggested_tp_rank": 2
   },
   "indicators": [],
   "rules": [
     {
-      "id": "bullish_artifact_suggested",
-      "name": "Buy",
+      "id": "bullish_artifact_suggested_limit_body_mid",
+      "name": "Buy Limit",
       "bias": "bullish",
       "priority": "medium",
       "when": {
@@ -61,13 +61,27 @@
       },
       "actions": [
         {
-          "id": "buy_market_plan",
+          "id": "buy_limit_body_mid_plan",
           "action": "trade",
-          "label": "Buy",
+          "label": "Buy Limit",
           "trade_plan": {
             "direction": "buy",
-            "type": "market",
-            "entry": "bar.close",
+            "type": "limit",
+            "entry": {
+              "/": [
+                {
+                  "+": [
+                    {
+                      "var": "bar.open"
+                    },
+                    {
+                      "var": "bar.close"
+                    }
+                  ]
+                },
+                2
+              ]
+            },
             "sl": "suggested_trade_sl(buy, params.suggested_level_tfs, params.reward_rr_floor, params.suggested_sl_rank, params.suggested_tp_rank)",
             "tp": "suggested_trade_tp(buy, params.suggested_level_tfs, params.reward_rr_floor, params.suggested_sl_rank, params.suggested_tp_rank)"
           }
@@ -75,8 +89,8 @@
       ]
     },
     {
-      "id": "bearish_artifact_suggested",
-      "name": "Sell",
+      "id": "bearish_artifact_suggested_limit_body_mid",
+      "name": "Sell Limit",
       "bias": "bearish",
       "priority": "medium",
       "when": {
@@ -119,13 +133,27 @@
       },
       "actions": [
         {
-          "id": "sell_market_plan",
+          "id": "sell_limit_body_mid_plan",
           "action": "trade",
-          "label": "Sell",
+          "label": "Sell Limit",
           "trade_plan": {
             "direction": "sell",
-            "type": "market",
-            "entry": "bar.close",
+            "type": "limit",
+            "entry": {
+              "/": [
+                {
+                  "+": [
+                    {
+                      "var": "bar.open"
+                    },
+                    {
+                      "var": "bar.close"
+                    }
+                  ]
+                },
+                2
+              ]
+            },
             "sl": "suggested_trade_sl(sell, params.suggested_level_tfs, params.reward_rr_floor, params.suggested_sl_rank, params.suggested_tp_rank)",
             "tp": "suggested_trade_tp(sell, params.suggested_level_tfs, params.reward_rr_floor, params.suggested_sl_rank, params.suggested_tp_rank)"
           }
@@ -142,7 +170,9 @@
   "metadata": {
     "strategy_type": "artifact_suggested_levels",
     "signal_source": "chart_artifacts",
-    "preview_current_bar_only": true
+    "entry_model": "limit_body_mid",
+    "preview_current_bar_only": true,
+    "cloned_from": "artifact_suggested_levels_v2"
   },
   "min_bars": 20,
   "conditions": {

@@ -17,6 +17,7 @@ import {
 } from "../../../shared/utils/tradeDetailUtils";
 const SymbolChart = lazy(() => import("./charts/SymbolChart"));
 import { SmartContent } from "../../../shared/components/SmartContent.jsx";
+import JsonTreeView from "../../../shared/components/JsonTreeView.jsx";
 import MobileCollapseSection from "../../../shared/components/MobileCollapseSection";
 import TradePriceInline from "./TradePriceInline";
 const TradeDraftTab = lazy(() => import("./TradeDraftTab"));
@@ -68,6 +69,22 @@ const MODE_PRESETS = {
     historyEmptyText: "No trade events.",
   },
 };
+
+function normalizeJsonObject(value) {
+  if (!value) return null;
+  if (typeof value === "object" && !Array.isArray(value)) return value;
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 const HASH_TO_CHART_MODE = {
   chart: "live",
@@ -1469,17 +1486,14 @@ export default function TradeDetailCard({
   const [selectedTfs, setSelectedTfs] = useState([]);
   const [selectedPlanId, setSelectedPlanId] = useState("main");
   const [planDrafts, setPlanDrafts] = useState({});
-  const responseRaw =
-    response?.raw && typeof response.raw === "object" ? response.raw : {};
+  const responseRaw = normalizeJsonObject(response?.raw) || {};
   const responseRowRaw =
-    response?.raw_json && typeof response.raw_json === "object"
-      ? response.raw_json
-      : response?.metadata?.raw_json &&
-          typeof response.metadata.raw_json === "object"
-        ? response.metadata.raw_json
-        : response?.raw && typeof response.raw === "object"
-          ? response.raw
-          : {};
+    normalizeJsonObject(response?.raw_json) ||
+    normalizeJsonObject(response?.rawJson) ||
+    normalizeJsonObject(response?.metadata?.raw_json) ||
+    normalizeJsonObject(response?.metadata?.rawJson) ||
+    normalizeJsonObject(response?.raw) ||
+    {};
   const cleanRowJson = useMemo(() => {
     if (!responseRowRaw || typeof responseRowRaw !== "object") return {};
     const cleaned = {};
@@ -3199,192 +3213,10 @@ export default function TradeDetailCard({
                     ))}
                   </div>
 
-                  {[
-                    ["Context", selectedAiPlan.context],
-                    ["Execution", selectedAiPlan.execution_plan],
-                    ["Risk Management", selectedAiPlan.risk_management],
-                  ].map(([title, section]) => {
-                    const rows = compactInfoEntries(section);
-                    if (!rows.length) return null;
-                    return (
-                      <div key={title} style={{ marginBottom: 14 }}>
-                        <div
-                          style={{
-                            fontSize: 10,
-                            textTransform: "uppercase",
-                            color: "var(--muted)",
-                            marginBottom: 6,
-                            borderBottom: "1px solid rgba(255,255,255,0.06)",
-                            paddingBottom: 3,
-                          }}
-                        >
-                          {title}
-                        </div>
-                        <div
-                          style={{
-                            display: "grid",
-                            gridTemplateColumns: "repeat(5,minmax(120px,1fr))",
-                            gap: 8,
-                          }}
-                        >
-                          {rows.map(([k, v]) => (
-                            (() => {
-                              const showSemanticPill =
-                                typeof v === "boolean" ||
-                                [
-                                  "yes",
-                                  "no",
-                                  "true",
-                                  "false",
-                                  "high",
-                                  "low",
-                                ].includes(String(v).toLowerCase());
-                              const badgeStyle =
-                                isDecisionField(k) || title === "Execution"
-                                  ? decisionBadgeStyle(v)
-                                  : showSemanticPill
-                                    ? semanticBadgeStyle(v)
-                                    : null;
-                              return (
-                            <div
-                              key={k}
-                              style={{
-                                border: "1px solid rgba(255,255,255,0.07)",
-                                borderRadius: 6,
-                                padding: 8,
-                                background: "rgba(255,255,255,0.02)",
-                                gridColumn:
-                                  typeof v === "object" ? "1 / -1" : "auto",
-                              }}
-                            >
-                              <div
-                                className="minor-text"
-                                style={{ fontSize: 9 }}
-                              >
-                                {humanizeInfoKey(k)}
-                              </div>
-                              <div style={{ fontSize: 11, marginTop: 3 }}>
-                                <span
-                                  style={{
-                                    display: "inline-block",
-                                    padding:
-                                      badgeStyle
-                                        ? "1px 6px"
-                                        : 0,
-                                    borderRadius:
-                                      badgeStyle
-                                        ? 999
-                                        : 0,
-                                    ...(badgeStyle || {}),
-                                  }}
-                                >
-                                  {renderInfoValue(v)}
-                                </span>
-                              </div>
-                            </div>
-                              );
-                            })()
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                  {selectedAiPlan.analysis &&
-                    typeof selectedAiPlan.analysis === "object" && (
-                      <div style={{ marginBottom: 16 }}>
-                        <div
-                          style={{
-                            fontSize: 10,
-                            textTransform: "uppercase",
-                            color: "var(--muted)",
-                            marginBottom: 6,
-                            borderBottom: "1px solid rgba(255,255,255,0.06)",
-                            paddingBottom: 3,
-                          }}
-                        >
-                          Analysis
-                        </div>
-                        <div
-                          style={{
-                            display: "grid",
-                            gridTemplateColumns: "repeat(4,minmax(140px,1fr))",
-                            gap: 8,
-                          }}
-                        >
-                          {compactInfoEntries(selectedAiPlan.analysis).map(
-                            ([groupKey, groupVal]) => (
-                              <div
-                                key={groupKey}
-                                style={{
-                                  border: "1px solid rgba(255,255,255,0.07)",
-                                  borderRadius: 6,
-                                  padding: 8,
-                                  background: "rgba(255,255,255,0.02)",
-                                }}
-                              >
-                                <div
-                                  style={{
-                                    fontSize: 10,
-                                    fontWeight: 700,
-                                    marginBottom: 6,
-                                  }}
-                                >
-                                  {humanizeInfoKey(groupKey)}
-                                </div>
-                                {compactInfoEntries(groupVal).map(([k, v]) => (
-                                  (() => {
-                                    const showSemanticPill =
-                                      typeof v === "boolean" ||
-                                      [
-                                        "yes",
-                                        "no",
-                                        "true",
-                                        "false",
-                                        "high",
-                                        "low",
-                                      ].includes(String(v).toLowerCase());
-                                    const badgeStyle = isDecisionField(k)
-                                      ? decisionBadgeStyle(v)
-                                      : showSemanticPill
-                                        ? semanticBadgeStyle(v)
-                                        : null;
-                                    return (
-                                      <div key={k} style={{ marginBottom: 6 }}>
-                                        <span
-                                          className="minor-text"
-                                          style={{ fontSize: 9 }}
-                                        >
-                                          {humanizeInfoKey(k)}
-                                        </span>
-                                        <div
-                                          style={{ fontSize: 11, marginTop: 1 }}
-                                        >
-                                          <span
-                                            style={{
-                                              display: "inline-block",
-                                              padding: badgeStyle
-                                                ? "1px 6px"
-                                                : 0,
-                                              borderRadius: badgeStyle
-                                                ? 999
-                                                : 0,
-                                              ...(badgeStyle || {}),
-                                            }}
-                                          >
-                                            {renderInfoValue(v)}
-                                          </span>
-                                        </div>
-                                      </div>
-                                    );
-                                  })()
-                                ))}
-                              </div>
-                            ),
-                          )}
-                        </div>
-                      </div>
-                    )}
+                  <JsonTreeView
+                    value={selectedAiPlan}
+                    className="trade-detail-json-tree"
+                  />
                 </div>
               )}
               {/* ── AI Multi-Timeframe Analysis (at top) ── */}
@@ -4097,7 +3929,11 @@ export default function TradeDetailCard({
               const normalizedMode = String(nextMode || "live").trim().toLowerCase();
               setChartModeTab(normalizedMode);
               setChartAutoReplayRequested(false);
-              if (mainTab === "chart") {
+              const currentHashTab = resolveDetailHashState(
+                typeof window !== "undefined" ? String(window.location.hash || "") : "",
+                defaultMainTab,
+              ).tab;
+              if (mainTab === "chart" && currentHashTab === "chart") {
                 window.location.hash = hashForDetailState("chart", normalizedMode);
               }
             }}
@@ -4451,6 +4287,9 @@ export default function TradeDetailCard({
               response?.id ||
               null
             }
+            apiScope={tradePlan?.apiScope || chart?.apiScope || ""}
+            events={Array.isArray(history?.items) ? history.items : []}
+            renderEvent={history?.renderItem}
             emptyText={preset.historyEmptyText}
           />
         </Suspense>

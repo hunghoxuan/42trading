@@ -393,8 +393,125 @@ function asFiniteNumber(value, fallback = null) {
   return Number.isFinite(num) ? num : fallback;
 }
 
+function asOptionalFiniteNumber(value, fallback = null) {
+  if (value === undefined || value === null || value === "") return fallback;
+  return asFiniteNumber(value, fallback);
+}
+
 function roundMoney(value) {
   return round(value, 2);
+}
+
+function normalizeSymbolKey(value = "") {
+  return String(value || "").trim().toUpperCase();
+}
+
+function normalizeExecutionMetadata(input = {}, fallback = {}) {
+  const raw = input && typeof input === "object" && !Array.isArray(input)
+    ? input
+    : {};
+  const data = raw.data && typeof raw.data === "object" && !Array.isArray(raw.data)
+    ? raw.data
+    : raw;
+  const symbol = normalizeSymbolKey(data.symbol || fallback.symbol);
+  if (!symbol) return null;
+  const pipSize = asOptionalFiniteNumber(data.pip_size ?? data.pipSize, null);
+  const spreadPips = asOptionalFiniteNumber(data.spread_pips ?? data.spreadPips ?? data.spread, null);
+  const minStopPips = asOptionalFiniteNumber(data.min_stop_pips ?? data.minStopPips, null);
+  const maxStopPips = asOptionalFiniteNumber(data.max_stop_pips ?? data.maxStopPips, null);
+  return {
+    provider: String(data.provider || fallback.provider || "").trim() || null,
+    account_id: String(data.account_id || fallback.account_id || "").trim() || null,
+    symbol,
+    broker_symbol: normalizeSymbolKey(data.broker_symbol || data.brokerSymbol || symbol),
+    pip_size: pipSize,
+    pip_value: asOptionalFiniteNumber(data.pip_value ?? data.pipValue, null),
+    lot_size: asOptionalFiniteNumber(data.lot_size ?? data.lotSize, null),
+    min_volume_units: asOptionalFiniteNumber(data.min_volume_units ?? data.minVolumeUnits, null),
+    max_volume_units: asOptionalFiniteNumber(data.max_volume_units ?? data.maxVolumeUnits, null),
+    volume_step_units: asOptionalFiniteNumber(
+      data.volume_step_units ?? data.step_volume_units ?? data.volumeStepUnits,
+      null,
+    ),
+    min_stop_pips: minStopPips,
+    min_stop_price_distance: asOptionalFiniteNumber(
+      data.min_stop_price_distance ?? data.minStopPriceDistance,
+      pipSize && minStopPips ? pipSize * minStopPips : null,
+    ),
+    max_stop_pips: maxStopPips,
+    max_stop_price_distance: asOptionalFiniteNumber(
+      data.max_stop_price_distance ?? data.maxStopPriceDistance,
+      pipSize && maxStopPips ? pipSize * maxStopPips : null,
+    ),
+    spread_pips: spreadPips,
+    spread:
+      pipSize && spreadPips != null
+        ? pipSize * spreadPips
+        : asOptionalFiniteNumber(data.spread_abs ?? data.spreadAbs, null),
+    commission_per_lot: asOptionalFiniteNumber(
+      data.commission_per_lot ?? data.commissionPerLot,
+      null,
+    ),
+    source: String(data.source || fallback.source || "").trim() || null,
+    updated_at: data.updated_at || raw.updated_at || null,
+  };
+}
+
+async function loadMarketExecutionMetadata(userId, symbol) {
+  const symbolKey = normalizeSymbolKey(symbol);
+  if (!symbolKey) return null;
+  const candidates = [];
+  const userDir = userRootDir(userId);
+  const runtimeDir = path.join(userDir, "broker_symbol_metadata__runtime");
+  try {
+    const entries = await fsp.readdir(runtimeDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const objectId = String(entry.name || "");
+      if (!objectId.toUpperCase().endsWith(`__${symbolKey}`)) continue;
+      const parsed = await readJsonFile(path.join(runtimeDir, entry.name, "data.json"), null);
+      const normalized = normalizeExecutionMetadata(parsed, {
+        symbol: symbolKey,
+        source: "broker_symbol_metadata__runtime",
+      });
+      if (normalized) candidates.push(normalized);
+    }
+  } catch (error) {
+    if (!error || error.code !== "ENOENT") throw error;
+  }
+
+  const tfMetadataRoot = path.join(
+    barsStorage.getDataRoot ? barsStorage.getDataRoot() : path.resolve(__dirname, "..", "..", "..", "..", "..", "data"),
+    "market_data",
+    symbolKey,
+    "metadata",
+  );
+  for (const fileName of ["broker.json", "symbol.json", "calibration.json"]) {
+    const parsed = await readJsonFile(path.join(tfMetadataRoot, fileName), null);
+    const normalized = normalizeExecutionMetadata(parsed, {
+      symbol: symbolKey,
+      source: `market_data/${fileName}`,
+    });
+    if (normalized) candidates.push(normalized);
+  }
+
+  return candidates.reduce((best, item) => {
+    if (!best) return item;
+    const bestScore = [
+      best.pip_size,
+      best.min_stop_pips,
+      best.spread_pips,
+      best.pip_value,
+    ].filter((value) => value != null).length;
+    const itemScore = [
+      item.pip_size,
+      item.min_stop_pips,
+      item.spread_pips,
+      item.pip_value,
+    ].filter((value) => value != null).length;
+    if (itemScore !== bestScore) return itemScore > bestScore ? item : best;
+    return String(item.updated_at || "") >= String(best.updated_at || "") ? item : best;
+  }, null);
 }
 
 function tradeSortTimeMs(trade = {}) {
@@ -602,6 +719,14 @@ function resolveExecutionOptions(strategy = {}, options = {}) {
     options.brokerCalibration && typeof options.brokerCalibration === "object"
       ? options.brokerCalibration
       : null;
+  const marketMetadata =
+    options.marketMetadata && typeof options.marketMetadata === "object"
+      ? options.marketMetadata
+      : null;
+  const calibration = {
+    ...(marketMetadata || {}),
+    ...(brokerCalibration || {}),
+  };
   const initialEquity = Math.max(
     1,
     asFiniteNumber(
@@ -638,9 +763,23 @@ function resolveExecutionOptions(strategy = {}, options = {}) {
       options.spreadAbs ??
         risk.spread_abs ??
         risk.spreadAbs ??
-        brokerCalibration?.spread,
+        calibration?.spread,
       0,
     ),
+  );
+  const pipSize = asOptionalFiniteNumber(
+    options.pipSize ??
+      risk.pip_size ??
+      risk.pipSize ??
+      calibration?.pip_size,
+    null,
+  ) || null;
+  const spreadPips = asOptionalFiniteNumber(
+    options.spreadPips ??
+      risk.spread_pips ??
+      risk.spreadPips ??
+      calibration?.spread_pips,
+    null,
   );
   const spreadBps = Math.max(
     0,
@@ -675,7 +814,7 @@ function resolveExecutionOptions(strategy = {}, options = {}) {
       options.commissionPerLot ??
         risk.commission_per_lot ??
         risk.commissionPerLot ??
-        brokerCalibration?.commission_per_lot,
+        calibration?.commission_per_lot,
       0,
     ),
   );
@@ -714,6 +853,18 @@ function resolveExecutionOptions(strategy = {}, options = {}) {
       ),
     ),
   );
+  const pendingOrderMaxBars = Math.max(
+    0,
+    Math.trunc(
+      asFiniteNumber(
+        options.pendingOrderMaxBars ??
+          options.pending_order_max_bars ??
+          risk.pending_order_max_bars ??
+          risk.pendingOrderMaxBars,
+        20,
+      ),
+    ),
+  );
   const direction = normalizeBacktestDirection(
     options.direction ?? strategy?.market?.direction,
     "all",
@@ -735,47 +886,88 @@ function resolveExecutionOptions(strategy = {}, options = {}) {
     partialAtR,
     partialCloseFraction,
     maxBarsInTrade,
+    pendingOrderMaxBars,
     direction,
     session,
     brokerCalibration,
-    pipSize:
-      asFiniteNumber(
-        options.pipSize ??
-          risk.pip_size ??
-          risk.pipSize ??
-          brokerCalibration?.pip_size,
-        null,
-      ) || null,
+    marketMetadata,
+    pipSize,
+    pipValue: asOptionalFiniteNumber(
+      options.pipValue ??
+        risk.pip_value ??
+        risk.pipValue ??
+        calibration?.pip_value,
+      null,
+    ),
+    minStopPips: asOptionalFiniteNumber(
+      options.minStopPips ??
+        risk.min_stop_pips ??
+        risk.minStopPips ??
+        calibration?.min_stop_pips,
+      null,
+    ),
+    minStopPriceDistance: asOptionalFiniteNumber(
+      options.minStopPriceDistance ??
+        risk.min_stop_price_distance ??
+        risk.minStopPriceDistance ??
+        calibration?.min_stop_price_distance,
+      pipSize && asOptionalFiniteNumber(calibration?.min_stop_pips, null)
+        ? pipSize * asOptionalFiniteNumber(calibration?.min_stop_pips, 0)
+        : null,
+    ),
+    maxStopPips: asOptionalFiniteNumber(
+      options.maxStopPips ??
+        risk.max_stop_pips ??
+        risk.maxStopPips ??
+        calibration?.max_stop_pips,
+      null,
+    ),
+    maxStopPriceDistance: asOptionalFiniteNumber(
+      options.maxStopPriceDistance ??
+        risk.max_stop_price_distance ??
+        risk.maxStopPriceDistance ??
+        calibration?.max_stop_price_distance,
+      pipSize && asOptionalFiniteNumber(calibration?.max_stop_pips, null)
+        ? pipSize * asOptionalFiniteNumber(calibration?.max_stop_pips, 0)
+        : null,
+    ),
+    spreadPips,
+    effectiveSpreadAbs:
+      spreadAbs > 0
+        ? spreadAbs
+        : pipSize && spreadPips != null
+          ? pipSize * spreadPips
+          : 0,
     lotSize:
-      asFiniteNumber(
+      asOptionalFiniteNumber(
         options.lotSize ??
           risk.lot_size ??
           risk.lotSize ??
-          brokerCalibration?.lot_size,
+          calibration?.lot_size,
         null,
       ) || null,
     volumeStepUnits:
-      asFiniteNumber(
+      asOptionalFiniteNumber(
         options.volumeStepUnits ??
           risk.volume_step_units ??
           risk.volumeStepUnits ??
-          brokerCalibration?.volume_step_units,
+          calibration?.volume_step_units,
         null,
       ) || null,
     minVolumeUnits:
-      asFiniteNumber(
+      asOptionalFiniteNumber(
         options.minVolumeUnits ??
           risk.min_volume_units ??
           risk.minVolumeUnits ??
-          brokerCalibration?.min_volume_units,
+          calibration?.min_volume_units,
         null,
       ) || null,
     maxVolumeUnits:
-      asFiniteNumber(
+      asOptionalFiniteNumber(
         options.maxVolumeUnits ??
           risk.max_volume_units ??
           risk.maxVolumeUnits ??
-          brokerCalibration?.max_volume_units,
+          calibration?.max_volume_units,
         null,
       ) || null,
     trailStages: normalizeTrailStages(
@@ -786,11 +978,48 @@ function resolveExecutionOptions(strategy = {}, options = {}) {
 }
 
 function resolveSpreadAmount(entryPrice, executionOptions) {
+  const effectiveSpread = Math.max(0, Number(executionOptions?.effectiveSpreadAbs || 0));
+  if (effectiveSpread > 0) return effectiveSpread;
   const directSpread = Math.max(0, Number(executionOptions?.spreadAbs || 0));
   if (directSpread > 0) return directSpread;
   const spreadBps = Math.max(0, Number(executionOptions?.spreadBps || 0));
   const basis = Math.abs(Number(entryPrice) || 0);
   return basis > 0 ? (basis * spreadBps) / 10000 : 0;
+}
+
+function resolveMinimumStopDistance(executionOptions = {}) {
+  const explicit = asOptionalFiniteNumber(executionOptions.minStopPriceDistance, null);
+  if (explicit != null && explicit > 0) return explicit;
+  const pipSize = asOptionalFiniteNumber(executionOptions.pipSize, null);
+  const minStopPips = asOptionalFiniteNumber(executionOptions.minStopPips, null);
+  return pipSize && minStopPips ? pipSize * minStopPips : 0;
+}
+
+function resolveMaximumStopDistance(executionOptions = {}) {
+  const explicit = asOptionalFiniteNumber(executionOptions.maxStopPriceDistance, null);
+  if (explicit != null && explicit > 0) return explicit;
+  const pipSize = asOptionalFiniteNumber(executionOptions.pipSize, null);
+  const maxStopPips = asOptionalFiniteNumber(executionOptions.maxStopPips, null);
+  return pipSize && maxStopPips ? pipSize * maxStopPips : 0;
+}
+
+function stopDistanceIsAllowed(entry, stopLoss, executionOptions = {}) {
+  const minDistance = resolveMinimumStopDistance(executionOptions);
+  const maxDistance = resolveMaximumStopDistance(executionOptions);
+  const distance = Math.abs(Number(entry) - Number(stopLoss));
+  if (!Number.isFinite(distance)) return false;
+  if (minDistance > 0 && distance + 1e-12 < minDistance) return false;
+  if (maxDistance > 0 && distance - 1e-12 > maxDistance) return false;
+  return true;
+}
+
+function limitOrderTouched(bar = {}, action = "", entry = null) {
+  const entryPrice = Number(entry);
+  if (!Number.isFinite(entryPrice)) return false;
+  if (String(action || "").toUpperCase() === "BUY") {
+    return Number(bar.low) <= entryPrice;
+  }
+  return Number(bar.high) >= entryPrice;
 }
 
 function adjustPriceForSide(rawPrice, action, spreadAmount, phase = "entry") {
@@ -1112,6 +1341,27 @@ function simulateSignalStrategy(bars, strategy, signalResolver, options = {}) {
   let equityPeak = execution.initialEquity;
   let maxDrawdownPct = 0;
   let openTrade = null;
+  let pendingOrder = null;
+
+  function resolvePlannedR(entryPrice, stopPrice, targetPrice) {
+    const riskDistance = Math.abs(Number(entryPrice) - Number(stopPrice));
+    const rewardDistance = Math.abs(Number(targetPrice) - Number(entryPrice));
+    if (!Number.isFinite(riskDistance) || riskDistance <= 0) return 0;
+    if (!Number.isFinite(rewardDistance) || rewardDistance <= 0) return 0;
+    return rewardDistance / riskDistance;
+  }
+
+  function resolvePlannedOutcomeR(plannedR, realizedNetPnl) {
+    const safePlannedR = Number(plannedR);
+    const safeRealizedNetPnl = Number(realizedNetPnl);
+    if (!Number.isFinite(safeRealizedNetPnl) || safeRealizedNetPnl === 0) {
+      return 0;
+    }
+    if (!Number.isFinite(safePlannedR) || safePlannedR <= 0) {
+      return safeRealizedNetPnl > 0 ? 1 : -1;
+    }
+    return safeRealizedNetPnl > 0 ? safePlannedR : -1;
+  }
 
   function pushTrade(trade) {
     trades.push(trade);
@@ -1122,13 +1372,121 @@ function simulateSignalStrategy(bars, strategy, signalResolver, options = {}) {
     maxDrawdownPct = Math.min(maxDrawdownPct, drawdownPct);
   }
 
+  function createOpenTradeFromSetup(setup = {}, fillBar = {}, fillIndex = 0) {
+    const action = String(setup.action || "").toUpperCase();
+    const entry = Number(setup.entry);
+    const sl = Number(setup.sl);
+    const tp = Number(setup.tp);
+    if (!action || !Number.isFinite(entry) || !Number.isFinite(sl) || !Number.isFinite(tp)) {
+      return null;
+    }
+    if (!stopDistanceIsAllowed(entry, sl, execution)) {
+      return null;
+    }
+    const accountEquityForTrade = execution.compoundEquity ? equity : execution.initialEquity;
+    const riskAmount =
+      execution.fixedRiskAmount !== null
+        ? Math.max(0.01, execution.fixedRiskAmount)
+        : Math.max(0.01, (accountEquityForTrade * execution.riskPercent) / 100);
+    const spreadAmount = resolveSpreadAmount(entry, execution);
+    const entryFill = adjustPriceForSide(entry, action, spreadAmount, "entry");
+    const stopFill = adjustPriceForSide(sl, action, spreadAmount, "exit");
+    const riskPerUnit = Math.abs(Number(entryFill) - Number(stopFill));
+    if (!Number.isFinite(riskPerUnit) || riskPerUnit <= 0) {
+      return null;
+    }
+    let quantity = Math.max(0.00000001, riskAmount / riskPerUnit);
+    quantity = quantizeToStep(
+      quantity,
+      execution.volumeStepUnits,
+      execution.minVolumeUnits,
+      execution.maxVolumeUnits,
+    );
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      return null;
+    }
+    const estimatedLots =
+      execution.lotSize && execution.lotSize > 0
+        ? quantity / execution.lotSize
+        : null;
+    const commissionPerSide =
+      execution.commissionFlat +
+      execution.commissionPerUnit * quantity +
+      (estimatedLots !== null ? execution.commissionPerLot * estimatedLots : 0);
+    const partialTp =
+      Number.isFinite(execution.partialAtR) && execution.partialAtR > 0
+        ? buildTargetPriceFromR(action, entry, sl, execution.partialAtR)
+        : null;
+    const breakEvenTrigger =
+      Number.isFinite(execution.breakEvenAtR) && execution.breakEvenAtR > 0
+        ? buildTargetPriceFromR(action, entry, sl, execution.breakEvenAtR)
+        : null;
+    return {
+      action,
+      orderType: setup.orderType || "market",
+      entry,
+      entryFill,
+      initialSl: sl,
+      activeSl: sl,
+      tp,
+      quantity,
+      estimatedLots,
+      riskAmount,
+      riskPercent: execution.riskPercent,
+      spreadAmount,
+      commissionPerSide,
+      entryIndex: fillIndex,
+      signalIndex: setup.signalIndex ?? fillIndex,
+      signalTime: setup.signalTime ?? fillBar.time,
+      openTime: fillBar.time,
+      accountEquityBefore: accountEquityForTrade,
+      breakEvenTrigger,
+      breakEvenArmed: false,
+      partialTp,
+      partialTaken: false,
+      partialCloseFraction: execution.partialCloseFraction,
+      remainingFraction: 1,
+      realizedGrossPnl: 0,
+      realizedNetPnl: 0,
+      realizedCommission: 0,
+      realizedR: 0,
+      plannedR: resolvePlannedR(entry, sl, tp),
+      weightedExitPrice: 0,
+      closedFractions: [],
+      maxBarsInTrade: execution.maxBarsInTrade,
+      trailStages: execution.trailStages.map((stage) => ({
+        ...stage,
+        triggerPrice: buildTargetPriceFromR(action, entry, sl, stage.trigger_r),
+        triggered: false,
+      })),
+      trailingStopUpdates: [],
+    };
+  }
+
   for (let i = 1; i < bars.length; i += 1) {
     const bar = bars[i];
     const signals = signalResolver(i) || {};
     const buySignal = Boolean(signals.buy);
     const sellSignal = Boolean(signals.sell);
 
+    if (!openTrade && pendingOrder) {
+      const pendingExpired =
+        execution.pendingOrderMaxBars > 0 &&
+        i - Number(pendingOrder.signalIndex || i) > execution.pendingOrderMaxBars;
+      if (pendingExpired) {
+        pendingOrder = null;
+      } else if (limitOrderTouched(bar, pendingOrder.action, pendingOrder.entry)) {
+        openTrade = createOpenTradeFromSetup(pendingOrder, bar, i);
+        pendingOrder = null;
+      }
+    }
+
     if (openTrade) {
+      // Signals are evaluated from the completed bar, so the fill bar itself
+      // cannot also be used to decide SL/TP outcomes without lookahead bias.
+      if (i <= Number(openTrade.entryIndex || 0)) {
+        continue;
+      }
       const isBuy = openTrade.action === "BUY";
       const slHit = isBuy ? bar.low <= openTrade.activeSl : bar.high >= openTrade.activeSl;
       const partialHit =
@@ -1210,6 +1568,7 @@ function simulateSignalStrategy(bars, strategy, signalResolver, options = {}) {
         pushTrade({
           sid: "",
           action: openTrade.action,
+          order_type: openTrade.orderType,
           entry: openTrade.entry,
           entry_fill: round(openTrade.entryFill),
           sl: round(openTrade.initialSl),
@@ -1240,8 +1599,21 @@ function simulateSignalStrategy(bars, strategy, signalResolver, options = {}) {
           estimated_lots: round(openTrade.estimatedLots, 8),
           risk_amount: roundMoney(openTrade.riskAmount),
           risk_percent: round(openTrade.riskPercent, 4),
+          realized_r: round(openTrade.realizedR, 5),
           r_multiple: round(openTrade.realizedR, 5),
+          planned_rr: round(openTrade.plannedR, 5),
+          planned_outcome_r: round(
+            resolvePlannedOutcomeR(openTrade.plannedR, openTrade.realizedNetPnl),
+            5,
+          ),
           spread_amount: round(openTrade.spreadAmount, 8),
+          spread_pips:
+            execution.pipSize && execution.pipSize > 0
+              ? round(openTrade.spreadAmount / execution.pipSize, 5)
+              : null,
+          pip_size: execution.pipSize,
+          min_stop_pips: execution.minStopPips,
+          max_stop_pips: execution.maxStopPips,
           spread_cost: round(
             Math.abs(openTrade.entryFill - openTrade.entry) * openTrade.quantity +
               Math.abs(Number(averageExit) - Number(openTrade.activeSl)) *
@@ -1307,6 +1679,7 @@ function simulateSignalStrategy(bars, strategy, signalResolver, options = {}) {
         pushTrade({
           sid: "",
           action: openTrade.action,
+          order_type: openTrade.orderType,
           entry: openTrade.entry,
           entry_fill: round(openTrade.entryFill),
           sl: round(openTrade.initialSl),
@@ -1336,15 +1709,28 @@ function simulateSignalStrategy(bars, strategy, signalResolver, options = {}) {
           quantity: round(openTrade.quantity, 8),
           estimated_lots: round(openTrade.estimatedLots, 8),
           risk_amount: roundMoney(openTrade.riskAmount),
-            risk_percent: round(openTrade.riskPercent, 4),
-            r_multiple: round(openTrade.realizedR, 5),
-            spread_amount: round(openTrade.spreadAmount, 8),
-            account_equity_before: roundMoney(openTrade.accountEquityBefore),
-            account_equity_after: roundMoney(equity + openTrade.realizedNetPnl),
-            closed_fractions: openTrade.closedFractions,
-            break_even_armed: openTrade.breakEvenArmed,
-            partial_taken: openTrade.partialTaken,
-            trailing_stop_updates: openTrade.trailingStopUpdates,
+          risk_percent: round(openTrade.riskPercent, 4),
+          realized_r: round(openTrade.realizedR, 5),
+          r_multiple: round(openTrade.realizedR, 5),
+          planned_rr: round(openTrade.plannedR, 5),
+          planned_outcome_r: round(
+            resolvePlannedOutcomeR(openTrade.plannedR, openTrade.realizedNetPnl),
+            5,
+          ),
+          spread_amount: round(openTrade.spreadAmount, 8),
+          spread_pips:
+            execution.pipSize && execution.pipSize > 0
+              ? round(openTrade.spreadAmount / execution.pipSize, 5)
+              : null,
+          pip_size: execution.pipSize,
+          min_stop_pips: execution.minStopPips,
+          max_stop_pips: execution.maxStopPips,
+          account_equity_before: roundMoney(openTrade.accountEquityBefore),
+          account_equity_after: roundMoney(equity + openTrade.realizedNetPnl),
+          closed_fractions: openTrade.closedFractions,
+          break_even_armed: openTrade.breakEvenArmed,
+          partial_taken: openTrade.partialTaken,
+          trailing_stop_updates: openTrade.trailingStopUpdates,
           });
           openTrade = null;
         } else if (
@@ -1371,6 +1757,7 @@ function simulateSignalStrategy(bars, strategy, signalResolver, options = {}) {
           pushTrade({
             sid: "",
             action: openTrade.action,
+            order_type: openTrade.orderType,
             entry: openTrade.entry,
             entry_fill: round(openTrade.entryFill),
             sl: round(openTrade.initialSl),
@@ -1401,8 +1788,21 @@ function simulateSignalStrategy(bars, strategy, signalResolver, options = {}) {
             estimated_lots: round(openTrade.estimatedLots, 8),
             risk_amount: roundMoney(openTrade.riskAmount),
             risk_percent: round(openTrade.riskPercent, 4),
+            realized_r: round(openTrade.realizedR, 5),
             r_multiple: round(openTrade.realizedR, 5),
+            planned_rr: round(openTrade.plannedR, 5),
+            planned_outcome_r: round(
+              resolvePlannedOutcomeR(openTrade.plannedR, openTrade.realizedNetPnl),
+              5,
+            ),
             spread_amount: round(openTrade.spreadAmount, 8),
+            spread_pips:
+              execution.pipSize && execution.pipSize > 0
+                ? round(openTrade.spreadAmount / execution.pipSize, 5)
+                : null,
+            pip_size: execution.pipSize,
+            min_stop_pips: execution.minStopPips,
+            max_stop_pips: execution.maxStopPips,
             account_equity_before: roundMoney(openTrade.accountEquityBefore),
             account_equity_after: roundMoney(equity + openTrade.realizedNetPnl),
             closed_fractions: openTrade.closedFractions,
@@ -1429,6 +1829,7 @@ function simulateSignalStrategy(bars, strategy, signalResolver, options = {}) {
       continue;
     }
     const entryCtx = signals.ctx || null;
+    const orderType = String(selectedTradePlan?.type || "market").trim().toLowerCase() || "market";
     const plannedEntry = resolveTradePlanFieldValue(selectedTradePlan?.entry, entryCtx);
     const entry = round(
       Number.isFinite(plannedEntry) ? plannedEntry : Number(bar.close),
@@ -1443,84 +1844,20 @@ function simulateSignalStrategy(bars, strategy, signalResolver, options = {}) {
       entryCtx,
       selectedTradePlan,
     );
-    const accountEquityForTrade = execution.compoundEquity ? equity : execution.initialEquity;
-    const riskAmount =
-      execution.fixedRiskAmount !== null
-        ? Math.max(0.01, execution.fixedRiskAmount)
-        : Math.max(0.01, (accountEquityForTrade * execution.riskPercent) / 100);
-    const spreadAmount = resolveSpreadAmount(entry, execution);
-    const entryFill = adjustPriceForSide(entry, action, spreadAmount, "entry");
-    const stopFill = adjustPriceForSide(sl, action, spreadAmount, "exit");
-    const riskPerUnit = Math.abs(Number(entryFill) - Number(stopFill));
-    if (!Number.isFinite(riskPerUnit) || riskPerUnit <= 0) {
-      continue;
-    }
-    let quantity = Math.max(
-      0.00000001,
-      riskAmount / riskPerUnit,
-    );
-    quantity = quantizeToStep(
-      quantity,
-      execution.volumeStepUnits,
-      execution.minVolumeUnits,
-      execution.maxVolumeUnits,
-    );
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      continue;
-    }
-    const estimatedLots =
-      execution.lotSize && execution.lotSize > 0
-        ? quantity / execution.lotSize
-        : null;
-    const commissionPerSide =
-      execution.commissionFlat +
-      execution.commissionPerUnit * quantity +
-      (estimatedLots !== null ? execution.commissionPerLot * estimatedLots : 0);
-    const partialTp =
-      Number.isFinite(execution.partialAtR) && execution.partialAtR > 0
-        ? buildTargetPriceFromR(action, entry, sl, execution.partialAtR)
-        : null;
-    const breakEvenTrigger =
-      Number.isFinite(execution.breakEvenAtR) && execution.breakEvenAtR > 0
-        ? buildTargetPriceFromR(action, entry, sl, execution.breakEvenAtR)
-        : null;
-    openTrade = {
+    const setup = {
       action,
+      orderType,
       entry,
-      entryFill,
-      initialSl: Number(sl),
-      activeSl: Number(sl),
+      sl: Number(sl),
       tp: Number(tp),
-      quantity,
-      estimatedLots,
-      riskAmount,
-      riskPercent: execution.riskPercent,
-      spreadAmount,
-      commissionPerSide,
-      entryIndex: i,
+      signalIndex: i,
       signalTime: bar.time,
-      openTime: bar.time,
-      accountEquityBefore: accountEquityForTrade,
-      breakEvenTrigger,
-      breakEvenArmed: false,
-      partialTp,
-      partialTaken: false,
-      partialCloseFraction: execution.partialCloseFraction,
-      remainingFraction: 1,
-      realizedGrossPnl: 0,
-      realizedNetPnl: 0,
-      realizedCommission: 0,
-      realizedR: 0,
-      weightedExitPrice: 0,
-      closedFractions: [],
-      maxBarsInTrade: execution.maxBarsInTrade,
-      trailStages: execution.trailStages.map((stage) => ({
-        ...stage,
-        triggerPrice: buildTargetPriceFromR(action, entry, sl, stage.trigger_r),
-        triggered: false,
-      })),
-      trailingStopUpdates: [],
     };
+    if (orderType === "limit") {
+      pendingOrder = setup;
+      continue;
+    }
+    openTrade = createOpenTradeFromSetup(setup, bar, i);
   }
 
   const details = {
@@ -1542,6 +1879,20 @@ function simulateSignalStrategy(bars, strategy, signalResolver, options = {}) {
     initial_equity: roundMoney(execution.initialEquity),
     final_equity: roundMoney(equity),
     max_drawdown_pct: round(maxDrawdownPct, 4),
+    execution_options: {
+      spread_amount: round(execution.effectiveSpreadAbs || execution.spreadAbs || 0, 8),
+      spread_pips: execution.spreadPips ?? null,
+      pip_size: execution.pipSize ?? null,
+      pip_value: execution.pipValue ?? null,
+      min_stop_pips: execution.minStopPips ?? null,
+      min_stop_price_distance: execution.minStopPriceDistance ?? null,
+      max_stop_pips: execution.maxStopPips ?? null,
+      max_stop_price_distance: execution.maxStopPriceDistance ?? null,
+      commission_flat: execution.commissionFlat,
+      commission_per_unit: execution.commissionPerUnit,
+      commission_per_lot: execution.commissionPerLot,
+      pending_order_max_bars: execution.pendingOrderMaxBars,
+    },
   };
   return options && options.returnDetails ? details : trades;
 }
@@ -2173,6 +2524,75 @@ function resolveIndicatorNumericSetting(value, strategy = {}, fallback = null) {
   return Number.isFinite(numeric) ? numeric : fallback;
 }
 
+function roundRuleContextLevelKey(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "";
+  return num.toFixed(6);
+}
+
+function extractRuleContextArtifactLevels(item = {}) {
+  const candidates = [
+    item?.price,
+    item?.payload?.level,
+    item?.payload?.source_swing_price,
+    item?.payload?.swept_swing_price,
+    item?.payload?.mitigation_price,
+    item?.price_high,
+    item?.price_low,
+  ]
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+  return Array.from(new Set(candidates.map((value) => roundRuleContextLevelKey(value))))
+    .map((key) => Number(key))
+    .filter((value) => Number.isFinite(value));
+}
+
+function resolveRuleContextKeyLevel({
+  bar = null,
+  derivedArtifacts = [],
+} = {}) {
+  const supportedTypes = new Set([
+    "liquidity_high",
+    "liquidity_low",
+    "fvg",
+    "ob",
+    "support",
+    "demand",
+    "pdh",
+    "pdl",
+  ]);
+  const currentTime = Number(bar?.time || 0);
+  const currentClose = Number(bar?.close);
+  const recentArtifacts = (Array.isArray(derivedArtifacts) ? derivedArtifacts : [])
+    .filter((item) => {
+      const type = String(item?.type || "").trim().toLowerCase();
+      if (!supportedTypes.has(type)) return false;
+      const itemTime = Number(
+        item?.anchor_time ?? item?.bar_end ?? item?.bar_start ?? item?.time ?? 0,
+      );
+      return !Number.isFinite(currentTime) || currentTime <= 0 || itemTime <= currentTime;
+    })
+    .slice(-12)
+    .reverse();
+  const levels = [];
+  const seen = new Set();
+  for (const item of recentArtifacts) {
+    for (const level of extractRuleContextArtifactLevels(item)) {
+      const key = roundRuleContextLevelKey(level);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      levels.push(level);
+    }
+  }
+  if (!levels.length) return null;
+  if (!Number.isFinite(currentClose)) return levels[0];
+  return [...levels].sort((left, right) => {
+    const leftDistance = Math.abs(Number(left) - currentClose);
+    const rightDistance = Math.abs(Number(right) - currentClose);
+    return leftDistance - rightDistance;
+  })[0];
+}
+
 function buildRuleContext({
   bars,
   index,
@@ -2187,6 +2607,10 @@ function buildRuleContext({
   analysis = null,
   tf = "",
 }) {
+  const inferredKeyLevel = resolveRuleContextKeyLevel({
+    bar: bars[index] || null,
+    derivedArtifacts,
+  });
   return {
     bar: bars[index] || null,
     prev: bars[index - 1] || null,
@@ -2208,6 +2632,9 @@ function buildRuleContext({
     },
     params: strategy.params || {},
     risk: strategy.risk || {},
+    levels: {
+      ...(Number.isFinite(Number(inferredKeyLevel)) ? { key: Number(inferredKeyLevel) } : {}),
+    },
     indicators: currentIndicators || {},
     prev_indicators: prevIndicators || {},
     entry,
@@ -2592,6 +3019,13 @@ function simulateRuleBasedStrategy(bars, strategy, options = {}) {
     scanMode: options?.scanMode || "backtest",
     skipConditions: options?.skipConditions !== false,
     newsEvents: options?.newsEvents || options?.news_events || [],
+    runtimeState: {
+      spread:
+        asOptionalFiniteNumber(options?.spreadPips, null) ??
+        asOptionalFiniteNumber(options?.marketMetadata?.spread_pips, null) ??
+        asOptionalFiniteNumber(options?.brokerCalibration?.spread_pips, null) ??
+        null,
+    },
   });
   const hitsByBarIndex = new Map();
   for (const hit of Array.isArray(evaluation?.matches) ? evaluation.matches : []) {
@@ -2726,8 +3160,26 @@ function summarizeTrades(trades = [], bars = [], strategy = null, details = {}) 
     (sum, trade) => sum + Number(trade.pnl_realized || 0),
     0,
   );
-  const totalR = trades.reduce(
-    (sum, trade) => sum + Number(trade.r_multiple || 0),
+  const totalRealizedR = trades.reduce(
+    (sum, trade) =>
+      sum +
+      Number(
+        trade.realized_r ??
+          trade.r_multiple ??
+          trade.rr_realized ??
+          trade.rr ??
+          0,
+      ),
+    0,
+  );
+  const totalPlannedOutcomeR = trades.reduce(
+    (sum, trade) =>
+      sum +
+      Number(
+        trade.planned_outcome_r ??
+          trade.plannedOutcomeR ??
+          0,
+      ),
     0,
   );
   const actionLog = Array.isArray(details.event_log) ? details.event_log : [];
@@ -2754,14 +3206,24 @@ function summarizeTrades(trades = [], bars = [], strategy = null, details = {}) 
     win_rate_pct: totalTrades ? round((wins / totalTrades) * 100, 2) : 0,
     total_pnl: round(totalPnl, 5),
     average_pnl: totalTrades ? round(totalPnl / totalTrades, 5) : 0,
-    total_r: round(totalR, 5),
-    average_r: totalTrades ? round(totalR / totalTrades, 5) : 0,
+    total_realized_r: round(totalRealizedR, 5),
+    average_realized_r: totalTrades ? round(totalRealizedR / totalTrades, 5) : 0,
+    total_planned_outcome_r: round(totalPlannedOutcomeR, 5),
+    average_planned_outcome_r: totalTrades
+      ? round(totalPlannedOutcomeR / totalTrades, 5)
+      : 0,
+    total_r: round(totalRealizedR, 5),
+    average_r: totalTrades ? round(totalRealizedR / totalTrades, 5) : 0,
     strategy_key: strategy?.key || strategy?.id || null,
     strategy_id: strategy?.id || null,
     strategy_name: strategy?.name || null,
     initial_equity: details.initial_equity ?? null,
     final_equity: details.final_equity ?? null,
     max_drawdown_pct: details.max_drawdown_pct ?? null,
+    execution_options:
+      details.execution_options && typeof details.execution_options === "object"
+        ? details.execution_options
+        : null,
     first_bar_at: bars[0] ? toIsoFromUnixSeconds(bars[0].time) : null,
     last_bar_at: bars.length
       ? toIsoFromUnixSeconds(bars[bars.length - 1].time)
@@ -3008,6 +3470,7 @@ async function runBacktest(userId, payload = {}) {
     );
   }
 
+  const marketMetadata = await loadMarketExecutionMetadata(userId, symbol);
   const brokerCalibration = await fetchBrokerCalibration(symbol, payload);
   const normalizedDirection = normalizeBacktestDirection(payload.direction, "all");
   const normalizedSession = normalizeBacktestSession(payload.session, "Any");
@@ -3034,11 +3497,13 @@ async function runBacktest(userId, payload = {}) {
     strategy_name: strategy.name,
     strategy_snapshot: strategy,
     market_data_quality: diagnostics,
+    market_metadata: marketMetadata,
     broker_calibration: brokerCalibration,
     execution_options: resolveExecutionOptions(strategy, {
       ...payload,
       direction: normalizedDirection,
       session: normalizedSession,
+      marketMetadata,
       brokerCalibration,
     }),
     started_at: startedAt,
@@ -3057,6 +3522,7 @@ async function runBacktest(userId, payload = {}) {
         : payload?.skip_conditions !== false && payload?.skipConditions !== false,
     direction: normalizedDirection,
     session: normalizedSession,
+    marketMetadata,
     brokerCalibration,
     multiTfData,
     returnDetails: true,
@@ -3072,6 +3538,7 @@ async function runBacktest(userId, payload = {}) {
   const summary = {
     ...summarizeTrades(trades, bars, strategy, executionResult),
     market_data_quality: diagnostics,
+    market_metadata: marketMetadata,
     equity_curve: executionResult.equity_curve,
     broker_calibration: brokerCalibration,
   };
@@ -3095,6 +3562,144 @@ async function runBacktest(userId, payload = {}) {
     return result;
   }
   return persistBacktestResult(userId, result);
+}
+
+async function buildSharedBatchContextForSymbols({
+  userId = "default",
+  symbols = [],
+  timeframes = [],
+  strategies = [],
+  limit = 0,
+  payload = {},
+} = {}) {
+  const contextBySymbol = new Map();
+  const requestedTfs = new Set(
+    (Array.isArray(timeframes) ? timeframes : []).map((tf) =>
+      strategyEventFunctions.normalizeTfKey(tf),
+    ).filter(Boolean),
+  );
+  for (const strategy of Array.isArray(strategies) ? strategies : []) {
+    for (const tf of requestedTfs) {
+      collectStrategyRequestedTimeframes(strategy, tf).forEach((item) => {
+        const normalized = strategyEventFunctions.normalizeTfKey(item);
+        if (normalized) requestedTfs.add(normalized);
+      });
+    }
+  }
+  for (const symbol of Array.isArray(symbols) ? symbols : []) {
+    const symbolKey = String(symbol || "").trim().toUpperCase();
+    if (!symbolKey) continue;
+    const marketMetadata = await loadMarketExecutionMetadata(userId, symbolKey);
+    const brokerCalibration = await fetchBrokerCalibration(symbolKey, payload);
+    const byTf = {};
+    for (const tf of requestedTfs) {
+      const normalized = normalizeBars(symbolKey, tf, limit);
+      byTf[tf] = {
+        bars: normalized.bars,
+        diagnostics: normalized.diagnostics,
+        derivedArtifacts: sharedArtifactDetection.buildDerivedItemsFromBars(
+          normalized.bars,
+          tf,
+        ),
+        analysis: null,
+      };
+    }
+    contextBySymbol.set(symbolKey, { marketMetadata, brokerCalibration, byTf });
+  }
+  return contextBySymbol;
+}
+
+function simulateBacktestFromSharedContext({
+  payload = {},
+  strategy = null,
+  strategyKey = "",
+  symbol = "",
+  tf = "",
+  limit = 0,
+  sharedContext = null,
+} = {}) {
+  const symbolKey = String(symbol || "").trim().toUpperCase();
+  const tfKey = strategyEventFunctions.normalizeTfKey(tf);
+  const strategyLabel = String(strategy?.name || strategyKey || "Strategy").trim();
+  const tfContext = sharedContext?.byTf?.[tfKey] || null;
+  const bars = Array.isArray(tfContext?.bars) ? tfContext.bars : [];
+  const diagnostics = tfContext?.diagnostics || null;
+  const minBars = Math.max(
+    20,
+    Number(strategy?.min_bars || strategy?.params?.slow_period || 20),
+  );
+  if (bars.length < minBars) {
+    throw new Error(
+      `Not enough bars for strategy "${strategyLabel}" on ${symbolKey} ${tf}: loaded ${bars.length}, required ${minBars}.`,
+    );
+  }
+  const normalizedDirection = normalizeBacktestDirection(payload.direction, "all");
+  const normalizedSession = normalizeBacktestSession(payload.session, "Any");
+  const marketMetadata = sharedContext?.marketMetadata || null;
+  const brokerCalibration = sharedContext?.brokerCalibration || null;
+  const executionResult = simulateStrategy(bars, strategy, {
+    ...payload,
+    symbol: symbolKey,
+    tf,
+    scanMode: payload?.scan_mode || payload?.scanMode || "backtest",
+    skipConditions:
+      payload?.skip_conditions === undefined && payload?.skipConditions === undefined
+        ? true
+        : payload?.skip_conditions !== false && payload?.skipConditions !== false,
+    direction: normalizedDirection,
+    session: normalizedSession,
+    marketMetadata,
+    brokerCalibration,
+    multiTfData: sharedContext?.byTf || {},
+    returnDetails: true,
+  });
+  const runId = makeRunId();
+  const trades = (Array.isArray(executionResult?.trades) ? executionResult.trades : []).map(
+    (trade, index) => ({
+      ...trade,
+      sid: makeTradeSid(runId, index),
+    }),
+  );
+  const summary = {
+    ...summarizeTrades(trades, bars, strategy, executionResult),
+    market_data_quality: diagnostics,
+    market_metadata: marketMetadata,
+    equity_curve: executionResult.equity_curve,
+    broker_calibration: brokerCalibration,
+  };
+  return {
+    ok: true,
+    run: {
+      run_id: runId,
+      symbol: symbolKey,
+      tf,
+      limit,
+      direction: normalizedDirection,
+      session: normalizedSession,
+      one_r_value: asFiniteNumber(payload.one_r_value, null),
+      strategy_key: strategyKey,
+      strategy_id: strategy?.id || strategyKey || null,
+      strategy_name: strategyLabel,
+      strategy_snapshot: strategy,
+      market_metadata: marketMetadata,
+      broker_calibration: brokerCalibration,
+      execution_options: resolveExecutionOptions(strategy, {
+        ...payload,
+        symbol: symbolKey,
+        tf,
+        direction: normalizedDirection,
+        session: normalizedSession,
+        marketMetadata,
+        brokerCalibration,
+      }),
+      summary,
+      status: "completed",
+      ephemeral: true,
+    },
+    summary,
+    trades,
+    events: Array.isArray(executionResult.event_log) ? executionResult.event_log : [],
+  };
 }
 
 async function runBacktestBatch(userId, payload = {}) {
@@ -3140,20 +3745,33 @@ async function runBacktestBatch(userId, payload = {}) {
   const barsAnalyzedValues = [];
   const matrix = new Map();
   const startedAt = new Date().toISOString();
+  const requestedLimit = Number(payload?.limit);
+  const limit =
+    requestedLimit === 0
+      ? 0
+      : Math.max(100, Math.min(requestedLimit || DEFAULT_LIMIT, MAX_LIMIT));
+  const sharedContexts = await buildSharedBatchContextForSymbols({
+    userId,
+    symbols: requestedSymbols,
+    timeframes: requestedTimeframes,
+    strategies,
+    limit,
+    payload,
+  });
 
   for (const strategy of strategies) {
     const strategyKey = String(strategy?.key || strategy?.id || "").trim();
     for (const symbol of requestedSymbols) {
       for (const tf of requestedTimeframes) {
         try {
-          const result = await runBacktest(userId, {
-            ...payload,
-            persist: false,
+          const result = simulateBacktestFromSharedContext({
+            payload,
+            strategy,
+            strategyKey,
             symbol,
             tf,
-            strategy_key: strategyKey,
-            strategy_id: strategyKey,
-            scan_mode: payload?.scan_mode || payload?.scanMode || "backtest",
+            limit,
+            sharedContext: sharedContexts.get(symbol),
           });
           const summary = result?.summary || {};
           const rowTrades = Math.max(0, Number(summary?.total_trades || 0));

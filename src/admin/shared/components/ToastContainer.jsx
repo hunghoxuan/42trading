@@ -1,5 +1,9 @@
 import { useEffect, useState, useCallback } from "react";
 import "./ToastContainer.css";
+import {
+  normalizeActivityResult,
+  resultStatusToToastType,
+} from "../utils/activityResult.js";
 
 let toastId = 0;
 
@@ -13,11 +17,17 @@ function normalizeToastPayload(input, fallbackType = "info") {
     };
   }
   const payload = input && typeof input === "object" ? input : {};
+  const result = normalizeActivityResult(payload?.result || payload || {}, {
+    ok: payload?.status !== "error" && payload?.type !== "error",
+  });
   return {
     ...payload,
-    message: String(payload.message || "").trim(),
-    fullMessage: String(payload.fullMessage || payload.message || "").trim(),
-    type: String(payload.type || "info").trim().toLowerCase() || "info",
+    result,
+    message: String(payload.message || result.message || "").trim(),
+    fullMessage: String(payload.fullMessage || payload.message || result.message || "").trim(),
+    type: String(payload.type || resultStatusToToastType(result.status) || "info")
+      .trim()
+      .toLowerCase() || "info",
     position: String(payload.position || "bottom-right").trim() || "bottom-right",
     duration: Number(payload.duration ?? 5000),
     createdAt: Number(payload.createdAt) || Date.now(),
@@ -35,7 +45,7 @@ function normalizeToastPayload(input, fallbackType = "info") {
     sourceLabel: String(payload.sourceLabel || "event - toast").trim(),
     sourceType: String(payload.sourceType || "").trim(),
     sourceId: String(payload.sourceId || "").trim(),
-    status: String(payload.status || "").trim().toUpperCase(),
+    status: String(payload.status || result.status || "").trim().toUpperCase(),
     target: String(payload.target || "").trim(),
   };
 }

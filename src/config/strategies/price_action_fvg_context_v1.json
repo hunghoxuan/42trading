@@ -1,6 +1,6 @@
 {
   "key": "price_action_fvg_context_v1",
-  "name": "Price Action FVG Context v1",
+  "name": "PA FVG v1",
   "kind": "preset",
   "description": "Context-driven price action strategy that reacts to structure bias, fair value gaps, and session levels supplied in backtest context rows.",
   "engine_version": "42trade.strategy.v2",

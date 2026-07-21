@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../../app/api";
 import { realtimeClient } from "../../42trade/realtime/realtimeClientSingleton";
-import DataTable from "../../../shared/components/DataTable";
-import CrudContainer from "../../../shared/components/CrudContainer";
+import LogsComponent from "../../../shared/components/LogsComponent.jsx";
 import { formatRelativeDateTime, showDateTime } from "../../../shared/utils/format";
+import { normalizeActivityResult } from "../../../shared/utils/activityResult.js";
 
 function sortLogFiles(files = []) {
   return [...files].sort((a, b) => {
@@ -149,15 +149,27 @@ function parseStandardLogLine(line, index) {
   const [, timestamp, level, eventType, rest] = match;
   const parsed = parseStructuredMessage(rest);
   const metadata = parseMetadataText(parsed.metadataText);
+  const result = normalizeActivityResult(
+    metadata && typeof metadata.result === "object"
+      ? metadata.result
+      : {
+          ...metadata,
+          message: parsed.message,
+          level: level,
+          event: eventType,
+        },
+    { ok: String(level || "").toUpperCase() !== "ERROR" },
+  );
   return {
     id: `${timestamp}-${eventType}-${index}`,
     raw: String(line || ""),
     timestamp,
     level: String(level || "").toUpperCase(),
     eventType: String(eventType || "").toUpperCase(),
-    message: parsed.message,
+    message: String(result.message || parsed.message || "").trim(),
     metadataText: parsed.metadataText,
     metadata,
+    result,
   };
 }
 
@@ -517,110 +529,105 @@ export default function LogViewer({
     </div>
   );
 
-  const standardTable = (
-    <DataTable
-      columns={tableColumns}
-      data={tableRows}
-      loading={false}
-      emptyText="No log lines available."
-      onRowClick={useCrudContainer ? handleSelectRow : undefined}
-      selectedRowId={useCrudContainer ? selectedRowId : null}
-    />
+  const logRows = useMemo(
+    () =>
+      tableRows.map((row) => ({
+        id: row.id,
+        time: row.timestamp,
+        entryType: row.eventType || "RAW",
+        status: row.level || "",
+        title: row.eventType || "RAW",
+        summary: row.message || row.raw || "—",
+        info: row.metadataText || "—",
+        source: activeFileMeta?.name || source || "LOGS",
+        payload: {
+          id: row.id,
+          timestamp: row.timestamp,
+          level: row.level,
+          eventType: row.eventType,
+          message: row.message,
+          metadata: row.metadata,
+          raw: row.raw,
+        },
+      })),
+    [activeFileMeta?.name, source, tableRows],
   );
 
-  const detailPayload = selectedRow
-    ? {
-        id: selectedRow.id,
-        timestamp: selectedRow.timestamp,
-        level: selectedRow.level,
-        eventType: selectedRow.eventType,
-        message: selectedRow.message,
-        metadata: selectedRow.metadata,
-        raw: selectedRow.raw,
-      }
-    : null;
-
-  if (useCrudContainer && effectiveFormat === "standard") {
-    return (
-      <div className="stack-layout">
-        {!hideToolbar ? toolbarContent : null}
-        {error ? <div className="form-message msg-error">{error}</div> : null}
-        {!effectiveLoading && !error && !isStaticMode && files.length === 0 ? (
-          <div className="minor-text">{emptyText}</div>
-        ) : null}
-        <CrudContainer
-          sameHeight
-          detailVisible={Boolean(selectedRow)}
-          detailOpen={detailOpen && Boolean(selectedRow)}
-          onDetailOpenChange={(open) => {
-            setDetailOpen(Boolean(open));
-            if (!open) setSelectedRowId("");
-          }}
-          detailCloseButton
-          list={{
-            title: activeFileMeta?.name || "Logs",
-            subtitle: "Click a log row to inspect the full payload",
-            panelClassName: "component-frozen-wrap",
-            children: effectiveLoading ? (
-              <div className="minor-text">Loading logs...</div>
-            ) : (
-              standardTable
-            ),
-          }}
-          detail={{
-            title: selectedRow?.eventType || "Log Detail",
-            subtitle: selectedRow?.timestamp
-              ? `${showDateTime(selectedRow.timestamp)} • ${selectedRow.level}`
-              : "Select a log row to inspect its JSON payload",
-            children: detailPayload ? (
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  minHeight: 0,
-                  height: "100%",
-                }}
+  const sharedColumns = useMemo(
+    () => [
+      {
+        accessorKey: "time",
+        header: "Time",
+        size: 180,
+        cell: ({ row }) => {
+          const value = row.original.time;
+          const status = row.original.status || "RAW";
+          const timeAgo = formatTimeAgo(value);
+          return (
+            <div className="cell-wrap">
+              <span className="cell-major time-ago">{timeAgo || "—"}</span>
+              <span
+                className={`cell-minor ${levelTextClass(status)}`}
+                style={{ fontSize: 10, fontWeight: 800 }}
               >
-                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    onClick={() =>
-                      navigator.clipboard.writeText(
-                        JSON.stringify(detailPayload, null, 2),
-                      )
-                    }
-                  >
-                    Copy
-                  </button>
-                </div>
-                <pre
-                  style={{
-                    margin: 0,
-                    flex: "1 1 auto",
-                    minHeight: 0,
-                    height: "100%",
-                    overflow: "auto",
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                    fontSize: 12,
-                    lineHeight: 1.5,
-                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                    border: "1px solid var(--border)",
-                    borderRadius: 10,
-                    padding: 12,
-                    background: "color-mix(in srgb, var(--surface) 82%, transparent)",
-                  }}
-                >
-                  {JSON.stringify(detailPayload, null, 2)}
-                </pre>
-              </div>
-            ) : (
-              <div className="minor-text">Select a log row to inspect its JSON payload.</div>
-            ),
-          }}
-        />
-      </div>
+                {status}
+              </span>
+            </div>
+          );
+        },
+      },
+      {
+        accessorKey: "title",
+        header: "Message",
+        size: 360,
+        cell: ({ row }) => (
+          <div className="cell-wrap">
+            <span
+              className={typeTextClass(row.original.title)}
+              style={{ fontWeight: 800, letterSpacing: "0.02em", fontSize: 11 }}
+            >
+              {row.original.title || "RAW"}
+            </span>
+            <span className="cell-minor">
+              {row.original.summary || "—"}
+            </span>
+          </div>
+        ),
+      },
+      {
+        accessorKey: "info",
+        header: "Info",
+        size: 420,
+        cell: ({ row }) => (
+          <div className="cell-wrap">
+            <span className="cell-major">{row.original.info || "—"}</span>
+          </div>
+        ),
+      },
+    ],
+    [],
+  );
+
+  if (effectiveFormat === "standard") {
+    return (
+      <LogsComponent
+        rows={logRows}
+        columns={sharedColumns}
+        loading={effectiveLoading}
+        error={error}
+        emptyText={!isStaticMode ? emptyText : "No log lines available."}
+        title={activeFileMeta?.name || "Activity"}
+        subtitle="Click a log row to inspect the full payload"
+        toolbar={!hideToolbar ? toolbarContent : null}
+        onRefresh={
+          !isStaticMode ? () => loadLogs(selectedFile) : null
+        }
+        refreshDisabled={effectiveLoading || (!isStaticMode && (!source || !objectId))}
+        getDetailTitle={(row) => row?.title || "Log Detail"}
+        getDetailSubtitle={(row) =>
+          row?.time ? `${showDateTime(row.time)} • ${row.status || "RAW"}` : "Select a log row to inspect its JSON payload"
+        }
+      />
     );
   }
 
@@ -647,8 +654,6 @@ export default function LogViewer({
       >
         {effectiveLoading ? (
           <div className="minor-text">Loading logs...</div>
-        ) : effectiveFormat === "standard" ? (
-          standardTable
         ) : effectiveLines.length ? (
           <pre
             style={{

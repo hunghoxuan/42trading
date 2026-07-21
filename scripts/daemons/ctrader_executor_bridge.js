@@ -12,6 +12,13 @@ function envStr(v, fallback = "") {
   return s ? s : fallback;
 }
 
+function cleanText(v, fallback = "") {
+  if (v === undefined || v === null) return fallback;
+  const s = String(v).trim();
+  if (!s || s.toLowerCase() === "null") return fallback;
+  return s;
+}
+
 function asNum(v, fallback = NaN) {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
@@ -341,8 +348,8 @@ function normalizeBrokerTaskItem(item = {}) {
     volume: Number.isFinite(Number(item.volume ?? item.lots))
       ? Number(item.volume ?? item.lots)
       : null,
-    strategy: String(item.strategy || item.strategy_name || "").trim(),
-    note: String(item.note || "").trim(),
+    strategy: cleanText(item.strategy || item.strategy_name),
+    note: cleanText(item.note),
     account_id: envStr(item.account_id || CFG.accountId || null),
     account_number: envStr(item.account_number || CFG.accountNumber || null),
     raw: item,

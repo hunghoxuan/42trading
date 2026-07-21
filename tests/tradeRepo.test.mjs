@@ -562,6 +562,21 @@ test("ctrader broker task normalization preserves strategy labels", () => {
   assert.equal(task.strategy, "Price Action v1");
 });
 
+test("ctrader broker task normalization drops literal null strategy text", () => {
+  const task = ctraderExecutorBridge.normalizeBrokerTaskItem({
+    sid: "TRD_STRAT_NULL",
+    type: "OPEN",
+    symbol: "xauusd",
+    action: "buy",
+    entry: 3345.5,
+    strategy: "null",
+    note: "null",
+  });
+
+  assert.equal(task.strategy, "");
+  assert.equal(task.note, "");
+});
+
 test("ctrader downstream matches broker tasks by ticket and label fallback", () => {
   const task = ctraderDownstreamServer.normalizeIncomingTask({
     signal: {
@@ -613,5 +628,16 @@ test("ctrader downstream uses strategy for label and keeps sid in comment", () =
   assert.match(
     ctraderDownstreamServer.buildBrokerComment("TRD_123", "Entry on BOS retest"),
     /^TRD_123 \| Entry on BOS retest$/,
+  );
+});
+
+test("ctrader downstream ignores literal null strategy and note text", () => {
+  assert.equal(
+    ctraderDownstreamServer.buildBrokerLabel("null", "TRD_123"),
+    "TRD_123",
+  );
+  assert.equal(
+    ctraderDownstreamServer.buildBrokerComment("TRD_123", "null"),
+    "TRD_123",
   );
 });

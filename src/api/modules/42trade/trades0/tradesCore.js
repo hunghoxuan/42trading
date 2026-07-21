@@ -219,6 +219,12 @@ function isBrokerSyncNoteMatchCandidate(row) {
   return executionStatus === "PENDING" || executionStatus === "FILLED";
 }
 
+function normalizeNullableText(value) {
+  const text = String(value ?? "").trim();
+  if (!text || text.toLowerCase() === "null") return "";
+  return text;
+}
+
 function normalizeTradeRow(row) {
   if (!row) return null;
   const metadata = parseJsonField(row.metadata) || {};
@@ -247,17 +253,19 @@ function normalizeTradeRow(row) {
       rawJson?.source_id ??
       null,
     label:
-      metadata.label ??
-      metadata.ctrader_label ??
-      brokerData.label ??
-      rawJson?.label ??
-      null,
+      normalizeNullableText(
+        metadata.label ??
+          metadata.ctrader_label ??
+          brokerData.label ??
+          rawJson?.label,
+      ) || null,
     comment:
-      metadata.comment ??
-      metadata.ctrader_comment ??
-      brokerData.comment ??
-      rawJson?.comment ??
-      null,
+      normalizeNullableText(
+        metadata.comment ??
+          metadata.ctrader_comment ??
+          brokerData.comment ??
+          rawJson?.comment,
+      ) || null,
     entryModel: row.entry_model ?? null,
     tradeTf,
     signalTf: tradeTf,
@@ -1853,14 +1861,17 @@ function createSqliteRepository(options = {}) {
           ticketCandidates.map((ticket) => byTicket.get(ticket)).find(Boolean) ||
           null;
 
+        const labelText = normalizeNullableText(it.label);
+        const commentText = normalizeNullableText(it.comment);
+        const channelText = normalizeNullableText(it.channel);
         const syncMeta = {
           order_type: it.order_type || null,
-          channel: it.channel || null,
-          label: it.label || null,
-          comment: it.comment || null,
-          ctrader_channel: it.channel || null,
-          ctrader_label: it.label || null,
-          ctrader_comment: it.comment || null,
+          channel: channelText,
+          label: labelText,
+          comment: commentText,
+          ctrader_channel: channelText,
+          ctrader_label: labelText,
+          ctrader_comment: commentText,
           broker_name: options.brokerName || "",
           provider_code: options.providerCode || "",
           last_change_origin: "broker",
@@ -3047,14 +3058,17 @@ function createPostgresRepository(options = {}) {
           ticketCandidates.map((ticket) => byTicket.get(ticket)).find(Boolean) ||
           null;
 
+        const labelText = normalizeNullableText(it.label);
+        const commentText = normalizeNullableText(it.comment);
+        const channelText = normalizeNullableText(it.channel);
         const syncMeta = {
           order_type: it.order_type || null,
-          channel: it.channel || null,
-          label: it.label || null,
-          comment: it.comment || null,
-          ctrader_channel: it.channel || null,
-          ctrader_label: it.label || null,
-          ctrader_comment: it.comment || null,
+          channel: channelText,
+          label: labelText,
+          comment: commentText,
+          ctrader_channel: channelText,
+          ctrader_label: labelText,
+          ctrader_comment: commentText,
           broker_name: options.brokerName || "",
           provider_code: options.providerCode || "",
           last_change_origin: "broker",

@@ -8,6 +8,7 @@ const {
   canonicalObjectType,
   objectLogsDir,
 } = require("./objectStore");
+const { normalizeActivityResult } = require("../activityResult");
 
 const SENSITIVE_KEY_RE =
   /key|secret|token|password|authorization|cookie|session|credential|private/i;
@@ -130,16 +131,24 @@ function sanitizeLogObject(value) {
 
 function buildObjectLogLine(userId, objectType, objectId, metadata = {}) {
   const evt = normalizeEventType(metadata);
-  const level = metadata.error
+  const result = normalizeActivityResult(metadata || {}, {
+    ok: metadata?.ok !== false,
+  });
+  const level = result.status === "error"
     ? "ERROR"
-    : String(metadata.level || "INFO").toUpperCase();
+    : result.status === "warn"
+      ? "WARN"
+      : String(metadata.level || "INFO").toUpperCase();
   const iso = new Date().toISOString();
   const canonicalType = canonicalObjectType(objectType);
   const safeObjectId = String(objectId || "default").trim() || "default";
   const safeUserId = String(userId || "default").trim() || "default";
   const autoMsg = `${evt.replace(/_/g, " ").toLowerCase()}: ${safeObjectId}`;
-  const message = String(metadata.message || "").trim() || autoMsg;
-  const sanitizedMetadata = sanitizeLogObject(metadata);
+  const message = String(result.message || metadata.message || "").trim() || autoMsg;
+  const sanitizedMetadata = sanitizeLogObject({
+    ...metadata,
+    result,
+  });
   const extra = [
     message,
     `object_type=${canonicalType}`,
@@ -197,6 +206,9 @@ function parseObjectLogLine(line, fallbackObjectId = null) {
   while ((kvMatch = kvRe.exec(kvStr)) !== null) {
     payload[kvMatch[1]] = kvMatch[3] !== undefined ? kvMatch[3] : kvMatch[4];
   }
+  const result = normalizeActivityResult(payload, {
+    ok: payload?.ok !== "false",
+  });
   return {
     log_id: `${ts}_${eventType}`,
     object_id: payload.object_id || fallbackObjectId,
@@ -205,6 +217,7 @@ function parseObjectLogLine(line, fallbackObjectId = null) {
     created_at: ts,
     metadata: payload,
     payload_json: payload,
+    result,
   };
 }
 

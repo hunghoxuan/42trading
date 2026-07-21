@@ -657,6 +657,7 @@ export function normalizeRuleAction(action = {}, ruleName = "") {
 
 export function createEmptyRuleDraft(options = {}) {
   const name = normalizeRuleName(options?.name, "Rule");
+  const hasExplicitActions = Object.prototype.hasOwnProperty.call(options || {}, "actions");
   return {
     id: String(options?.id || createNodeId("rule")).trim() || createNodeId("rule"),
     abbr: String(options?.abbr || options?.short_name || "").trim(),
@@ -668,8 +669,10 @@ export function createEmptyRuleDraft(options = {}) {
     when: options?.when && typeof options.when === "object"
       ? deepClone(options.when)
       : { and: [] },
-    actions: Array.isArray(options?.actions) && options.actions.length
-      ? options.actions.map((action) => normalizeRuleAction(action, name))
+    actions: hasExplicitActions
+      ? (Array.isArray(options?.actions) ? options.actions : []).map((action) =>
+          normalizeRuleAction(action, name),
+        )
       : [createEmptyRuleActionDraft("trade")],
   };
 }
@@ -1301,11 +1304,11 @@ export default function RuleBuilder({
               style={{
                 display: "grid",
                 gridTemplateColumns: showName && showMeta
-                  ? "minmax(0, 1.4fr) minmax(160px, 0.7fr) minmax(160px, 0.7fr) auto"
+                  ? "minmax(220px, 1.4fr) 90px 120px 120px minmax(140px, 0.65fr) minmax(140px, 0.65fr) auto"
                   : showName
                     ? "minmax(0, 1fr) auto"
                     : showMeta
-                      ? "minmax(160px, 0.7fr) minmax(160px, 0.7fr) auto"
+                      ? "90px 120px 120px minmax(140px, 0.65fr) minmax(140px, 0.65fr) auto"
                       : "auto",
                 gap: 10,
                 alignItems: "center",
@@ -1321,6 +1324,27 @@ export default function RuleBuilder({
               ) : null}
               {showMeta ? (
                 <>
+                  <input
+                    className="input"
+                    value={normalizedRule.abbr || ""}
+                    onChange={(event) => updateRule({ abbr: event.target.value })}
+                    placeholder="Abbr"
+                    title="Rule abbreviation"
+                  />
+                  <input
+                    className="input"
+                    value={normalizedRule.icon || ""}
+                    onChange={(event) => updateRule({ icon: event.target.value })}
+                    placeholder="Icon"
+                    title="Rule icon"
+                  />
+                  <input
+                    className="input"
+                    value={normalizedRule.family || ""}
+                    onChange={(event) => updateRule({ family: event.target.value })}
+                    placeholder="Family"
+                    title="Rule family"
+                  />
                   <InputComboSelect
                     value={resolveSelectValue(normalizedRule.bias, RULE_BIAS_OPTIONS)}
                     onChange={(event) => updateRule({ bias: event.target.value })}

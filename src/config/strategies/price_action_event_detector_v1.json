@@ -1,6 +1,6 @@
 {
   "key": "price_action_event_detector_v1",
-  "name": "Price Action Event Detector v1",
+  "name": "PA Events v1",
   "kind": "preset",
   "description": "Detector-only strategy for chart validation. Walks loaded bars and marks BOS, CHOCH, Rejection, and Sweep events wherever the rule engine finds them.",
   "engine_version": "42trade.strategy.v2",

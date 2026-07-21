@@ -14,6 +14,8 @@ Read this first on every new chat.
 - UI work: `agents/rules/ui-rules.md`
 - User-facing reports: `agents/rules/communication.md`
 - Deploy or release work: `agents/rules/deploy.md`
+- Local service start/restart: `scripts/start/README.md`
+  Durable local services should use the `launchctl`-based flows in `start_dev.sh`, `start_api.sh launchctl`, or `start_admin.sh launchctl`.
 
 ## Core Law
 

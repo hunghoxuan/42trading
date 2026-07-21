@@ -75,9 +75,9 @@ test("evaluateChartStrategies returns the latest matching event inside the lookb
   };
 
   const result = evaluateChartStrategies({
-    bars: makeBars([10, 9, 8, 9, 11, 13, 14]),
+    bars: makeBars([10, 9, 8, 9, 11, 13, 14, 15, 16, 17]),
     strategies: [strategy],
-    lookbackBars: 5,
+    lookbackBars: 10,
     symbol: "EURUSD",
     tf: "1m",
   });
@@ -439,9 +439,9 @@ test("evaluateChartStrategies derives directional marker metadata for long entri
   };
 
   const result = evaluateChartStrategies({
-    bars: makeBars([10, 9, 8, 9, 11, 13, 14]),
+    bars: makeBars([10, 9, 8, 9, 11, 13, 14, 15, 16, 17]),
     strategies: [strategy],
-    lookbackBars: 5,
+    lookbackBars: 10,
     symbol: "EURUSD",
     tf: "1m",
   });
@@ -451,6 +451,43 @@ test("evaluateChartStrategies derives directional marker metadata for long entri
   assert.equal(result.matches[0].markerShape, "arrowUp");
   assert.equal(result.matches[0].markerPosition, "belowBar");
   assert.equal(result.matches[0].markerText, "EMA Cross");
+});
+
+test("evaluateChartStrategies falls back to a circle when post-event trend is not yet confirmed", () => {
+  const strategy = {
+    id: "ema_cross_neutral",
+    name: "EMA Cross Neutral",
+    engine_version: "42trade.strategy.v2",
+    indicators: [
+      { id: "ema_fast", type: "ema", length: 2, source: "close" },
+      { id: "ema_slow", type: "ema", length: 4, source: "close" },
+    ],
+    events: [
+      {
+        id: "entry_long",
+        name: "Entry Long",
+        when: {
+          crosses_above: [
+            { var: "indicators.ema_fast" },
+            { var: "indicators.ema_slow" },
+          ],
+        },
+        actions: [{ id: "open_long", type: "trade.open.long" }],
+      },
+    ],
+  };
+
+  const result = evaluateChartStrategies({
+    bars: makeBars([10, 9, 8, 9, 11, 13, 14]),
+    strategies: [strategy],
+    lookbackBars: 5,
+    symbol: "EURUSD",
+    tf: "1m",
+  });
+
+  assert.equal(result.matches.length, 1);
+  assert.equal(result.matches[0].markerDirection, "neutral");
+  assert.equal(result.matches[0].markerShape, "circle");
 });
 
 test("evaluateChartStrategies builds client trade plans from trade actions", () => {
@@ -820,8 +857,8 @@ test("evaluateChartStrategies derives marker direction from artifact bias for de
 
   assert.equal(result.matches.length > 0, true);
   const latest = result.matches[result.matches.length - 1];
-  assert.equal(latest.markerDirection, "up");
-  assert.equal(latest.markerShape, "arrowUp");
+  assert.equal(latest.markerDirection, "neutral");
+  assert.equal(latest.markerShape, "circle");
   assert.equal(latest.markerPosition, "belowBar");
 });
 
@@ -996,9 +1033,9 @@ test("evaluateChartStrategies derives directional marker metadata for long entri
   };
 
   const result = evaluateChartStrategies({
-    bars: makeBars([10, 9, 8, 9, 11, 13, 14]),
+    bars: makeBars([10, 9, 8, 9, 11, 13, 14, 15, 16, 17]),
     strategies: [strategy],
-    lookbackBars: 5,
+    lookbackBars: 10,
     symbol: "EURUSD",
     tf: "1m",
   });

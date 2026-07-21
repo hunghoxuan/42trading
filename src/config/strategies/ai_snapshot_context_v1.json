@@ -1,6 +1,6 @@
 {
   "key": "ai_snapshot_context_v1",
-  "name": "AI Snapshot Context v1",
+  "name": "AI Context v1",
   "kind": "preset",
   "description": "Backtests AI-produced trade context per bar using ai.direction, ai.confidence, ai.entry, ai.sl, and ai.tp supplied in ai_context_rows.",
   "engine_version": "42trade.strategy.v2",

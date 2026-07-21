@@ -30,6 +30,10 @@ class TradesService {
     return this.repo.upsertTrade(input, options);
   }
 
+  deleteTradesBySids(userId, sids = []) {
+    return this.repo.deleteTradesBySids(userId, sids);
+  }
+
   countTradesByExecutionStatus(input = {}) {
     return this.repo.countTradesByExecutionStatus(input);
   }

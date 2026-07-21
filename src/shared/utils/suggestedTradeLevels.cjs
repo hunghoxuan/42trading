@@ -236,7 +236,9 @@ function buildSuggestedTradeLevels({
   activeTf = "",
   selectedTfs = [],
   artifactItemsByTf = {},
-  minRr = 1.5
+  minRr = 1.5,
+  stopLevelRank = 1,
+  targetLevelRank = 1
 }) {
   const entry = Number(entryPrice);
   if (!Number.isFinite(entry) || entry <= 0) return { tp: null, sl: null };
@@ -244,6 +246,8 @@ function buildSuggestedTradeLevels({
   const anchor = Number.isFinite(reference) && reference > 0 ? reference : entry;
   const upperSide = String(side || "BUY").trim().toUpperCase();
   const targetMinRr = Math.max(1, Number(minRr) || 1.5);
+  const normalizedStopRank = Math.max(1, Math.round(Number(stopLevelRank) || 1));
+  const normalizedTargetRank = Math.max(1, Math.round(Number(targetLevelRank) || 1));
   const stopCandidates = [];
   const targetCandidates = [];
   const tfList = Array.isArray(selectedTfs) ? selectedTfs : [];
@@ -321,15 +325,16 @@ function buildSuggestedTradeLevels({
     if (Math.abs(distanceDelta) > 1e-6) return distanceDelta;
     return b.score - a.score;
   });
-  const chosenStop = sortedStops[0] || null;
+  const chosenStop = sortedStops[normalizedStopRank - 1] || sortedStops[0] || null;
   if (!chosenStop) return { tp: null, sl: null };
   const bufferedStop = applyTradeStopBuffer(entry, chosenStop.price, upperSide);
   const risk = upperSide === "BUY" ? entry - bufferedStop : bufferedStop - entry;
   if (!(risk > 0)) return { tp: null, sl: null };
-  const chosenTarget = sortedTargets.find((candidate) => {
+  const qualifyingTargets = sortedTargets.filter((candidate) => {
     const reward = upperSide === "BUY" ? candidate.price - entry : entry - candidate.price;
     return reward / risk >= targetMinRr;
-  }) || sortedTargets[0] || null;
+  });
+  const chosenTarget = qualifyingTargets[normalizedTargetRank - 1] || qualifyingTargets[0] || sortedTargets[normalizedTargetRank - 1] || sortedTargets[0] || null;
   const rawTarget = chosenTarget?.price ?? null;
   const finalTarget = applyTradeTargetTrim({
     entry,

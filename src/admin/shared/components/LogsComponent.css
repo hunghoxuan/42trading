@@ -1,0 +1,120 @@
+.logs-component-wrap {
+  min-height: min(72vh, calc(100vh - 260px));
+  font-size: 10px;
+}
+
+.logs-component.crud-container {
+  min-height: min(72vh, calc(100vh - 260px));
+}
+
+.logs-component .responsive-panel__header {
+  min-height: 44px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.logs-component .responsive-panel__subtitle {
+  display: block;
+}
+
+.logs-component__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.logs-component .data-table-shell {
+  font-size: 10px;
+}
+
+.logs-component__table th,
+.logs-component__table td {
+  padding-top: 7px;
+  padding-bottom: 7px;
+  vertical-align: middle;
+}
+
+.logs-component__table .cell-wrap {
+  gap: 1px;
+}
+
+.logs-component__table .cell-major,
+.logs-component__table .cell-minor {
+  font-size: 10px;
+  line-height: 1.25;
+}
+
+.logs-component__type,
+.logs-component__title,
+.logs-component__summary {
+  font-weight: 800;
+}
+
+.logs-component__summary {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.logs-component__error {
+  color: #ef4444;
+  font-size: 10px;
+  margin-bottom: 8px;
+}
+
+.logs-component__icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  min-width: 34px;
+  height: 32px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.logs-component .status-display--mini.status-display--badge {
+  min-height: 18px;
+  padding: 2px 6px;
+  font-size: 9px;
+}
+
+.logs-component__detail-panel .responsive-panel__body,
+.logs-component__detail-panel .crud-container__panel-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.logs-component__payload-shell {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 12px;
+}
+
+.logs-component__payload {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.38;
+}
+
+.logs-component__empty-detail {
+  padding: 12px;
+}

@@ -94,6 +94,9 @@ export function normalizeTradeRowsForChart(trades = [], defaultTradeLabel = "") 
         side,
         entry: toTradePriceNumber(trade?.entry),
         exitPrice: toTradePriceNumber(trade?.exit_price ?? trade?.exitPrice),
+        exitPriceRaw: toTradePriceNumber(
+          trade?.exit_price_raw ?? trade?.exitPriceRaw,
+        ),
         sl: toTradePriceNumber(trade?.sl),
         tp: toTradePriceNumber(trade?.tp),
         createdAt:
@@ -193,6 +196,7 @@ export function buildSingleTradeForChart({
   tp1Price = null,
   slPrice = null,
   exitPrice = null,
+  exitPriceRaw = null,
   openedAt = null,
   closedAt = null,
   createdAt = null,
@@ -221,6 +225,7 @@ export function buildSingleTradeForChart({
     side: resolvedSide,
     entry,
     exitPrice: toTradePriceNumber(exitPrice),
+    exitPriceRaw: toTradePriceNumber(exitPriceRaw),
     sl: toTradePriceNumber(slPrice),
     tp: toTradePriceNumber(tpPrice ?? tp1Price),
     createdAt: createdAt || null,
@@ -628,6 +633,7 @@ export function resolveTradeCloseDisplayPrice({
   closeStatus = "",
   pnlRealized = null,
   exitPrice = null,
+  exitPriceRaw = null,
   tpPrice = null,
   slPrice = null,
 }) {
@@ -636,7 +642,7 @@ export function resolveTradeCloseDisplayPrice({
   const tp = Number(tpPrice);
   const sl = Number(slPrice);
   const exit = Number(exitPrice);
-  if (Number.isFinite(exit) && exit > 0) return exit;
+  const exitRaw = Number(exitPriceRaw);
   const hasCloseEvidence =
     [
       "TP",
@@ -669,9 +675,13 @@ export function resolveTradeCloseDisplayPrice({
     ["SL", "LOSS", "FAIL", "STOPPED", "CANCELLED", "REJECTED"].includes(status) ||
     (!status && Number.isFinite(pnl) && pnl < 0);
   if (isTp && Number.isFinite(tp) && tp > 0) return tp;
+  if (isTp && Number.isFinite(exitRaw) && exitRaw > 0) return exitRaw;
   if (isSl && Number.isFinite(sl) && sl > 0) return sl;
+  if (isSl && Number.isFinite(exitRaw) && exitRaw > 0) return exitRaw;
+  if (Number.isFinite(exit) && exit > 0) return exit;
   if (Number.isFinite(tp) && tp > 0) return tp;
   if (Number.isFinite(sl) && sl > 0) return sl;
+  if (Number.isFinite(exitRaw) && exitRaw > 0) return exitRaw;
   return null;
 }
 
@@ -683,7 +693,10 @@ export function resolveClosedTradeLineStyle(source = {}, barBounds = null) {
     source?.pnlRealized ?? source?.pnl_realized,
   );
   const rawExitPrice = toTradePriceNumber(
-    source?.exitPrice ?? source?.exit_price,
+    source?.exitPriceRaw ??
+      source?.exit_price_raw ??
+      source?.exitPrice ??
+      source?.exit_price,
   );
   const exitPrice =
     rawExitPrice != null &&

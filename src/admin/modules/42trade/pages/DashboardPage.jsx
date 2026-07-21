@@ -1227,11 +1227,12 @@ export default function DashboardPage() {
     chartEndMonth,
   ]);
 
-  async function handleRunCron() {
-    if (!selectedCronName) return;
+  async function handleRunCron(cronNameOverride = "") {
+    const cronName = String(cronNameOverride || selectedCronName || "").trim();
+    if (!cronName) return;
     setRunCronLoading(true);
     try {
-      await api.runCron(selectedCronName);
+      await api.runCron(cronName);
       await load();
     } catch (e) {
       if (isAuthRedirectError(e)) return;

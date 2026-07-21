@@ -1397,18 +1397,6 @@ export function TradePlanEditor({
                   resize: "vertical",
                 }}
               />
-            </div>
-
-            <div
-              className="trade-plan-actions-row"
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: "6px",
-                alignItems: "center",
-                marginTop: "4px",
-              }}
-            >
               {showReasonField ? (
                 <input
                   type="text"
@@ -1419,10 +1407,23 @@ export function TradePlanEditor({
                   onChange={(e) => update(reasonKey, e.target.value)}
                   disabled={controlsDisabled}
                   style={{
-                    width: "220px",
+                    width: "100%",
+                    marginTop: 6,
                   }}
                 />
               ) : null}
+            </div>
+
+            <div
+              className="trade-plan-actions-row"
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: "6px",
+                alignItems: "center",
+                marginTop: "4px",
+              }}
+            >
               <div
                 className="trade-plan-action-buttons"
                 style={{

@@ -42,6 +42,7 @@ import {
 import {
   collectContextualStrategyTradePlans,
   evaluateChartStrategies,
+  resolveConfirmedPostEventDirection,
 } from "../../../../shared/utils/chartStrategyChecks";
 import {
   mergeStrategiesById,
@@ -170,6 +171,39 @@ function resolveAllowedRuleEventKey(value = "") {
   return ruleEventKeyFromDefinition(predefined) || direct;
 }
 
+function resolveAllowedRuleEventKeys(value = "") {
+  const raw = String(value || "").trim();
+  if (!raw) return [];
+  const keys = new Set();
+  const direct = normalizeRuleEventKey(raw);
+  if (direct) keys.add(direct);
+  const normalized = raw.toLowerCase();
+  const predefined = listPredefinedRules().find((rule) =>
+    [
+      rule?.id,
+      rule?.abbr,
+      rule?.short_name,
+      rule?.name,
+    ]
+      .map((item) => String(item || "").trim().toLowerCase())
+      .filter(Boolean)
+      .includes(normalized),
+  );
+  if (predefined) {
+    [
+      predefined?.abbr,
+      predefined?.short_name,
+      predefined?.id,
+      predefined?.name,
+      predefined?.marker_text,
+    ].forEach((item) => {
+      const key = normalizeRuleEventKey(item);
+      if (key) keys.add(key);
+    });
+  }
+  return Array.from(keys);
+}
+
 function buildAllowedRuleEventSet(...groups) {
   const values = groups.flatMap((group) => {
     if (group == null) return [];
@@ -178,27 +212,30 @@ function buildAllowedRuleEventSet(...groups) {
   if (!values.length) return null;
   const set = new Set();
   for (const value of values) {
-    const key =
+    const keys =
       value && typeof value === "object"
-        ? resolveAllowedRuleEventKey(
-            value.abbr ||
-              value.short_name ||
-              value.eventKey ||
-              value.event_key ||
-              value.rule_id ||
-              value.id ||
-              value.name,
-          )
-        : resolveAllowedRuleEventKey(value);
-    if (key) set.add(key);
+        ? [
+            value.abbr,
+            value.short_name,
+            value.eventKey,
+            value.event_key,
+            value.rule_id,
+            value.id,
+            value.name,
+          ].flatMap((item) => resolveAllowedRuleEventKeys(item))
+        : resolveAllowedRuleEventKeys(value);
+    keys.forEach((key) => {
+      if (key) set.add(key);
+    });
   }
   return set.size ? set : null;
 }
 
 function allowedRuleEventSetHas(allowedSet, eventKey = "") {
   if (!allowedSet) return true;
-  const key = resolveAllowedRuleEventKey(eventKey);
-  return !key || allowedSet.has(key);
+  const keys = resolveAllowedRuleEventKeys(eventKey);
+  if (!keys.length) return true;
+  return keys.some((key) => allowedSet.has(key));
 }
 
 const PREDEFINED_RULE_EVENT_CATALOG = listPredefinedRules()
@@ -346,6 +383,9 @@ const INDICATOR_GROUPS = [
       { key: "sma20", label: "SMA (20)", color: "#60a5fa" },
       { key: "sma50", label: "SMA (50)", color: "#f97316" },
       { key: "sma200", label: "SMA (200)", color: "#22c55e" },
+      { key: "ema20", label: "EMA (20)", color: "#38bdf8" },
+      { key: "ema50", label: "EMA (50)", color: "#fb7185" },
+      { key: "ema200", label: "EMA (200)", color: "#84cc16" },
       { key: "vwap", label: "VWAP", color: "#0ea5e9" },
       { key: "bbMid", label: "BB Mid", color: "#94a3b8" },
       { key: "bbUpper", label: "BB Upper", color: "#f472b6" },
@@ -365,6 +405,172 @@ const INDICATOR_GROUPS = [
       { key: "macdSignal", label: "MACD Signal", color: "#ef4444" },
       { key: "macdHistogram", label: "MACD Hist", color: "#64748b" },
     ],
+  },
+];
+
+const TREND_LAYER_GROUPS = [
+  {
+    key: "trend-sma",
+    label: "SMA",
+    itemKeys: ["sma20", "sma50", "sma200"],
+    description: "20 / 50 / 200",
+    tone: "#60a5fa",
+  },
+  {
+    key: "trend-ema",
+    label: "EMA",
+    itemKeys: ["ema20", "ema50", "ema200"],
+    description: "20 / 50 / 200",
+    tone: "#38bdf8",
+  },
+  {
+    key: "trend-vwap",
+    label: "VWAP",
+    itemKeys: ["vwap"],
+    description: "VWAP",
+    tone: "#0ea5e9",
+  },
+  {
+    key: "trend-bb",
+    label: "BB",
+    itemKeys: ["bbMid", "bbUpper", "bbLower"],
+    description: "Mid / Upper / Lower",
+    tone: "#f472b6",
+  },
+  {
+    key: "trend-ich",
+    label: "Ich",
+    itemKeys: ["ichiTenkan", "ichiKijun", "ichiSpanA", "ichiSpanB", "ichiChikou"],
+    description: "Tenkan / Kijun / Span / Chikou",
+    tone: "#a855f7",
+  },
+  {
+    key: "trend-zigzag",
+    label: "ZZ",
+    itemKeys: ["zigzag"],
+    description: "ZigZag",
+    tone: "#facc15",
+  },
+];
+
+const MOMENTUM_LAYER_GROUPS = [
+  {
+    key: "momentum-rsi",
+    label: "RSI",
+    itemKeys: ["rsi", "rsiEma9", "rsiWma45"],
+    description: "14 / EMA9 / WMA45",
+    tone: "#a855f7",
+  },
+  {
+    key: "momentum-stoch",
+    label: "Stoch",
+    itemKeys: ["stochK", "stochD"],
+    description: "%K / %D",
+    tone: "#3b82f6",
+  },
+  {
+    key: "momentum-macd",
+    label: "MACD",
+    itemKeys: ["macd", "macdSignal", "macdHistogram"],
+    description: "Line / Signal / Hist",
+    tone: "#22c55e",
+  },
+  {
+    key: "momentum-volume",
+    label: "Volume",
+    itemKeys: ["volume"],
+    description: "Volume",
+    tone: "#60a5fa",
+  },
+];
+
+const ARTIFACT_LAYER_GROUPS = [
+  {
+    key: "artifact-fvg",
+    label: "FVG",
+    groupKeys: ["fvg", "ifvg"],
+    description: "FVG / iFVG",
+  },
+  {
+    key: "artifact-ob-bb",
+    label: "OB/BB",
+    groupKeys: ["ob", "bb"],
+    description: "OB / BB",
+  },
+  {
+    key: "artifact-sup-dem",
+    label: "Sup/Dem",
+    groupKeys: ["support", "demand"],
+    description: "Support / Demand",
+  },
+  {
+    key: "artifact-res-supply",
+    label: "Res/Sply",
+    groupKeys: ["resistance", "supply"],
+    description: "Resistance / Supply",
+  },
+  {
+    key: "artifact-structure",
+    label: "Struct",
+    groupKeys: ["bos", "choch", "sweep", "swings"],
+    description: "BOS / CH / SW / Swings",
+  },
+  {
+    key: "artifact-levels",
+    label: "Levels",
+    groupKeys: ["pdh", "pdl", "liquidity"],
+    description: "PDH / PDL / LIQ",
+  },
+  {
+    key: "artifact-lines",
+    label: "Lines",
+    groupKeys: ["trendline", "divergence", "patterns"],
+    description: "TL / DIV / Patterns",
+  },
+];
+
+const EVENT_LAYER_GROUPS = [
+  {
+    key: "event-structure",
+    label: "Struct",
+    eventKeys: ["BOS", "BOS_B", "BOS_S", "CH", "CH_B", "CH_S", "SW", "SW_B", "SW_S", "SH", "SL"],
+    description: "BOS / CH / SW",
+  },
+  {
+    key: "event-candles",
+    label: "Candles",
+    eventKeys: ["ENG", "ENG_B", "ENG_S", "PIN", "INSI", "OUTS"],
+    description: "ENG / PIN / INSI / OUTS",
+  },
+  {
+    key: "event-rejection",
+    label: "Reject",
+    eventKeys: ["REJ", "RJ_EMA", "RJ_VWAP", "RJ_BB", "RJ_OB", "RJ_FVG", "RT_LVL"],
+    description: "REJ / RJ_* / RT",
+  },
+  {
+    key: "event-breakout",
+    label: "Break",
+    eventKeys: ["BRK", "BRK_DN"],
+    description: "BRK / BRK_DN",
+  },
+  {
+    key: "event-ma-vwap-bb",
+    label: "MA/VWAP",
+    eventKeys: ["PX_EMA", "EMA_X", "PX_VWAP", "PX_VWAP_DN", "PX_BB_MID"],
+    description: "EMA / VWAP / BB",
+  },
+  {
+    key: "event-momentum",
+    label: "Momentum",
+    eventKeys: ["MACD_X", "MACD_X_DN", "RSI_OS", "RSI_OB", "RSI_50_UP", "RSI_50_DN", "DIV"],
+    description: "MACD / RSI / DIV",
+  },
+  {
+    key: "event-trend-phase",
+    label: "Trend",
+    eventKeys: ["TREND_B", "TREND_S", "IMPULSE", "PULLBACK"],
+    description: "Trend / Phase",
   },
 ];
 
@@ -815,9 +1021,18 @@ function RealtimeTfAnalysisOverlay({
                   {phaseTargetVisual.text}
                 </span>
               ) : null}
-              {recentEvents.map((recentEvent, index) => (
+              {recentEvents.map((recentEvent, index) => {
+                const eventKey = [
+                  tf,
+                  recentEvent?.eventId || recentEvent?.event_id || recentEvent?.id || "",
+                  recentEvent?.markerText || "",
+                  recentEvent?.direction || "",
+                  recentEvent?.eventTime || recentEvent?.time || recentEvent?.bar_time_unix || "",
+                  index,
+                ].join("-");
+                return (
                 <span
-                  key={`${tf}-${recentEvent.markerText}-${recentEvent.eventTime || index}`}
+                  key={eventKey}
                   style={{
                     color: recentEvent.color,
                     border: "none",
@@ -841,7 +1056,8 @@ function RealtimeTfAnalysisOverlay({
                   </span>
                   {recentEvent.markerText}
                 </span>
-              ))}
+                );
+              })}
             </span>
           </div>
         );
@@ -863,6 +1079,9 @@ const DEFAULT_INDICATOR_VISIBILITY = {
   sma20: true,
   sma50: true,
   sma200: true,
+  ema20: false,
+  ema50: false,
+  ema200: false,
   vwap: false,
   bbMid: false,
   bbUpper: false,
@@ -2245,6 +2464,21 @@ function humanizeArtifactLabel(text = "") {
 }
 
 function artifactFullLabel(item = {}) {
+  if (item?.is_event) {
+    const groupKey = artifactGroupKeyForItem(item);
+    const eventKey = artifactMarkerText(item);
+    const baseLabel =
+      groupKey === "ob"
+        ? "OB"
+        : groupKey === "bb"
+          ? "BB"
+          : groupKey === "fvg"
+            ? "FVG"
+            : groupKey === "ifvg"
+              ? "iFVG"
+              : "";
+    if (baseLabel && eventKey) return `${baseLabel} ${eventKey}`;
+  }
   const candidates = [
     item?.label,
     item?.artifact_payload?.label,
@@ -2313,13 +2547,18 @@ function artifactMarkerText(item = {}) {
 function isTrueSignalEventItem(item = {}) {
   if (!item || typeof item !== "object" || item?.is_event !== true) return false;
   const type = artifactDisplayTypeKey(item);
+  const groupKey = artifactGroupKeyForItem(item);
   if (
     type === "liquidity_high" ||
     type === "liquidity_low" ||
     type === "hh" ||
     type === "hl" ||
     type === "lh" ||
-    type === "ll"
+    type === "ll" ||
+    groupKey === "support" ||
+    groupKey === "resistance" ||
+    groupKey === "demand" ||
+    groupKey === "supply"
   ) {
     return false;
   }
@@ -2339,7 +2578,24 @@ const DEFAULT_VISIBLE_SIGNAL_EVENT_KEYS = new Set([
 ]);
 const DEFAULT_HIDDEN_ARTIFACT_GROUP_KEYS = new Set(["swings", "patterns"]);
 
-function resolveArtifactEventDirection(item = {}) {
+function resolveArtifactEventDirection(item = {}, bars = [], timeframe = "") {
+  if (Array.isArray(bars) && bars.length) {
+    const eventTimeSec =
+      Number(item?.event_time ?? item?.anchor_time ?? item?.bar_end ?? item?.bar_start ?? item?.time) ||
+      null;
+    const eventPrice =
+      Number(item?.payload?.marker_price ?? item?.price ?? item?.payload?.level) || null;
+    const confirmedDirection = resolveConfirmedPostEventDirection({
+      bars,
+      eventTimeSec,
+      timeframe,
+      eventPrice,
+    });
+    if (confirmedDirection === "buy" || confirmedDirection === "sell") {
+      return confirmedDirection;
+    }
+    return "neutral";
+  }
   const artifactPayload =
     item?.artifact_payload && typeof item.artifact_payload === "object"
       ? item.artifact_payload
@@ -2377,6 +2633,17 @@ function resolveArtifactEventDirection(item = {}) {
   return "neutral";
 }
 
+function markerShapeForConfirmedDirection(direction = "neutral") {
+  if (direction === "sell") return "arrowDown";
+  if (direction === "buy") return "arrowUp";
+  return "circle";
+}
+
+function markerPositionForConfirmedDirection(direction = "neutral") {
+  if (direction === "sell") return "aboveBar";
+  return "belowBar";
+}
+
 function defaultArtifactEventVisible(item = {}) {
   if (!isTrueSignalEventItem(item)) return true;
   const eventKey = artifactMarkerText(item);
@@ -2411,7 +2678,11 @@ function defaultArtifactGroupVisible(groupKey = "") {
 function signalEventColorFromDirection(direction = "neutral") {
   if (direction === "sell") return "#ef4444";
   if (direction === "buy") return "#22c55e";
-  return "#94a3b8";
+  return "rgba(148, 163, 184, 0.38)";
+}
+
+function eventMarkerSizeForConfirmedDirection(direction = "neutral") {
+  return direction === "neutral" ? 2.2 : 4;
 }
 
 function eventPanelGroupRank(eventKey = "") {
@@ -2513,6 +2784,7 @@ function strategyHitToChartObject(hit = {}, fallbackTf = "") {
     latestArtifactGroup === "bb"
       ? brightenHexColor(baseMarkerColor, 0.3)
       : baseMarkerColor;
+  const markerText = strategyHitMarkerText(hit);
   const price = Number(
     ruleEvent?.price ??
       hit?.latestArtifact?.price ??
@@ -2552,12 +2824,20 @@ function strategyHitToChartObject(hit = {}, fallbackTf = "") {
     line_style: "dot",
     line_width: 0.1,
     marker_shape: String(hit?.markerShape || "circle"),
-    marker_text: strategyHitMarkerText(hit),
+    marker_text: markerText,
     marker_position: String(hit?.markerPosition || "belowBar"),
     artifact_family: String(ruleEvent?.family || "strategy").trim().toLowerCase() || "strategy",
     artifact_type: ruleId || "strategy",
     artifact_group: "strategy",
     source_tf: sourceTf,
+    is_event: true,
+    event_key: markerText,
+    event_direction: resolveArtifactEventDirection({
+      direction: hit?.markerDirection,
+      subtype: ruleEvent?.bias || hit?.eventBias,
+      label: markerText,
+      artifact_payload: hit,
+    }),
     artifact_payload: hit,
   };
 }
@@ -2967,7 +3247,7 @@ function artifactGroupLabel(groupKey = "") {
   if (key === "support") return "SUP";
   if (key === "resistance") return "RES";
   if (key === "demand") return "DEM";
-  if (key === "supply") return "SPLY";
+  if (key === "supply") return "SUPL";
   if (key === "ifvg") return "iFVG";
   if (key === "fvg") return "FVG";
   if (key === "bb") return "BB";
@@ -2995,6 +3275,41 @@ function artifactPanelGroupRank(groupKey = "") {
   if (["trendline", "divergence"].includes(key)) return 4;
   if (["patterns"].includes(key)) return 5;
   return 9;
+}
+
+function layerGroupChecked(keys = [], visibility = {}) {
+  const normalizedKeys = (Array.isArray(keys) ? keys : [])
+    .map((key) => String(key || "").trim())
+    .filter(Boolean);
+  if (!normalizedKeys.length) return false;
+  return normalizedKeys.every((key) => visibility?.[key] !== false);
+}
+
+function layerGroupDescription(labels = []) {
+  return (Array.isArray(labels) ? labels : [])
+    .map((label) => String(label || "").trim())
+    .filter(Boolean)
+    .join(" / ");
+}
+
+function summarizeGroupedLayerItems(items = [], groupDefs = [], keyName = "groupKeys") {
+  const sourceItems = Array.isArray(items) ? items : [];
+  const used = new Set();
+  const grouped = [];
+  for (const groupDef of Array.isArray(groupDefs) ? groupDefs : []) {
+    const keys = (Array.isArray(groupDef?.[keyName]) ? groupDef[keyName] : [])
+      .map((key) => String(key || "").trim())
+      .filter(Boolean);
+    const matches = sourceItems.filter((item) => keys.includes(String(item?.groupKey || item?.eventKey || item?.key || "").trim()));
+    if (!matches.length) continue;
+    matches.forEach((item) => used.add(String(item?.groupKey || item?.eventKey || item?.key || "").trim()));
+    grouped.push({ groupDef, matches });
+  }
+  const ungrouped = sourceItems.filter((item) => {
+    const key = String(item?.groupKey || item?.eventKey || item?.key || "").trim();
+    return key && !used.has(key);
+  });
+  return { grouped, ungrouped };
 }
 
 function resolveArtifactWindow(
@@ -3081,12 +3396,13 @@ function artifactSourceSpanEndTimeSec(item = {}, startTimeSec = null, fallbackTf
   return null;
 }
 
-function artifactItemToChartObject(item = {}, fallbackTf = "") {
+function artifactItemToChartObject(item = {}, fallbackTf = "", barsByTf = null) {
   if (!item || typeof item !== "object") return null;
   const family = String(item.family || "").trim().toLowerCase();
   const type = String(item.type || "").trim();
   const label = String(item.label || item.type || "").trim();
   const tf = String(item.timeframe || fallbackTf || "").trim();
+  const barsForTf = Array.isArray(barsByTf?.[tf]) ? barsByTf[tf] : [];
   const color = artifactColorForItem(item);
   const groupKey = artifactGroupKeyForItem(item);
   const timeSec =
@@ -3207,9 +3523,16 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
       artifact_type: type,
       artifact_group: groupKey,
       source_tf: tf,
+      is_event: groupKey === "divergence",
+      event_key: groupKey === "divergence" ? "DIV" : "",
+      event_direction:
+        groupKey === "divergence"
+          ? resolveArtifactEventDirection(item, barsForTf, tf)
+          : "",
       artifact_payload: item,
     };
     if (groupKey !== "divergence") return segment;
+    const divergenceDirection = resolveArtifactEventDirection(item, barsForTf, tf);
     return [
       segment,
       {
@@ -3226,15 +3549,16 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
         anchorPrice: toPrice,
         line_style: "dot",
         line_width: 0.1,
-        marker_shape: String(item?.direction || item?.payload?.divergence_class || "").toLowerCase().includes("bear")
-          ? "arrowDown"
-          : "arrowUp",
+        marker_shape: markerShapeForConfirmedDirection(divergenceDirection),
         marker_text: "DIV",
-        marker_position: String(item?.direction || "").toLowerCase() === "sell" ? "aboveBar" : "belowBar",
+        marker_position: markerPositionForConfirmedDirection(divergenceDirection),
         artifact_family: family,
         artifact_type: `${type}_point`,
         artifact_group: groupKey,
         source_tf: tf,
+        is_event: true,
+        event_key: "DIV",
+        event_direction: divergenceDirection,
         artifact_payload: item,
       },
     ];
@@ -3333,11 +3657,7 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
       artifact_payload: item,
     };
     const eventTimeSec = Number(item?.event_time ?? item?.anchor_time ?? item?.bar_end) || null;
-    const eventDirection = String(
-      item?.event_direction || item?.direction || item?.payload?.bias || item?.subtype || "",
-    )
-      .trim()
-      .toLowerCase();
+    const eventDirection = resolveArtifactEventDirection(item, barsForTf, tf);
     const zoneEventMarkerText = artifactMarkerText(item);
     const eventPrice = resolveZoneEventMarkerPrice(
       item,
@@ -3351,32 +3671,27 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
       Number.isFinite(eventTimeSec) &&
       Number.isFinite(eventPrice)
     ) {
+      const eventColor = signalEventColorFromDirection(eventDirection);
       return [
         zoneObject,
         {
           id: `${String(item.id || `${family}-${type}-${eventTimeSec}`)}:event`,
           kind: "point",
           type: type.toUpperCase() || "POINT",
-          label: artifactFullLabel(item),
+          label: artifactFullLabel({ ...item, artifact_type: `${type}_event`, is_event: true }),
           visible: true,
           tf,
-          color,
+          color: eventColor,
           price: eventPrice,
           time: eventTimeSec,
           anchorTimeMs: eventTimeSec * 1000,
           anchorPrice: eventPrice,
           line_style: "dot",
           line_width: 0.1,
-          marker_shape:
-            eventDirection === "sell" || eventDirection === "bearish"
-              ? "arrowDown"
-              : "arrowUp",
+          marker_shape: markerShapeForConfirmedDirection(eventDirection),
           marker_text: zoneEventMarkerText,
-          marker_position:
-            eventDirection === "sell" || eventDirection === "bearish"
-              ? "aboveBar"
-              : "belowBar",
-          marker_size: 4,
+          marker_position: markerPositionForConfirmedDirection(eventDirection),
+          marker_size: eventMarkerSizeForConfirmedDirection(eventDirection),
           artifact_family: family,
           artifact_type: `${type}_event`,
           artifact_group: groupKey,
@@ -3393,12 +3708,9 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
 
   if (family === "pattern" || family === "structure") {
     if (!Number.isFinite(price) || !Number.isFinite(timeSec)) return null;
-    const direction = String(
-      item?.event_direction || item?.direction || item?.payload?.bias || item?.subtype || "",
-    )
-      .trim()
-      .toLowerCase();
+    const direction = resolveArtifactEventDirection(item, barsForTf, tf);
     const isEvent = item?.is_event !== false;
+    const pointColor = isEvent ? signalEventColorFromDirection(direction) : color;
     const markerText = artifactMarkerText(item);
     const isStructureSegmentSignal =
       family === "structure" &&
@@ -3423,7 +3735,7 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
       label: artifactFullLabel(item),
       visible: true,
       tf,
-      color,
+      color: pointColor,
       price,
       time: timeSec,
       anchorTimeMs: timeSec * 1000,
@@ -3432,14 +3744,11 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
       line_width: 0.1,
       marker_shape:
         isEvent
-          ? direction === "sell" || direction === "bearish"
-            ? "arrowDown"
-            : "arrowUp"
+          ? markerShapeForConfirmedDirection(direction)
           : "circle",
       marker_text: markerText,
-      marker_position:
-        direction === "sell" || direction === "bearish" ? "aboveBar" : "belowBar",
-      marker_size: isEvent ? 4 : 3,
+      marker_position: markerPositionForConfirmedDirection(direction),
+      marker_size: isEvent ? eventMarkerSizeForConfirmedDirection(direction) : 3,
       artifact_family: family,
       artifact_type: type,
       artifact_group: groupKey,
@@ -3516,11 +3825,11 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
   return null;
 }
 
-function artifactEnvelopeToChartObjects(artifacts, fallbackTf = "") {
+function artifactEnvelopeToChartObjects(artifacts, fallbackTf = "", barsByTf = null) {
   const items = Array.isArray(artifacts?.items) ? artifacts.items : [];
   return items
     .flatMap((item) => {
-      const mapped = artifactItemToChartObject(item, fallbackTf);
+      const mapped = artifactItemToChartObject(item, fallbackTf, barsByTf);
       return Array.isArray(mapped) ? mapped : [mapped];
     })
     .filter(Boolean);
@@ -3555,10 +3864,10 @@ function analysisSummaryItemBounds(item = {}) {
 function buildSvgSummaryObjectsFromAnalysisEntry(entry = {}, tf = "") {
   const tfKey = String(tf || entry?.timeframe || "").trim().toLowerCase();
   const bucketConfigs = [
-    { key: "supports", label: "SUP", color: "#22c55e", kind: "line" },
-    { key: "resistances", label: "RES", color: "#ef4444", kind: "line" },
-    { key: "demands", label: "DEM", color: "#14b8a6", kind: "zone" },
-    { key: "supplies", label: "SPLY", color: "#f97316", kind: "zone" },
+    { key: "supports", groupKey: "support", label: "SUP", color: "#22c55e", kind: "line" },
+    { key: "resistances", groupKey: "resistance", label: "RES", color: "#ef4444", kind: "line" },
+    { key: "demands", groupKey: "demand", label: "DEM", color: "#14b8a6", kind: "zone" },
+    { key: "supplies", groupKey: "supply", label: "SPLY", color: "#f97316", kind: "zone" },
   ];
   return bucketConfigs.flatMap((bucket) => {
     const items = Array.isArray(entry?.[bucket.key]) ? entry[bucket.key] : [];
@@ -3588,8 +3897,8 @@ function buildSvgSummaryObjectsFromAnalysisEntry(entry = {}, tf = "") {
             line_style: "dot",
             line_width: 0.1,
             artifact_family: "analysis_summary",
-            artifact_group: bucket.key,
-            artifact_type: bucket.key,
+            artifact_group: bucket.groupKey,
+            artifact_type: bucket.groupKey,
             artifact_payload: item,
           };
         }
@@ -3609,8 +3918,8 @@ function buildSvgSummaryObjectsFromAnalysisEntry(entry = {}, tf = "") {
           line_width: 0.8,
           line_scope: "segment_to_scale",
           artifact_family: "analysis_summary",
-          artifact_group: bucket.key,
-          artifact_type: bucket.key,
+          artifact_group: bucket.groupKey,
+          artifact_type: bucket.groupKey,
           artifact_payload: item,
         };
       })
@@ -3913,14 +4222,15 @@ function buildRecentArtifactEventsByTf({
       );
       if (!Number.isFinite(eventTime) || eventTime <= 0) continue;
       if (!Array.isArray(recentEventEntriesByTf[tfKey])) recentEventEntriesByTf[tfKey] = [];
+      const fullLabel = artifactFullLabel(item?.artifact_payload || item) || eventKey;
       recentEventEntriesByTf[tfKey].push({
         markerText: eventKey,
-        fullLabel: String(item?.label || item?.type || eventKey).trim(),
+        fullLabel,
         color: String(item?.color || artifactColorForItem(item?.artifact_payload || item)).trim(),
         direction: normalizeArtifactEventDirection(item?.artifact_payload || item),
         eventTime,
         price: Number(item?.price ?? item?.anchorPrice ?? item?.anchor_price),
-        title: `${displayTfLabel(tfKey)} ${String(item?.label || item?.type || eventKey).trim()} at ${new Date(eventTime * 1000).toLocaleString()}`,
+        title: `${displayTfLabel(tfKey)} ${fullLabel} at ${new Date(eventTime * 1000).toLocaleString()}`,
       });
     }
   }
@@ -3944,7 +4254,7 @@ function buildRecentArtifactEventsByTf({
         if (typeof storedVisible === "boolean" ? !storedVisible : !fallbackVisible) return null;
         const eventTime = latestArtifactEventTimeSec(item);
         if (!Number.isFinite(eventTime) || eventTime <= 0) return null;
-        const fullLabel = String(item?.label || item?.type || eventKey).trim();
+        const fullLabel = artifactFullLabel(item) || eventKey;
         return {
           markerText: eventKey,
           fullLabel,
@@ -6165,6 +6475,11 @@ export default function SymbolChart({
   const isReplayMode = activeMode === REPLAY_MODE || mode === REPLAY_MODE;
   const activeDataMode = activeMode === REPLAY_MODE ? "cache" : activeMode;
   const isCacheLikeMode = mode === "cache" || mode === REPLAY_MODE;
+  const canShowChartContextMenu =
+    isCacheLikeMode ||
+    (isStreamingMode &&
+      (typeof onQuickTradeIntent === "function" ||
+        typeof onPlanLevelChange === "function"));
   const isTradeAnchoredReplay = hasExternalReplayConfig && replayTrades.length > 0;
   const replayActiveMode = hasExternalReplayConfig ? "cache" : REPLAY_MODE;
   const replayEnabledInChart = Boolean(
@@ -8791,28 +9106,9 @@ export default function SymbolChart({
           },
         };
         const chartId = `${cleanSym}-${tfKey}`;
-        const rawObjects = artifactEnvelopeToChartObjects(mergedEnvelope, tfKey);
-        const nextObjects = limitArtifactObjectsNearLastBar(
-          rawObjects,
-          bars,
-        ).map((item) => {
-          const groupKey = artifactGroupKeyForItem(item);
-          if (isTrueSignalEventItem(item)) return item;
-          const storedVisible = artifactGroupVisibility?.[groupKey];
-          if (typeof storedVisible === "boolean") {
-            return { ...item, visible: storedVisible };
-          }
-          return item;
-        });
-        const nextRawObjects = rawObjects.map((item) => {
-          const groupKey = artifactGroupKeyForItem(item);
-          if (isTrueSignalEventItem(item)) return item;
-          const storedVisible = artifactGroupVisibility?.[groupKey];
-          if (typeof storedVisible === "boolean") {
-            return { ...item, visible: storedVisible };
-          }
-          return item;
-        });
+        const rawObjects = artifactEnvelopeToChartObjects(mergedEnvelope, tfKey, barsByTf);
+        const nextObjects = limitArtifactObjectsNearLastBar(rawObjects, bars);
+        const nextRawObjects = rawObjects;
         nextArtifactItemsByTf[tfKey] = Array.isArray(mergedEnvelope.items)
           ? mergedEnvelope.items
           : [];
@@ -8873,7 +9169,6 @@ export default function SymbolChart({
       return { envelopesByTf, analysisByTf };
     },
     [
-      artifactGroupVisibility,
       cleanSym,
       master?.analysis,
       master?.serverArtifactsByTf,
@@ -9898,7 +10193,17 @@ export default function SymbolChart({
 
   const artifactPanelGroups = useMemo(() => {
     const groups = new Map();
-    for (const [chartId, items] of Object.entries(rawArtifactObjectsByChartId || {})) {
+    const groupedSources = [
+      ...Object.entries(rawArtifactObjectsByChartId || {}).map(([chartId, items]) => ({
+        chartId,
+        items,
+      })),
+      ...Object.entries(sharedEngineAnalysisByTf || {}).map(([tfKey, entry]) => ({
+        chartId: `analysis-${tfKey}`,
+        items: buildSvgSummaryObjectsFromAnalysisEntry(entry, tfKey),
+      })),
+    ];
+    for (const { chartId, items } of groupedSources) {
       for (const item of Array.isArray(items) ? items : []) {
         if (isSignalArtifactPanelItem(item)) continue;
         if (!shouldShowArtifactOnChart(item, item?.source_tf || item?.tf, "5m")) {
@@ -9925,7 +10230,7 @@ export default function SymbolChart({
           typeof storedVisible === "boolean"
             ? storedVisible
             : group.defaultVisible;
-        if (item?.visible !== false && nextVisible !== false) group.visible = true;
+        if (nextVisible !== false) group.visible = true;
       }
     }
     return Array.from(groups.values())
@@ -9938,7 +10243,7 @@ export default function SymbolChart({
         if (rankDiff !== 0) return rankDiff;
         return String(a.label || "").localeCompare(String(b.label || ""));
       });
-  }, [rawArtifactObjectsByChartId, cleanSym, artifactGroupVisibility]);
+  }, [rawArtifactObjectsByChartId, sharedEngineAnalysisByTf, cleanSym, artifactGroupVisibility]);
 
   const artifactPanelTimeframes = useMemo(() => {
     const groups = new Map();
@@ -10085,7 +10390,15 @@ export default function SymbolChart({
       (sum, items) => sum + (Array.isArray(items) ? items.length : 0),
       0,
     );
-    onStrategyMarkersChange({ objectsByTf, total });
+    const resultCount = Object.values(objectsByTf).reduce(
+      (sum, items) =>
+        sum +
+        (Array.isArray(items)
+          ? items.filter((item) => item?.kind === "point" && item?.type === "STRATEGY").length
+          : 0),
+      0,
+    );
+    onStrategyMarkersChange({ objectsByTf, total, resultCount });
   }, [onStrategyMarkersChange, strategyMarkerObjectsByTf]);
   useEffect(() => {
     if (Array.isArray(SYMBOL_CHART_STRATEGY_CACHE)) return;
@@ -10351,21 +10664,23 @@ export default function SymbolChart({
           : !(typeof fallbackVisible === "boolean" ? fallbackVisible : true);
       return { ...(prev || {}), [groupKey]: nextVisible };
     });
-    setArtifactObjectsByChartId((prev) => {
+  }, [artifactPanelGroups]);
+
+  const toggleArtifactGroupKeysVisibility = useCallback((groupKeys = []) => {
+    const keys = (Array.isArray(groupKeys) ? groupKeys : [])
+      .map((key) => String(key || "").trim())
+      .filter(Boolean);
+    if (!keys.length) return;
+    const keySet = new Set(keys);
+    const matchingGroups = artifactPanelGroups.filter((group) =>
+      keySet.has(String(group?.groupKey || "").trim()),
+    );
+    const nextVisible = matchingGroups.some((group) => group?.visible === false);
+    setArtifactGroupVisibility((prev) => {
       const next = { ...(prev || {}) };
-      for (const [chartId, listRaw] of Object.entries(prev || {})) {
-        const list = Array.isArray(listRaw) ? listRaw : [];
-        const targetEntries = list.filter(
-          (entry) => artifactGroupKeyForItem(entry) === groupKey,
-        );
-        if (!targetEntries.length) continue;
-        const nextVisible = targetEntries.some((entry) => entry?.visible === false);
-        next[chartId] = list.map((entry) =>
-          artifactGroupKeyForItem(entry) === groupKey
-            ? { ...entry, visible: nextVisible }
-            : entry,
-        );
-      }
+      keys.forEach((key) => {
+        next[key] = nextVisible;
+      });
       return next;
     });
   }, [artifactPanelGroups]);
@@ -10381,6 +10696,24 @@ export default function SymbolChart({
       return { ...(prev || {}), [tfKey]: nextVisible };
     });
   }, [artifactPanelTimeframes]);
+  const toggleArtifactTfGroupVisibility = useCallback((tfKeys = []) => {
+    const keys = (Array.isArray(tfKeys) ? tfKeys : [])
+      .map((key) => String(key || "").trim())
+      .filter(Boolean);
+    if (!keys.length) return;
+    const keySet = new Set(keys);
+    const matchingGroups = artifactPanelTimeframes.filter((group) =>
+      keySet.has(String(group?.tfKey || "").trim()),
+    );
+    const nextVisible = matchingGroups.some((group) => group?.visible === false);
+    setArtifactTfVisibility((prev) => {
+      const next = { ...(prev || {}) };
+      keys.forEach((key) => {
+        next[key] = nextVisible;
+      });
+      return next;
+    });
+  }, [artifactPanelTimeframes]);
   const toggleArtifactEventVisibility = useCallback((eventKey) => {
     setArtifactEventVisibility((prev) => {
       const current = prev?.[eventKey];
@@ -10392,6 +10725,37 @@ export default function SymbolChart({
       return { ...(prev || {}), [eventKey]: nextVisible };
     });
   }, [artifactPanelEvents]);
+  const toggleArtifactEventKeysVisibility = useCallback((eventKeys = []) => {
+    const keys = (Array.isArray(eventKeys) ? eventKeys : [])
+      .map((key) => String(key || "").trim())
+      .filter(Boolean);
+    if (!keys.length) return;
+    const keySet = new Set(keys);
+    const matchingEvents = artifactPanelEvents.filter((group) =>
+      keySet.has(String(group?.eventKey || "").trim()),
+    );
+    const nextVisible = matchingEvents.some((group) => group?.visible === false);
+    setArtifactEventVisibility((prev) => {
+      const next = { ...(prev || {}) };
+      keys.forEach((key) => {
+        next[key] = nextVisible;
+      });
+      return next;
+    });
+  }, [artifactPanelEvents]);
+  const toggleIndicatorKeysVisibility = useCallback((keys = [], checked = true) => {
+    const normalizedKeys = (Array.isArray(keys) ? keys : [])
+      .map((key) => String(key || "").trim())
+      .filter(Boolean);
+    if (!normalizedKeys.length) return;
+    setIndicatorVisibility((prev) => {
+      const next = { ...(prev || {}) };
+      normalizedKeys.forEach((key) => {
+        next[key] = Boolean(checked);
+      });
+      return next;
+    });
+  }, []);
   const isArtifactEventVisible = useCallback(
     (item) => {
       if (!item?.is_event) return true;
@@ -10405,32 +10769,23 @@ export default function SymbolChart({
     [allowedRuleEventKeys, artifactEventVisibility],
   );
 
-  const momentumLayerItems = useMemo(
-    () =>
-      INDICATOR_GROUPS.filter((group) => group.label === "MOMENTUM" || group.label === "MACD")
-        .flatMap((group) => group.items)
-        .filter((item) => item.key !== "zigzag"),
-    [],
-  );
-
-  const trendLayerItems = useMemo(
-    () =>
-      INDICATOR_GROUPS.filter((group) => group.label === "TREND")
-        .flatMap((group) => group.items)
-        .filter((item) => item.key !== "zigzag"),
-    [],
-  );
   const chartLayerToggleItems = useMemo(
     () => [
-      ...artifactPanelTimeframes.map(({ tfKey, label, color, count, visible }) => ({
-        key: `tf-${tfKey}`,
-        checked: visible,
-        onChange: () => toggleArtifactTfVisibility(tfKey),
-        label,
-        description: `${count} item${count === 1 ? "" : "s"}`,
-        tone: color,
-        title: `${label} artifacts · ${count} item${count === 1 ? "" : "s"}`,
-      })),
+      ...(artifactPanelTimeframes.length
+        ? [{
+            key: "tf-all",
+            checked: artifactPanelTimeframes.every((group) => group.visible !== false),
+            onChange: (evt) =>
+              toggleArtifactTfGroupVisibility(
+                artifactPanelTimeframes.map((group) => group.tfKey),
+                evt?.target?.checked,
+              ),
+            label: "TFs",
+            description: layerGroupDescription(artifactPanelTimeframes.map((group) => group.label)),
+            tone: "#38bdf8",
+            title: "Toggle all loaded timeframe artifact layers",
+          }]
+        : []),
       {
         key: "chart-rsi-panel",
         checked: indicatorVisibility.rsiPanel !== false,
@@ -10473,7 +10828,7 @@ export default function SymbolChart({
       indicatorVisibility.rsiPanel,
       indicatorVisibility.zigzag,
       showStrategyMarkers,
-      toggleArtifactTfVisibility,
+      toggleArtifactTfGroupVisibility,
     ],
   );
   const artifactGroupToggleItems = useMemo(
@@ -10504,35 +10859,31 @@ export default function SymbolChart({
   );
   const momentumToggleItems = useMemo(
     () =>
-      momentumLayerItems.map((item) => ({
-        key: item.key,
-        checked: indicatorVisibility[item.key] !== false,
+      MOMENTUM_LAYER_GROUPS.map((group) => ({
+        key: group.key,
+        checked: layerGroupChecked(group.itemKeys, indicatorVisibility),
         onChange: (evt) =>
-          setIndicatorVisibility((prev) => ({
-            ...prev,
-            [item.key]: evt.target.checked,
-          })),
-        label: item.label,
-        tone: item.color,
-        title: item.label,
+          toggleIndicatorKeysVisibility(group.itemKeys, evt?.target?.checked),
+        label: group.label,
+        description: group.description,
+        tone: group.tone,
+        title: group.description,
       })),
-    [indicatorVisibility, momentumLayerItems],
+    [indicatorVisibility, toggleIndicatorKeysVisibility],
   );
   const trendToggleItems = useMemo(
     () =>
-      trendLayerItems.map((item) => ({
-        key: item.key,
-        checked: indicatorVisibility[item.key] !== false,
+      TREND_LAYER_GROUPS.map((group) => ({
+        key: group.key,
+        checked: layerGroupChecked(group.itemKeys, indicatorVisibility),
         onChange: (evt) =>
-          setIndicatorVisibility((prev) => ({
-            ...prev,
-            [item.key]: evt.target.checked,
-          })),
-        label: item.label,
-        tone: item.color,
-        title: item.label,
+          toggleIndicatorKeysVisibility(group.itemKeys, evt?.target?.checked),
+        label: group.label,
+        description: group.description,
+        tone: group.tone,
+        title: group.description,
       })),
-    [indicatorVisibility, trendLayerItems],
+    [indicatorVisibility, toggleIndicatorKeysVisibility],
   );
   const liveDebugRows = useMemo(() => {
     const cronInfo =
@@ -11381,7 +11732,11 @@ export default function SymbolChart({
             />
           ) : null}
           {isCacheLikeMode && (
-            <div style={{ position: "relative" }}>
+            <div
+              style={{ position: "relative", zIndex: showIndicatorsMenu ? 90 : "auto" }}
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+            >
               <button
                 className="secondary-button"
                 style={{
@@ -11407,6 +11762,8 @@ export default function SymbolChart({
               </button>
               {showIndicatorsMenu && (
                 <div
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onClick={(event) => event.stopPropagation()}
                   style={{
                     position: "absolute",
                     top: "calc(100% + 8px)",
@@ -11422,6 +11779,8 @@ export default function SymbolChart({
                     background: "rgba(9,15,28,0.96)",
                     boxShadow: "0 18px 48px rgba(0,0,0,0.28)",
                     padding: 12,
+                    pointerEvents: "auto",
+                    isolation: "isolate",
                   }}
                 >
                   <div
@@ -11518,12 +11877,7 @@ export default function SymbolChart({
                       }}
                     >
                       {activeLayersTab === "chart" ? (
-                        <>
-                          {artifactPanelTimeframes.length ? (
-                            <LayerBooleanGrid items={chartLayerToggleItems.slice(0, artifactPanelTimeframes.length)} />
-                          ) : null}
-                          <LayerBooleanGrid items={chartLayerToggleItems.slice(artifactPanelTimeframes.length)} />
-                        </>
+                        <LayerBooleanGrid items={chartLayerToggleItems} />
                       ) : null}
                       {activeLayersTab === "artifacts" ? (
                         <>
@@ -12028,9 +12382,7 @@ export default function SymbolChart({
                           ? true
                           : isSignalEvent
                             ? item?.visible !== false
-                            : item?.visible !== false &&
-                            groupVisible !== false &&
-                            !isHiddenByDefaultGroup,
+                            : groupVisible !== false && !isHiddenByDefaultGroup,
                       color: artifactTimeframeColor(
                         item?.source_tf || item?.tf || sourceTf,
                       ),
@@ -12055,8 +12407,17 @@ export default function SymbolChart({
                 const itemTfKey = artifactSourceTfLabel(
                   item?.source_tf || item?.tf || tf,
                 );
+                const itemGroupKey = String(
+                  item?.artifact_group || artifactGroupKeyForItem(item) || "",
+                ).trim().toLowerCase();
+                const storedGroupVisible = artifactGroupVisibility?.[itemGroupKey];
+                const groupVisible =
+                  typeof storedGroupVisible === "boolean"
+                    ? storedGroupVisible
+                    : defaultArtifactGroupVisible(itemGroupKey);
                 if (!itemTfKey) return true;
                 return (
+                  groupVisible !== false &&
                   artifactTfVisibility?.[itemTfKey] !== false &&
                   isArtifactEventVisible(item)
                 );
@@ -12077,7 +12438,9 @@ export default function SymbolChart({
               const strategyMarkerObjects =
                 showStrategyMarkers &&
                 Array.isArray(strategyMarkerObjectsByTf?.[tf.toLowerCase()])
-                  ? strategyMarkerObjectsByTf[tf.toLowerCase()]
+                  ? strategyMarkerObjectsByTf[tf.toLowerCase()].filter((item) =>
+                      isArtifactEventVisible(item),
+                    )
                   : [];
               const replaySharedObjects = isBacktestChartReplay
                 ? dedupeSignalEventObjects(
@@ -12472,7 +12835,9 @@ export default function SymbolChart({
                         }
                         sharedObjects={sharedChartObjects}
                         onContextRequest={
-                          isCacheLikeMode ? handleContextRequest : undefined
+                          canShowChartContextMenu
+                            ? handleContextRequest
+                            : undefined
                         }
                         onViewportChange={
                           !isBacktestChartReplay &&
@@ -12818,7 +13183,7 @@ export default function SymbolChart({
           </div>
         </div>
       ) : null}
-      {isCacheLikeMode && ctxMenu && (
+      {canShowChartContextMenu && ctxMenu && (
         <div
           style={{
             position: "fixed",

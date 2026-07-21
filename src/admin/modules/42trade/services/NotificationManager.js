@@ -2,6 +2,7 @@ import {
   isMeaningfulEntry,
   normalizeServerEntry,
 } from "../../../shared/utils/notificationDisplay.js";
+import { normalizeActivityResult } from "../../../shared/utils/activityResult.js";
 
 export const HUB_KEY = "hub:results";
 export const HUB_TTL_MS = 3600000;
@@ -47,13 +48,16 @@ export function normalizeHubEntry(entry = {}) {
       `hub_${now}_${Math.random().toString(36).slice(2, 6)}`,
     type: entry?.type || "system_event",
     symbol: entry?.symbol || "",
-    status: entry?.status || "ok",
+    status: entry?.status || "info",
     createdAt,
     completedAt,
     durationMs: Number.isFinite(durationMsRaw) ? durationMsRaw : null,
     dbDurationMs: Number(entry?.dbDurationMs) || null,
     extra: entry?.extra || "",
     error: entry?.error || "",
+    result: normalizeActivityResult(entry?.result || entry || {}, {
+      ok: entry?.status !== "error",
+    }),
     data: entry?.data || null,
     meta: entry?.meta || null,
     event: entry?.event || "",

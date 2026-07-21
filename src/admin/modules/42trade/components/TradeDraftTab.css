@@ -1,0 +1,23 @@
+.trade-files-folder__snapshot-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.trade-files-folder__snapshot-actions .primary-button {
+  margin-left: auto;
+}
+
+.trade-files-folder__icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  min-width: 34px;
+  height: 32px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+}

@@ -516,7 +516,10 @@ export default function InputComboSelect({
                       const currentValues = Array.isArray(normalizedComboValue)
                         ? normalizedComboValue
                         : [];
-                      const nextValues = event.target.checked
+                      const shouldSelectFiltered = !filteredValues.every((value) =>
+                        currentValues.includes(value),
+                      );
+                      const nextValues = shouldSelectFiltered
                         ? [...new Set([...currentValues, ...filteredValues])]
                         : currentValues.filter((value) => !filteredValues.includes(value));
                       const eventPayload = buildEventPayload({
