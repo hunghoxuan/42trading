@@ -24,3 +24,5 @@ Read this first on every new chat.
 - Test real code changes.
 - Do not create new files in `scripts/` or `tests/` without explicit user approval.
 - Put scratch or one-off files in `.local/`.
+- Before reverting or restoring any code from git history, first create a backup copy or commit the current state to a git branch.
+- Auto-commit work at end of day or immediately after each completed feature so recovery points always exist.
