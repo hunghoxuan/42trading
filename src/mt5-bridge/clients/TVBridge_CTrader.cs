@@ -46,6 +46,8 @@ namespace cAlgo.Robots
         private string _chartSelectedDirection = "All";
         private string _chartSelectedTradeProfile = "Scalp";
         private string _chartSymbolsSignature = "";
+        private bool _chartUiBootstrapped = false;
+        private const bool DisableCustomChartUiForIsolation = false;
         private const string ChartAllSymbolsOption = "All";
         private bool _isRebuildingChartPanel = false;
         private bool _toggleKillerZones;
@@ -81,6 +83,7 @@ namespace cAlgo.Robots
         private bool _toggleRsiEvents = true;
         private bool _toggleStochasticEvents = true;
         private bool _toggleMacdEvents = true;
+        private const bool DisableTechnicalVisualRenderingForIsolation = true;
         private bool _toggleFvgZones;
         private bool _toggleOrderBlocks;
         private bool _toggleHigherTimeframeZones;
@@ -97,6 +100,22 @@ namespace cAlgo.Robots
         private readonly List<StrategyChartMarker> _strategyChartMarkers = new List<StrategyChartMarker>();
         private string _lastStopReason = "external_or_unknown";
         private DateTime _startedAtUtc = DateTime.MinValue;
+        private DateTime _startupWarmupUntilUtc = DateTime.MinValue;
+        private bool _startupWarmupAnnounced = false;
+        private const bool DisableBridgeRuntimeForIsolation = false;
+        private const bool DisableOnStartExtrasForIsolation = true;
+        private const bool DisableOnStopCleanupForIsolation = true;
+        private const bool DisableTimerStartupForIsolation = false;
+        private const bool DisableWatchdogStartupForIsolation = true;
+        private const bool DisableMasterTimerBodyForIsolation = false;
+        private const bool DisableMasterTimerNetworkForIsolation = true;
+        private const bool DisableMasterTimerStrategyForIsolation = true;
+        private const bool DisableMasterTimerChartWorkForIsolation = false;
+        private const bool DisableChartPanelBootstrapForIsolation = true;
+        private const bool DisableChartPerTickRefreshForIsolation = true;
+        private const bool DisableChartVisualTogglePanelForIsolation = true;
+        private const bool DisableCustomUiSettingsPersistenceForIsolation = true;
+        private const int LiteZoneRefreshEveryTicks = 5;
         private Color _lastPanelMessageColor = Color.White;
         private bool _backtestExportActive = false;
         private string _backtestExportRunId = "";
@@ -327,6 +346,9 @@ namespace cAlgo.Robots
         [Parameter("Trailing Stop", Group = "Strategies", DefaultValue = false)]
         public bool EnableTrailingStop { get; set; }
 
+        [Parameter("Export backtest", Group = "Strategies", DefaultValue = false)]
+        public bool EnableBacktestExport { get; set; }
+
         [Parameter("Candles", Group = "Strategy_FollowTrend", DefaultValue = 3, MinValue = 1, Step = 1)]
         public int FollowTrendCandlesCount { get; set; }
 
@@ -381,79 +403,79 @@ namespace cAlgo.Robots
         [Parameter("Alert Sound", Group = "Logging", DefaultValue = false)]
         public bool EnableAlertSound { get; set; }
 
-        [Parameter("Draw Killer Zones", Group = "Chart Visuals", DefaultValue = true)]
+        [Parameter("Killer Zones", Group = "Chart Visuals", DefaultValue = true)]
         public bool DrawKillerZones { get; set; }
 
-        [Parameter("Draw Liquidity", Group = "Chart Visuals", DefaultValue = true)]
+        [Parameter("Liquidity", Group = "Chart Visuals", DefaultValue = true)]
         public bool DrawLiquidityLevels { get; set; }
 
-        [Parameter("Draw Sweep", Group = "Chart Visuals", DefaultValue = true)]
+        [Parameter("Sweep", Group = "Chart Visuals", DefaultValue = true)]
         public bool DrawSweepDetections { get; set; }
 
-        [Parameter("Draw BOS", Group = "Chart Visuals", DefaultValue = true)]
+        [Parameter("BOS", Group = "Chart Visuals", DefaultValue = true)]
         public bool DrawBosDetections { get; set; }
 
-        [Parameter("Draw CHOCH", Group = "Chart Visuals", DefaultValue = true)]
+        [Parameter("CHOCH", Group = "Chart Visuals", DefaultValue = true)]
         public bool DrawChochDetections { get; set; }
 
-        [Parameter("Draw Rejection", Group = "Chart Visuals", DefaultValue = true)]
+        [Parameter("Rejection", Group = "Chart Visuals", DefaultValue = true)]
         public bool DrawRejectionDetections { get; set; }
 
-        [Parameter("Draw Breakout", Group = "Chart Visuals", DefaultValue = true)]
+        [Parameter("Breakout", Group = "Chart Visuals", DefaultValue = true)]
         public bool DrawBreakoutDetections { get; set; }
 
-        [Parameter("Draw Pullback", Group = "Chart Visuals", DefaultValue = true)]
+        [Parameter("Pullback", Group = "Chart Visuals", DefaultValue = true)]
         public bool DrawPullbackDetections { get; set; }
 
-        [Parameter("Draw Continuation", Group = "Chart Visuals", DefaultValue = true)]
+        [Parameter("Continuation", Group = "Chart Visuals", DefaultValue = true)]
         public bool DrawContinuationDetections { get; set; }
 
-        [Parameter("Draw Impulse", Group = "Chart Visuals", DefaultValue = true)]
+        [Parameter("Impulse", Group = "Chart Visuals", DefaultValue = true)]
         public bool DrawImpulseDetections { get; set; }
 
         [Parameter("KZ Days", Group = "Chart Visuals", DefaultValue = 10, MinValue = 1, MaxValue = 10)]
         public int KillerZoneDays { get; set; }
 
-        [Parameter("Draw FVG", Group = "Chart Visuals", DefaultValue = true)]
+        [Parameter("FVG", Group = "Chart Visuals", DefaultValue = true)]
         public bool DrawFvgZones { get; set; }
 
-        [Parameter("Draw OB", Group = "Chart Visuals", DefaultValue = true)]
+        [Parameter("OB", Group = "Chart Visuals", DefaultValue = true)]
         public bool DrawOrderBlocks { get; set; }
 
-        [Parameter("Draw HTF Zones", Group = "Chart Visuals", DefaultValue = true)]
+        [Parameter("HTF Zones", Group = "Chart Visuals", DefaultValue = true)]
         public bool DrawHigherTimeframeZones { get; set; }
 
-        [Parameter("Draw HTF Mini", Group = "Chart Visuals", DefaultValue = true)]
+        [Parameter("HTF Mini", Group = "Chart Visuals", DefaultValue = true)]
         public bool DrawHtfMiniChart { get; set; }
 
-        [Parameter("Show Strategy", Group = "Chart Visuals", DefaultValue = true)]
+        [Parameter("Strategy", Group = "Chart Visuals", DefaultValue = true)]
         public bool DrawStrategyMarkers { get; set; }
 
-        [Parameter("Draw EMA", Group = "Chart Visuals", DefaultValue = true)]
+        [Parameter("EMA", Group = "Chart Visuals", DefaultValue = true)]
         public bool DrawEmaOverlay { get; set; }
 
-        [Parameter("Draw VWAP", Group = "Chart Visuals", DefaultValue = true)]
+        [Parameter("VWAP", Group = "Chart Visuals", DefaultValue = true)]
         public bool DrawVwapOverlay { get; set; }
 
-        [Parameter("Draw Bollinger", Group = "Chart Visuals", DefaultValue = true)]
+        [Parameter("Bollinger", Group = "Chart Visuals", DefaultValue = true)]
         public bool DrawBollingerOverlay { get; set; }
 
-        [Parameter("Draw EMA evt", Group = "Chart Visuals", DefaultValue = true)]
+        [Parameter("EMA evt", Group = "Chart Visuals", DefaultValue = true)]
         public bool DrawEmaEvents { get; set; }
 
-        [Parameter("Draw VWAP evt", Group = "Chart Visuals", DefaultValue = true)]
+        [Parameter("VWAP evt", Group = "Chart Visuals", DefaultValue = true)]
         public bool DrawVwapEvents { get; set; }
 
-        [Parameter("Draw BB evt", Group = "Chart Visuals", DefaultValue = true)]
+        [Parameter("BB evt", Group = "Chart Visuals", DefaultValue = true)]
         public bool DrawBollingerEvents { get; set; }
 
-        [Parameter("Draw RSI evt", Group = "Chart Visuals", DefaultValue = true)]
+        [Parameter("RSI evt", Group = "Chart Visuals", DefaultValue = true)]
         public bool DrawRsiEvents { get; set; }
 
-        [Parameter("Draw Stoch evt", Group = "Chart Visuals", DefaultValue = true)]
+        [Parameter("Stoch evt", Group = "Chart Visuals", DefaultValue = true)]
         public bool DrawStochasticEvents { get; set; }
 
-        [Parameter("Draw MACD evt", Group = "Chart Visuals", DefaultValue = true)]
+        [Parameter("MACD evt", Group = "Chart Visuals", DefaultValue = true)]
         public bool DrawMacdEvents { get; set; }
 
         [Parameter("Marker Font", Group = "Chart Visuals", DefaultValue = ChartMarkerFontSizeMode.Small)]
@@ -462,7 +484,7 @@ namespace cAlgo.Robots
         [Parameter("Marker Symbol", Group = "Chart Visuals", DefaultValue = ChartMarkerSymbolMode.Triangles)]
         public ChartMarkerSymbolMode MarkerSymbol { get; set; }
 
-        [Parameter("Show Label", Group = "Chart Visuals", DefaultValue = ChartLabelVisibilityMode.Yes)]
+        [Parameter("Label", Group = "Chart Visuals", DefaultValue = ChartLabelVisibilityMode.Yes)]
         public ChartLabelVisibilityMode ShowMarkerLabel { get; set; }
 
         [Parameter("OB Full Wick", Group = "Chart Visuals", DefaultValue = true)]
@@ -1653,6 +1675,29 @@ namespace cAlgo.Robots
             return IsBacktestingRuntime() || EnableLiveStrategyTrading;
         }
 
+        private bool IsStartupWarmupActive()
+        {
+            if (_startupWarmupUntilUtc == DateTime.MinValue)
+                return false;
+
+            return DateTime.UtcNow < _startupWarmupUntilUtc;
+        }
+
+        private void TrackStartupWarmup()
+        {
+            var warmupActive = IsStartupWarmupActive();
+            if (warmupActive && !_startupWarmupAnnounced)
+            {
+                _startupWarmupAnnounced = true;
+                SafePrint("[Bridge] Startup warmup active");
+            }
+            else if (!warmupActive && _startupWarmupAnnounced)
+            {
+                _startupWarmupAnnounced = false;
+                SafePrint("[Bridge] Startup warmup complete");
+            }
+        }
+
         private bool ShouldStrategySubmitOrders()
         {
             return IsBacktestingRuntime() || EnableLiveStrategyTrading;
@@ -1894,6 +1939,9 @@ namespace cAlgo.Robots
 
         private void LoadCustomUiSettings()
         {
+            if (DisableCustomUiSettingsPersistenceForIsolation)
+                return;
+
             _customUiSettings.Clear();
             _customUiSettingsSerializedSnapshot = "";
 
@@ -1919,7 +1967,6 @@ namespace cAlgo.Robots
                 }
 
                 _customUiSettingsSerializedSnapshot = SerializeCustomUiSettingsSnapshot();
-                PrintBypassLogFilter("[Settings] Loaded custom UI settings from {0}", path);
             }
             catch (Exception ex)
             {
@@ -1939,6 +1986,9 @@ namespace cAlgo.Robots
 
         private void SaveCustomUiSettings()
         {
+            if (DisableCustomUiSettingsPersistenceForIsolation)
+                return;
+
             try
             {
                 var serialized = SerializeCustomUiSettingsSnapshot();
@@ -2079,6 +2129,9 @@ namespace cAlgo.Robots
 
         private void PersistCustomUiSettingsSnapshot()
         {
+            if (DisableCustomUiSettingsPersistenceForIsolation)
+                return;
+
             SetCustomUiSetting("chart.symbol", _chartSelectedSymbol ?? "");
             SetCustomUiSetting("chart.direction", _chartSelectedDirection ?? "");
             SetCustomUiSetting("chart.trade_profile", _chartSelectedTradeProfile ?? "");
@@ -2171,9 +2224,7 @@ namespace cAlgo.Robots
 
             var currentTf = Chart != null ? Chart.TimeFrame : TimeFrame.Minute;
             frames.Add(currentTf);
-            frames.Add(TimeFrame.Hour);
-            frames.Add(TimeFrame.Hour4);
-            frames.Add(TimeFrame.Daily);
+            frames.AddRange(GetAutoHigherTimeframes(currentTf));
 
             return frames
                 .Where(tf => tf != null)
@@ -2406,6 +2457,15 @@ namespace cAlgo.Robots
 
             string resolvedName;
             if (!TryResolveBrokerSymbol(NormalizeSymbolAlias(rawSymbol), out resolvedName)) return null;
+            try
+            {
+                var direct = Symbols.GetSymbol(resolvedName);
+                if (direct != null)
+                    return direct;
+            }
+            catch
+            {
+            }
             try
             {
                 foreach (var loaded in Symbols)
@@ -2962,6 +3022,9 @@ namespace cAlgo.Robots
                 Chart.RemoveObject("CT_TXT_" + i.ToString(CultureInfo.InvariantCulture));
                 Chart.RemoveObject("IM_" + i.ToString(CultureInfo.InvariantCulture));
                 Chart.RemoveObject("IM_TXT_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("EMA20_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("EMA50_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("EMA200_" + i.ToString(CultureInfo.InvariantCulture));
                 Chart.RemoveObject("PIN_" + i.ToString(CultureInfo.InvariantCulture));
                 Chart.RemoveObject("PIN_TXT_" + i.ToString(CultureInfo.InvariantCulture));
                 Chart.RemoveObject("ENG_" + i.ToString(CultureInfo.InvariantCulture));
@@ -2996,6 +3059,128 @@ namespace cAlgo.Robots
                     Chart.RemoveObject("IM_TXT_" + tfLabel + "_" + i.ToString(CultureInfo.InvariantCulture));
                 }
             }
+        }
+
+        private void RemoveLiteZoneObjects()
+        {
+            for (var i = 0; i < 256; i++)
+            {
+                Chart.RemoveObject("MINI_BODY_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("MINI_WICK_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("MINI_WICK_U_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("MINI_WICK_L_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("MINI_TXT_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("MINI_PAD_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("KZ_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("KZ_TOP_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("KZ_BOT_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("KZ_TXT_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("KZ_TXT2_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("FVG_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("OB_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("HTF_FVG_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("HTF_OB_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("KEY_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("KEY_TXT_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("LIQ_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("LIQ_TXT_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("SWEEP_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("SWEEP_TXT_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("BOS_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("BOS_TXT_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("CHOCH_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("CHOCH_TXT_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("RJ_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("RJ_TXT_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("BR_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("BR_TXT_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("PB_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("PB_TXT_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("CT_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("CT_TXT_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("IM_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("IM_TXT_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("PIN_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("PIN_TXT_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("ENG_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("ENG_TXT_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("BIG_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("BIG_TXT_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("PAT_1m_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("PAT_5m_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("PAT_15m_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("PAT_1H_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("PAT_4H_" + i.ToString(CultureInfo.InvariantCulture));
+                Chart.RemoveObject("PAT_1D_" + i.ToString(CultureInfo.InvariantCulture));
+            }
+        }
+
+        private void DrawLiteZoneOverlays()
+        {
+            try
+            {
+                if (Chart == null || Bars == null || Bars.Count < 5)
+                    return;
+
+                RemoveLiteZoneObjects();
+
+                var objectIndex = 0;
+                if (_toggleHtfMiniChart)
+                    objectIndex = DrawHtfMiniCharts(objectIndex);
+                if (_toggleKillerZones)
+                    objectIndex = DrawConfiguredKillerZones(objectIndex);
+                if (_toggleFvgZones)
+                    objectIndex = DrawRecentFvgZones(Bars, Chart.TimeFrame, "FVG_", objectIndex, GetCurrentChartEndTime());
+                if (_toggleOrderBlocks)
+                    objectIndex = DrawRecentOrderBlocks(Bars, Chart.TimeFrame, "OB_", objectIndex, GetCurrentChartEndTime());
+                if (_toggleHigherTimeframeZones)
+                    objectIndex = DrawHigherTimeframeZonesOnChart(objectIndex);
+                if (_toggleKeyLevels)
+                    objectIndex = DrawKeyLevelsOnChart(objectIndex);
+                if (_toggleLiquidityLevels)
+                    objectIndex = DrawLiquidityLevelsOnChart(objectIndex);
+                if (_toggleSweepDetections)
+                    objectIndex = DrawSweepDetectionsOnChart(objectIndex);
+                if (_toggleBosDetections)
+                    objectIndex = DrawStructureBreakDetectionsOnChart(objectIndex, false);
+                if (_toggleChochDetections)
+                    objectIndex = DrawStructureBreakDetectionsOnChart(objectIndex, true);
+                if (_toggleRejectionDetections)
+                    objectIndex = DrawCanonicalEventsOnChart(objectIndex, CanonicalEventType.Rejection);
+                if (_toggleBreakoutDetections)
+                    objectIndex = DrawCanonicalEventsOnChart(objectIndex, CanonicalEventType.Breakout);
+                if (_togglePullbackDetections)
+                    objectIndex = DrawCanonicalEventsOnChart(objectIndex, CanonicalEventType.Pullback);
+                if (_toggleContinuationDetections)
+                    objectIndex = DrawCanonicalEventsOnChart(objectIndex, CanonicalEventType.Continuation);
+                if (_toggleImpulseDetections)
+                    objectIndex = DrawCanonicalEventsOnChart(objectIndex, CanonicalEventType.Impulse);
+                if (_toggleEmaOverlay)
+                    objectIndex = DrawLiteEmaOverlays(objectIndex);
+            }
+            catch (Exception ex)
+            {
+                SafePrint("[Visuals] Lite zones failed: {0}", ex.Message);
+            }
+        }
+
+        private int DrawLiteEmaOverlays(int objectIndex)
+        {
+            if (Chart == null || Bars == null || Bars.Count < 24)
+                return objectIndex;
+
+            try
+            {
+                objectIndex = DrawIndicatorSeriesLine(objectIndex, "EMA20_", index => ComputeExponentialMovingAverage(Bars, index, 20), Color.FromArgb(255, 56, 189, 248), 1, "Lines", 180);
+                objectIndex = DrawIndicatorSeriesLine(objectIndex, "EMA50_", index => ComputeExponentialMovingAverage(Bars, index, 50), Color.FromArgb(255, 251, 113, 133), 1, "Lines", 180);
+                objectIndex = DrawIndicatorSeriesLine(objectIndex, "EMA200_", index => ComputeExponentialMovingAverage(Bars, index, 200), Color.FromArgb(255, 132, 204, 22), 2, "Lines", 220);
+            }
+            catch (Exception ex)
+            {
+                SafePrint("[Visuals] Lite EMA failed: {0}", ex.Message);
+            }
+
+            return objectIndex;
         }
 
         private void DrawChartVisualOverlays()
@@ -3051,7 +3236,7 @@ namespace cAlgo.Robots
                 {
                     objectIndex = DrawCanonicalEventsOnChart(objectIndex, CanonicalEventType.Impulse);
                 }
-                if (_toggleEmaOverlay || _toggleVwapOverlay || _toggleBollingerOverlay)
+                if (!DisableTechnicalVisualRenderingForIsolation && (_toggleEmaOverlay || _toggleVwapOverlay || _toggleBollingerOverlay))
                 {
                     objectIndex = DrawIndicatorOverlaysOnChart(objectIndex);
                 }
@@ -3063,7 +3248,7 @@ namespace cAlgo.Robots
                 {
                     objectIndex = DrawDirectionalCandlePatternsOnChart(objectIndex);
                 }
-                if (_toggleEmaEvents || _toggleVwapEvents || _toggleBollingerEvents || _toggleRsiEvents || _toggleStochasticEvents || _toggleMacdEvents)
+                if (!DisableTechnicalVisualRenderingForIsolation && (_toggleEmaEvents || _toggleVwapEvents || _toggleBollingerEvents || _toggleRsiEvents || _toggleStochasticEvents || _toggleMacdEvents))
                 {
                     objectIndex = DrawDirectionalIndicatorEventsOnChart(objectIndex);
                 }
@@ -5297,6 +5482,9 @@ namespace cAlgo.Robots
 
         private int DrawDirectionalIndicatorEventsOnChart(int objectIndex)
         {
+            if (DisableTechnicalVisualRenderingForIsolation)
+                return objectIndex;
+
             if (!ShouldDrawChartMarkers() || Chart == null || Bars == null || Bars.Count < 16 || Symbol == null)
                 return objectIndex;
 
@@ -5392,6 +5580,9 @@ namespace cAlgo.Robots
 
         private int DrawIndicatorOverlaysOnChart(int objectIndex)
         {
+            if (DisableTechnicalVisualRenderingForIsolation)
+                return objectIndex;
+
             if (Chart == null || Bars == null || Bars.Count < 24)
                 return objectIndex;
 
@@ -7086,7 +7277,7 @@ namespace cAlgo.Robots
 
         private void StartBacktestExportSession()
         {
-            if (!IsBacktestingRuntime() || _backtestExportActive)
+            if (!EnableBacktestExport || !IsBacktestingRuntime() || _backtestExportActive)
                 return;
 
             _backtestExportUserId = DefaultBacktestUserId;
@@ -7561,7 +7752,7 @@ namespace cAlgo.Robots
 
         private void FinalizeBacktestExportSession()
         {
-            if (!_backtestExportActive || string.IsNullOrWhiteSpace(_backtestExportRunDir))
+            if (!EnableBacktestExport || !_backtestExportActive || string.IsNullOrWhiteSpace(_backtestExportRunDir))
                 return;
 
             try
@@ -9198,9 +9389,29 @@ namespace cAlgo.Robots
         protected override void OnStart()
         {
             _startedAtUtc = DateTime.UtcNow;
+            _startupWarmupUntilUtc = _startedAtUtc.AddSeconds(12);
+            _startupWarmupAnnounced = false;
             _lastStopReason = "running";
+            if (DisableBridgeRuntimeForIsolation)
+            {
+                try
+                {
+                    Chart.DrawStaticText(
+                        "Bridge_Isolation_Status",
+                        "[Bridge] Isolation build active",
+                        VerticalAlignment.Top,
+                        HorizontalAlignment.Left,
+                        Color.Yellow);
+                }
+                catch
+                {
+                }
+                PrintBypassLogFilter("[Bridge] Isolation build active: OnStart early return");
+                return;
+            }
             LoadCustomUiSettings();
-            StartBacktestExportSession();
+            if (!DisableOnStartExtrasForIsolation)
+                StartBacktestExportSession();
             if (!string.IsNullOrWhiteSpace(ServerBaseUrl) &&
                 ServerBaseUrl.IndexOf("localhost", StringComparison.OrdinalIgnoreCase) >= 0)
             {
@@ -9246,17 +9457,30 @@ namespace cAlgo.Robots
             _toggleKeyLevels = true;
             _toggleStrategyMarkers = DrawStrategyMarkers;
             ApplyCustomUiSettingsOverrides();
+            var isBacktesting = IsBacktestingRuntime();
             var effectiveMaxRiskPercent = GetEffectiveMaxRiskPercent();
             var effectiveMaxDailyLossPercent = GetEffectiveMaxDailyLossPercent();
             var effectiveMaxTotalOpenRiskPercent = GetEffectiveMaxTotalOpenRiskPercent();
             var effectiveMaxEquityDrawdownPercent = GetEffectiveMaxEquityDrawdownPercent();
             int interval = Math.Max(1, MasterTimerSeconds);
-            Timer.Start(TimeSpan.FromSeconds(interval));
-            _lastTimerTickSeen = DateTime.Now;
-            StartMasterWatchdog(interval);
-            BuildChartVisualTogglePanel();
-            BuildChartButtonPanel();
-            DrawChartVisualOverlays();
+            if (!DisableTimerStartupForIsolation && (!isBacktesting || ShouldRunStrategiesOnMasterTimer()))
+            {
+                Timer.Start(TimeSpan.FromSeconds(interval));
+                _lastTimerTickSeen = DateTime.Now;
+                if (!DisableWatchdogStartupForIsolation)
+                    StartMasterWatchdog(interval);
+            }
+            if (!isBacktesting)
+            {
+                _chartUiBootstrapped = DisableCustomChartUiForIsolation;
+            }
+            if (DisableChartPanelBootstrapForIsolation && !DisableCustomChartUiForIsolation)
+            {
+                try { BuildChartButtonPanel(); } catch { }
+                try { DrawLiteZoneOverlays(); } catch { }
+                try { RefreshDebugPanelNow(false); } catch { }
+                try { RefreshChartSummaryPanel(BuildRiskGateState(0)); } catch { }
+            }
             SafePrint("[Bridge] Started. MasterTimer={0}s Ver={1}", interval, BuildVersion);
             SafePrint(
                 "[RiskTpl] Active={0} Effective: MaxRisk={1}% MaxOpenRisk={2}% MaxDayLoss={3}% MaxDD={4}%",
@@ -9265,7 +9489,6 @@ namespace cAlgo.Robots
                 FormatDashboardPercent(effectiveMaxTotalOpenRiskPercent),
                 FormatDashboardPercent(effectiveMaxDailyLossPercent),
                 FormatDashboardPercent(effectiveMaxEquityDrawdownPercent));
-            RefreshDebugPanelNow();
         }
 
         private int ClampTimeoutSeconds(int seconds, int fallbackSeconds)
@@ -9447,6 +9670,9 @@ namespace cAlgo.Robots
 
         private void StartMasterWatchdog(int intervalSec)
         {
+            if (IsBacktestingRuntime() && !ShouldRunStrategiesOnMasterTimer())
+                return;
+
             _watchdogCts = new CancellationTokenSource();
             var ct = _watchdogCts.Token;
             Task.Run(async () =>
@@ -9473,7 +9699,13 @@ namespace cAlgo.Robots
 
         protected override void OnTick()
         {
+            if (DisableBridgeRuntimeForIsolation)
+                return;
+
             EnsureAutoProtectedPositions();
+
+            if (IsStartupWarmupActive())
+                return;
 
             if (ShouldStrategyEngineRun() && ShouldRunStrategiesOnTickEvent())
                 TryRunBacktestStrategy();
@@ -9481,12 +9713,24 @@ namespace cAlgo.Robots
 
         protected override void OnBar()
         {
+            if (DisableBridgeRuntimeForIsolation)
+                return;
+
+            if (IsStartupWarmupActive())
+                return;
+
             if (ShouldRunStrategiesOnBarEvent())
                 TryRunBacktestStrategy();
         }
 
         protected override void OnBarClosed()
         {
+            if (DisableBridgeRuntimeForIsolation)
+                return;
+
+            if (IsStartupWarmupActive())
+                return;
+
             if (ShouldStrategyEngineRun() && ShouldRunStrategiesOnBarClosedEvent())
                 TryRunBacktestStrategy();
         }
@@ -9615,6 +9859,9 @@ namespace cAlgo.Robots
 
         protected override void OnTimer()
         {
+            if (DisableBridgeRuntimeForIsolation)
+                return;
+
             _lastTimerTickSeen = DateTime.Now;
             _masterTickCount++;
             _masterTimerTick = DateTime.Now;
@@ -12076,7 +12323,26 @@ namespace cAlgo.Robots
 
         private void MasterTimerTick()
         {
-            if (EnableLiveStrategyTrading && !IsBacktestingRuntime() && _masterTickCount <= 2)
+            if (DisableMasterTimerBodyForIsolation)
+                return;
+
+            var isBacktesting = IsBacktestingRuntime();
+            TrackStartupWarmup();
+            if (!DisableCustomChartUiForIsolation && !DisableChartPanelBootstrapForIsolation && !isBacktesting && !_chartUiBootstrapped && _masterTickCount >= 5)
+            {
+                try
+                {
+                    if (!DisableChartVisualTogglePanelForIsolation)
+                        BuildChartVisualTogglePanel();
+                    BuildChartButtonPanel();
+                    _chartUiBootstrapped = true;
+                }
+                catch (Exception ex)
+                {
+                    SafePrint("[Bridge] Chart UI bootstrap failed: {0}", ex.Message);
+                }
+            }
+            if (EnableLiveStrategyTrading && !isBacktesting && _masterTickCount <= 2)
             {
                 var timerSymbol = ResolveSharedStrategySymbol(
                     Chart != null ? Chart.SymbolName : (Symbol != null ? Symbol.Name : ""));
@@ -12091,24 +12357,32 @@ namespace cAlgo.Robots
             }
 
             var fullRefreshEveryTicks = Math.Max(1, (int)Math.Ceiling(5.0 / Math.Max(1, MasterTimerSeconds)));
-            var includeVisualOverlays = _masterTickCount <= 1 || (_masterTickCount % fullRefreshEveryTicks) == 0;
-            RefreshDebugPanelNow(includeVisualOverlays);
+            var chartUiReady = _chartUiBootstrapped || DisableChartPanelBootstrapForIsolation;
+            var includeVisualOverlays = !DisableChartPerTickRefreshForIsolation && !DisableMasterTimerChartWorkForIsolation && !DisableCustomChartUiForIsolation && !isBacktesting && chartUiReady && _masterTickCount >= 8 && (_masterTickCount % fullRefreshEveryTicks) == 0;
+            if (!DisableChartPerTickRefreshForIsolation && !DisableMasterTimerChartWorkForIsolation && !DisableCustomChartUiForIsolation && !isBacktesting && chartUiReady)
+                RefreshDebugPanelNow(includeVisualOverlays);
+            else if (!DisableMasterTimerChartWorkForIsolation && !DisableCustomChartUiForIsolation && !isBacktesting && chartUiReady && (_masterTickCount % Math.Max(1, LiteZoneRefreshEveryTicks)) == 0)
+                DrawLiteZoneOverlays();
 
             if (_masterTickCount % 60 == 0) CleanupOldEntries();
 
-            if (EnableLiveStrategyTrading)
+            if (IsStartupWarmupActive())
+                return;
+
+            if (!DisableMasterTimerNetworkForIsolation && EnableLiveStrategyTrading)
                 TriggerNewsGateRefreshIfNeeded();
 
             EnforceLiveStrategyProtectionSafety();
-            TrackStrategyPositionMarkers();
+            if (!DisableChartPerTickRefreshForIsolation && !DisableMasterTimerChartWorkForIsolation && !DisableCustomChartUiForIsolation && !isBacktesting && chartUiReady)
+                TrackStrategyPositionMarkers();
 
             // MasterTimer mode lets strategies run independently from the host chart bar close.
             // This is especially useful when the chart symbol/timeframe differs from the
             // configured strategy symbol/timeframe.
-            if (ShouldStrategyEngineRun() && ShouldRunStrategiesOnMasterTimer())
+            if (!DisableMasterTimerStrategyForIsolation && ShouldStrategyEngineRun() && ShouldRunStrategiesOnMasterTimer())
                 TryRunBacktestStrategy();
 
-            if (IsBacktestingRuntime())
+            if (isBacktesting)
                 return;
 
             if (_consecutiveErrors > 0)
@@ -12117,6 +12391,9 @@ namespace cAlgo.Robots
                 if (bs > PollSeconds && _masterTickCount % Math.Max(1, bs / MasterTimerSeconds) != 0)
                     return;
             }
+
+            if (DisableMasterTimerNetworkForIsolation)
+                return;
 
             var accId = Account.UserId.ToString();
             var now = DateTime.Now;
@@ -12548,9 +12825,17 @@ namespace cAlgo.Robots
             catch
             {
             }
+            if (DisableOnStopCleanupForIsolation)
+            {
+                try { _watchdogCts?.Cancel(); } catch { }
+                try { _watchdogCts?.Dispose(); } catch { }
+                try { Chart.RemoveObject("Bridge_Isolation_Status"); } catch { }
+                return;
+            }
             try { FinalizeBacktestExportSession(); } catch { }
             try { _watchdogCts?.Cancel(); } catch { }
             try { _watchdogCts?.Dispose(); } catch { }
+            try { Chart.RemoveObject("Bridge_Isolation_Status"); } catch { }
             try { if (_chartButtonPanel != null) Chart.RemoveControl(_chartButtonPanel); } catch { }
             try { if (_chartSummaryPanel != null) Chart.RemoveControl(_chartSummaryPanel); } catch { }
             try { if (_chartVisualTogglePanel != null) Chart.RemoveControl(_chartVisualTogglePanel); } catch { }
@@ -12584,13 +12869,15 @@ namespace cAlgo.Robots
                     ? _chartSelectedSymbol
                     : (Chart != null ? Chart.SymbolName : "");
                 var selectedToolbarSymbol = EnsureChartSelectedSymbol(preferredToolbarSymbol);
+                var entryToolbarSymbol = GetEffectiveChartEntrySymbolSelection();
                 var selectedDirection = ReadChartDirectionComboSelection();
                 var isAllSymbolsSelected = IsChartAllSymbolsSelection(selectedToolbarSymbol);
+                var hasConcreteEntrySymbol = !string.IsNullOrWhiteSpace(entryToolbarSymbol) && !IsChartAllSymbolsSelection(entryToolbarSymbol);
                 var hasSelectedOpenPositions = SymbolHasOpenPositions(selectedToolbarSymbol, selectedDirection);
                 var hasSelectedPendingOrders = SymbolHasPendingOrders(selectedToolbarSymbol, selectedDirection);
                 var allowDirectionalManagement = !string.Equals(selectedDirection, "All", StringComparison.OrdinalIgnoreCase);
 
-                if (!isAllSymbolsSelected)
+                if (hasConcreteEntrySymbol)
                 {
                     var buyButton = BuildChartActionButton("B", Color.White, Color.ForestGreen, 28);
                     ApplyButtonTooltip(buyButton, "Buy market order using current chart trade settings");
@@ -12689,6 +12976,9 @@ namespace cAlgo.Robots
 
         private void BuildChartVisualTogglePanel()
         {
+            if (DisableChartVisualTogglePanelForIsolation)
+                return;
+
             try
             {
                 if (_chartVisualTogglePanel != null)
@@ -12945,6 +13235,39 @@ namespace cAlgo.Robots
             return label;
         }
 
+        private static Color GetSummaryMetricColor(double value, bool inverse = false)
+        {
+            var positiveColor = Color.LimeGreen;
+            var negativeColor = Color.OrangeRed;
+            var neutralColor = Color.LightGray;
+
+            if (Math.Abs(value) <= 0.0000001)
+                return neutralColor;
+
+            if (inverse)
+                return value > 0 ? negativeColor : positiveColor;
+
+            return value > 0 ? positiveColor : negativeColor;
+        }
+
+        private static string FormatSummaryPair(double currentValue, double limitValue, string suffix = "%")
+        {
+            var currentText = FormatDashboardPercent(currentValue);
+            var limitText = limitValue > 0 ? FormatDashboardPercent(limitValue) : "-";
+            return string.Format(CultureInfo.InvariantCulture, "{0}{2}/{1}{2}", currentText, limitText, suffix);
+        }
+
+        private static string FormatSummaryMoney(double value)
+        {
+            if (double.IsNaN(value) || double.IsInfinity(value))
+                return "-";
+
+            if (Math.Abs(value) >= 1000)
+                return Math.Round(value, 0, MidpointRounding.AwayFromZero).ToString("0", CultureInfo.InvariantCulture);
+
+            return value.ToString("0.##", CultureInfo.InvariantCulture);
+        }
+
         private StructureBias DetectStructureBias(Bars sourceBars, int lookbackBars)
         {
             var swings = CollectConfirmedSwings(sourceBars, lookbackBars);
@@ -13193,19 +13516,29 @@ namespace cAlgo.Robots
                 if (string.IsNullOrWhiteSpace(symbolName) || IsChartAllSymbolsSelection(symbolName))
                     return Tuple.Create(0, 0, 0);
 
-                var dailyBars = MarketData.GetBars(TimeFrame.Daily, symbolName);
-                var h4Bars = MarketData.GetBars(TimeFrame.Hour4, symbolName);
-                var m15Bars = MarketData.GetBars(TimeFrame.Minute15, symbolName);
-                var dailyTrend = dailyBars != null && dailyBars.Count >= 10
-                    ? DetectArtifactFirstBiasScore(dailyBars, TimeFrame.Daily, 180)
-                    : 0;
-                var h4Bias = h4Bars != null && h4Bars.Count >= 10
-                    ? DetectArtifactFirstBiasScore(h4Bars, TimeFrame.Hour4, 180)
-                    : 0;
-                var m15Bias = m15Bars != null && m15Bars.Count >= 10
-                    ? DetectArtifactFirstBiasScore(m15Bars, TimeFrame.Minute15, 180)
-                    : 0;
-                return Tuple.Create(dailyTrend, h4Bias, m15Bias);
+                var baseTimeFrame = Chart != null ? Chart.TimeFrame : TimeFrame.Minute;
+                var frames = new List<TimeFrame> { baseTimeFrame };
+                frames.AddRange(GetAutoHigherTimeframes(baseTimeFrame));
+                var uniqueFrames = frames
+                    .Where(tf => tf != null)
+                    .Distinct()
+                    .Take(3)
+                    .ToList();
+
+                var scores = new List<int>();
+                foreach (var timeFrame in uniqueFrames)
+                {
+                    var bars = MarketData.GetBars(timeFrame, symbolName);
+                    var score = bars != null && bars.Count >= 10
+                        ? DetectArtifactFirstBiasScore(bars, timeFrame, 180)
+                        : 0;
+                    scores.Add(score);
+                }
+
+                while (scores.Count < 3)
+                    scores.Add(0);
+
+                return Tuple.Create(scores[0], scores[1], scores[2]);
             }
             catch
             {
@@ -13233,6 +13566,9 @@ namespace cAlgo.Robots
 
         private void RefreshChartSummaryPanel(RiskGateState riskState)
         {
+            if (IsBacktestingRuntime())
+                return;
+
             try
             {
                 _dashboardEventCache.Clear();
@@ -13241,7 +13577,6 @@ namespace cAlgo.Robots
                     try { Chart.RemoveControl(_chartSummaryPanel); } catch { }
                     _chartSummaryPanel = null;
                 }
-
                 var positionGroups = Positions
                     .GroupBy(p => string.IsNullOrWhiteSpace(p.SymbolName) ? "" : p.SymbolName.Trim().ToUpperInvariant())
                     .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
@@ -13261,15 +13596,30 @@ namespace cAlgo.Robots
                     Opacity = 0.84
                 };
 
-                var summaryTimeFrames = new[]
-                {
-                    new { Label = "1D", Tf = TimeFrame.Daily, Color = Color.Gold },
-                    new { Label = "4H", Tf = TimeFrame.Hour4, Color = Color.MediumPurple },
-                    new { Label = "1H", Tf = TimeFrame.Hour, Color = Color.CornflowerBlue },
-                    new { Label = "15m", Tf = TimeFrame.Minute15, Color = Color.DeepSkyBlue },
-                    new { Label = "5m", Tf = TimeFrame.Minute5, Color = Color.LimeGreen },
-                    new { Label = "1m", Tf = TimeFrame.Minute, Color = Color.WhiteSmoke }
-                };
+                var baseSummaryTimeFrame = Chart != null ? Chart.TimeFrame : TimeFrame.Minute;
+                var summaryFrames = new List<TimeFrame> { baseSummaryTimeFrame };
+                summaryFrames.AddRange(GetAutoHigherTimeframes(baseSummaryTimeFrame));
+                var summaryTimeFrames = summaryFrames
+                    .Where(tf => tf != null)
+                    .Distinct()
+                    .Take(3)
+                    .Select(tf => new
+                    {
+                        Label = GetMiniChartLabel(tf),
+                        Tf = tf,
+                        Color = TimeFrameToMinutes(tf) >= 1440
+                            ? Color.Gold
+                            : TimeFrameToMinutes(tf) >= 240
+                                ? Color.MediumPurple
+                                : TimeFrameToMinutes(tf) >= 60
+                                    ? Color.CornflowerBlue
+                                    : TimeFrameToMinutes(tf) >= 15
+                                        ? Color.DeepSkyBlue
+                                        : TimeFrameToMinutes(tf) >= 5
+                                            ? Color.LimeGreen
+                                            : Color.WhiteSmoke
+                    })
+                    .ToList();
                 const int symbolWidth = 64;
                 const int tfWidth = 24;
                 const int pnlWidth = 58;
@@ -13452,6 +13802,25 @@ namespace cAlgo.Robots
             }
 
             return true;
+        }
+
+        private string GetChartSymbolFallback()
+        {
+            if (Chart != null && !string.IsNullOrWhiteSpace(Chart.SymbolName))
+                return Chart.SymbolName.Trim();
+            if (Symbol != null && !string.IsNullOrWhiteSpace(Symbol.Name))
+                return Symbol.Name.Trim();
+            return "";
+        }
+
+        private string GetEffectiveChartEntrySymbolSelection()
+        {
+            var symbolName = ReadChartSymbolComboSelection();
+            if (!string.IsNullOrWhiteSpace(symbolName) && !IsChartAllSymbolsSelection(symbolName))
+                return symbolName;
+
+            var fallback = GetChartSymbolFallback();
+            return string.IsNullOrWhiteSpace(fallback) ? symbolName : fallback;
         }
 
         private string EnsureChartSelectedSymbol(string preferred = null)
@@ -14541,7 +14910,7 @@ namespace cAlgo.Robots
             if (symbol == null || string.IsNullOrWhiteSpace(symbolName))
                 return plan;
 
-            var currentPrice = tradeType == TradeType.Buy ? symbol.Bid : symbol.Ask;
+            var currentPrice = tradeType == TradeType.Buy ? symbol.Ask : symbol.Bid;
             if (currentPrice <= 0)
                 return plan;
 
@@ -14649,7 +15018,7 @@ namespace cAlgo.Robots
             if (symbol == null || string.IsNullOrWhiteSpace(symbolName))
                 return plan;
 
-            var currentPrice = tradeType == TradeType.Buy ? symbol.Bid : symbol.Ask;
+            var currentPrice = tradeType == TradeType.Buy ? symbol.Ask : symbol.Bid;
             if (currentPrice <= 0)
                 return plan;
 
@@ -14974,7 +15343,7 @@ namespace cAlgo.Robots
             var started = Stopwatch.StartNew();
             try
             {
-                var symbolName = ReadChartSymbolComboSelection();
+                var symbolName = GetEffectiveChartEntrySymbolSelection();
                 var selectedTradeProfile = GetChartTradeProfileRaw(ReadChartTradeTypeComboSelection());
                 var structureTfLabel = GetChartTradeStructureTfLabel(selectedTradeProfile);
                 if (string.IsNullOrWhiteSpace(symbolName))
@@ -15142,7 +15511,7 @@ namespace cAlgo.Robots
             var started = Stopwatch.StartNew();
             try
             {
-                var symbolName = ReadChartSymbolComboSelection();
+                var symbolName = GetEffectiveChartEntrySymbolSelection();
                 var selectedTradeProfile = GetChartTradeProfileRaw(ReadChartTradeTypeComboSelection());
                 var structureTfLabel = GetChartTradeStructureTfLabel(selectedTradeProfile);
                 if (string.IsNullOrWhiteSpace(symbolName))
@@ -15169,7 +15538,7 @@ namespace cAlgo.Robots
                     RefreshDebugPanelLite();
                     return;
                 }
-                var currentPrice = tradeType == TradeType.Buy ? symbol.Bid : symbol.Ask;
+                var currentPrice = tradeType == TradeType.Buy ? symbol.Ask : symbol.Bid;
                 if (currentPrice <= 0)
                 {
                     SafeLog("ERROR", "[ChartTrade] {0} {1} {2} rejected: invalid_reference_price", action, orderTypeLabel, symbolName);
@@ -15353,7 +15722,7 @@ namespace cAlgo.Robots
             var started = Stopwatch.StartNew();
             try
             {
-                var symbolName = ReadChartSymbolComboSelection();
+                var symbolName = GetEffectiveChartEntrySymbolSelection();
                 var selectedTradeProfile = GetChartTradeProfileRaw(ReadChartTradeTypeComboSelection());
                 if (string.IsNullOrWhiteSpace(symbolName))
                 {
@@ -18098,6 +18467,8 @@ namespace cAlgo.Robots
             try
             {
                 var isBacktesting = IsBacktestingRuntime();
+                if (isBacktesting)
+                    return;
                 if (includeVisualOverlays)
                     DrawChartVisualOverlays();
                 Chart.RemoveObject("Panel_HEARTBEAT");
