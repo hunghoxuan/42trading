@@ -97,8 +97,31 @@ test("predefined rule catalog exposes fresh detector building blocks", () => {
   const ids = rules.map((rule) => rule.id);
 
   assert.ok(ids.includes("price_crosses_ema"));
+  assert.ok(ids.includes("price_crosses_below_ema"));
   assert.ok(ids.includes("price_rejected_ema"));
   assert.ok(ids.includes("ema_fast_crosses_ema_slow"));
+  assert.ok(ids.includes("ema_fast_crosses_below_ema_slow"));
+  assert.ok(ids.includes("stochastic_cross_up"));
+  assert.ok(ids.includes("macd_crosses_above_zero"));
   assert.ok(ids.includes("liquidity_sweep"));
   assert.equal(findPredefinedRule("break_of_structure")?.abbr, "BOS");
+});
+
+test("predefined stochastic cross rule evaluates with shared indicator context", () => {
+  const bars = makeBars([10]);
+  const rule = findPredefinedRule("stochastic_cross_up");
+  const result = evaluateRules({
+    bars,
+    rules: [rule],
+    baseContext: {
+      symbol: "EURUSD",
+      tf: "5m",
+      indicators: { stoch_k: 55, stoch_d: 45 },
+      prev_indicators: { stoch_k: 35, stoch_d: 40 },
+    },
+  });
+
+  assert.equal(result.events.length, 1);
+  assert.equal(result.events[0].rule_id, "stochastic_cross_up");
+  assert.equal(result.events[0].bias, "bullish");
 });

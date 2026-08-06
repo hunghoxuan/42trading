@@ -1,0 +1,119 @@
+{
+  "key": "three_candles_v1",
+  "name": "Three Candles v1",
+  "kind": "preset",
+  "description": "Ports the cTrader ThreeCandlesV1 setup: enter after N same-color candles, place the stop from the selected candle body/extreme, and project TP by fixed RR.",
+  "engine_version": "42trade.strategy.v2",
+  "status": "active",
+  "params": {
+    "candles_count": 3,
+    "sl_candle_num": 1,
+    "reward_risk": 1,
+    "direction_mode": "continue"
+  },
+  "indicators": [],
+  "rules": [
+    {
+      "id": "entry_buy",
+      "name": "Buy",
+      "bias": "bullish",
+      "priority": "medium",
+      "when": {
+        "fn": "three_candles_signal",
+        "args": [
+          "buy",
+          { "var": "params.candles_count" },
+          { "var": "params.direction_mode" }
+        ]
+      },
+      "actions": [
+        {
+          "id": "open_buy",
+          "action": "trade",
+          "label": "Buy",
+          "trade_plan": {
+            "direction": "buy",
+            "type": "market",
+            "entry": "bar.close",
+            "sl": {
+              "fn": "three_candles_sl",
+              "args": [
+                "buy",
+                { "var": "params.candles_count" },
+                { "var": "params.sl_candle_num" }
+              ]
+            },
+            "tp": {
+              "fn": "three_candles_tp",
+              "args": [
+                "buy",
+                { "var": "params.candles_count" },
+                { "var": "params.sl_candle_num" },
+                { "var": "params.reward_risk" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "entry_sell",
+      "name": "Sell",
+      "bias": "bearish",
+      "priority": "medium",
+      "when": {
+        "fn": "three_candles_signal",
+        "args": [
+          "sell",
+          { "var": "params.candles_count" },
+          { "var": "params.direction_mode" }
+        ]
+      },
+      "actions": [
+        {
+          "id": "open_sell",
+          "action": "trade",
+          "label": "Sell",
+          "trade_plan": {
+            "direction": "sell",
+            "type": "market",
+            "entry": "bar.close",
+            "sl": {
+              "fn": "three_candles_sl",
+              "args": [
+                "sell",
+                { "var": "params.candles_count" },
+                { "var": "params.sl_candle_num" }
+              ]
+            },
+            "tp": {
+              "fn": "three_candles_tp",
+              "args": [
+                "sell",
+                { "var": "params.candles_count" },
+                { "var": "params.sl_candle_num" },
+                { "var": "params.reward_risk" }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "risk": {
+    "rr_target": 1,
+    "stop_lookback": 3,
+    "max_open_trades": 1,
+    "fallback_stop_pct": 0.001,
+    "fallback_tp_pct": 0.001
+  },
+  "min_bars": 5,
+  "conditions": {
+    "skip_news": true,
+    "news_window_minutes": 120
+  },
+  "metadata": {
+    "strategy_type": "candlestick_pattern",
+    "source_strategy": "ctrader.ThreeCandlesV1"
+  }
+}

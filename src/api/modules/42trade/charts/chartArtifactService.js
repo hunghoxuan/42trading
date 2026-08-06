@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("crypto");
+const fs = require("fs");
 const chartArtifactRepo = require("./chartArtifactRepo");
 const sharedArtifactDetection = require("../../../../shared/rules-engine/features/detectArtifacts.cjs");
 
@@ -57,6 +58,159 @@ function normalizeBars(bars = []) {
 
 function normalizeUnixTime(value) {
   return chartArtifactRepo.normalizeUnixTime(value);
+}
+
+// ---------------------------------------------------------------------------
+// In-memory market artifact store
+// ---------------------------------------------------------------------------
+// The market-data upsert loop used to re-read + re-write artifacts.json on every cycle
+// even when the underlying bars were unchanged. This store makes reads hit memory (load
+// once), identical envelopes skip the disk write entirely (fingerprint), and the actual
+// file writes are debounced off the request path (save async).
+const MARKET_ARTIFACT_STORE_CAP = 300;
+const MARKET_ARTIFACT_FLUSH_MS = 2500;
+const marketArtifactStore = new Map();
+const marketArtifactFlushTimers = new Map();
+
+function marketArtifactCacheKey(symbol, timeframe, options = {}) {
+  const sym = String(symbol || "").trim().toUpperCase() || "UNKNOWN";
+  const tf = normalizeTf(timeframe) || "default";
+  const start = normalizeUnixTime(options.startTime ?? options.start_time) ?? "";
+  const end = normalizeUnixTime(options.endTime ?? options.end_time) ?? "";
+  return `${sym}|${tf}|${start}|${end}`;
+}
+
+// Fingerprint of everything the artifact file actually carries that is derived from data
+// (items + covered bar window). Timestamps and cached indicators are excluded so identical
+// data does not rewrite the file on every market-data cycle.
+function computeArtifactFingerprint(envelope) {
+  const items = Array.isArray(envelope?.items) ? envelope.items : [];
+  const firstBar = Number(envelope?.bars_ref?.first_bar_time) || 0;
+  const lastBar = Number(envelope?.bars_ref?.last_bar_time) || 0;
+  return `${firstBar}|${lastBar}|${hashJson(items)}`;
+}
+
+function trimMarketArtifactStore() {
+  while (marketArtifactStore.size > MARKET_ARTIFACT_STORE_CAP) {
+    const oldestKey = marketArtifactStore.keys().next().value;
+    if (oldestKey === undefined) break;
+    marketArtifactStore.delete(oldestKey);
+    const timer = marketArtifactFlushTimers.get(oldestKey);
+    if (timer) {
+      clearTimeout(timer);
+      marketArtifactFlushTimers.delete(oldestKey);
+    }
+  }
+}
+
+function scheduleMarketArtifactFlush(key) {
+  if (marketArtifactFlushTimers.has(key)) return;
+  const timer = setTimeout(() => {
+    marketArtifactFlushTimers.delete(key);
+    flushMarketArtifactToDisk(key);
+  }, MARKET_ARTIFACT_FLUSH_MS);
+  if (typeof timer.unref === "function") timer.unref();
+  marketArtifactFlushTimers.set(key, timer);
+}
+
+function flushMarketArtifactToDisk(key) {
+  const entry = marketArtifactStore.get(key);
+  if (!entry || !entry.pendingWrite) return;
+  entry.pendingWrite = false;
+  try {
+    const options = entry.lastOptions || {};
+    chartArtifactRepo.writeMarketArtifactEnvelope(
+      entry.symbol,
+      entry.timeframe,
+      entry.envelope,
+      options,
+    );
+    if (entry.envelope && entry.envelope.canonical_event_cache) {
+      writeCanonicalEventCache(
+        entry.symbol,
+        entry.timeframe,
+        entry.envelope.canonical_event_cache,
+        options,
+      );
+    }
+  } catch (err) {
+    entry.pendingWrite = true;
+    scheduleMarketArtifactFlush(key);
+  }
+}
+
+// Flush every pending key now (for callers that need the file on disk immediately, e.g. tests).
+function flushMarketArtifactStore() {
+  for (const key of [...marketArtifactFlushTimers.keys()]) {
+    const timer = marketArtifactFlushTimers.get(key);
+    if (timer) clearTimeout(timer);
+    marketArtifactFlushTimers.delete(key);
+    flushMarketArtifactToDisk(key);
+  }
+}
+
+// Canonical events are written externally by the cTrader bridge at end of day; re-read the
+// file only when it actually changed (cheap stat instead of a full read per cycle).
+function attachFreshCanonicalEventCache(symbol, timeframe, options, entry) {
+  try {
+    const filePath = chartArtifactRepo.resolveCanonicalEventCachePath(symbol, timeframe, options);
+    const stats = fs.statSync(filePath);
+    const sig = `${stats.mtimeMs}|${stats.size}`;
+    if (entry.canonicalSig === sig) return;
+    entry.canonicalSig = sig;
+    entry.canonical = readCanonicalEventCache(symbol, timeframe, options);
+  } catch {
+    entry.canonicalSig = null;
+    entry.canonical = null;
+  }
+}
+
+// Input-level dedup gate for the upsert path: true when the bars / AI arrays differ from the
+// last processed input for this (symbol, timeframe). Lets the hot loop skip the whole
+// load -> recompute -> save cycle when nothing about the input changed.
+const marketArtifactInputFingerprints = new Map();
+
+function buildMarketArtifactInputFingerprint(bars, metadata) {
+  const arr = Array.isArray(bars) ? bars : [];
+  const first = arr.length ? Number(arr[0]?.time ?? arr[0]?.t) : null;
+  const tail = normalizeBars(arr.slice(-200));
+  const last = tail.length ? tail[tail.length - 1] : null;
+  const lastBarKey = last
+    ? `${last.time}|${last.open}|${last.high}|${last.low}|${last.close}|${last.volume}`
+    : "";
+  const tailHash = tail.length ? hashJson(tail) : null;
+  const pd = Array.isArray(metadata?.pd_arrays) ? hashJson(metadata.pd_arrays) : "";
+  const kls = Array.isArray(metadata?.key_levels) ? hashJson(metadata.key_levels) : "";
+  return `${first}|${lastBarKey}|${tailHash}|${pd}|${kls}`;
+}
+
+function marketArtifactInputChanged(symbol, timeframe, bars = [], metadata = {}) {
+  const sym = String(symbol || "").trim().toUpperCase() || "UNKNOWN";
+  const tf = normalizeTf(timeframe) || "default";
+  const key = `${sym}|${tf}`;
+  const fingerprint = buildMarketArtifactInputFingerprint(bars, metadata);
+  const previous = marketArtifactInputFingerprints.get(key);
+  marketArtifactInputFingerprints.set(key, fingerprint);
+  if (marketArtifactInputFingerprints.size > MARKET_ARTIFACT_STORE_CAP) {
+    const oldestKey = marketArtifactInputFingerprints.keys().next().value;
+    if (oldestKey !== undefined) marketArtifactInputFingerprints.delete(oldestKey);
+  }
+  return previous !== fingerprint;
+}
+
+function marketArtifactCacheStats() {
+  return {
+    cached: marketArtifactStore.size,
+    pendingWrites: [...marketArtifactStore.values()].filter((entry) => entry.pendingWrite).length,
+    inputFingerprints: marketArtifactInputFingerprints.size,
+  };
+}
+
+function clearMarketArtifactStore() {
+  for (const timer of marketArtifactFlushTimers.values()) clearTimeout(timer);
+  marketArtifactFlushTimers.clear();
+  marketArtifactStore.clear();
+  marketArtifactInputFingerprints.clear();
 }
 
 function filterBarsByRange(bars = [], startTime = null, endTime = null) {
@@ -1161,22 +1315,83 @@ function resolveTradeArtifactPath(tradeDir) {
   return chartArtifactRepo.resolveTradeArtifactPath(tradeDir);
 }
 
+function resolveCanonicalEventCachePath(symbol, timeframe, options = {}) {
+  return chartArtifactRepo.resolveCanonicalEventCachePath(symbol, timeframe, options);
+}
+
 function readMarketArtifacts(symbol, timeframe, options = {}) {
+  const storeKey = marketArtifactCacheKey(symbol, timeframe, options);
+  const cached = marketArtifactStore.get(storeKey);
+  if (cached && cached.envelope) {
+    // Memory is the source of truth for the latest envelope; keep the canonical event
+    // cache fresh (it is written externally by the bridge at end of day) via a cheap stat.
+    attachFreshCanonicalEventCache(symbol, timeframe, options, cached);
+    const canonicalEventCache = cached.canonical;
+    if (
+      canonicalEventCache &&
+      (canonicalEventCache.computed_bar_times_unix.length || canonicalEventCache.events.length)
+    ) {
+      cached.envelope.canonical_event_cache = canonicalEventCache;
+    }
+    return cached.envelope;
+  }
+
   const envelope = chartArtifactRepo.readMarketArtifactEnvelope(
     symbol,
     timeframe,
     options,
   );
-  return isCurrentArtifactEnvelope(envelope) ? envelope : null;
-}
-
-function writeMarketArtifacts(symbol, timeframe, envelope, options = {}) {
-  return chartArtifactRepo.writeMarketArtifactEnvelope(
+  if (!isCurrentArtifactEnvelope(envelope)) return null;
+  const canonicalEventCache = readCanonicalEventCache(symbol, timeframe, options);
+  const hasCanonical =
+    canonicalEventCache &&
+    (canonicalEventCache.computed_bar_times_unix.length || canonicalEventCache.events.length);
+  if (hasCanonical) {
+    envelope.canonical_event_cache = canonicalEventCache;
+  }
+  marketArtifactStore.set(storeKey, {
     symbol,
     timeframe,
     envelope,
-    options,
-  );
+    fingerprint: computeArtifactFingerprint(envelope),
+    lastOptions: options,
+    canonicalSig: null,
+    canonical: hasCanonical ? canonicalEventCache : null,
+    pendingWrite: false,
+  });
+  trimMarketArtifactStore();
+  return envelope;
+}
+
+function writeMarketArtifacts(symbol, timeframe, envelope, options = {}) {
+  const storeKey = marketArtifactCacheKey(symbol, timeframe, options);
+  const fingerprint = computeArtifactFingerprint(envelope);
+  const cached = marketArtifactStore.get(storeKey);
+  if (cached && cached.fingerprint === fingerprint) {
+    // Same bars + same items as the last processed envelope: nothing to persist.
+    return envelope;
+  }
+  marketArtifactStore.set(storeKey, {
+    symbol,
+    timeframe,
+    envelope: clone(envelope),
+    fingerprint,
+    lastOptions: options,
+    canonicalSig: cached ? cached.canonicalSig : null,
+    canonical: cached ? cached.canonical : null,
+    pendingWrite: true,
+  });
+  trimMarketArtifactStore();
+  scheduleMarketArtifactFlush(storeKey);
+  return envelope;
+}
+
+function readCanonicalEventCache(symbol, timeframe, options = {}) {
+  return chartArtifactRepo.readCanonicalEventCache(symbol, timeframe, options);
+}
+
+function writeCanonicalEventCache(symbol, timeframe, payload, options = {}) {
+  return chartArtifactRepo.writeCanonicalEventCache(symbol, timeframe, payload, options);
 }
 
 function mergeMarketArtifacts({
@@ -1307,18 +1522,25 @@ function extractLegacyChartObjects(envelope) {
 module.exports = {
   buildEnvelope,
   buildDerivedItemsFromBars,
+  clearMarketArtifactStore,
   dedupeItems,
   extractLegacyChartObjects,
+  filterBarsByRange,
+  flushMarketArtifactStore,
+  marketArtifactCacheStats,
+  marketArtifactInputChanged,
   mergeMarketArtifacts,
   migrateLegacyMarketArtifacts,
   normalizeChartArtifactItem,
-  filterBarsByRange,
+  readCanonicalEventCache,
   readMarketArtifacts,
   readTradeArtifacts,
+  resolveCanonicalEventCachePath,
   resolveLegacyTradeObjectsPath,
   resolveMarketArtifactPath,
   resolveMarketMetadataPath,
   resolveTradeArtifactPath,
+  writeCanonicalEventCache,
   writeMarketArtifacts,
   writeTradeArtifacts,
 };

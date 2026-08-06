@@ -6992,46 +6992,51 @@ async function marketDataFileUpsert(symbolNorm, tfNorm, snapshot) {
   // Merge bars into CSV (deduplicates by time, updates L1 + Redis cache)
   mergeBarsIntoCSV(symbolNorm, tfNorm, bars);
   writeMarketDataMetadata(symbolNorm, tfNorm, metadata);
-  const existing = chartArtifactService.readMarketArtifacts(symbolNorm, tfNorm, {
-    dataRoot: GLOBAL_DATA_DIR,
-    startTime: rangeStart,
-    endTime: rangeEnd,
-  });
-  const chartArtifacts = chartArtifactService.mergeMarketArtifacts({
-    symbol: symbolNorm,
-    timeframe: tfNorm,
-    bars,
-    indicators,
-    metadata,
-    provider: snapshot?.provider || metadata?.provider || "unknown",
-    userId: snapshot?.user_id || CFG.mt5DefaultUserId,
-    existing,
-    startTime: rangeStart,
-    endTime: rangeEnd,
-  });
-  chartArtifactService.writeMarketArtifacts(symbolNorm, tfNorm, chartArtifacts, {
-    dataRoot: GLOBAL_DATA_DIR,
-    startTime: rangeStart,
-    endTime: rangeEnd,
-  });
-  marketDataMemoryWrite(symbolNorm, tfNorm, {
-    ...snapshot,
-    bars,
-    indicators,
-    metadata,
-    chart_artifacts: chartArtifacts,
-    bar_start: snapshot?.bar_start || bars[0]?.time || null,
-    bar_end: snapshot?.bar_end || bars[bars.length - 1]?.time || null,
-  });
-  await marketDataRedisWrite(symbolNorm, tfNorm, {
-    ...snapshot,
-    bars,
-    indicators,
-    metadata,
-    chart_artifacts: chartArtifacts,
-    bar_start: snapshot?.bar_start || bars[0]?.time || null,
-    bar_end: snapshot?.bar_end || bars[bars.length - 1]?.time || null,
-  }).catch(() => {});
+
+  // Skip the load -> recompute -> save cycle when nothing about the input changed (same
+  // bars + same AI arrays). Pure in-memory check - no disk I/O on the hot loop.
+  if (chartArtifactService.marketArtifactInputChanged(symbolNorm, tfNorm, bars, metadata)) {
+    const existing = chartArtifactService.readMarketArtifacts(symbolNorm, tfNorm, {
+      dataRoot: GLOBAL_DATA_DIR,
+      startTime: rangeStart,
+      endTime: rangeEnd,
+    });
+    const chartArtifacts = chartArtifactService.mergeMarketArtifacts({
+      symbol: symbolNorm,
+      timeframe: tfNorm,
+      bars,
+      indicators,
+      metadata,
+      provider: snapshot?.provider || metadata?.provider || "unknown",
+      userId: snapshot?.user_id || CFG.mt5DefaultUserId,
+      existing,
+      startTime: rangeStart,
+      endTime: rangeEnd,
+    });
+    chartArtifactService.writeMarketArtifacts(symbolNorm, tfNorm, chartArtifacts, {
+      dataRoot: GLOBAL_DATA_DIR,
+      startTime: rangeStart,
+      endTime: rangeEnd,
+    });
+    marketDataMemoryWrite(symbolNorm, tfNorm, {
+      ...snapshot,
+      bars,
+      indicators,
+      metadata,
+      chart_artifacts: chartArtifacts,
+      bar_start: snapshot?.bar_start || bars[0]?.time || null,
+      bar_end: snapshot?.bar_end || bars[bars.length - 1]?.time || null,
+    });
+    await marketDataRedisWrite(symbolNorm, tfNorm, {
+      ...snapshot,
+      bars,
+      indicators,
+      metadata,
+      chart_artifacts: chartArtifacts,
+      bar_start: snapshot?.bar_start || bars[0]?.time || null,
+      bar_end: snapshot?.bar_end || bars[bars.length - 1]?.time || null,
+    }).catch(() => {});
+  }
 
   // Update cron state (keeps tracking for monitoring)
   await marketDataUpdateCronState({
@@ -29206,6 +29211,33 @@ const appHandler = async (req, res) => {
     }
   }
 
+  function resolveSystemLogFilePath(source = "", id = "", file = "") {
+    const safeSource = String(source || "").replace(/[^a-z]/g, "");
+    const safeId = String(id || "").replace(/[^A-Za-z0-9_.-]/g, "_");
+    const safeFile = String(file || "").replace(/[^A-Za-z0-9_.-]/g, "_");
+    if (!safeSource || !safeId || !safeFile) return "";
+    let filePath = "";
+    if (safeSource === "cron") {
+      const matches = listCronCompatibilityLogFiles(safeId, safeFile);
+      filePath = matches[0]?.path || "";
+    } else if (safeSource === "providers") {
+      const matches = listProviderLogFiles(safeId, safeFile);
+      filePath = matches[0]?.path || "";
+    } else if (safeSource === "accounts") {
+      const matches = listAccountLogFiles(safeId, safeFile);
+      filePath = matches[0]?.path || "";
+      if (!filePath) {
+        filePath = path.join(SERVER_LOG_DIR, safeSource, safeId, safeFile + ".log");
+      }
+    } else {
+      filePath = path.join(SERVER_LOG_DIR, safeSource, safeId, safeFile + ".log");
+      if (!fs.existsSync(filePath)) {
+        filePath = path.join(SERVER_LOG_DIR, safeSource, safeFile + ".log");
+      }
+    }
+    return filePath;
+  }
+
   if (req.method === "GET" && url.pathname === "/v2/system/logs/file") {
     const source = String(url.searchParams.get("source") || "").replace(
       /[^a-z]/g,
@@ -29225,26 +29257,7 @@ const appHandler = async (req, res) => {
     );
     if (!source || !id || !file)
       return json(res, 400, { ok: false, error: "source, id, file required" });
-    let filePath = "";
-    if (source === "cron") {
-      const matches = listCronCompatibilityLogFiles(id, file);
-      filePath = matches[0]?.path || "";
-    } else if (source === "providers") {
-      const matches = listProviderLogFiles(id, file);
-      filePath = matches[0]?.path || "";
-    } else if (source === "accounts") {
-      const matches = listAccountLogFiles(id, file);
-      filePath = matches[0]?.path || "";
-      if (!filePath) {
-        filePath = path.join(SERVER_LOG_DIR, source, id, file + ".log");
-      }
-    } else {
-      // Try nested path first, then flat (source/file.log)
-      filePath = path.join(SERVER_LOG_DIR, source, id, file + ".log");
-      if (!fs.existsSync(filePath)) {
-        filePath = path.join(SERVER_LOG_DIR, source, file + ".log");
-      }
-    }
+    const filePath = resolveSystemLogFilePath(source, id, file);
     if (!filePath || !fs.existsSync(filePath))
       return json(res, 404, { ok: false, error: "file not found" });
     try {
@@ -29261,6 +29274,43 @@ const appHandler = async (req, res) => {
       });
     } catch (e) {
       return json(res, 500, { ok: false, error: e.message });
+    }
+  }
+
+  if (req.method === "DELETE" && url.pathname === "/v2/system/logs/file") {
+    const source = String(url.searchParams.get("source") || "").replace(
+      /[^a-z]/g,
+      "",
+    );
+    const id = String(url.searchParams.get("id") || "").replace(
+      /[^A-Za-z0-9_.-]/g,
+      "_",
+    );
+    const file = String(url.searchParams.get("file") || "").replace(
+      /[^A-Za-z0-9_.-]/g,
+      "_",
+    );
+    if (!source || !id || !file) {
+      return json(res, 400, { ok: false, error: "source, id, file required" });
+    }
+    const filePath = resolveSystemLogFilePath(source, id, file);
+    if (!filePath || !fs.existsSync(filePath)) {
+      return json(res, 404, { ok: false, error: "file not found" });
+    }
+    try {
+      fs.truncateSync(filePath, 0);
+      return json(res, 200, {
+        ok: true,
+        source,
+        id,
+        file,
+        cleared: true,
+      });
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error || "clear_failed"),
+      });
     }
   }
 
@@ -41626,6 +41676,50 @@ const appHandler = async (req, res) => {
         sourceId,
         account.user_id || account.userId || null,
       );
+      const normalizeBrokerPullTf = (value) => {
+        const tf = String(value || "").trim().toLowerCase();
+        if (!tf) return "";
+        switch (tf) {
+          case "1":
+          case "m1":
+          case "1m":
+            return "1m";
+          case "5":
+          case "m5":
+          case "5m":
+            return "5m";
+          case "15":
+          case "m15":
+          case "15m":
+            return "15m";
+          case "60":
+          case "h1":
+          case "1h":
+            return "1h";
+          case "240":
+          case "h4":
+          case "4h":
+            return "4h";
+          case "1440":
+          case "d1":
+          case "1d":
+          case "daily":
+            return "1d";
+          default:
+            return String(value || "").trim();
+        }
+      };
+      const deriveBrokerPullProfile = (profileValue, tradeTfValue, chartTfValue) => {
+        const profile = String(profileValue || "").trim().toLowerCase();
+        if (profile.includes("scalp")) return "scalp";
+        if (profile.includes("swing")) return "swing";
+        if (profile.includes("daily") || profile.includes("intraday")) return "daily";
+        const tf = normalizeBrokerPullTf(tradeTfValue || chartTfValue).toLowerCase();
+        if (tf === "1m") return "scalp";
+        if (tf === "5m") return "swing";
+        if (tf) return "daily";
+        return "";
+      };
       const resp = {
         ok: true,
         items: (items || []).map((t) => {
@@ -41644,6 +41738,27 @@ const appHandler = async (req, res) => {
             type === "MODIFY"
               ? (plannedLots ?? plannedVolume ?? brokerLots)
               : (plannedVolume ?? plannedLots ?? brokerLots);
+          const tradeTf =
+            nullLikeEmpty(t.trade_tf) ||
+            nullLikeEmpty(normalizedMetadata.trade_tf) ||
+            nullLikeEmpty(normalizedMetadata.signal_tf) ||
+            nullLikeEmpty(normalizedMetadata.trade_plan?.trade_tf) ||
+            nullLikeEmpty(normalizedMetadata.trade_plan?.tf) ||
+            "";
+          const chartTf =
+            nullLikeEmpty(t.chart_tf) ||
+            nullLikeEmpty(normalizedMetadata.chart_tf) ||
+            nullLikeEmpty(normalizedMetadata.timeframe) ||
+            nullLikeEmpty(normalizedMetadata.trade_plan?.chart_tf) ||
+            "";
+          const profile =
+            nullLikeEmpty(t.profile) ||
+            nullLikeEmpty(normalizedMetadata.profile) ||
+            deriveBrokerPullProfile(
+              normalizedMetadata.profile,
+              tradeTf,
+              chartTf,
+            );
           return {
             sid: t.sid,
             type,
@@ -41679,6 +41794,9 @@ const appHandler = async (req, res) => {
               nullLikeEmpty(normalizedMetadata.strategy_name) ||
               nullLikeEmpty(normalizedMetadata.trade_plan?.strategy) ||
               "",
+            trade_tf: normalizeBrokerPullTf(tradeTf) || null,
+            chart_tf: normalizeBrokerPullTf(chartTf) || null,
+            profile: profile || null,
             note: t.note ?? t.intent_note ?? null,
             metadata: normalizedMetadata,
           };
@@ -41783,6 +41901,96 @@ const appHandler = async (req, res) => {
     } catch (error) {
       console.error(
         "[v2/broker/ack] ERROR",
+        error instanceof Error ? error.message : String(error),
+      );
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  // --- Bridge UI settings: async mirror of the cTrader bot's chart UI state ---
+  // The bridge saves its chart toolbar selections (symbol / direction / orders-per-click)
+  // to the API asynchronously so combo changes never block the UI thread on disk I/O.
+  if (
+    req.method === "POST" &&
+    /^\/(webhook\/)?(v2|api)\/broker\/ui-settings$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    try {
+      const payload = await readJson(req);
+      if (!(await requireEaKey(req, res, url, payload))) return;
+      const rawSettings =
+        payload && typeof payload.settings === "object" && payload.settings !== null
+          ? payload.settings
+          : {};
+      const settings = {};
+      for (const [key, value] of Object.entries(rawSettings)) {
+        if (typeof value !== "string") continue;
+        settings[String(key).trim()] = value;
+      }
+      const targetDir = path.join(GLOBAL_DATA_DIR, "ctrader");
+      fs.mkdirSync(targetDir, { recursive: true });
+      const targetPath = path.join(targetDir, "ui_settings.json");
+      const tmpPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
+      fs.writeFileSync(
+        tmpPath,
+        `${JSON.stringify(
+          {
+            version: 1,
+            source_id: String(payload?.source_id || "Ctrader").trim(),
+            saved_at_utc: new Date().toISOString(),
+            settings,
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      fs.renameSync(tmpPath, targetPath);
+      return json(res, 200, { ok: true, saved: Object.keys(settings).length });
+    } catch (error) {
+      console.error(
+        "[v2/broker/ui-settings] ERROR",
+        error instanceof Error ? error.message : String(error),
+      );
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    /^\/(webhook\/)?(v2|api)\/broker\/ui-settings$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    try {
+      if (!(await requireEaKey(req, res, url))) return;
+      const targetPath = path.join(GLOBAL_DATA_DIR, "ctrader", "ui_settings.json");
+      let data = null;
+      if (fs.existsSync(targetPath)) {
+        try {
+          data = JSON.parse(fs.readFileSync(targetPath, "utf8"));
+        } catch {
+          data = null;
+        }
+      }
+      return json(res, 200, {
+        ok: true,
+        settings:
+          data && typeof data.settings === "object" && data.settings !== null
+            ? data.settings
+            : {},
+        saved_at_utc: data?.saved_at_utc || null,
+        source_id: data?.source_id || null,
+      });
+    } catch (error) {
+      console.error(
+        "[v2/broker/ui-settings] ERROR",
         error instanceof Error ? error.message : String(error),
       );
       return json(res, 400, {
@@ -45091,15 +45299,43 @@ async function executeStrategyScanCronConfig(conf, options = {}) {
   const barsCount = Math.max(50, Math.min(Number(data?.bars_count || 300) || 300, CHART_HISTORY_MAX_BARS));
   const autoSave = normalizeStrategyScanAutoSave(data?.auto_save);
 
+  function buildStrategyScanSummaryMessage() {
+    if (summary.error) {
+      return `Strategy scan cron failed: ${summary.error}`;
+    }
+    const symbolResults = Array.isArray(summary.results) ? summary.results : [];
+    for (const item of symbolResults) {
+      const skipReasons = Array.isArray(item?.skip_reasons) ? item.skip_reasons : [];
+      for (const reason of skipReasons) {
+        const detail = String(reason?.detail || "").trim();
+        if (!detail) continue;
+        const timeframe = String(reason?.timeframe || "").trim();
+        const symbol = String(item?.symbol || "").trim();
+        const scope = [symbol, timeframe].filter(Boolean).join(" ");
+        return scope
+          ? `Strategy scan skipped: ${scope} - ${detail}`
+          : `Strategy scan skipped: ${detail}`;
+      }
+      const itemErrors = Array.isArray(item?.errors) ? item.errors : [];
+      for (const errorItem of itemErrors) {
+        const detail = String(errorItem?.detail || errorItem?.error || errorItem?.message || "").trim();
+        if (!detail) continue;
+        const timeframe = String(errorItem?.timeframe || "").trim();
+        const symbol = String(item?.symbol || "").trim();
+        const scope = [symbol, timeframe].filter(Boolean).join(" ");
+        return scope
+          ? `Strategy scan error: ${scope} - ${detail}`
+          : `Strategy scan error: ${detail}`;
+      }
+    }
+    return `Strategy scan cron completed: ${summary.created} trades from ${summary.matched} matches`;
+  }
+
   async function finalizeSummary(level = null, message = "") {
     const finalLevel =
       level ||
       (summary.error ? "ERROR" : summary.results.some((item) => item?.ok === false) ? "WARN" : "INFO");
-    const finalMessage =
-      message ||
-      (summary.error
-        ? `Strategy scan cron failed: ${summary.error}`
-        : `Strategy scan cron completed: ${summary.created} trades from ${summary.matched} matches`);
+    const finalMessage = message || buildStrategyScanSummaryMessage();
     await writeObjectLog(userId, "cron", cronName, {
       event: "CRON_STRATEGY_SCAN",
       level: finalLevel,

@@ -230,6 +230,43 @@
       ]
     },
     {
+      "value": "three_candles_signal",
+      "label": "Three Candles Signal",
+      "kind": "predicate",
+      "family": "patterns",
+      "args": [
+        { "key": "direction", "label": "Direction" },
+        { "key": "candles_count", "label": "Candles Count" },
+        { "key": "direction_mode", "label": "Mode" },
+        { "key": "tf", "label": "TF (optional)" }
+      ]
+    },
+    {
+      "value": "three_candles_sl",
+      "label": "Three Candles SL",
+      "kind": "value",
+      "family": "trade_plan",
+      "args": [
+        { "key": "direction", "label": "Direction" },
+        { "key": "candles_count", "label": "Candles Count" },
+        { "key": "sl_candle_num", "label": "SL Candle Num" },
+        { "key": "tf", "label": "TF (optional)" }
+      ]
+    },
+    {
+      "value": "three_candles_tp",
+      "label": "Three Candles TP",
+      "kind": "value",
+      "family": "trade_plan",
+      "args": [
+        { "key": "direction", "label": "Direction" },
+        { "key": "candles_count", "label": "Candles Count" },
+        { "key": "sl_candle_num", "label": "SL Candle Num" },
+        { "key": "reward_risk", "label": "Reward Risk" },
+        { "key": "tf", "label": "TF (optional)" }
+      ]
+    },
+    {
       "value": "is_true",
       "label": "IS_TRUE",
       "kind": "predicate",

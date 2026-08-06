@@ -42,6 +42,18 @@ var PREDEFINED_RULES = [
     outputs: { bias: "bullish", marker: "arrow_up" }
   },
   {
+    id: "price_crosses_below_ema",
+    abbr: "PX_EMA_DN",
+    name: "Price Crosses Below EMA",
+    icon: "crosshair",
+    family: "moving_average",
+    params: { side: "below", source: "close", ema_length: 20 },
+    condition: {
+      crosses_below: [{ var: "bar.close" }, { var: "indicators.ema_20" }]
+    },
+    outputs: { bias: "bearish", marker: "arrow_down" }
+  },
+  {
     id: "ema_fast_crosses_ema_slow",
     abbr: "EMA_X",
     name: "Fast EMA Crosses Slow EMA",
@@ -49,9 +61,21 @@ var PREDEFINED_RULES = [
     family: "moving_average",
     params: { side: "above", fast_length: 9, slow_length: 21 },
     condition: {
-      crosses_above: [{ var: "indicators.ema_fast" }, { var: "indicators.ema_slow" }]
+      crosses_above: [{ var: "indicators.ema_9" }, { var: "indicators.ema_21" }]
     },
     outputs: { bias: "bullish", marker: "arrow_up" }
+  },
+  {
+    id: "ema_fast_crosses_below_ema_slow",
+    abbr: "EMA_X_DN",
+    name: "Fast EMA Crosses Below Slow EMA",
+    icon: "git-compare-arrows",
+    family: "moving_average",
+    params: { side: "below", fast_length: 9, slow_length: 21 },
+    condition: {
+      crosses_below: [{ var: "indicators.ema_9" }, { var: "indicators.ema_21" }]
+    },
+    outputs: { bias: "bearish", marker: "arrow_down" }
   },
   {
     id: "price_rejected_ema",
@@ -174,6 +198,18 @@ var PREDEFINED_RULES = [
     outputs: { bias: "bullish", marker: "arrow_up" }
   },
   {
+    id: "price_crosses_below_bollinger_mid",
+    abbr: "PX_BB_MID_DN",
+    name: "Price Crosses Below Bollinger Mid",
+    icon: "brackets",
+    family: "volatility",
+    params: { side: "below" },
+    condition: {
+      crosses_below: [{ var: "bar.close" }, { var: "indicators.bb_mid" }]
+    },
+    outputs: { bias: "bearish", marker: "arrow_down" }
+  },
+  {
     id: "macd_cross",
     abbr: "MACD_X",
     name: "MACD Cross",
@@ -235,6 +271,66 @@ var PREDEFINED_RULES = [
     family: "momentum",
     params: { threshold: 50 },
     condition: { crosses_below: [{ var: "indicators.rsi_14" }, 50] },
+    outputs: { bias: "bearish", marker: "arrow_down" }
+  },
+  {
+    id: "stochastic_cross_up",
+    abbr: "STO_X",
+    name: "Stochastic K Crosses Above D",
+    icon: "activity",
+    family: "momentum",
+    params: { side: "above" },
+    condition: { crosses_above: [{ var: "indicators.stoch_k" }, { var: "indicators.stoch_d" }] },
+    outputs: { bias: "bullish", marker: "arrow_up" }
+  },
+  {
+    id: "stochastic_cross_down",
+    abbr: "STO_X_DN",
+    name: "Stochastic K Crosses Below D",
+    icon: "activity",
+    family: "momentum",
+    params: { side: "below" },
+    condition: { crosses_below: [{ var: "indicators.stoch_k" }, { var: "indicators.stoch_d" }] },
+    outputs: { bias: "bearish", marker: "arrow_down" }
+  },
+  {
+    id: "stochastic_reclaims_20",
+    abbr: "STO_20_UP",
+    name: "Stochastic Reclaims 20",
+    icon: "activity",
+    family: "momentum",
+    params: { threshold: 20 },
+    condition: { crosses_above: [{ var: "indicators.stoch_k" }, 20] },
+    outputs: { bias: "bullish", marker: "arrow_up" }
+  },
+  {
+    id: "stochastic_loses_80",
+    abbr: "STO_80_DN",
+    name: "Stochastic Loses 80",
+    icon: "activity",
+    family: "momentum",
+    params: { threshold: 80 },
+    condition: { crosses_below: [{ var: "indicators.stoch_k" }, 80] },
+    outputs: { bias: "bearish", marker: "arrow_down" }
+  },
+  {
+    id: "macd_crosses_above_zero",
+    abbr: "MACD_0_UP",
+    name: "MACD Crosses Above Zero",
+    icon: "chart-no-axes-combined",
+    family: "momentum",
+    params: { side: "above" },
+    condition: { crosses_above: [{ var: "indicators.macd_line" }, 0] },
+    outputs: { bias: "bullish", marker: "arrow_up" }
+  },
+  {
+    id: "macd_crosses_below_zero",
+    abbr: "MACD_0_DN",
+    name: "MACD Crosses Below Zero",
+    icon: "chart-no-axes-combined",
+    family: "momentum",
+    params: { side: "below" },
+    condition: { crosses_below: [{ var: "indicators.macd_line" }, 0] },
     outputs: { bias: "bearish", marker: "arrow_down" }
   },
   {

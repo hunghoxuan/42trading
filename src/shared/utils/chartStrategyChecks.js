@@ -364,6 +364,12 @@ const RULE_FUNCTION_EVALUATORS = {
     strategyEventFunctions.evaluateNamedFunction("price_action_sl", args, ctx, evaluate),
   price_action_tp: (args, ctx, evaluate) =>
     strategyEventFunctions.evaluateNamedFunction("price_action_tp", args, ctx, evaluate),
+  three_candles_signal: (args, ctx, evaluate) =>
+    strategyEventFunctions.evaluateNamedFunction("three_candles_signal", args, ctx, evaluate),
+  three_candles_sl: (args, ctx, evaluate) =>
+    strategyEventFunctions.evaluateNamedFunction("three_candles_sl", args, ctx, evaluate),
+  three_candles_tp: (args, ctx, evaluate) =>
+    strategyEventFunctions.evaluateNamedFunction("three_candles_tp", args, ctx, evaluate),
   get_artifacts: (args, ctx, evaluate) =>
     strategyEventFunctions.evaluateNamedFunction("get_artifacts", args, ctx, evaluate),
   is_true: (args, ctx, evaluate) =>

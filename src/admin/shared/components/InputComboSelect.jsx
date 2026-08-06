@@ -1,18 +1,23 @@
 import { Children, isValidElement, useEffect, useMemo, useRef, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { formatDisplayValue } from "../utils/objectDisplay.js";
+
+function normalizeOptionValue(value) {
+  return formatDisplayValue(value);
+}
 
 function normalizeItems(items = []) {
   return (Array.isArray(items) ? items : [])
     .map((item) => {
       if (item && typeof item === "object") {
-        const value = String(item.value ?? item.label ?? "").trim();
+        const value = normalizeOptionValue(item.value ?? item.label ?? "").trim();
         return {
           value,
-          label: String(item.label ?? item.value ?? "").trim() || value,
+          label: normalizeOptionValue(item.label ?? item.value ?? "").trim() || value,
           disabled: Boolean(item.disabled),
         };
       }
-      const value = String(item ?? "").trim();
+      const value = normalizeOptionValue(item ?? "").trim();
       return {
         value,
         label: value,
@@ -35,12 +40,12 @@ function flattenOptions(children, groupLabel = "") {
     const rawValue = child.props.value ?? child.props.children ?? "";
     const rawLabel = child.props.children ?? rawValue ?? "";
     const labelText = Array.isArray(rawLabel)
-      ? rawLabel.join("")
-      : String(rawLabel ?? "");
+      ? rawLabel.map((item) => normalizeOptionValue(item)).join("")
+      : normalizeOptionValue(rawLabel ?? "");
 
     return [
       {
-        value: String(rawValue ?? ""),
+        value: normalizeOptionValue(rawValue ?? ""),
         label: groupLabel ? `${groupLabel}: ${labelText}` : labelText,
         disabled: Boolean(child.props.disabled),
       },
@@ -62,16 +67,16 @@ function buildEventPayload({
   multiple,
 }) {
   const selectedValues = Array.isArray(values)
-    ? values.map((item) => String(item ?? ""))
+    ? values.map((item) => normalizeOptionValue(item ?? ""))
     : [];
   const payload = {
     id,
     name,
-    value: multiple ? selectedValues[0] || "" : String(value ?? ""),
+    value: multiple ? selectedValues[0] || "" : normalizeOptionValue(value ?? ""),
     values: multiple ? selectedValues : undefined,
     selectedOptions: multiple
       ? selectedValues.map((item) => ({ value: item }))
-      : [{ value: String(value ?? "") }],
+      : [{ value: normalizeOptionValue(value ?? "") }],
   };
   return {
     target: payload,
@@ -80,7 +85,7 @@ function buildEventPayload({
 }
 
 function defaultSingleLabel(options, value) {
-  const normalized = String(value ?? "").trim();
+  const normalized = normalizeOptionValue(value ?? "").trim();
   if (!normalized) return "Select...";
   return (
     options.find((option) => option.value === normalized)?.label ||
@@ -91,7 +96,7 @@ function defaultSingleLabel(options, value) {
 
 function defaultMultiLabel(options, values) {
   const normalized = Array.isArray(values)
-    ? values.map((item) => String(item ?? ""))
+    ? values.map((item) => normalizeOptionValue(item ?? ""))
     : [];
   if (!normalized.length) return "Select...";
   const labels = options
@@ -103,7 +108,7 @@ function defaultMultiLabel(options, values) {
 }
 
 function matchesOption(text = "", option = {}) {
-  const normalized = String(text || "").trim().toLowerCase();
+  const normalized = normalizeOptionValue(text || "").trim().toLowerCase();
   if (!normalized) return false;
   return (
     String(option.value || "").trim().toLowerCase() === normalized ||
@@ -158,10 +163,10 @@ export default function InputComboSelect({
 
   const normalizedComboValue = multiple
     ? Array.isArray(value)
-      ? value.map((item) => String(item ?? ""))
+      ? value.map((item) => normalizeOptionValue(item ?? ""))
       : []
-    : String(value ?? "");
-  const normalizedText = String(text ?? value ?? "");
+    : normalizeOptionValue(value ?? "");
+  const normalizedText = normalizeOptionValue(text ?? value ?? "");
   const normalizedType = inferType(normalizedText, options, type);
 
   const comboLabel = multiple

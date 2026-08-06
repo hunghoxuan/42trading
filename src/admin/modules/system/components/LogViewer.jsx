@@ -130,6 +130,45 @@ function parseMetadataText(metadataText = "") {
   return out;
 }
 
+function parseJsonLoose(value) {
+  if (value == null || value === "") return null;
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function deriveStrategyScanSummaryMessage(metadata = {}, fallbackMessage = "") {
+  const fallback = String(fallbackMessage || "").trim();
+  const results = parseJsonLoose(metadata?.results);
+  const resultRows = Array.isArray(results) ? results : [];
+  for (const item of resultRows) {
+    const skipReasons = Array.isArray(item?.skip_reasons) ? item.skip_reasons : [];
+    for (const reason of skipReasons) {
+      const detail = String(reason?.detail || "").trim();
+      if (!detail) continue;
+      const symbol = String(item?.symbol || "").trim();
+      const timeframe = String(reason?.timeframe || "").trim();
+      const scope = [symbol, timeframe].filter(Boolean).join(" ");
+      return scope ? `Strategy scan skipped: ${scope} - ${detail}` : `Strategy scan skipped: ${detail}`;
+    }
+    const errors = Array.isArray(item?.errors) ? item.errors : [];
+    for (const errorItem of errors) {
+      const detail = String(errorItem?.detail || errorItem?.error || errorItem?.message || "").trim();
+      if (!detail) continue;
+      const symbol = String(item?.symbol || "").trim();
+      const timeframe = String(errorItem?.timeframe || "").trim();
+      const scope = [symbol, timeframe].filter(Boolean).join(" ");
+      return scope ? `Strategy scan error: ${scope} - ${detail}` : `Strategy scan error: ${detail}`;
+    }
+  }
+  const resultMeta = parseJsonLoose(metadata?.result);
+  const resultMessage = String(resultMeta?.message || "").trim();
+  return resultMessage || fallback;
+}
+
 function parseStandardLogLine(line, index) {
   const match = String(line || "").match(
     /^\[([^\]]+)\]\s+\[([^\]]+)\]\s+\[([^\]]+)\]\s+(.*)$/,
@@ -149,12 +188,17 @@ function parseStandardLogLine(line, index) {
   const [, timestamp, level, eventType, rest] = match;
   const parsed = parseStructuredMessage(rest);
   const metadata = parseMetadataText(parsed.metadataText);
+  const eventTypeUpper = String(eventType || "").toUpperCase();
+  const derivedMessage =
+    eventTypeUpper === "CRON_STRATEGY_SCAN"
+      ? deriveStrategyScanSummaryMessage(metadata, parsed.message)
+      : String(parsed.message || "").trim();
   const result = normalizeActivityResult(
     metadata && typeof metadata.result === "object"
       ? metadata.result
       : {
           ...metadata,
-          message: parsed.message,
+          message: derivedMessage,
           level: level,
           event: eventType,
         },
@@ -165,8 +209,8 @@ function parseStandardLogLine(line, index) {
     raw: String(line || ""),
     timestamp,
     level: String(level || "").toUpperCase(),
-    eventType: String(eventType || "").toUpperCase(),
-    message: String(result.message || parsed.message || "").trim(),
+    eventType: eventTypeUpper,
+    message: String(result.message || derivedMessage || parsed.message || "").trim(),
     metadataText: parsed.metadataText,
     metadata,
     result,
@@ -241,6 +285,7 @@ export default function LogViewer({
   const [lines, setLines] = useState([]);
   const [totalLines, setTotalLines] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [error, setError] = useState("");
   const [detailOpen, setDetailOpen] = useState(false);
   const [selectedRowId, setSelectedRowId] = useState("");
@@ -553,6 +598,26 @@ export default function LogViewer({
     [activeFileMeta?.name, source, tableRows],
   );
 
+  const handleClearLogs = useCallback(async () => {
+    if (isStaticMode || !source || !objectId || !selectedFile) return;
+    const ok = window.confirm(`Clear all log items from ${selectedFile}?`);
+    if (!ok) return;
+    try {
+      setClearing(true);
+      setError("");
+      await api.clearSystemLogFile(source, objectId, selectedFile);
+      setLines([]);
+      setTotalLines(0);
+      setSelectedRowId("");
+      setDetailOpen(false);
+      await loadLogs(selectedFile);
+    } catch (err) {
+      setError(err?.message || "Failed to clear logs.");
+    } finally {
+      setClearing(false);
+    }
+  }, [isStaticMode, loadLogs, objectId, selectedFile, source]);
+
   const sharedColumns = useMemo(
     () => [
       {
@@ -622,6 +687,12 @@ export default function LogViewer({
         onRefresh={
           !isStaticMode ? () => loadLogs(selectedFile) : null
         }
+        onDeleteAll={!isStaticMode ? handleClearLogs : null}
+        deleteAllDisabled={
+          clearing || effectiveLoading || !source || !objectId || !selectedFile || logRows.length === 0
+        }
+        deleteAllLabel={clearing ? "Clearing log items..." : "Clear all log items"}
+        deleteAllIcon={clearing ? "..." : "✕"}
         refreshDisabled={effectiveLoading || (!isStaticMode && (!source || !objectId))}
         getDetailTitle={(row) => row?.title || "Log Detail"}
         getDetailSubtitle={(row) =>

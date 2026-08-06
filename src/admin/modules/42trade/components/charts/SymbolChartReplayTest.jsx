@@ -1628,6 +1628,34 @@ function artifactLevelLabel(item = {}, fallbackTf = "") {
   return artifactInlineLabel(item, fallbackTf);
 }
 
+function shouldHideConvertedOriginalZoneLabel(item = {}) {
+  const groupKey = artifactGroupKeyForItem(item);
+  if (groupKey !== "fvg" && groupKey !== "ob") return false;
+  const payload =
+    item?.payload && typeof item.payload === "object"
+      ? item.payload
+      : item?.artifact_payload?.payload && typeof item.artifact_payload.payload === "object"
+        ? item.artifact_payload.payload
+        : {};
+  const lifecycleState = String(payload?.lifecycle_state || "").trim().toLowerCase();
+  const convertedTo = String(payload?.converted_to || "").trim().toLowerCase();
+  if (lifecycleState !== "broken_through") return false;
+  return convertedTo === "ifvg" || convertedTo === "bb";
+}
+
+function shouldRenderOnlyUntouchedConvertedZone(item = {}) {
+  const groupKey = artifactGroupKeyForItem(item);
+  if (groupKey !== "ifvg" && groupKey !== "bb") return true;
+  const payload =
+    item?.payload && typeof item.payload === "object"
+      ? item.payload
+      : item?.artifact_payload?.payload && typeof item.artifact_payload.payload === "object"
+        ? item.artifact_payload.payload
+        : {};
+  const lifecycleState = String(payload?.lifecycle_state || "").trim().toLowerCase();
+  return lifecycleState === "converted_active";
+}
+
 function artifactFullLabel(item = {}) {
   if (item?.is_event) {
     const groupKey = artifactGroupKeyForItem(item);
@@ -1656,6 +1684,67 @@ function artifactMarkerText(item = {}) {
   if (type === "choch") return "CH";
   if (type === "sweep_high" || type === "sweep_low") return "SW";
   return artifactTypeAbbr(type).slice(0, 4).toUpperCase();
+}
+
+function resolveArtifactEventDirection(item = {}, bars = [], timeframe = "") {
+  const normalizedType = artifactDisplayTypeKey(item);
+  if (normalizedType === "sweep_high") return "sell";
+  if (normalizedType === "sweep_low") return "buy";
+  const artifactPayload =
+    item?.artifact_payload && typeof item.artifact_payload === "object"
+      ? item.artifact_payload
+      : {};
+  const payload =
+    item?.payload && typeof item.payload === "object"
+      ? item.payload
+      : item?.artifact_payload?.payload && typeof item.artifact_payload.payload === "object"
+        ? item.artifact_payload.payload
+        : {};
+  const directionCandidates = [
+    item?.event_direction,
+    item?.direction,
+    artifactPayload?.event_direction,
+    artifactPayload?.direction,
+    payload?.bias,
+    item?.subtype,
+    artifactPayload?.subtype,
+    item?.type,
+    artifactPayload?.type,
+    item?.label,
+    artifactPayload?.label,
+  ]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+  const direction = directionCandidates.find(Boolean) || "";
+  if (direction === "sell" || direction === "bearish") return "sell";
+  if (direction === "buy" || direction === "bullish") return "buy";
+  if (directionCandidates.some((value) => value.includes("sell") || value.includes("bear"))) {
+    return "sell";
+  }
+  if (directionCandidates.some((value) => value.includes("buy") || value.includes("bull"))) {
+    return "buy";
+  }
+  if (
+    normalizedType === "swing_high" ||
+    normalizedType === "liquidity_high" ||
+    normalizedType === "bearish_engulfing" ||
+    normalizedType === "bearish_pin_bar" ||
+    normalizedType === "lh" ||
+    normalizedType === "ll"
+  ) {
+    return "sell";
+  }
+  if (
+    normalizedType === "swing_low" ||
+    normalizedType === "liquidity_low" ||
+    normalizedType === "bullish_engulfing" ||
+    normalizedType === "bullish_pin_bar" ||
+    normalizedType === "hh" ||
+    normalizedType === "hl"
+  ) {
+    return "buy";
+  }
+  return "neutral";
 }
 
 function isTrueSignalEventItem(item = {}) {
@@ -1921,12 +2010,14 @@ function strategyHitContextToChartObjects(hit = {}, fallbackTf = "") {
 
 function artifactTimeframeColor(tf = "") {
   const label = artifactSourceTfLabel(tf);
+  if (label === "1w") return "#da70d6";
   if (label === "1d") return "#facc15";
-  if (label === "4h") return "#a855f7";
-  if (label === "1h") return "#60a5fa";
-  if (label === "15m") return "#3b82f6";
-  if (label === "5m") return "#9ca3af";
-  if (label === "1m") return "#6b7280";
+  if (label === "4h") return "#f97316";
+  if (label === "1h") return "#7b68ee";
+  if (label === "30m") return "#1e90ff";
+  if (label === "15m") return "#00008b";
+  if (label === "5m") return "#f5f5f5";
+  if (label === "1m") return "#dcdcdc";
   return "#94a3b8";
 }
 
@@ -2271,6 +2362,7 @@ function markerPositionForConfirmedDirection(direction = "neutral") {
 
 function artifactItemToChartObject(item = {}, fallbackTf = "", barsByTf = null) {
   if (!item || typeof item !== "object") return null;
+  if (!shouldRenderOnlyUntouchedConvertedZone(item)) return null;
   const family = String(item.family || "").trim().toLowerCase();
   const type = String(item.type || "").trim();
   const label = String(item.label || item.type || "").trim();
@@ -2453,7 +2545,7 @@ function artifactItemToChartObject(item = {}, fallbackTf = "", barsByTf = null) 
       id: String(item.id || `${family}-${type}-${timeSec || top}`),
       kind: "zone",
       type: type.toUpperCase() || "ZONE",
-      label: artifactInlineLabel(item, tf),
+      label: shouldHideConvertedOriginalZoneLabel(item) ? "" : artifactInlineLabel(item, tf),
       visible: true,
       tf,
       color,
@@ -2664,6 +2756,84 @@ function artifactObjectReferenceEndTime(item = {}) {
   if (Number.isFinite(timeSec)) return timeSec;
   const timeMs = Number(item?.anchorTimeMs2);
   return Number.isFinite(timeMs) ? Math.floor(timeMs / 1000) : null;
+}
+
+function supportResistanceClusterThreshold(objects = [], bars = []) {
+  const ranges = (Array.isArray(bars) ? bars : [])
+    .slice(-80)
+    .map((bar) => Math.abs(Number(bar?.high) - Number(bar?.low)))
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .sort((a, b) => a - b);
+  const medianRange = ranges.length
+    ? (ranges.length % 2
+        ? ranges[Math.floor(ranges.length / 2)]
+        : (ranges[ranges.length / 2 - 1] + ranges[ranges.length / 2]) / 2)
+    : 0;
+  const fallbackPrice =
+    artifactObjectReferencePrice((Array.isArray(objects) ? objects : []).find(Boolean)) || 0;
+  return Math.max(medianRange * 0.35, Math.abs(fallbackPrice) * 0.00035, 0.0000001);
+}
+
+function collapseNearbySupportResistanceObjects(objects = [], bars = []) {
+  const list = Array.isArray(objects) ? objects : [];
+  const threshold = supportResistanceClusterThreshold(list, bars);
+  if (!Number.isFinite(threshold) || threshold <= 0) return list;
+
+  const byGroup = new Map();
+  const passthrough = [];
+  for (const item of list) {
+    const kind = String(item?.kind || "").trim().toLowerCase();
+    const groupKey = String(
+      item?.artifact_group || artifactGroupKeyForItem(item) || "",
+    )
+      .trim()
+      .toLowerCase();
+    if (kind !== "line" || (groupKey !== "support" && groupKey !== "resistance")) {
+      passthrough.push(item);
+      continue;
+    }
+    if (!byGroup.has(groupKey)) byGroup.set(groupKey, []);
+    byGroup.get(groupKey).push(item);
+  }
+
+  const kept = [...passthrough];
+  for (const entries of byGroup.values()) {
+    const sortable = entries
+      .map((item) => ({
+        item,
+        price: artifactObjectReferencePrice(item),
+        time: artifactObjectReferenceTime(item) || 0,
+      }))
+      .filter((entry) => Number.isFinite(entry.price))
+      .sort((a, b) => a.price - b.price);
+
+    let cluster = [];
+    const flushCluster = () => {
+      if (!cluster.length) return;
+      cluster.sort((left, right) => {
+        if (right.time !== left.time) return right.time - left.time;
+        return Math.abs(right.price) - Math.abs(left.price);
+      });
+      kept.push(cluster[0].item);
+      cluster = [];
+    };
+
+    for (const entry of sortable) {
+      if (!cluster.length) {
+        cluster = [entry];
+        continue;
+      }
+      const lastEntry = cluster[cluster.length - 1];
+      if (Math.abs(entry.price - lastEntry.price) <= threshold) {
+        cluster.push(entry);
+        continue;
+      }
+      flushCluster();
+      cluster = [entry];
+    }
+    flushCluster();
+  }
+  return kept;
 }
 
 function projectArtifactObjectForReplay(item = {}, replayTimeSec = null) {
@@ -9955,21 +10125,27 @@ export default function SymbolChart({
                   ? strategyMarkerObjectsByTf[tf.toLowerCase()]
                   : [];
               const replaySharedObjects = isBacktestChartReplay
-                ? [
-                    ...strategyMarkerObjects,
-                    ...artifactObjects,
-                    ...annotationObjects,
-                  ]
-                    .map((item) => projectArtifactObjectForReplay(item, replayCurrentBarTimeSec))
-                    .filter(Boolean)
+                ? collapseNearbySupportResistanceObjects(
+                    [
+                      ...strategyMarkerObjects,
+                      ...artifactObjects,
+                      ...annotationObjects,
+                    ]
+                      .map((item) => projectArtifactObjectForReplay(item, replayCurrentBarTimeSec))
+                      .filter(Boolean),
+                    barsToRender,
+                  )
                 : [];
               const sharedChartObjects = isBacktestChartReplay
                 ? replaySharedObjects
-                : [
-                    ...strategyMarkerObjects,
-                    ...artifactObjects,
-                    ...annotationObjects,
-                  ];
+                : collapseNearbySupportResistanceObjects(
+                    [
+                      ...strategyMarkerObjects,
+                      ...artifactObjects,
+                      ...annotationObjects,
+                    ],
+                    barsToRender,
+                  );
               const isActiveTf = activeChartId === chartId;
 
               return (

@@ -229,6 +229,8 @@ const RULE_MODE_OPTIONS = [
   { value: "predefined_rule", label: "Predefined Rule" },
 ];
 
+const HISTORY_STRATEGY_FILTER_ALL = "__all__";
+
 const RULE_COMPARE_OPTIONS = (Array.isArray(strategyFunctions?.operators)
   ? strategyFunctions.operators
   : []
@@ -1099,7 +1101,9 @@ function editorHashActive(location) {
 
 function resolveBacktestsBasePath(pathname = "") {
   const path = String(pathname || "").trim().toLowerCase();
-  return "/trades/backtests";
+  if (path.startsWith("/trades0/backtests")) return "/trades0/backtests";
+  if (path.startsWith("/trades/backtests")) return "/trades/backtests";
+  return "/backtests";
 }
 
 function buildBacktestsStrategyUrl(
@@ -1128,6 +1132,31 @@ function buildBacktestsRunUrl(
   });
   const queryText = query.toString();
   return queryText ? `${basePath}?${queryText}` : basePath;
+}
+
+function buildBacktestsDetailUrl(
+  runId = "",
+  {
+    strategyId = "",
+    params = {},
+    basePath = "/trades/backtests",
+    hash = "",
+  } = {},
+) {
+  const normalizedRunId = String(runId || "").trim();
+  const baseUrl = normalizedRunId
+    ? `${basePath}/${encodeURIComponent(normalizedRunId)}`
+    : String(basePath || "/trades/backtests");
+  const query = new URLSearchParams();
+  const normalizedStrategyId = String(strategyId || "").trim();
+  if (normalizedStrategyId) query.set("strategy", normalizedStrategyId);
+  Object.entries(params || {}).forEach(([key, rawValue]) => {
+    const value = String(rawValue || "").trim();
+    if (value) query.set(key, value);
+  });
+  const queryText = query.toString();
+  const hashText = String(hash || "").trim();
+  return `${baseUrl}${queryText ? `?${queryText}` : ""}${hashText}`;
 }
 
 function formatBacktestDateLabel(value) {
@@ -1188,6 +1217,11 @@ function formatBacktestSummaryRange(run = {}, summaryOverride = null) {
       : startLabel || endLabel || "";
   if (rangeLabel && barsLabel) return `${rangeLabel} | ${barsLabel}`;
   return rangeLabel || barsLabel || "";
+}
+
+function formatBacktestSummaryParams(summary = null) {
+  const text = String(summary?.backtest_params_text || "").trim();
+  return text || "";
 }
 
 function formatMoneyCompact(value, digits = 0) {
@@ -1715,7 +1749,8 @@ function buildStrategySaveAsPayload(strategy) {
     id: `${sourceId}_${timestamp}`,
     name: sourceName ? `${sourceName} Copy` : "New Custom Strategy",
     key: undefined,
-    status: String(base.status || "draft").trim() || "draft",
+    kind: "custom",
+    status: "draft",
   };
 }
 
@@ -1860,6 +1895,9 @@ export default function BacktestsPage() {
   const [batchReport, setBatchReport] = useState(null);
   const [resultFilterTf, setResultFilterTf] = useState("all");
   const [resultFilterStrategy, setResultFilterStrategy] = useState("all");
+  const [historyStrategyFilter, setHistoryStrategyFilter] = useState(
+    HISTORY_STRATEGY_FILTER_ALL,
+  );
   const [resultChartLoaded, setResultChartLoaded] = useState(false);
   const [resultChartLoadKey, setResultChartLoadKey] = useState(0);
   const [replayPlaying, setReplayPlaying] = useState(false);
@@ -2847,6 +2885,45 @@ export default function BacktestsPage() {
       ),
     [form.strategy_key, runs, selectedExistingStrategy, selectedStrategyKeys],
   );
+  const historyStrategyOptions = useMemo(() => {
+    const byId = new Map();
+    runs.forEach((run) => {
+      const id = String(run?.strategy_key || run?.strategy_id || "").trim();
+      const label = String(run?.strategy_name || id || "").trim();
+      if (!id || !label || byId.has(id)) return;
+      byId.set(id, label);
+    });
+    return [
+      { value: HISTORY_STRATEGY_FILTER_ALL, label: "All Strategies" },
+      ...Array.from(byId.entries())
+        .sort((left, right) => String(left[1] || "").localeCompare(String(right[1] || "")))
+        .map(([value, label]) => ({ value, label })),
+    ];
+  }, [runs]);
+  const historyRuns = useMemo(() => {
+    const selectedFilter = String(historyStrategyFilter || HISTORY_STRATEGY_FILTER_ALL).trim();
+    return [...runs]
+      .filter((run) => {
+        if (selectedFilter === HISTORY_STRATEGY_FILTER_ALL) return true;
+        return String(run?.strategy_key || run?.strategy_id || "").trim() === selectedFilter;
+      })
+      .sort((left, right) => {
+        const cmp = compareTimeDesc(
+          left?.run_at || left?.created_at || left?.updated_at || left?.summary?.created_at,
+          right?.run_at || right?.created_at || right?.updated_at || right?.summary?.created_at,
+        );
+        if (cmp !== 0) return cmp;
+        return String(right?.run_id || "").localeCompare(String(left?.run_id || ""));
+      });
+  }, [historyStrategyFilter, runs]);
+  useEffect(() => {
+    if (
+      historyStrategyFilter !== HISTORY_STRATEGY_FILTER_ALL &&
+      !historyStrategyOptions.some((item) => item.value === historyStrategyFilter)
+    ) {
+      setHistoryStrategyFilter(HISTORY_STRATEGY_FILTER_ALL);
+    }
+  }, [historyStrategyFilter, historyStrategyOptions]);
   const replaySummary = useMemo(() => {
     if (!replayPlaying || !replayProgress) return null;
     const replayTimeSec = Number(replayProgress.clockTimeSec);
@@ -2944,6 +3021,7 @@ export default function BacktestsPage() {
   }, [filteredActiveTrades]);
   const summaryRangeText =
     replaySummary?.rangeLabel || activeSummaryRangeLabel || activeDataRangeLabel || "-";
+  const summaryParamsText = replaySummary ? "" : formatBacktestSummaryParams(activeSummary);
   const summaryTradesCount = replaySummary
     ? replaySummary.totalTrades
     : filteredSummary.totalTrades;
@@ -2969,6 +3047,7 @@ export default function BacktestsPage() {
     `Plan ${summaryPlannedOutcomeAvailable ? `${formatNumber(summaryPlannedOutcomeRValue, 1)}r` : "-"}`,
     `$${formatNumber(summaryTotalPnlValue, 0)}`,
     summaryRangeText,
+    summaryParamsText,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -3020,8 +3099,28 @@ export default function BacktestsPage() {
               const nextRunId = String(event.target.value || "").trim();
               if (!nextRunId) return;
               setEphemeralRunDetail(null);
+              setEphemeralRunSaveName("");
               setSelectedRunId(nextRunId);
-              navigate(`/backtests/${encodeURIComponent(nextRunId)}`);
+              navigate(
+                buildBacktestsDetailUrl(nextRunId, {
+                  strategyId: String(
+                    activeRun?.strategy_key ||
+                      activeRun?.strategy_id ||
+                      selectedStrategy?.key ||
+                      selectedStrategy?.id ||
+                      form.strategy_key ||
+                      DEFAULT_BACKTEST_STRATEGY_ID,
+                  ).trim(),
+                  params: {
+                    symbol: String(activeRun?.symbol || form.symbol || "").trim().toUpperCase(),
+                    tf:
+                      normalizeBacktestTimeframeValue(activeRun?.tf || "", "") ||
+                      normalizeTimeframeSelection(form, "1")[0] ||
+                      form.tf,
+                  },
+                  basePath: backtestsBasePath,
+                }),
+              );
             }}
             searchable
             searchPlaceholder="Filter strategy runs..."
@@ -3036,7 +3135,7 @@ export default function BacktestsPage() {
           <button
             type="button"
             className="secondary-button"
-            onClick={() => setActiveTab("history")}
+            onClick={() => handleLeftTabChange("history")}
             style={{ minHeight: 28, padding: "0 9px", fontSize: 10 }}
             title="Open History tab"
           >
@@ -3663,7 +3762,24 @@ export default function BacktestsPage() {
       await loadRuns(runId);
       if (runId) {
         setSelectedRunId(runId);
-        navigate(`${backtestsBasePath}/${encodeURIComponent(runId)}`);
+        navigate(
+          buildBacktestsDetailUrl(runId, {
+            strategyId: String(
+              res?.run?.strategy_key ||
+                res?.run?.strategy_id ||
+                form.strategy_key ||
+                DEFAULT_BACKTEST_STRATEGY_ID,
+            ).trim(),
+            params: {
+              symbol: String(res?.run?.symbol || form.symbol || "").trim().toUpperCase(),
+              tf:
+                normalizeBacktestTimeframeValue(res?.run?.tf || "", "") ||
+                normalizeTimeframeSelection(form, "1")[0] ||
+                form.tf,
+            },
+            basePath: backtestsBasePath,
+          }),
+        );
       }
       if (res) {
         setSelectedRunDetail(res);
@@ -3947,20 +4063,67 @@ export default function BacktestsPage() {
 
   function handleLeftTabChange(nextValue) {
     const nextTab = String(nextValue || "backtest").trim().toLowerCase() || "backtest";
+    const activeStrategyId = String(
+      activeRun?.strategy_key ||
+        activeRun?.strategy_id ||
+        selectedStrategy?.key ||
+        selectedStrategy?.id ||
+        form.strategy_key ||
+        DEFAULT_BACKTEST_STRATEGY_ID,
+    ).trim();
+    const activeRunRouteId = String(routeRunId || selectedRunId || activeRun?.run_id || "").trim();
+    const activeSymbol = String(activeRun?.symbol || form.symbol || "").trim().toUpperCase();
+    const activeTf =
+      normalizeBacktestTimeframeValue(activeRun?.tf || "", "") ||
+      normalizeTimeframeSelection(form, "1")[0] ||
+      form.tf ||
+      "";
     setActiveTab(nextTab);
     if (nextTab === "rules") {
       navigate(`${backtestsBasePath}#rules`, { replace: false });
       return;
     }
     if (nextTab === "history") {
-      navigate(`${backtestsBasePath}#history`, { replace: false });
+      navigate(
+        activeRunRouteId
+          ? buildBacktestsDetailUrl(activeRunRouteId, {
+              strategyId: activeStrategyId,
+              params: {
+                symbol: activeSymbol,
+                tf: activeTf,
+              },
+              basePath: backtestsBasePath,
+              hash: "#history",
+            })
+          : `${backtestsBasePath}#history`,
+        { replace: false },
+      );
       return;
     }
     if (nextTab === "strategies") {
       navigate(`${backtestsBasePath}#edit`, { replace: false });
       return;
     }
-    navigate(backtestsBasePath, { replace: false });
+    navigate(
+      activeRunRouteId
+        ? buildBacktestsDetailUrl(activeRunRouteId, {
+            strategyId: activeStrategyId,
+            params: {
+              symbol: activeSymbol,
+              tf: activeTf,
+            },
+            basePath: backtestsBasePath,
+          })
+        : buildBacktestsRunUrl(
+            activeStrategyId,
+            {
+              symbol: activeSymbol,
+              tf: activeTf,
+            },
+            backtestsBasePath,
+          ),
+      { replace: false },
+    );
   }
 
   async function handleDeleteRun(run) {
@@ -3985,6 +4148,40 @@ export default function BacktestsPage() {
       await loadRuns("");
     } catch (deleteError) {
       setError(String(deleteError?.message || deleteError || "Failed to delete backtest"));
+    }
+  }
+
+  async function handleDeleteVisibleRuns() {
+    if (!historyRuns.length) return;
+    const count = historyRuns.length;
+    const ok = await confirm({
+      title: "Delete visible backtests?",
+      message: `Delete ${count} visible backtest ${count === 1 ? "run" : "runs"} from history?`,
+      confirmLabel: "Delete All",
+      tone: "danger",
+    });
+    if (!ok) return;
+    setError("");
+    try {
+      for (const run of historyRuns) {
+        const runId = String(run?.run_id || "").trim();
+        if (!runId) continue;
+        await api.deleteBacktest(runId);
+      }
+      const visibleRunIds = new Set(
+        historyRuns.map((run) => String(run?.run_id || "").trim()).filter(Boolean),
+      );
+      if (visibleRunIds.has(String(selectedRunId || "").trim())) {
+        setSelectedRunId("");
+        setSelectedRunDetail(null);
+        setSelectedTradeSid("");
+        navigate(`${backtestsBasePath}#history`, { replace: false });
+      }
+      await loadRuns("");
+    } catch (deleteError) {
+      setError(
+        String(deleteError?.message || deleteError || "Failed to delete visible backtests"),
+      );
     }
   }
 
@@ -4163,14 +4360,87 @@ export default function BacktestsPage() {
   );
 
   const runList = (
-    <ListItems>
-      {runs.length ? (
-        runs.map((run) => {
+    <div className="stack-layout" style={{ gap: 8 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          flexWrap: "wrap",
+        }}
+      >
+        <InputComboSelect
+          value={historyStrategyFilter}
+          onChange={(event) =>
+            setHistoryStrategyFilter(
+              String(event?.target?.value || HISTORY_STRATEGY_FILTER_ALL).trim() ||
+                HISTORY_STRATEGY_FILTER_ALL,
+            )
+          }
+          searchable
+          searchPlaceholder="Filter strategy..."
+          style={{ flex: "1 1 220px", minWidth: 0, height: 32, fontSize: 11 }}
+        >
+          {historyStrategyOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </InputComboSelect>
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={!historyRuns.length}
+          onClick={handleDeleteVisibleRuns}
+          title="Delete all visible history"
+          style={{
+            minHeight: 32,
+            minWidth: 32,
+            padding: "0 10px",
+            fontSize: 12,
+            color: historyRuns.length ? "#f87171" : undefined,
+          }}
+        >
+          X
+        </button>
+      </div>
+      <ListItems>
+      {historyRuns.length ? (
+        historyRuns.map((run) => {
           const isActive = selectedRunId === run.run_id;
           const pnl = Number(run?.summary?.total_pnl || 0);
           const openRun = () => {
-            setSelectedRunId(run.run_id);
-            navigate(`/backtests/${encodeURIComponent(run.run_id)}`);
+            const nextRunId = String(run?.run_id || "").trim();
+            if (!nextRunId) return;
+            setEphemeralRunDetail(null);
+            setEphemeralRunSaveName("");
+            setSelectedRunId(nextRunId);
+            setSelectedTradeSid("");
+            setReplayPlaying(false);
+            setReplayStartTradeSid("");
+            setReplayActiveTradeSid("");
+            setReplayProgress(null);
+            setActiveTab("backtest");
+            navigate(
+              buildBacktestsDetailUrl(nextRunId, {
+                strategyId: String(
+                  run?.strategy_key ||
+                    run?.strategy_id ||
+                    selectedStrategy?.key ||
+                    selectedStrategy?.id ||
+                    form.strategy_key ||
+                    DEFAULT_BACKTEST_STRATEGY_ID,
+                ).trim(),
+                params: {
+                  symbol: String(run?.symbol || form.symbol || "").trim().toUpperCase(),
+                  tf:
+                    normalizeBacktestTimeframeValue(run?.tf || "", "") ||
+                    normalizeTimeframeSelection(form, "1")[0] ||
+                    form.tf,
+                },
+                basePath: backtestsBasePath,
+              }),
+            );
           };
           return (
             <div
@@ -4280,9 +4550,14 @@ export default function BacktestsPage() {
           );
         })
       ) : (
-        <div className="empty-state">No backtest runs yet.</div>
+        <div className="empty-state">
+          {runs.length
+            ? "No backtests match the selected strategy filter."
+            : "No backtest runs yet."}
+        </div>
       )}
-    </ListItems>
+      </ListItems>
+    </div>
   );
 
   const strategiesList = (
@@ -4957,6 +5232,9 @@ export default function BacktestsPage() {
                         {`$${formatNumber(summaryTotalPnlValue, 0)}`}
                       </span>
                       <span className="minor-text">{summaryRangeText}</span>
+                      {summaryParamsText ? (
+                        <span className="minor-text">{summaryParamsText}</span>
+                      ) : null}
                     </div>
                     {batchMetricsTable ? (
                       <div

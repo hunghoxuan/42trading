@@ -91,6 +91,11 @@ const COMPACT_VIEWPORT_MIN_BARS = 50;
 const COMPACT_VIEWPORT_STEP_BARS = 50;
 const COMPACT_VIEWPORT_DEFAULT_BARS = 50;
 const SHOW_ALL_LOADED_VIEWPORT_MAX_BARS = 2000;
+const DAY_SECONDS = 86400;
+// Zoom presets: `zoom_3d` spans yesterday→today→tomorrow (±1 day around the
+// latest loaded bar), `zoom_week` spans a full week centered on the same anchor.
+const ZOOM_3D_HALF_SPAN_SECONDS = DAY_SECONDS;
+const ZOOM_WEEK_HALF_SPAN_SECONDS = 3.5 * DAY_SECONDS;
 const ARTIFACT_LINE_DASH = [1.5, 3.5];
 const ARTIFACT_LINE_WIDTH = 0.2;
 const ARTIFACT_ZONE_LINE_WIDTH = 0.18;
@@ -227,12 +232,14 @@ function displayIntervalLabel(tfRaw) {
 
 function artifactPaletteColorForTf(tfRaw = "") {
   const label = displayIntervalLabel(tfRaw);
+  if (label === "1w") return "#da70d6";
   if (label === "1d") return "#facc15";
-  if (label === "4h") return "#a855f7";
-  if (label === "1h") return "#60a5fa";
-  if (label === "15m") return "#3b82f6";
-  if (label === "5m") return "#9ca3af";
-  if (label === "1m") return "#6b7280";
+  if (label === "4h") return "#f97316";
+  if (label === "1h") return "#7b68ee";
+  if (label === "30m") return "#1e90ff";
+  if (label === "15m") return "#00008b";
+  if (label === "5m") return "#f5f5f5";
+  if (label === "1m") return "#dcdcdc";
   return "#94a3b8";
 }
 
@@ -1030,6 +1037,40 @@ function rememberLogicalRange(chart, range) {
       to: Number(range.to),
     };
   } catch {}
+}
+
+// Zoom the time scale to a window anchored on the latest loaded bar.
+// `fromOffsetSec`/`toOffsetSec` are relative offsets in seconds, so the preset
+// stays meaningful for live bars (anchor ≈ now) and historical/backtest bars
+// (anchor = last bar in the loaded window) alike.
+function applyRelativeTimeRangeViewport(
+  chart,
+  candles = [],
+  fromOffsetSec = 0,
+  toOffsetSec = 0,
+) {
+  if (!chart || !Array.isArray(candles) || !candles.length) return false;
+  const anchorSec = Number(candles[candles.length - 1]?.time);
+  if (!Number.isFinite(anchorSec) || anchorSec <= 0) return false;
+  const fromSec = anchorSec + Number(fromOffsetSec);
+  const toSec = anchorSec + Number(toOffsetSec);
+  if (
+    !Number.isFinite(fromSec) ||
+    !Number.isFinite(toSec) ||
+    toSec <= fromSec
+  ) {
+    return false;
+  }
+  try {
+    chart.timeScale().setVisibleRange({
+      from: Math.round(fromSec),
+      to: Math.round(toSec),
+    });
+    rememberLogicalRange(chart, { from: fromSec, to: toSec });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function applyLatestBarsViewport(
@@ -2131,6 +2172,9 @@ function resolveArtifactBiasVisual(directionRaw = "", typeRaw = "") {
       border: "rgba(248, 113, 113, 0.3)",
     };
   }
+  if (type === "sweep_high" || type === "sweep_low") {
+    return null;
+  }
   if (type === "swing_high" || type === "liquidity_high" || type === "sweep_high") {
     return {
       label: "High",
@@ -2150,6 +2194,54 @@ function resolveArtifactBiasVisual(directionRaw = "", typeRaw = "") {
     };
   }
   return null;
+}
+
+function resolveRenderedArtifactTooltipDirection(obj = {}, payload = {}) {
+  const type = String(
+    obj?.artifact_type ||
+    obj?.type ||
+    obj?.artifact_group ||
+    payload?.type ||
+    "",
+  )
+    .trim()
+    .toLowerCase();
+  if (type === "sweep_high") return "sell";
+  if (type === "sweep_low") return "buy";
+  const direction = String(
+    payload?.event_direction ||
+    payload?.direction ||
+    payload?.subtype ||
+    payload?.payload?.bias ||
+    "",
+  )
+    .trim()
+    .toLowerCase();
+  if (direction === "sell" || direction === "bearish") return "sell";
+  if (direction === "buy" || direction === "bullish") return "buy";
+  if (direction.includes("sell") || direction.includes("bear")) return "sell";
+  if (direction.includes("buy") || direction.includes("bull")) return "buy";
+  if (
+    type === "swing_high" ||
+    type === "liquidity_high" ||
+    type === "bearish_engulfing" ||
+    type === "bearish_pin_bar" ||
+    type === "lh" ||
+    type === "ll"
+  ) {
+    return "sell";
+  }
+  if (
+    type === "swing_low" ||
+    type === "liquidity_low" ||
+    type === "bullish_engulfing" ||
+    type === "bullish_pin_bar" ||
+    type === "hh" ||
+    type === "hl"
+  ) {
+    return "buy";
+  }
+  return "";
 }
 
 function compactTooltipStatChip({
@@ -4679,13 +4771,14 @@ export default function TradeSignalChart({
           : obj || {};
       const tf = obj?.source_tf || obj?.tf || payload?.timeframe || payload?.tf || "";
       const type = obj?.artifact_type || obj?.type || obj?.artifact_group || payload?.type || "";
+      const direction = resolveRenderedArtifactTooltipDirection(obj, payload);
       return renderCompactArtifactTooltipHtml({
         label: obj?.label || payload?.label || obj?.marker_text || obj?.type || payload?.type || "Artifact",
         tf,
         type,
         group: obj?.artifact_group || payload?.group || "",
         family: obj?.artifact_family || payload?.family || "",
-        direction: payload?.event_direction || payload?.direction || payload?.subtype || payload?.payload?.bias || "",
+        direction,
         markerText: obj?.marker_text || payload?.marker_text || "",
         eventKey: obj?.event_key || payload?.event_key || "",
         isEvent:
@@ -8580,6 +8673,27 @@ export default function TradeSignalChart({
       applyLatestBarsViewport(chartRef.current, bars, visibleBarsCount, {
         anchorRatio: isReplayActive ? 0.5 : 0.8,
       });
+      return;
+    }
+    if (action === "zoom_3d") {
+      // Yesterday → today → tomorrow around the latest loaded bar.
+      applyRelativeTimeRangeViewport(
+        chartRef.current,
+        bars,
+        -ZOOM_3D_HALF_SPAN_SECONDS,
+        ZOOM_3D_HALF_SPAN_SECONDS,
+      );
+      return;
+    }
+    if (action === "zoom_week") {
+      // Full week centered on the latest loaded bar.
+      applyRelativeTimeRangeViewport(
+        chartRef.current,
+        bars,
+        -ZOOM_WEEK_HALF_SPAN_SECONDS,
+        ZOOM_WEEK_HALF_SPAN_SECONDS,
+      );
+      return;
     }
   }, [
     viewportCommand,

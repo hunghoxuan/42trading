@@ -385,6 +385,189 @@ function resolvePriceActionEntry(ctx = {}) {
   return toFiniteNumber(bar?.close) ?? toFiniteNumber(bar?.open);
 }
 
+function resolveThreeCandlesBarsContext(requestedTf = "", ctx = {}) {
+  return resolveTfContext(requestedTf, ctx);
+}
+
+function resolveThreeCandlesSettings(
+  candlesCountValue = 3,
+  slCandleNumValue = 1,
+  rewardRiskValue = 1,
+  directionModeValue = "continue",
+) {
+  const candlesCount = Math.max(2, Math.trunc(Number(candlesCountValue) || 3));
+  let slCandleNum = Math.max(1, Math.trunc(Number(slCandleNumValue) || 1));
+  if (slCandleNum >= candlesCount) slCandleNum = candlesCount - 1;
+  const rewardRisk = Math.max(0.1, Number(rewardRiskValue) || 1);
+  const directionMode =
+    String(directionModeValue || "continue").trim().toLowerCase() === "reverse"
+      ? "reverse"
+      : "continue";
+  return { candlesCount, slCandleNum, rewardRisk, directionMode };
+}
+
+function detectThreeCandlesSequence(candlesCountValue = 3, requestedTf = "", ctx = {}) {
+  const { candlesCount } = resolveThreeCandlesSettings(candlesCountValue);
+  const tfContext = resolveThreeCandlesBarsContext(requestedTf, ctx);
+  const bars = Array.isArray(tfContext?.bars) ? tfContext.bars : [];
+  const currentIndex = Number(tfContext?.currentIndex);
+  if (!bars.length || !Number.isInteger(currentIndex) || currentIndex < candlesCount - 1) {
+    return {
+      matched: false,
+      timeframe: String(tfContext?.timeframe || currentTimeframe(ctx)).trim(),
+      currentBar: tfContext?.currentBar || null,
+      currentIndex,
+      startIndex: -1,
+      sequenceBias: "",
+      bars,
+    };
+  }
+
+  const startIndex = currentIndex - candlesCount + 1;
+  let bullishSequence = true;
+  let bearishSequence = true;
+  for (let index = startIndex; index <= currentIndex; index += 1) {
+    const bar = bars[index] || {};
+    const open = Number(bar?.open);
+    const close = Number(bar?.close);
+    if (!(close > open)) bullishSequence = false;
+    if (!(close < open)) bearishSequence = false;
+  }
+
+  const sequenceBias = bullishSequence ? "bullish" : bearishSequence ? "bearish" : "";
+  return {
+    matched: Boolean(sequenceBias),
+    timeframe: String(tfContext?.timeframe || currentTimeframe(ctx)).trim(),
+    currentBar: tfContext?.currentBar || null,
+    currentIndex,
+    startIndex,
+    sequenceBias,
+    bars,
+  };
+}
+
+function resolveThreeCandlesTradeBias(directionValue = "buy", directionModeValue = "continue") {
+  const direction = normalizePlanDirection(directionValue, "buy");
+  const { directionMode } = resolveThreeCandlesSettings(3, 1, 1, directionModeValue);
+  if (direction === "buy") return directionMode === "reverse" ? "bearish" : "bullish";
+  return directionMode === "reverse" ? "bullish" : "bearish";
+}
+
+function resolveThreeCandlesStop(
+  directionValue = "buy",
+  candlesCountValue = 3,
+  slCandleNumValue = 1,
+  requestedTf = "",
+  ctx = {},
+) {
+  const direction = normalizePlanDirection(directionValue, "buy");
+  const { candlesCount, slCandleNum } = resolveThreeCandlesSettings(
+    candlesCountValue,
+    slCandleNumValue,
+  );
+  const sequence = detectThreeCandlesSequence(candlesCount, requestedTf, ctx);
+  if (!sequence.matched) return null;
+
+  const entryPrice = toFiniteNumber(sequence?.currentBar?.close);
+  if (!Number.isFinite(entryPrice)) return null;
+
+  const stopIndex = sequence.currentIndex - slCandleNum;
+  const stopBar = sequence?.bars?.[stopIndex] || null;
+  if (!stopBar) return null;
+
+  let rawStop =
+    direction === "buy"
+      ? Math.min(Number(stopBar?.low), Math.min(Number(stopBar?.open), Number(stopBar?.close)))
+      : Math.max(Number(stopBar?.high), Math.max(Number(stopBar?.open), Number(stopBar?.close)));
+
+  if (!Number.isFinite(rawStop)) return null;
+
+  if (direction === "buy" && rawStop >= entryPrice) {
+    for (let index = sequence.startIndex; index <= sequence.currentIndex; index += 1) {
+      rawStop = Math.min(rawStop, Number(sequence?.bars?.[index]?.low));
+    }
+  } else if (direction === "sell" && rawStop <= entryPrice) {
+    for (let index = sequence.startIndex; index <= sequence.currentIndex; index += 1) {
+      rawStop = Math.max(rawStop, Number(sequence?.bars?.[index]?.high));
+    }
+  }
+
+  return Number.isFinite(rawStop) ? rawStop : null;
+}
+
+function evaluateThreeCandlesSignal(
+  directionValue = "buy",
+  candlesCountValue = 3,
+  directionModeValue = "continue",
+  requestedTf = "",
+  ctx = {},
+) {
+  const sequence = detectThreeCandlesSequence(candlesCountValue, requestedTf, ctx);
+  if (!sequence.matched) return false;
+
+  const expectedBias = resolveThreeCandlesTradeBias(directionValue, directionModeValue);
+  if (sequence.sequenceBias !== expectedBias) return false;
+
+  const match = buildSyntheticMatch({
+    functionName: "three_candles_signal",
+    timeframe: sequence.timeframe,
+    bar: sequence.currentBar,
+    price: sequence?.currentBar?.close,
+    bias: expectedBias,
+    payload: {
+      direction: normalizePlanDirection(directionValue, "buy"),
+      direction_mode:
+        String(directionModeValue || "continue").trim().toLowerCase() === "reverse"
+          ? "reverse"
+          : "continue",
+      candles_count: Math.max(2, Math.trunc(Number(candlesCountValue) || 3)),
+      sequence_bias: sequence.sequenceBias,
+    },
+  });
+
+  return match
+    ? buildArtifactResult("three_candles_signal", [match], {
+        timeframe: sequence.timeframe,
+      })
+    : false;
+}
+
+function resolveThreeCandlesTarget(
+  directionValue = "buy",
+  candlesCountValue = 3,
+  slCandleNumValue = 1,
+  rewardRiskValue = 1,
+  requestedTf = "",
+  ctx = {},
+) {
+  const direction = normalizePlanDirection(directionValue, "buy");
+  const { rewardRisk } = resolveThreeCandlesSettings(
+    candlesCountValue,
+    slCandleNumValue,
+    rewardRiskValue,
+  );
+  const sequence = detectThreeCandlesSequence(candlesCountValue, requestedTf, ctx);
+  if (!sequence.matched) return null;
+
+  const entryPrice = toFiniteNumber(sequence?.currentBar?.close);
+  const stopLoss = resolveThreeCandlesStop(
+    direction,
+    candlesCountValue,
+    slCandleNumValue,
+    requestedTf,
+    ctx,
+  );
+  if (!Number.isFinite(entryPrice) || !Number.isFinite(stopLoss)) return null;
+
+  if (direction === "buy") {
+    const riskDistance = entryPrice - stopLoss;
+    return riskDistance > 0 ? entryPrice + riskDistance * rewardRisk : null;
+  }
+
+  const riskDistance = stopLoss - entryPrice;
+  return riskDistance > 0 ? entryPrice - riskDistance * rewardRisk : null;
+}
+
 function inferPipSize(entry = null, explicitPipSize = null) {
   const pipSize = toFiniteNumber(explicitPipSize);
   if (Number.isFinite(pipSize) && pipSize > 0) return pipSize;
@@ -940,6 +1123,37 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
       ctx,
     );
   }
+  if (lowerName === "three_candles_signal") {
+    const evaluatedArgs = (Array.isArray(rawArgs) ? rawArgs : []).map((arg) => resolve(arg));
+    return evaluateThreeCandlesSignal(
+      evaluatedArgs[0],
+      evaluatedArgs[1],
+      evaluatedArgs[2],
+      evaluatedArgs[3],
+      ctx,
+    );
+  }
+  if (lowerName === "three_candles_sl") {
+    const evaluatedArgs = (Array.isArray(rawArgs) ? rawArgs : []).map((arg) => resolve(arg));
+    return resolveThreeCandlesStop(
+      evaluatedArgs[0],
+      evaluatedArgs[1],
+      evaluatedArgs[2],
+      evaluatedArgs[3],
+      ctx,
+    );
+  }
+  if (lowerName === "three_candles_tp") {
+    const evaluatedArgs = (Array.isArray(rawArgs) ? rawArgs : []).map((arg) => resolve(arg));
+    return resolveThreeCandlesTarget(
+      evaluatedArgs[0],
+      evaluatedArgs[1],
+      evaluatedArgs[2],
+      evaluatedArgs[3],
+      evaluatedArgs[4],
+      ctx,
+    );
+  }
   if (lowerName === "suggested_trade_sl") {
     const evaluatedArgs = (Array.isArray(rawArgs) ? rawArgs : []).map((arg) => resolve(arg));
     return resolveSuggestedTradeLevelsForContext(
@@ -1063,6 +1277,78 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
         resultMatches(
           currentBarArtifactByType({
             types: ["bullish_engulfing", "bearish_engulfing"],
+            bias: biasArg,
+            ctx: nextCtx,
+          }),
+        ),
+        { timeframe, bias: biasArg },
+      );
+    case "morning_star":
+      return buildArtifactResult(
+        lowerName,
+        resultMatches(currentBarArtifactByType({ types: ["bullish_morning_star"], ctx: nextCtx })),
+        { timeframe, bias: "bullish" },
+      );
+    case "evening_star":
+      return buildArtifactResult(
+        lowerName,
+        resultMatches(currentBarArtifactByType({ types: ["bearish_evening_star"], ctx: nextCtx })),
+        { timeframe, bias: "bearish" },
+      );
+    case "hammer":
+      return buildArtifactResult(
+        lowerName,
+        resultMatches(currentBarArtifactByType({ types: ["bullish_hammer"], ctx: nextCtx })),
+        { timeframe, bias: "bullish" },
+      );
+    case "hanging_man":
+      return buildArtifactResult(
+        lowerName,
+        resultMatches(currentBarArtifactByType({ types: ["hanging_man"], ctx: nextCtx })),
+        { timeframe, bias: "bearish" },
+      );
+    case "shooting_star":
+      return buildArtifactResult(
+        lowerName,
+        resultMatches(currentBarArtifactByType({ types: ["shooting_star"], ctx: nextCtx })),
+        { timeframe, bias: "bearish" },
+      );
+    case "inverted_hammer":
+      return buildArtifactResult(
+        lowerName,
+        resultMatches(currentBarArtifactByType({ types: ["bullish_inverted_hammer"], ctx: nextCtx })),
+        { timeframe, bias: "bullish" },
+      );
+    case "piercing_line":
+      return buildArtifactResult(
+        lowerName,
+        resultMatches(currentBarArtifactByType({ types: ["bullish_piercing_line"], ctx: nextCtx })),
+        { timeframe, bias: "bullish" },
+      );
+    case "dark_cloud_cover":
+      return buildArtifactResult(
+        lowerName,
+        resultMatches(currentBarArtifactByType({ types: ["bearish_dark_cloud_cover"], ctx: nextCtx })),
+        { timeframe, bias: "bearish" },
+      );
+    case "three_white_soldiers":
+      return buildArtifactResult(
+        lowerName,
+        resultMatches(currentBarArtifactByType({ types: ["bullish_three_white_soldiers"], ctx: nextCtx })),
+        { timeframe, bias: "bullish" },
+      );
+    case "three_black_crows":
+      return buildArtifactResult(
+        lowerName,
+        resultMatches(currentBarArtifactByType({ types: ["bearish_three_black_crows"], ctx: nextCtx })),
+        { timeframe, bias: "bearish" },
+      );
+    case "harami":
+      return buildArtifactResult(
+        lowerName,
+        resultMatches(
+          currentBarArtifactByType({
+            types: ["bullish_harami", "bearish_harami"],
             bias: biasArg,
             ctx: nextCtx,
           }),

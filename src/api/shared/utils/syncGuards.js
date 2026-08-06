@@ -92,9 +92,30 @@ function nextLeaseRetryCount(row = {}, now = new Date()) {
   return leaseRetryCount(row) + (isExpiredLease(row, now) ? 1 : 0);
 }
 
-function shouldAutoRejectLeasedTrade(row = {}, maxRetries = 3, now = new Date()) {
+function isBrokerPullTaskTooOld(row = {}, maxAgeHours = 0, now = new Date()) {
+  const maxAge = Number(maxAgeHours);
+  if (!Number.isFinite(maxAge) || maxAge <= 0) return false;
   if (brokerTaskTypeForTrade(row) !== "OPEN") return false;
-  return nextLeaseRetryCount(row, now) >= Math.max(1, Number(maxRetries) || 3);
+  const status = String(row.execution_status || "").trim().toUpperCase();
+  if (status !== "PENDING") return false;
+  const createdAt = new Date(row.created_at || 0);
+  if (!Number.isFinite(createdAt.getTime())) return false;
+  return now.getTime() - createdAt.getTime() > maxAge * 60 * 60 * 1000;
+}
+
+function shouldAutoRejectLeasedTrade(
+  row = {},
+  maxRetries = 3,
+  now = new Date(),
+  maxAgeHours = 0,
+) {
+  if (brokerTaskTypeForTrade(row) !== "OPEN") return false;
+  if (nextLeaseRetryCount(row, now) < Math.max(1, Number(maxRetries) || 3)) {
+    return false;
+  }
+  const maxAge = Number(maxAgeHours);
+  if (!Number.isFinite(maxAge) || maxAge <= 0) return true;
+  return isBrokerPullTaskTooOld(row, maxAge, now);
 }
 
 function isNewTradeTooOld(row = {}, maxAgeHours = 0, now = new Date()) {
@@ -247,6 +268,7 @@ module.exports = {
   shouldClearRejectedDispatchFromBrokerSnapshot,
   leaseRetryCount,
   nextLeaseRetryCount,
+  isBrokerPullTaskTooOld,
   shouldAutoRejectLeasedTrade,
   isNewTradeTooOld,
 };

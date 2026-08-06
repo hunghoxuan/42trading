@@ -53,7 +53,7 @@ function metadataForSymbol(items = [], symbol = "") {
   );
 }
 
-function buildSymbolRows(groupSymbols = [], metadataItems = []) {
+function buildSymbolRows(groupSymbols = [], metadataItems = [], { includeMetadataOnly = true } = {}) {
   const known = new Set();
   const rows = [];
   for (const symbol of groupSymbols) {
@@ -61,6 +61,9 @@ function buildSymbolRows(groupSymbols = [], metadataItems = []) {
     if (!key || known.has(key)) continue;
     known.add(key);
     rows.push({ symbol: key, metadata: metadataForSymbol(metadataItems, key) });
+  }
+  if (!includeMetadataOnly) {
+    return rows.sort((a, b) => a.symbol.localeCompare(b.symbol));
   }
   for (const item of metadataItems) {
     const key = String(item?.symbol || "").trim().toUpperCase();
@@ -112,8 +115,11 @@ export default function MarketDataPage() {
     symbolGroups[0] ||
     { symbols: [] };
   const symbolRows = useMemo(
-    () => buildSymbolRows(selectedGroup.symbols, metadataItems),
-    [metadataItems, selectedGroup.symbols],
+    () =>
+      buildSymbolRows(selectedGroup.symbols, metadataItems, {
+        includeMetadataOnly: selectedGroupId === "all",
+      }),
+    [metadataItems, selectedGroup.symbols, selectedGroupId],
   );
   const displayedSymbolRows = useMemo(() => {
     const query = String(symbolQuery || "").trim().toUpperCase();
@@ -199,7 +205,9 @@ export default function MarketDataPage() {
       setMetadataItems(items);
       setSelectedSymbol((current) => {
         const normalized = String(current || "").trim().toUpperCase();
-        const nextRows = buildSymbolRows(selectedGroup.symbols, items).filter((row) => {
+        const nextRows = buildSymbolRows(selectedGroup.symbols, items, {
+          includeMetadataOnly: selectedGroupId === "all",
+        }).filter((row) => {
           const query = String(symbolQuery || "").trim().toUpperCase();
           return !query || row.symbol.includes(query);
         });
@@ -221,7 +229,7 @@ export default function MarketDataPage() {
     } finally {
       if (!background) setLoading(false);
     }
-  }, [selectedGroup.symbols, symbolQuery]);
+  }, [selectedGroup.symbols, selectedGroupId, symbolQuery]);
 
   const scheduleRealtimeRefresh = useCallback(() => {
     if (refreshTimerRef.current) {

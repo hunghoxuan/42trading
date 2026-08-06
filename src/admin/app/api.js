@@ -1510,6 +1510,10 @@ export const api = {
     get(
       `/api/system/logs/file?source=${encodeURIComponent(source)}&id=${encodeURIComponent(id)}&file=${encodeURIComponent(file)}&limit=${limit}`,
     ),
+  clearSystemLogFile: (source, id, file) =>
+    del(
+      `/api/system/logs/file?source=${encodeURIComponent(source)}&id=${encodeURIComponent(id)}&file=${encodeURIComponent(file)}`,
+    ),
   systemHealthNodes: () => get("/api/system/health/nodes"),
   saveSystemHealthNodes: (nodes = []) =>
     put("/api/system/health/nodes", { nodes }),

@@ -116,6 +116,10 @@ export default function LogsComponent({
   renderDetail = null,
   normalizeRow = null,
   headerActions = null,
+  onDeleteAll = null,
+  deleteAllDisabled = false,
+  deleteAllLabel = "Delete all log items",
+  deleteAllIcon = "🗑",
 }) {
   const [selectedRowId, setSelectedRowId] = useState("");
   const [detailOpen, setDetailOpen] = useState(true);
@@ -244,7 +248,7 @@ export default function LogsComponent({
           title,
           subtitle,
           headerActions:
-            headerActions || onRefresh ? (
+            headerActions || onDeleteAll || onRefresh ? (
               <div
                 style={{
                   display: "flex",
@@ -253,6 +257,18 @@ export default function LogsComponent({
                 }}
               >
                 {headerActions}
+                {onDeleteAll ? (
+                  <button
+                    type="button"
+                    className="danger-button logs-component__icon-button"
+                    onClick={onDeleteAll}
+                    disabled={loading || deleteAllDisabled}
+                    aria-label={deleteAllLabel}
+                    title={deleteAllLabel}
+                  >
+                    {deleteAllIcon}
+                  </button>
+                ) : null}
                 {onRefresh ? (
                   <button
                     type="button"

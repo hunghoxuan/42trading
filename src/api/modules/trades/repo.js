@@ -108,6 +108,102 @@ function toIso(value, fallback = new Date().toISOString()) {
   return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : fallback;
 }
 
+function buildTradeJournalData(trade = {}, data = {}, entryType = "") {
+  const base = clone(data) || {};
+  const executionStatus = text(trade.execution_status).toUpperCase();
+  const dispatchStatus = text(trade.dispatch_status).toUpperCase();
+  const rejectionReason =
+    text(base.rejection_reason || trade.rejection_reason || "") || null;
+  const closeReason = text(base.close_reason || trade.close_reason || "") || null;
+  const ackMessage =
+    text(
+      base.message ||
+        base.error ||
+        base.ack_error ||
+        objectValue(trade.metadata, {}).ack_message ||
+        objectValue(trade.metadata, {}).ack_error ||
+        objectValue(trade.metadata, {}).last_broker_task_error ||
+        "",
+    ) || null;
+  const derivedMessage =
+    rejectionReason ||
+    (executionStatus === "REJECTED" ? ackMessage : null) ||
+    (["CLOSED", "CANCELLED"].includes(executionStatus) ? closeReason : null) ||
+    null;
+
+  return {
+    ...base,
+    execution_status: executionStatus || base.execution_status || null,
+    dispatch_status: dispatchStatus || base.dispatch_status || null,
+    symbol: text(trade.symbol) || base.symbol || null,
+    action: text(trade.action) || base.action || null,
+    order_type: text(trade.order_type) || base.order_type || null,
+    rejection_reason: rejectionReason,
+    close_reason: closeReason,
+    ack_message: ackMessage,
+    message: text(base.message || derivedMessage || "") || null,
+    journal_entry_type: entryType || null,
+  };
+}
+
+function buildSyntheticTradeStateEvent(trade = {}) {
+  if (!trade?.sid) return null;
+  const executionStatus = text(trade.execution_status).toUpperCase();
+  const rejectionReason = text(trade.rejection_reason || "") || null;
+  const closeReason = text(trade.close_reason || "") || null;
+  const metadata = objectValue(trade.metadata, {});
+  const ackMessage =
+    text(
+      metadata.ack_message ||
+        metadata.ack_error ||
+        metadata.last_broker_task_error ||
+        "",
+    ) || null;
+  const message =
+    rejectionReason ||
+    (executionStatus === "REJECTED" ? ackMessage : null) ||
+    closeReason ||
+    null;
+  if (!message) return null;
+  return {
+    id: `trade_state_${trade.sid}_${executionStatus || "UNKNOWN"}`,
+    tenant_id: TRADES_SCOPE,
+    tenantId: TRADES_SCOPE,
+    entity_id: tradeEntityId(trade.sid),
+    entityId: tradeEntityId(trade.sid),
+    entity_type: TRADE_ENTITY_TYPE,
+    entityType: TRADE_ENTITY_TYPE,
+    entity_key: trade.sid,
+    entityKey: trade.sid,
+    user_id: trade.user_id || null,
+    userId: trade.user_id || null,
+    entry_type: "trade.state",
+    entryType: "trade.state",
+    direction: "none",
+    amount: numberOrNull(trade.volume),
+    currency: tradeCurrency(trade),
+    happened_at: trade.updated_at || trade.closed_at || trade.created_at || toIso(new Date()),
+    happenedAt: trade.updated_at || trade.closed_at || trade.created_at || toIso(new Date()),
+    sort_order: 0,
+    sortOrder: 0,
+    created_at: trade.updated_at || trade.closed_at || trade.created_at || toIso(new Date()),
+    createdAt: trade.updated_at || trade.closed_at || trade.created_at || toIso(new Date()),
+    data: {
+      source_system: SOURCE_SYSTEM,
+      source_trade_sid: trade.sid,
+      source_user_id: trade.user_id || null,
+      execution_status: executionStatus || null,
+      dispatch_status: text(trade.dispatch_status) || null,
+      rejection_reason: rejectionReason,
+      close_reason: closeReason,
+      ack_message: ackMessage,
+      message,
+      reason: rejectionReason || closeReason || ackMessage || null,
+      synthetic: true,
+    },
+  };
+}
+
 function sortTrades(items = []) {
   return [...items].sort((a, b) => {
     const aPrimary = Date.parse(a?.closed_at || a?.updated_at || 0) || 0;
@@ -920,6 +1016,14 @@ function normalizeBrokerCommentSid(value) {
   return raw.split("|")[0].trim();
 }
 
+function normalizeBrokerIdentitySid(value) {
+  const collapsed = String(value || "")
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .trim()
+    .toUpperCase();
+  return /^[A-Z0-9]{9}$/.test(collapsed) ? collapsed : "";
+}
+
 function firstTradePlanCandidate(value) {
   if (Array.isArray(value)) {
     return value.find((item) => item && typeof item === "object") || {};
@@ -984,7 +1088,8 @@ function isBrokerSyncNoteMatchCandidate(row) {
   const executionStatus = String(row.execution_status || "")
     .trim()
     .toUpperCase();
-  return executionStatus === "PENDING" || executionStatus === "FILLED";
+  if (!(executionStatus === "PENDING" || executionStatus === "FILLED")) return false;
+  return Boolean(normalizeBrokerIdentitySid(row.note || row.sid || ""));
 }
 
 function isTerminalExecutionStatus(status) {
@@ -1395,7 +1500,7 @@ function createTradesRepo(options = {}) {
       amount: numberOrNull(trade.volume),
       currency: tradeCurrency(trade),
       happenedAt: happenedAt || trade.updated_at || toIso(new Date()),
-      data: clone(data) || {},
+      data: buildTradeJournalData(trade, data, entryType),
     });
   }
 
@@ -1540,7 +1645,33 @@ function createTradesRepo(options = {}) {
         entityKey: sid,
         limit,
       });
-      return { ok: true, sid, items: Array.isArray(items) ? items : [] };
+      const normalizedItems = Array.isArray(items) ? items : [];
+      const trade = await loadTradeBySid(sid);
+      const synthetic = buildSyntheticTradeStateEvent(trade);
+      const alreadyCovered =
+        synthetic &&
+        normalizedItems.some((item) => {
+          const data = objectValue(item?.data, {});
+          const itemMessage = text(
+            data.message ||
+              data.rejection_reason ||
+              data.close_reason ||
+              data.ack_message ||
+              "",
+          );
+          const syntheticMessage = text(
+            synthetic.data?.message ||
+              synthetic.data?.rejection_reason ||
+              synthetic.data?.close_reason ||
+              "",
+          );
+          return syntheticMessage && itemMessage === syntheticMessage;
+        });
+      const mergedItems =
+        synthetic && !alreadyCovered
+          ? [synthetic, ...normalizedItems].slice(0, limit)
+          : normalizedItems;
+      return { ok: true, sid, items: mergedItems };
     },
 
     async listTrades(filters = {}) {
@@ -1945,6 +2076,7 @@ function createTradesRepo(options = {}) {
             row,
             Number(options.maxLeaseRetries || 3),
             now,
+            Number(options.maxAgeHours || 0),
           ) &&
           !hasBroker
         ) {
@@ -2131,11 +2263,14 @@ function createTradesRepo(options = {}) {
       const closedRows = [];
 
       for (const it of Array.isArray(items) ? items : []) {
+        const trustedSidCandidates = [
+          normalizeBrokerIdentitySid(it.sid),
+          normalizeBrokerIdentitySid(it.comment),
+          normalizeBrokerIdentitySid(it.trade_id),
+          normalizeBrokerIdentitySid(it.signal_id),
+        ].filter(Boolean);
         const identityCandidates = [
-          normalizeBrokerCommentSid(it.sid),
-          normalizeBrokerCommentSid(it.comment),
-          String(it.trade_id || "").trim(),
-          String(it.signal_id || "").trim(),
+          ...trustedSidCandidates,
         ].filter(Boolean);
         const ticketCandidates =
           Array.isArray(it.ticket_candidates) && it.ticket_candidates.length
@@ -2180,11 +2315,11 @@ function createTradesRepo(options = {}) {
         }
 
         const noteCandidates = [
-          normalizeBrokerCommentSid(it.note),
-          normalizeBrokerCommentSid(it.comment),
-          String(it.trade_id || "").trim(),
-          String(it.signal_id || "").trim(),
-          normalizeBrokerCommentSid(it.sid),
+          normalizeBrokerIdentitySid(it.note),
+          normalizeBrokerIdentitySid(it.comment),
+          normalizeBrokerIdentitySid(it.trade_id),
+          normalizeBrokerIdentitySid(it.signal_id),
+          normalizeBrokerIdentitySid(it.sid),
         ]
           .filter(Boolean)
           .map((value) => value.toUpperCase());

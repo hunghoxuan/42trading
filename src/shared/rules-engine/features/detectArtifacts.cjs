@@ -422,27 +422,117 @@ function inferPatternAt(bars = [], index = 0) {
   if (index <= 0 || index >= bars.length) return [];
   const bar = bars[index];
   const prev = bars[index - 1];
+  const prev2 = index > 1 ? bars[index - 2] : null;
   if (!bar || !prev) return [];
-  const body = Math.abs(bar.close - bar.open);
-  const range = Math.max(1e-7, bar.high - bar.low);
-  const upperWick = bar.high - Math.max(bar.open, bar.close);
-  const lowerWick = Math.min(bar.open, bar.close) - bar.low;
-  const prevBodyHigh = Math.max(prev.open, prev.close);
-  const prevBodyLow = Math.min(prev.open, prev.close);
-  const bodyHigh = Math.max(bar.open, bar.close);
-  const bodyLow = Math.min(bar.open, bar.close);
+  const candleStats = (candle) => {
+    if (!candle) return null;
+    const open = Number(candle.open);
+    const high = Number(candle.high);
+    const low = Number(candle.low);
+    const close = Number(candle.close);
+    const range = Math.max(1e-7, high - low);
+    const body = Math.abs(close - open);
+    return {
+      open,
+      high,
+      low,
+      close,
+      range,
+      body,
+      bodyHigh: Math.max(open, close),
+      bodyLow: Math.min(open, close),
+      upperWick: high - Math.max(open, close),
+      lowerWick: Math.min(open, close) - low,
+      bullish: close > open,
+      bearish: close < open,
+      bodyRatio: body / range
+    };
+  };
+  const barStats = candleStats(bar);
+  const prevStats = candleStats(prev);
+  const prev2Stats = candleStats(prev2);
+  if (!barStats || !prevStats) return [];
   const out = [];
-  if (prev.close < prev.open && bar.close > bar.open && bodyHigh >= prevBodyHigh && bodyLow <= prevBodyLow) {
+  const inferPriorPressure = (endIndex, lookback = 4) => {
+    const lastIndex = Number(endIndex);
+    if (!Number.isInteger(lastIndex) || lastIndex < 1) return "neutral";
+    const startIndex = Math.max(0, lastIndex - Math.max(2, lookback) + 1);
+    const window = [];
+    for (let i = startIndex; i <= lastIndex; i += 1) {
+      const stats = candleStats(bars[i]);
+      if (stats) window.push(stats);
+    }
+    if (window.length < 2) return "neutral";
+    const firstClose = window[0].close;
+    const lastClose = window[window.length - 1].close;
+    let bullishCount = 0;
+    let bearishCount = 0;
+    window.forEach((stats) => {
+      if (stats.bullish) bullishCount += 1;
+      else if (stats.bearish) bearishCount += 1;
+    });
+    if (lastClose < firstClose && bearishCount >= bullishCount + 1) return "down";
+    if (lastClose > firstClose && bullishCount >= bearishCount + 1) return "up";
+    return "neutral";
+  };
+  const preCurrentPressure = inferPriorPressure(index - 1, 4);
+  const preStarPressure = inferPriorPressure(index - 2, 4);
+  const preSequencePressure = inferPriorPressure(index - 3, 5);
+  const lowerShadowReversalShape = barStats.bodyRatio <= 0.35 && barStats.lowerWick / barStats.range >= 0.5 && barStats.upperWick / barStats.range <= 0.15 && barStats.bodyLow >= barStats.low + barStats.range * 0.55;
+  const upperShadowReversalShape = barStats.bodyRatio <= 0.35 && barStats.upperWick / barStats.range >= 0.5 && barStats.lowerWick / barStats.range <= 0.15 && barStats.bodyHigh <= barStats.low + barStats.range * 0.45;
+  if (prevStats.bearish && barStats.bullish && barStats.bodyHigh >= prevStats.bodyHigh && barStats.bodyLow <= prevStats.bodyLow) {
     out.push("bullish_engulfing");
   }
-  if (prev.close > prev.open && bar.close < bar.open && bodyHigh >= prevBodyHigh && bodyLow <= prevBodyLow) {
+  if (prevStats.bullish && barStats.bearish && barStats.bodyHigh >= prevStats.bodyHigh && barStats.bodyLow <= prevStats.bodyLow) {
     out.push("bearish_engulfing");
   }
-  if (body / range <= 0.35 && lowerWick / range >= 0.45 && upperWick / range <= 0.2) {
+  if (barStats.bodyRatio <= 0.35 && barStats.lowerWick / barStats.range >= 0.45 && barStats.upperWick / barStats.range <= 0.2) {
     out.push("bullish_pin_bar");
   }
-  if (body / range <= 0.35 && upperWick / range >= 0.45 && lowerWick / range <= 0.2) {
+  if (barStats.bodyRatio <= 0.35 && barStats.upperWick / barStats.range >= 0.45 && barStats.lowerWick / barStats.range <= 0.2) {
     out.push("bearish_pin_bar");
+  }
+  if (lowerShadowReversalShape && preCurrentPressure === "down") {
+    out.push("bullish_hammer");
+  }
+  if (lowerShadowReversalShape && preCurrentPressure === "up") {
+    out.push("hanging_man");
+  }
+  if (upperShadowReversalShape && preCurrentPressure === "up") {
+    out.push("shooting_star");
+  }
+  if (upperShadowReversalShape && preCurrentPressure === "down") {
+    out.push("bullish_inverted_hammer");
+  }
+  if (prevStats.bearish && barStats.bullish && barStats.open < prevStats.close && barStats.close > (prevStats.open + prevStats.close) * 0.5 && barStats.close < prevStats.open && preCurrentPressure === "down") {
+    out.push("bullish_piercing_line");
+  }
+  if (prevStats.bullish && barStats.bearish && barStats.open > prevStats.close && barStats.close < (prevStats.open + prevStats.close) * 0.5 && barStats.close > prevStats.open && preCurrentPressure === "up") {
+    out.push("bearish_dark_cloud_cover");
+  }
+  if (prevStats.bearish && prevStats.bodyRatio >= 0.5 && barStats.bullish && barStats.bodyHigh <= prevStats.bodyHigh && barStats.bodyLow >= prevStats.bodyLow && barStats.body <= prevStats.body * 0.75 && preCurrentPressure === "down") {
+    out.push("bullish_harami");
+  }
+  if (prevStats.bullish && prevStats.bodyRatio >= 0.5 && barStats.bearish && barStats.bodyHigh <= prevStats.bodyHigh && barStats.bodyLow >= prevStats.bodyLow && barStats.body <= prevStats.body * 0.75 && preCurrentPressure === "up") {
+    out.push("bearish_harami");
+  }
+  if (prev2Stats && prev2Stats.bearish && prev2Stats.bodyRatio >= 0.45 && prevStats.body <= prev2Stats.body * 0.6 && prevStats.bodyRatio <= 0.35 && barStats.bullish && barStats.bodyRatio >= 0.45 && barStats.close >= prev2Stats.bodyLow + prev2Stats.body * 0.5 && preStarPressure === "down") {
+    out.push("bullish_morning_star");
+  }
+  if (prev2Stats && prev2Stats.bullish && prev2Stats.bodyRatio >= 0.45 && prevStats.body <= prev2Stats.body * 0.6 && prevStats.bodyRatio <= 0.35 && barStats.bearish && barStats.bodyRatio >= 0.45 && barStats.close <= prev2Stats.bodyLow + prev2Stats.body * 0.5 && preStarPressure === "up") {
+    out.push("bearish_evening_star");
+  }
+  if (index >= 2 && bars[index - 2] && bars[index - 1] && bars[index]) {
+    const a = candleStats(bars[index - 2]);
+    const b = candleStats(bars[index - 1]);
+    const c = candleStats(bars[index]);
+    const ascendingCloses = a && b && c && a.bullish && b.bullish && c.bullish && b.close > a.close && c.close > b.close;
+    const descendingCloses = a && b && c && a.bearish && b.bearish && c.bearish && b.close < a.close && c.close < b.close;
+    const opensWithinBodies = a && b && c && b.open >= a.bodyLow && b.open <= a.bodyHigh && c.open >= b.bodyLow && c.open <= b.bodyHigh;
+    const smallUpperWicks = a && b && c && a.upperWick / a.range <= 0.2 && b.upperWick / b.range <= 0.2 && c.upperWick / c.range <= 0.2;
+    const smallLowerWicks = a && b && c && a.lowerWick / a.range <= 0.2 && b.lowerWick / b.range <= 0.2 && c.lowerWick / c.range <= 0.2;
+    if (ascendingCloses && opensWithinBodies && smallUpperWicks && preSequencePressure === "down") out.push("bullish_three_white_soldiers");
+    if (descendingCloses && opensWithinBodies && smallLowerWicks && preSequencePressure === "up") out.push("bearish_three_black_crows");
   }
   if (bar.high <= prev.high && bar.low >= prev.low) {
     out.push("inside_bar");
@@ -1562,6 +1652,7 @@ function shouldLimitArtifactType(type = "", family = "") {
   if (normalizedFamily === "trendline") return false;
   if (normalizedFamily === "divergence") return false;
   if (normalizedFamily === "structure") return false;
+  if (normalizedType === "ob" || normalizedType === "fvg" || normalizedType === "ifvg") return false;
   if (normalizedType === "swing_high" || normalizedType === "swing_low") return false;
   if (normalizedType === "bos" || normalizedType === "choch") return false;
   if (normalizedType === "sweep_high" || normalizedType === "sweep_low") return false;

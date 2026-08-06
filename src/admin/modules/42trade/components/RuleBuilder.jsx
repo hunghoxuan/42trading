@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import InputComboSelect from "../../../shared/components/InputComboSelect";
 import strategyFunctions from "../../../../config/strategyFunctions.json";
+import { formatDisplayValue } from "../../../shared/utils/objectDisplay.js";
 import {
   appendGroupChild,
   ensureGroupRootDraft,
@@ -8,13 +9,13 @@ import {
   makeEmptyGroupDraft,
 } from "../../../shared/utils/strategyRuleEditor.js";
 
-const LOGIC_OPTIONS = [
+export const LOGIC_OPTIONS = [
   { value: "and", label: "AND" },
   { value: "or", label: "OR" },
   { value: "then", label: "THEN" },
 ];
 
-const CONDITION_MODE_OPTIONS = [
+export const CONDITION_MODE_OPTIONS = [
   { value: "compare", label: "Compare" },
   { value: "if_true", label: "If True" },
   { value: "if_not", label: "If Not" },
@@ -24,7 +25,7 @@ const CONDITION_MODE_OPTIONS = [
   { value: "draw", label: "DRAW" },
 ];
 
-const FUNCTION_OPTIONS = (Array.isArray(strategyFunctions?.functions)
+export const FUNCTION_OPTIONS = (Array.isArray(strategyFunctions?.functions)
   ? strategyFunctions.functions
   : []
 )
@@ -38,7 +39,7 @@ const FUNCTION_OPTIONS = (Array.isArray(strategyFunctions?.functions)
 
 const FUNCTION_VALUES = new Set(FUNCTION_OPTIONS.map((item) => item.value));
 
-const COMPARATOR_OPTIONS = (Array.isArray(strategyFunctions?.operators)
+export const COMPARATOR_OPTIONS = (Array.isArray(strategyFunctions?.operators)
   ? strategyFunctions.operators
   : []
 )
@@ -53,31 +54,31 @@ const COMPARATOR_OPTIONS = (Array.isArray(strategyFunctions?.operators)
   }))
   .filter((item) => item.value);
 
-const RULE_BIAS_OPTIONS = [
+export const RULE_BIAS_OPTIONS = [
   { value: "neutral", label: "Auto" },
   { value: "bullish", label: "Bullish" },
   { value: "bearish", label: "Bearish" },
 ];
 
-const RULE_PRIORITY_OPTIONS = [
+export const RULE_PRIORITY_OPTIONS = [
   { value: "medium", label: "Medium" },
   { value: "strong", label: "Strong" },
   { value: "weak", label: "Weak" },
 ];
 
-const ACTION_TYPE_OPTIONS = [
+export const ACTION_TYPE_OPTIONS = [
   { value: "trade", label: "Trade" },
   { value: "draw", label: "Marker" },
   { value: "notify.notification", label: "Notification" },
   { value: "notify.toast", label: "Toast" },
 ];
 
-const TRADE_DIRECTION_OPTIONS = [
+export const TRADE_DIRECTION_OPTIONS = [
   { value: "buy", label: "Buy" },
   { value: "sell", label: "Sell" },
 ];
 
-const TRADE_TYPE_OPTIONS = [
+export const TRADE_TYPE_OPTIONS = [
   { value: "market", label: "Market" },
   { value: "limit", label: "Limit" },
   { value: "stop", label: "Stop" },
@@ -168,7 +169,7 @@ function parseLiteralInput(rawValue = "") {
 function formatLiteralInput(value) {
   if (value === null) return "null";
   if (value === undefined) return "";
-  return String(value);
+  return formatDisplayValue(value);
 }
 
 function parsePlanFieldInput(value) {
@@ -178,16 +179,18 @@ function parsePlanFieldInput(value) {
     !Array.isArray(value)
   ) {
     if (typeof value.fn === "string") {
-      return formatPlanFunctionExpression(value);
+      return value;
     }
     if (
       Object.keys(value).length === 1 &&
       Object.prototype.hasOwnProperty.call(value, "var")
     ) {
       const variablePath = String(value.var || "").trim();
-      return variablePath || null;
+      return variablePath ? { var: variablePath } : null;
     }
+    return value;
   }
+  if (Array.isArray(value)) return value;
   const raw = String(value ?? "").trim();
   if (!raw) return null;
   return raw;
@@ -207,6 +210,8 @@ function formatPlanFieldInput(value) {
   if (value && typeof value === "object" && !Array.isArray(value) && typeof value.fn === "string") {
     return formatPlanFunctionExpression(value);
   }
+  const expressionText = formatPlanMathExpression(value);
+  if (expressionText) return expressionText;
   return typeof value === "object" ? prettyJson(value) : String(value);
 }
 
@@ -230,6 +235,35 @@ function formatPlanFunctionExpression(node = {}) {
   const fnName = String(node?.fn || "").trim();
   const args = Array.isArray(node?.args) ? node.args : [];
   return `${fnName}(${args.map((arg) => formatPlanFunctionArgument(arg)).join(", ")})`;
+}
+
+function formatPlanMathExpression(value, nested = false) {
+  if (value === null) return "null";
+  if (value === undefined) return "";
+  if (typeof value === "number" || typeof value === "bigint") return String(value);
+  if (typeof value === "string") return value.trim();
+  if (Array.isArray(value)) {
+    return value.map((item) => formatPlanMathExpression(item, true)).filter(Boolean).join(", ");
+  }
+  if (!value || typeof value !== "object") return "";
+  if (typeof value.fn === "string") return formatPlanFunctionExpression(value);
+  if (
+    Object.keys(value).length === 1 &&
+    Object.prototype.hasOwnProperty.call(value, "var")
+  ) {
+    return String(value.var || "").trim();
+  }
+
+  const entries = Object.entries(value);
+  if (entries.length !== 1) return "";
+  const [operator, rawArgs] = entries[0];
+  if (!["+", "-", "*", "/"].includes(operator) || !Array.isArray(rawArgs) || !rawArgs.length) {
+    return "";
+  }
+  const renderedArgs = rawArgs.map((item) => formatPlanMathExpression(item, true)).filter(Boolean);
+  if (!renderedArgs.length) return "";
+  const joined = renderedArgs.join(` ${operator} `);
+  return nested && renderedArgs.length > 1 ? `(${joined})` : joined;
 }
 
 function isPlanFieldParamType(value) {

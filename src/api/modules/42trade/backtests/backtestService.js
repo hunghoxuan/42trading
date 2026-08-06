@@ -60,7 +60,9 @@ async function writeJsonAtomic(filePath, value) {
 async function readJsonFile(filePath, fallback = null) {
   try {
     const raw = await fsp.readFile(filePath, "utf8");
-    return JSON.parse(raw);
+    const sanitized =
+      typeof raw === "string" && raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+    return JSON.parse(sanitized);
   } catch (error) {
     if (error && error.code === "ENOENT") return fallback;
     throw error;
@@ -2409,6 +2411,12 @@ const RULE_FUNCTION_EVALUATORS = {
     strategyEventFunctions.evaluateNamedFunction("price_action_sl", args, ctx, evaluate),
   price_action_tp: (args, ctx, evaluate) =>
     strategyEventFunctions.evaluateNamedFunction("price_action_tp", args, ctx, evaluate),
+  three_candles_signal: (args, ctx, evaluate) =>
+    strategyEventFunctions.evaluateNamedFunction("three_candles_signal", args, ctx, evaluate),
+  three_candles_sl: (args, ctx, evaluate) =>
+    strategyEventFunctions.evaluateNamedFunction("three_candles_sl", args, ctx, evaluate),
+  three_candles_tp: (args, ctx, evaluate) =>
+    strategyEventFunctions.evaluateNamedFunction("three_candles_tp", args, ctx, evaluate),
   get_artifacts: (args, ctx, evaluate) =>
     strategyEventFunctions.evaluateNamedFunction("get_artifacts", args, ctx, evaluate),
   is_true: (args, ctx, evaluate) =>
@@ -3152,6 +3160,7 @@ function simulateRuleBasedStrategy(bars, strategy, options = {}) {
 }
 
 function summarizeTrades(trades = [], bars = [], strategy = null, details = {}) {
+  const strategyParamsText = formatBacktestStrategyParamsText(strategy);
   const totalTrades = trades.length;
   const wins = trades.filter((trade) => trade.result === "win").length;
   const losses = trades.filter((trade) => trade.result === "loss").length;
@@ -3217,6 +3226,7 @@ function summarizeTrades(trades = [], bars = [], strategy = null, details = {}) 
     strategy_key: strategy?.key || strategy?.id || null,
     strategy_id: strategy?.id || null,
     strategy_name: strategy?.name || null,
+    backtest_params_text: strategyParamsText || null,
     initial_equity: details.initial_equity ?? null,
     final_equity: details.final_equity ?? null,
     max_drawdown_pct: details.max_drawdown_pct ?? null,
@@ -3229,6 +3239,51 @@ function summarizeTrades(trades = [], bars = [], strategy = null, details = {}) 
       ? toIsoFromUnixSeconds(bars[bars.length - 1].time)
       : null,
   };
+}
+
+function formatBacktestParamValue(value) {
+  if (value === null || value === undefined || value === "") return "";
+  if (typeof value === "boolean") return value ? "True" : "False";
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return "";
+    return Number.isInteger(value) ? String(value) : String(value);
+  }
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text.toLowerCase() === "continue") return "Continue";
+  if (text.toLowerCase() === "reverse") return "Reverse";
+  return text;
+}
+
+function formatGenericBacktestParamsText(params = {}) {
+  if (!params || typeof params !== "object" || Array.isArray(params)) return "";
+  return Object.entries(params)
+    .map(([key, value]) => {
+      const formattedValue = formatBacktestParamValue(value);
+      if (!formattedValue) return "";
+      return `${String(key || "").trim()}: ${formattedValue}`;
+    })
+    .filter(Boolean)
+    .join(" | ");
+}
+
+function formatBacktestStrategyParamsText(strategy = null) {
+  const params =
+    strategy?.params && typeof strategy.params === "object" && !Array.isArray(strategy.params)
+      ? strategy.params
+      : {};
+  if (!Object.keys(params).length) return "";
+  const strategyKey = String(strategy?.key || strategy?.id || "").trim().toLowerCase();
+  if (strategyKey === "three_candles_v1") {
+    const parts = [
+      `Candles Num ${formatBacktestParamValue(params.candles_count) || "3"}`,
+      `SL Candle Num ${formatBacktestParamValue(params.sl_candle_num) || "1"}`,
+      `TP/SL RR ${formatBacktestParamValue(params.reward_risk) || "1"}`,
+      `Trade Direction ${formatBacktestParamValue(params.direction_mode) || "Continue"}`,
+    ];
+    return parts.filter(Boolean).join(" | ");
+  }
+  return formatGenericBacktestParamsText(params);
 }
 
 async function listRunDirs(root) {

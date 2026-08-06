@@ -930,6 +930,11 @@ function computePhase({ bars = [], artifacts = [], bias = "neutral", trend = "ra
 function summarizeArtifacts(artifacts = [], lastClose = null) {
   const summaries = (Array.isArray(artifacts) ? artifacts : []).map((item) => toItemSummary(item, lastClose));
   const byType = {};
+  const hasLastClose = Number.isFinite(Number(lastClose));
+  const isBelowLastClose = (item) =>
+    !hasLastClose || (Number.isFinite(Number(item?.price)) && Number(item.price) < Number(lastClose));
+  const isAboveLastClose = (item) =>
+    !hasLastClose || (Number.isFinite(Number(item?.price)) && Number(item.price) > Number(lastClose));
   summaries.forEach((item) => {
     const type = String(item?.type || "").trim().toLowerCase();
     if (!type) return;
@@ -943,12 +948,12 @@ function summarizeArtifacts(artifacts = [], lastClose = null) {
     supports: sortSummariesByDistance([
       ...(byType.support || []),
       ...(byType.swing_low || []),
-    ]).slice(0, 4),
+    ].filter(isBelowLastClose)).slice(0, 4),
     resistances: sortSummariesByDistance([
       ...(byType.swing_high || []),
       ...(byType.pdh || []),
       ...(byType.liquidity_high || []),
-    ]).slice(0, 4),
+    ].filter(isAboveLastClose)).slice(0, 4),
     demands: sortSummariesByDistance(byType.demand || []).slice(0, 4),
     supplies: sortSummariesByDistance(
       summaries.filter(

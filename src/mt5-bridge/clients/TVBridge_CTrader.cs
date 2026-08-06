@@ -26,14 +26,19 @@ namespace cAlgo.Robots
         private const int TransientErrorLogThresholdCount = 10;
         private const int TransientErrorLogThresholdSeconds = 30;
         private const string CustomUiSettingsFileName = "ctrader_ui_settings.txt";
+        private const string CanonicalEventCacheFileName = "canonical_events.tsv";
+        private const string CanonicalEventCacheVersion = "2";
+        private const int CanonicalEventCacheMaxBars = 5000;
+        private const int DefaultKillerZoneDays = 7;
+        private const int DefaultHtf1BackgroundBars = 24;
+        private const int DefaultHtf2BackgroundBars = 7;
         private const string DefaultBaseServerPath = "/Users/macmini/Projects/moza/42trade";
         private const string DefaultBacktestUserId = "default";
         private bool _showProcessDebugPanel = true;
         private StackPanel _chartButtonPanel;
         private StackPanel _chartSummaryPanel;
-        private StackPanel _chartVisualTogglePanel;
-        private StackPanel _chartVisualQuickPanel;
-        private readonly Dictionary<string, List<CanonicalMarketEvent>> _dashboardEventCache = new Dictionary<string, List<CanonicalMarketEvent>>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, TimedCacheEntry<List<CanonicalMarketEvent>>> _dashboardEventCache = new Dictionary<string, TimedCacheEntry<List<CanonicalMarketEvent>>>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, TimedCacheEntry<PersistedCanonicalEventCache>> _persistedCanonicalEventCache = new Dictionary<string, TimedCacheEntry<PersistedCanonicalEventCache>>(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _backtestStrategyHandledEventKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, BacktestExportTradeSnapshot> _backtestExportTradeSnapshots = new Dictionary<string, BacktestExportTradeSnapshot>(StringComparer.OrdinalIgnoreCase);
         private readonly List<BacktestExportTradeSnapshot> _backtestExportTradeSequence = new List<BacktestExportTradeSnapshot>();
@@ -41,15 +46,30 @@ namespace cAlgo.Robots
         private string _backtestRiskStopReason = "";
         private object _chartSymbolCombo;
         private object _chartDirectionCombo;
-        private object _chartTradeTypeCombo;
+        private object _chartOrderCountCombo;
         private string _chartSelectedSymbol = "";
         private string _chartSelectedDirection = "All";
         private string _chartSelectedTradeProfile = "Scalp";
+        private string _chartSelectedOrderCount = "Auto";
         private string _chartSymbolsSignature = "";
         private bool _chartUiBootstrapped = false;
-        private const bool DisableCustomChartUiForIsolation = false;
+        private bool _chartScaleDiagLogged = false;
         private const string ChartAllSymbolsOption = "All";
         private bool _isRebuildingChartPanel = false;
+        // Chart zoom presets matching the admin web chart: zoom-in shows
+        // Zoom presets (chart buttons): "-" = today + HTF mini chart, "+" = this week + tomorrow (8 days).
+        private const int ChartZoomPresetMinLevel = 5;
+        private const int ChartZoomPresetMaxLevel = 500;
+        private const int ChartZoomPresetMaxIterations = 10;
+        // Absolute zoom calibration: (ZoomLevel, MaxVisibleBars) captured once when the chart
+        // naturally fills the viewport with bars. Every preset click recomputes the target
+        // zoom from this fixed baseline, so "-" always returns to the same 2-day scale and
+        // "+" always to the same 8-day scale regardless of the current zoom state.
+        private double _zoomCalibrationLevel = 0;
+        private double _zoomCalibrationVisibleBars = 0;
+        // Dynamic zoom window (days per full chart width): starts at 2 (today + tomorrow),
+        // "-" decreases by 1 day (min 1 = today), "+" increases by 1 day (max 8).
+        private double _zoomWindowDays = 2;
         private bool _toggleKillerZones;
         private bool _toggleLiquidityLevels;
         private bool _toggleSweepDetections;
@@ -77,45 +97,126 @@ namespace cAlgo.Robots
         private bool _toggleEmaOverlay = true;
         private bool _toggleVwapOverlay = true;
         private bool _toggleBollingerOverlay = true;
+        private bool _toggleIchimokuOverlay = true;
+        private bool _toggleTrendlines = true;
+        private bool _toggleDivergence = true;
         private bool _toggleEmaEvents = true;
         private bool _toggleVwapEvents = true;
         private bool _toggleBollingerEvents = true;
         private bool _toggleRsiEvents = true;
         private bool _toggleStochasticEvents = true;
         private bool _toggleMacdEvents = true;
-        private const bool DisableTechnicalVisualRenderingForIsolation = true;
+        private EmaIndicatorConfig _resolvedEmaOverlayConfig;
+        private EmaIndicatorConfig _resolvedEmaEventConfig;
+        private VwapIndicatorConfig _resolvedVwapOverlayConfig;
+        private VwapIndicatorConfig _resolvedVwapEventConfig;
+        private BollingerIndicatorConfig _resolvedBollingerOverlayConfig;
+        private BollingerIndicatorConfig _resolvedBollingerEventConfig;
+        private IchimokuIndicatorConfig _resolvedIchimokuOverlayConfig;
+        private RsiIndicatorConfig _resolvedRsiEventConfig;
+        private StochasticIndicatorConfig _resolvedStochasticEventConfig;
+        private MacdIndicatorConfig _resolvedMacdEventConfig;
+        private ChartIndicator _chartRsiIndicator;
+        private ChartIndicator _chartStochasticIndicator;
+        private ChartIndicator _chartMacdIndicator;
+        private string _chartOscillatorSignature = "";
+        // Native price-panel overlays (EMA / VWAP / Bollinger / Ichimoku). When these exist,
+        // the expensive per-bar custom drawing is skipped; if an Add fails (null), the custom
+        // path is kept as a fallback.
+        private ChartIndicator _chartEmaFastIndicator;
+        private ChartIndicator _chartEmaMidIndicator;
+        private ChartIndicator _chartEmaSlowIndicator;
+        private ChartIndicator _chartVwapIndicator;
+        private ChartIndicator _chartBollingerIndicator;
+        private ChartIndicator _chartIchimokuIndicator;
+        private string _chartTechnicalOverlaySignature = "";
+        // When the Momentum Technical combo is All Custom, native chart indicators must not be
+        // added and the per-bar custom-drawn overlays (our own line styles) are used instead.
+        private bool _forceCustomTechnicalOverlays;
+        private bool _indicatorVisibilityDiagLogged = false;
+        private static readonly bool DisableTechnicalVisualRenderingForIsolation = false;
         private bool _toggleFvgZones;
         private bool _toggleOrderBlocks;
         private bool _toggleHigherTimeframeZones;
-        private bool _toggleHtf15 = true;
-        private bool _toggleHtf4H = true;
-        private bool _toggleHtf1D = true;
-        private bool _toggleHtfMiniChart;
         private bool _toggleKeyLevels = true;
+        private bool _toggleSupplyDemand = true;
         private bool _toggleStrategyMarkers = true;
         private readonly Dictionary<string, string> _customUiSettings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private string _customUiSettingsSerializedSnapshot = "";
         private readonly Dictionary<string, long> _liveStrategyLastProcessedBarTicks = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<long, StrategyPositionSnapshot> _trackedStrategyPositions = new Dictionary<long, StrategyPositionSnapshot>();
         private readonly List<StrategyChartMarker> _strategyChartMarkers = new List<StrategyChartMarker>();
+        private long _lastLiteOverlayDrawMs = 0;
+        private int _lastLiteOverlayObjectCount = 0;
+        private string _lastLiteOverlayBreakdown = "";
+        private DateTime _lastLiteOverlayAtUtc = DateTime.MinValue;
+        // Per-family lite overlay dirty checks: each family only redraws when something it
+        // actually draws changed (see RefreshLite* below), instead of remove+redrawing the
+        // whole lite overlay on every forming-bar tick.
+        private int _last4HSplitterBarsCount = -1;
+        private string _last4HSplitterStateKey = "";
+        private int _lastHtfBackgroundBarsCount = -1;
+        private string _lastHtfBackgroundStateKey = "";
+        private int _lastMiniChartBarsCount = -1;
+        private string _lastMiniChartStateKey = "";
+        private int _lastDetectionsBarsCount = -1;
+        private string _lastDetectionsStateKey = "";
+        private DateTime _lastDetectionsRedrawAtUtc = DateTime.MinValue;
+        private DateTime _lastMiniChartRedrawAtUtc = DateTime.MinValue;
+        private DateTime _lastTechOverlayRedrawAtUtc = DateTime.MinValue;
+        private int _lastFullOverlayBarsCount = -1;
+        private string _lastFullOverlayStateKey = "";
+        private int _lastTechnicalOverlayBarsCount = -1;
+        private string _lastTechnicalOverlayStateKey = "";
+        private DateTime _lastFullOverlayRedrawAtUtc = DateTime.MinValue;
+        // Set when the user clicks the manual refresh button: bypasses the overlay
+        // dirty-check + throttle so everything is recalculated and redrawn once.
+        private bool _forceChartVisualsRefresh = false;
+        private readonly HashSet<string> _persistedCacheLoadedFromDisk = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly List<Tuple<string, TimeFrame>> _persistedCacheKeys = new List<Tuple<string, TimeFrame>>();
+        private DateTime _lastCanonicalCacheFlushDay = DateTime.MinValue;
         private string _lastStopReason = "external_or_unknown";
         private DateTime _startedAtUtc = DateTime.MinValue;
         private DateTime _startupWarmupUntilUtc = DateTime.MinValue;
         private bool _startupWarmupAnnounced = false;
-        private const bool DisableBridgeRuntimeForIsolation = false;
-        private const bool DisableOnStartExtrasForIsolation = true;
-        private const bool DisableOnStopCleanupForIsolation = true;
-        private const bool DisableTimerStartupForIsolation = false;
-        private const bool DisableWatchdogStartupForIsolation = true;
-        private const bool DisableMasterTimerBodyForIsolation = false;
-        private const bool DisableMasterTimerNetworkForIsolation = true;
-        private const bool DisableMasterTimerStrategyForIsolation = true;
-        private const bool DisableMasterTimerChartWorkForIsolation = false;
-        private const bool DisableChartPanelBootstrapForIsolation = true;
-        private const bool DisableChartPerTickRefreshForIsolation = true;
-        private const bool DisableChartVisualTogglePanelForIsolation = true;
-        private const bool DisableCustomUiSettingsPersistenceForIsolation = true;
+        private static readonly bool DisableBridgeRuntimeForIsolation = false;
+        private static readonly bool DisableOnStartExtrasForIsolation = true;
+        private static readonly bool DisableOnStopCleanupForIsolation = true;
+        private static readonly bool DisableTimerStartupForIsolation = false;
+        private static readonly bool DisableWatchdogStartupForIsolation = true;
+        private static readonly bool DisableMasterTimerBodyForIsolation = false;
+        private static readonly bool DisableMasterTimerNetworkForIsolation = true;
+        private static readonly bool DisableMasterTimerStrategyForIsolation = true;
+        private static readonly bool DisableMasterTimerChartWorkForIsolation = false;
+        private static readonly bool DisableCustomChartUiForIsolation = false;
+        private static readonly bool DisableChartPanelBootstrapForIsolation = true;
+        private static readonly bool DisableChartPerTickRefreshForIsolation = true;
+        private static readonly bool DisableCustomUiSettingsPersistenceForIsolation = false;
+        private static readonly bool DisableCandlePatternRenderingForIsolation = false;
+        private static readonly bool SkipPinBarForIsolation = false;
+        private static readonly bool SkipEngulfingForIsolation = false;
+        private static readonly bool SkipBigCandleForIsolation = false;
+        private static readonly bool SkipMorningStarForIsolation = false;
+        private static readonly bool SkipEveningStarForIsolation = false;
+        private static readonly bool RestorePinBarOnlyForIsolation = false;
+        private static readonly bool RestoreEngulfingOnlyForIsolation = false;
+        private static readonly bool RestoreBigCandleOnlyForIsolation = false;
+        private static readonly bool RestoreHammerOnlyForIsolation = false;
+        private static readonly bool RestoreHangingManOnlyForIsolation = false;
+        private static readonly bool RestoreMorningStarOnlyForIsolation = false;
+        private static readonly bool RestoreEveningStarOnlyForIsolation = false;
         private const int LiteZoneRefreshEveryTicks = 5;
+        // Hard cap on how often the heavier lite overlay families (detections, mini chart
+        // strip, technical overlays) can remove+redraw. Their keys change once per completed
+        // bar, which on fast timeframes (1s/5s charts) would still redraw every few seconds.
+        private const int LiteRedrawMinIntervalSeconds = 15;
+        // Cap how often the heavy overlay remove+redraw can run, even when the state
+        // key changes (new completed bar, strategy markers added, day rollover).
+        private const int FullOverlayRedrawMinIntervalSeconds = 10;
+        // Hard ceiling on chart objects the bot draws per refresh cycle. When reached,
+        // lower-priority overlay families are skipped so the platform chart never hits
+        // its object limit (which can crash the chart / force a bot restart).
+        private const int MaxChartObjectBudget = 6000;
         private Color _lastPanelMessageColor = Color.White;
         private bool _backtestExportActive = false;
         private string _backtestExportRunId = "";
@@ -168,41 +269,301 @@ namespace cAlgo.Robots
             No
         }
 
+        public enum ChartEventsPerTypeMode
+        {
+            None,
+            All,
+            _1,
+            _2,
+            _3,
+            _4,
+            _5
+        }
+
+        public enum RiskMode
+        {
+            Risky,
+            Safe
+        }
+
+        public enum HtfSlotMode
+        {
+            Auto,
+            Off,
+            _15m,
+            _1h,
+            _4h,
+            _1d,
+            _1w
+        }
+
+        // HTF Mini param: controls the on-chart HTF strip (mini chart) and the background HTF
+        // candle together.
+        public enum HtfMiniChartMode
+        {
+            No,
+            Mini_chart,
+            Background,
+            Both
+        }
+
+        public enum KillerZoneVisualMode
+        {
+            No,
+            Asia_KZ,
+            Asia_Session,
+            LD_KZ,
+            LD_Session,
+            NY_KZ,
+            NY_Session,
+            All_KZs,
+            All_Sessions
+        }
+
+        public enum EmaVisualMode
+        {
+            Auto,
+            Off,
+            E9_21_55,
+            E20_50_200,
+            E34_49
+        }
+
+        public enum VwapVisualMode
+        {
+            Auto,
+            Off,
+            V20,
+            V30,
+            V50
+        }
+
+        public enum BollingerVisualMode
+        {
+            Auto,
+            Off,
+            BB20_2,
+            BB20_25,
+            BB34_2
+        }
+
+        public enum IchimokuVisualMode
+        {
+            Auto,
+            Off,
+            I9_26_52,
+            I7_22_44,
+            I20_60_120
+        }
+
+        public enum RsiVisualMode
+        {
+            Auto,
+            Off,
+            R14,
+            R21
+        }
+
+        public enum StochasticVisualMode
+        {
+            Auto,
+            Off,
+            S14_3_3,
+            S9_3_3,
+            S21_5_5
+        }
+
+        public enum MacdVisualMode
+        {
+            Auto,
+            Off,
+            M12_26_9,
+            M8_21_5,
+            M5_34_5
+        }
+
+        public enum EventToggleMode
+        {
+            On,
+            Off
+        }
+
+        // Master-visibility combos for the Chart Visuals groups. Order: All | None | Per Item
+        // then a specific item to isolate just that one. All/None hide or show every item in the
+        // group at once; Per Item (default) keeps the per-item toggles as-is.
+        public enum SmcZoneComboMode
+        {
+            All,
+            None,
+            PerItem,
+            OrderBlocks,
+            FvgZones,
+            KeyLevels,
+            Liquidity,
+            HigherTimeframeZones,
+            KillerZones,
+            SupplyDemand
+        }
+
+        public enum StructureEventComboMode
+        {
+            All,
+            None,
+            PerItem,
+            Sweep,
+            Bos,
+            Choch,
+            Rejection,
+            Breakout,
+            Pullback,
+            Continuation,
+            Impulse
+        }
+
+        public enum MomentumTechnicalComboMode
+        {
+            All,
+            AllCustom,
+            None,
+            PerItem,
+            Ema,
+            Vwap,
+            Bollinger,
+            Ichimoku,
+            EmaEvents,
+            VwapEvents,
+            BollingerEvents,
+            RsiEvents,
+            StochasticEvents,
+            MacdEvents
+        }
+
+        public enum CandleComboMode
+        {
+            All,
+            None,
+            PerItem,
+            PinBar,
+            Engulfing,
+            BigCandle,
+            MorningStar,
+            EveningStar,
+            Hammer,
+            HangingMan,
+            ShootingStar,
+            InvertedHammer,
+            PiercingLine,
+            DarkCloudCover,
+            ThreeWhiteSoldiers,
+            ThreeBlackCrows,
+            Harami
+        }
+
+        // Volume confirmation for event detections: the event bar must have higher volume than
+        // the previous bar by the configured %. No = skip the check.
+        public enum VolumeSurgeMode
+        {
+            No,
+            _5pct,
+            _10pct,
+            _15pct,
+            _20pct
+        }
+
+        // SMC zone visual presets: the first option (No/Skip/All) ignores that requirement;
+        // the friendly presets map to numeric thresholds inside the zone detection code.
+        public enum ZoneFvgDisplacementPreset
+        {
+            No,
+            Loose,
+            Normal,
+            Tight,
+            Strict
+        }
+
+        public enum ZoneFvgBodyRatioPreset
+        {
+            No,
+            Low,
+            Medium,
+            High,
+            Full
+        }
+
+        public enum ZoneFvgGapPreset
+        {
+            No,
+            Tiny,
+            Small,
+            Normal,
+            Large
+        }
+
+        public enum ZoneRevisitMode
+        {
+            No,
+            Skip
+        }
+
+        public enum ZoneLookbackPreset
+        {
+            All,
+            Bars50,
+            Bars80,
+            Bars120,
+            Bars200
+        }
+
+        public enum ZoneMaxCountPreset
+        {
+            All,
+            Few,
+            Normal,
+            Many,
+            Max
+        }
+
+        // Custom period grid (Splitter Grid): No = off, Auto = use HTF1's timeframe as the
+        // splitter step, or a fixed step (30m/1h/2h/4h/8h/1d/1w).
+        public enum SplitterGridMode
+        {
+            No,
+            Auto,
+            _30m,
+            _1h,
+            _2h,
+            _4h,
+            _8h,
+            _1d,
+            _1w
+        }
+
         [Parameter("Rules Profile", DefaultValue = RiskTemplate.FTMO_1Step)]
         public RiskTemplate SelectedRiskTemplate { get; set; }
 
-        [Parameter("M. Day Loss %", Group = "Custom Rules", DefaultValue = 3.0, MinValue = 0, Step = 0.5)]
-        public double MaxDailyLossPercent { get; set; }
+        [Parameter("M. Day Loss", Group = "Custom Rules", DefaultValue = RiskLimitPreset._3pct)]
+        public RiskLimitPreset MaxDailyLossPreset { get; set; }
 
-        [Parameter("M. DD %", Group = "Custom Rules", DefaultValue = 10.0, MinValue = 0, Step = 1)]
-        public double MaxEquityDrawdownPercent { get; set; }
+        [Parameter("M. DD", Group = "Custom Rules", DefaultValue = RiskLimitPreset._10pct)]
+        public RiskLimitPreset MaxEquityDrawdownPreset { get; set; }
 
         [Parameter("News block", Group = "Trade Config", DefaultValue = NewsBlockPreset._90m)]
         public NewsBlockPreset SelectedNewsBlockPreset { get; set; }
 
-        [Parameter("Overnight block", Group = "Trade Config", DefaultValue = true)]
-        public bool NoOvernightHold { get; set; }
+        [Parameter("Overnight block", Group = "Trade Config", DefaultValue = TradeBlockScopeMode.Both)]
+        public TradeBlockScopeMode OvernightBlockMode { get; set; }
 
-        [Parameter("Weekend block", Group = "Trade Config", DefaultValue = true)]
-        public bool NoWeekendHold { get; set; }
+        [Parameter("Weekend block", Group = "Trade Config", DefaultValue = TradeBlockScopeMode.Both)]
+        public TradeBlockScopeMode WeekendBlockMode { get; set; }
 
-        [Parameter("M. Trade Risk %", Group = "Trade Config", DefaultValue = 0.5, MinValue = 0, Step = 0.1)]
-        public double MaxRiskPercent { get; set; }
+        [Parameter("M. Trade Risk", Group = "Trade Config", DefaultValue = RiskLimitPreset._0_5pct)]
+        public RiskLimitPreset MaxRiskPreset { get; set; }
 
-        [Parameter("M. Total Risk %", Group = "Trade Config", DefaultValue = 1.5, MinValue = 0)]
-        public double MaxTotalOpenRiskPercent { get; set; }
+        [Parameter("M. Total Risk", Group = "Trade Config", DefaultValue = RiskLimitPreset._2pct)]
+        public RiskLimitPreset MaxTotalOpenRiskPreset { get; set; }
 
-        [Parameter("M. Margin %", Group = "Trade Config", DefaultValue = 98, MinValue = 0, MaxValue = 100)]
-        public double MarginSafetyPercent { get; set; }
-
-        [Parameter("m. Stop pips", Group = "Trade Config", DefaultValue = 15, MinValue = 5)]
-        public double MinStopPips { get; set; }
-
-        [Parameter("M. Stop/TP pips", Group = "Trade Config", DefaultValue = 5000, MinValue = 50)]
-        public double MaxProtectionPips { get; set; }
-
-        [Parameter("M. RR", Group = "Trade Config", DefaultValue = 20, MinValue = 1)]
-        public double MaxRewardRiskRatio { get; set; }
+        [Parameter("Risk mode", Group = "Trade Config", DefaultValue = RiskMode.Safe)]
+        public RiskMode SelectedRiskMode { get; set; }
 
         [Parameter("On SL/TP err", Group = "Trade Config", DefaultValue = "Adjust")]
         public string OnSlTpError { get; set; }  // "Reject" = cancel trade, "Adjust" = auto-widen to meet minimum, "Continue" = keep position without SL/TP
@@ -210,6 +571,7 @@ namespace cAlgo.Robots
         public enum BacktestStrategyMode
         {
             Off,
+            CustomTrade,
             HtfEventMarket,
             LtfEventMarket,
             EmaCrossV1,
@@ -233,19 +595,58 @@ namespace cAlgo.Robots
             AiSnapshotContextV1
         }
 
-        public enum StrategyExposureMode
+        public enum StrategyCustomEventsMode
         {
-            Off,
-            PositionOnly,
-            PositionAndOrder
+            AND,
+            OR
         }
 
-        public enum StrategyTriggerMode
+        public enum StrategyCustomEventOption
         {
-            Timer1s,
-            OnBar,
-            OnBarClosed,
-            Ticker
+            Off,
+            CHOCH_ChangeOfCharacter,
+            BOS_BreakOfStructure,
+            SR_SweepReclaim,
+            RJ_Rejection_KeyLevel,
+            BR_Breakout_Structure,
+            PB_Pullback_EmaReclaim,
+            CT_Continuation_VwapReclaim,
+            IM_Impulse_MomentumShift,
+            AnyStructureEvent,
+            DIV_Divergence,
+            PXE_EMA_PriceCross,
+            EMX_EMA_FastMidCross,
+            EMT_EMA_MidSlowCross,
+            VWX_VWAP_PriceCross,
+            VWR_VWAP_Rejection,
+            BBX_Bollinger_MidCross,
+            BBR_Bollinger_BandReject,
+            R50_RSI_MidlineCross,
+            ROS_RSI_ExitOversold,
+            ROB_RSI_ExitOverbought,
+            STX_Stoch_Cross,
+            STO_Stoch_ExitExtreme,
+            MDX_MACD_SignalCross,
+            MD0_MACD_ZeroCross,
+            PIN_PinBar,
+            ENG_Engulfing,
+            BIG_BigCandle,
+            MOR_MorningStar,
+            EVE_EveningStar,
+            HAM_Hammer,
+            HGM_HangingMan,
+            SST_ShootingStar,
+            IHM_InvertedHammer,
+            PRC_PiercingLine,
+            DCC_DarkCloudCover,
+            TWS_ThreeWhiteSoldiers,
+            TBC_ThreeBlackCrows,
+            HAR_Harami,
+            AnyCandlePattern,
+            LTF_Trend_Bias,
+            HTF_Trend_Bias,
+            LTF_Trend_Bias_Against,
+            HTF_Trend_Bias_Against
         }
 
         public enum StrategyEntryType
@@ -254,6 +655,16 @@ namespace cAlgo.Robots
             _0_1_limit,
             _0_2_limit,
             _0_3_limit
+        }
+
+        public enum StrategyOrderCountMode
+        {
+            Auto,
+            _1,
+            _2,
+            _3,
+            _4,
+            _5
         }
 
         public enum StrategyDaysPreset
@@ -291,11 +702,43 @@ namespace cAlgo.Robots
             _120m
         }
 
+        public enum TradeBlockScopeMode
+        {
+            No,
+            Cron,
+            Manual,
+            Both
+        }
+
+        public enum RiskLimitPreset
+        {
+            None,
+            _0_05pct,
+            _0_1pct,
+            _0_2pct,
+            _0_5pct,
+            _1pct,
+            _2pct,
+            _3pct,
+            _4pct,
+            _5pct,
+            _10pct,
+            _15pct,
+            _20pct,
+            _25usd,
+            _50usd,
+            _100usd,
+            _200usd,
+            _500usd,
+            _1000usd,
+            _2000usd
+        }
+
         [Parameter("Live trade", Group = "Strategies", DefaultValue = true)]
         public bool EnableLiveStrategyTrading { get; set; }
 
-        [Parameter("M. risk/idea", Group = "Trade Config", DefaultValue = 1.0, MinValue = 0)]
-        public double MaxSameSymbolDirectionRiskPercent { get; set; }
+        [Parameter("M. risk/idea", Group = "Trade Config", DefaultValue = RiskLimitPreset._1pct)]
+        public RiskLimitPreset MaxSameSymbolDirectionRiskPreset { get; set; }
 
         [Parameter("M. pos/idea", Group = "Trade Config", DefaultValue = 10, MinValue = 1)]
         public int MaxPositionsPerIdea { get; set; }
@@ -325,11 +768,32 @@ namespace cAlgo.Robots
         [Parameter("Timeframes", Group = "Strategies", DefaultValue = "")]
         public string StrategyTimeframes { get; set; }
 
-        [Parameter("Exposure mode", Group = "Strategies", DefaultValue = StrategyExposureMode.PositionOnly)]
-        public StrategyExposureMode SelectedStrategyExposureMode { get; set; }
+        [Parameter("Vol Surge", Group = "Strategies", DefaultValue = VolumeSurgeMode.No)]
+        public VolumeSurgeMode StrategyVolumeSurgePreset { get; set; }
 
-        [Parameter("Trigger", Group = "Strategies", DefaultValue = StrategyTriggerMode.OnBarClosed)]
-        public StrategyTriggerMode SelectedStrategyTriggerMode { get; set; }
+        [Parameter("Days", Group = "Strategies", DefaultValue = StrategyDaysPreset.Weekdays)]
+        public StrategyDaysPreset StrategyDaysPresetValue { get; set; }
+
+        [Parameter("Sessions", Group = "Strategies", DefaultValue = StrategySessionsPreset.A_Ld_Ny)]
+        public StrategySessionsPreset StrategySessionsPresetValue { get; set; }
+
+        [Parameter("CustomEvents", Group = "Strategies", DefaultValue = StrategyCustomEventsMode.OR)]
+        public StrategyCustomEventsMode SelectedStrategyCustomEventsMode { get; set; }
+
+        [Parameter("Event1", Group = "Strategies", DefaultValue = StrategyCustomEventOption.Off)]
+        public StrategyCustomEventOption StrategyCustomEvent1 { get; set; }
+
+        [Parameter("Event2", Group = "Strategies", DefaultValue = StrategyCustomEventOption.Off)]
+        public StrategyCustomEventOption StrategyCustomEvent2 { get; set; }
+
+        [Parameter("Event3", Group = "Strategies", DefaultValue = StrategyCustomEventOption.Off)]
+        public StrategyCustomEventOption StrategyCustomEvent3 { get; set; }
+
+        [Parameter("Event4", Group = "Strategies", DefaultValue = StrategyCustomEventOption.Off)]
+        public StrategyCustomEventOption StrategyCustomEvent4 { get; set; }
+
+        [Parameter("Event5", Group = "Strategies", DefaultValue = StrategyCustomEventOption.Off)]
+        public StrategyCustomEventOption StrategyCustomEvent5 { get; set; }
 
         [Parameter("Entry type", Group = "Strategies", DefaultValue = StrategyEntryType._0_1_limit)]
         public StrategyEntryType SelectedStrategyEntryType { get; set; }
@@ -337,11 +801,8 @@ namespace cAlgo.Robots
         [Parameter("TP/SL RR", Group = "Strategies", DefaultValue = 1.1, MinValue = 0.1)]
         public double StrategyRewardRisk { get; set; }
 
-        [Parameter("Days", Group = "Strategies", DefaultValue = StrategyDaysPreset.Weekdays)]
-        public StrategyDaysPreset StrategyDaysPresetValue { get; set; }
-
-        [Parameter("Sessions", Group = "Strategies", DefaultValue = StrategySessionsPreset.A_Ld_Ny)]
-        public StrategySessionsPreset StrategySessionsPresetValue { get; set; }
+        [Parameter("n.Trades", Group = "Strategies", DefaultValue = StrategyOrderCountMode.Auto)]
+        public StrategyOrderCountMode StrategyOrderCount { get; set; }
 
         [Parameter("Trailing Stop", Group = "Strategies", DefaultValue = false)]
         public bool EnableTrailingStop { get; set; }
@@ -357,6 +818,205 @@ namespace cAlgo.Robots
 
         [Parameter("Body % min", Group = "Strategy_FollowTrend_BigCandle", DefaultValue = 95.0, MinValue = 50.0, MaxValue = 100.0)]
         public double FollowTrendBigCandleBodyPercentMin { get; set; }
+
+        [Parameter("Marker Font", Group = "Chart Visuals", DefaultValue = ChartMarkerFontSizeMode.Small)]
+        public ChartMarkerFontSizeMode MarkerFontSize { get; set; }
+
+        [Parameter("Marker Symbol", Group = "Chart Visuals", DefaultValue = ChartMarkerSymbolMode.Arrows)]
+        public ChartMarkerSymbolMode MarkerSymbol { get; set; }
+
+        [Parameter("Label", Group = "Chart Visuals", DefaultValue = ChartLabelVisibilityMode.Yes)]
+        public ChartLabelVisibilityMode ShowMarkerLabel { get; set; }
+
+        [Parameter("n. events/type", Group = "Chart Visuals", DefaultValue = ChartEventsPerTypeMode._3)]
+        public ChartEventsPerTypeMode ChartEventsPerType { get; set; }
+
+        [Parameter("SMC Zones", Group = "Chart Visuals", DefaultValue = SmcZoneComboMode.PerItem)]
+        public SmcZoneComboMode SmcZonesCombo { get; set; }
+
+        [Parameter("Structure Events", Group = "Chart Visuals", DefaultValue = StructureEventComboMode.PerItem)]
+        public StructureEventComboMode StructureEventsCombo { get; set; }
+
+        [Parameter("Momentum Technical", Group = "Chart Visuals", DefaultValue = MomentumTechnicalComboMode.PerItem)]
+        public MomentumTechnicalComboMode MomentumTechnicalCombo { get; set; }
+
+        [Parameter("Candles", Group = "Chart Visuals", DefaultValue = CandleComboMode.PerItem)]
+        public CandleComboMode CandlesCombo { get; set; }
+
+        [Parameter("HTF Zones", Group = "SMC Zones", DefaultValue = true)]
+        public bool DrawHigherTimeframeZones { get; set; }
+
+        [Parameter("HTF Mini", Group = "Chart Visuals", DefaultValue = HtfMiniChartMode.Both)]
+        public HtfMiniChartMode DrawHtfMiniChartMode { get; set; }
+
+        [Parameter("HTF Auto 1", Group = "Chart Visuals", DefaultValue = HtfSlotMode.Auto)]
+        public HtfSlotMode DrawAutoHtf1 { get; set; }
+
+        [Parameter("HTF Auto 2", Group = "Chart Visuals", DefaultValue = HtfSlotMode.Auto)]
+        public HtfSlotMode DrawAutoHtf2 { get; set; }
+
+        [Parameter("Strategy", Group = "Chart Visuals", DefaultValue = true)]
+        public bool DrawStrategyMarkers { get; set; }
+
+        [Parameter("Trendline", Group = "Chart Visuals", DefaultValue = true)]
+        public bool DrawTrendlines { get; set; }
+
+        [Parameter("Divergence", Group = "Chart Visuals", DefaultValue = true)]
+        public bool DrawDivergence { get; set; }
+
+        [Parameter("Killer Zones", Group = "Chart Visuals", DefaultValue = KillerZoneVisualMode.All_Sessions)]
+        public KillerZoneVisualMode DrawKillerZones { get; set; }
+
+        [Parameter("Splitter Grid", Group = "Chart Visuals", DefaultValue = SplitterGridMode.Auto)]
+        public SplitterGridMode DrawSplitterGrid { get; set; }
+
+        [Parameter("Liquidity", Group = "SMC Zones", DefaultValue = true)]
+        public bool DrawLiquidityLevels { get; set; }
+
+        [Parameter("Sweep", Group = "Structure Events", DefaultValue = true)]
+        public bool DrawSweepDetections { get; set; }
+
+        [Parameter("BOS", Group = "Structure Events", DefaultValue = true)]
+        public bool DrawBosDetections { get; set; }
+
+        [Parameter("CHOCH", Group = "Structure Events", DefaultValue = true)]
+        public bool DrawChochDetections { get; set; }
+
+        [Parameter("Rejection", Group = "Structure Events", DefaultValue = true)]
+        public bool DrawRejectionDetections { get; set; }
+
+        [Parameter("Breakout", Group = "Structure Events", DefaultValue = true)]
+        public bool DrawBreakoutDetections { get; set; }
+
+        [Parameter("Pullback", Group = "Structure Events", DefaultValue = true)]
+        public bool DrawPullbackDetections { get; set; }
+
+        [Parameter("Continuation", Group = "Structure Events", DefaultValue = true)]
+        public bool DrawContinuationDetections { get; set; }
+
+        [Parameter("Impulse", Group = "Structure Events", DefaultValue = true)]
+        public bool DrawImpulseDetections { get; set; }
+
+        [Parameter("Vol Surge", Group = "Structure Events", DefaultValue = VolumeSurgeMode._20pct)]
+        public VolumeSurgeMode VolumeSurgePreset { get; set; }
+
+        [Parameter("OB", Group = "SMC Zones", DefaultValue = true)]
+        public bool DrawOrderBlocks { get; set; }
+
+        [Parameter("FVG", Group = "SMC Zones", DefaultValue = true)]
+        public bool DrawFvgZones { get; set; }
+
+        [Parameter("Key Levels", Group = "SMC Zones", DefaultValue = true)]
+        public bool DrawKeyLevels { get; set; }
+
+        [Parameter("S/D Zones", Group = "SMC Zones", DefaultValue = true)]
+        public bool DrawSupplyDemand { get; set; }
+
+        [Parameter("Zones Vol Surge", Group = "SMC Zones", DefaultValue = VolumeSurgeMode.No)]
+        public VolumeSurgeMode ZoneVolumeSurgePreset { get; set; }
+
+        [Parameter("FVG Displacement", Group = "SMC Zones", DefaultValue = ZoneFvgDisplacementPreset.Normal)]
+        public ZoneFvgDisplacementPreset ZoneFvgDisplacement { get; set; }
+
+        [Parameter("FVG Body Ratio", Group = "SMC Zones", DefaultValue = ZoneFvgBodyRatioPreset.Medium)]
+        public ZoneFvgBodyRatioPreset ZoneFvgBodyRatio { get; set; }
+
+        [Parameter("FVG Gap %", Group = "SMC Zones", DefaultValue = ZoneFvgGapPreset.Normal)]
+        public ZoneFvgGapPreset ZoneFvgGap { get; set; }
+
+        [Parameter("Skip Revisited", Group = "SMC Zones", DefaultValue = ZoneRevisitMode.Skip)]
+        public ZoneRevisitMode ZoneRevisit { get; set; }
+
+        [Parameter("Zone Lookback", Group = "SMC Zones", DefaultValue = ZoneLookbackPreset.Bars80)]
+        public ZoneLookbackPreset ZoneLookback { get; set; }
+
+        [Parameter("Max Zones", Group = "SMC Zones", DefaultValue = ZoneMaxCountPreset.Normal)]
+        public ZoneMaxCountPreset ZoneMaxCount { get; set; }
+
+        [Parameter("EMA", Group = "Momentum Technical", DefaultValue = EmaVisualMode.Auto)]
+        public EmaVisualMode DrawEmaOverlay { get; set; }
+
+        [Parameter("VWAP", Group = "Momentum Technical", DefaultValue = VwapVisualMode.Auto)]
+        public VwapVisualMode DrawVwapOverlay { get; set; }
+
+        [Parameter("Bollinger", Group = "Momentum Technical", DefaultValue = BollingerVisualMode.Auto)]
+        public BollingerVisualMode DrawBollingerOverlay { get; set; }
+
+        [Parameter("Ichimoku", Group = "Momentum Technical", DefaultValue = IchimokuVisualMode.Auto)]
+        public IchimokuVisualMode DrawIchimokuOverlay { get; set; }
+
+        [Parameter("RSI", Group = "Momentum Technical", DefaultValue = RsiVisualMode.Auto)]
+        public RsiVisualMode DrawRsiMode { get; set; }
+
+        [Parameter("Stoch", Group = "Momentum Technical", DefaultValue = StochasticVisualMode.Auto)]
+        public StochasticVisualMode DrawStochasticMode { get; set; }
+
+        [Parameter("MACD", Group = "Momentum Technical", DefaultValue = MacdVisualMode.Auto)]
+        public MacdVisualMode DrawMacdMode { get; set; }
+
+        [Parameter("EMA evt", Group = "Structure Events", DefaultValue = EventToggleMode.On)]
+        public EventToggleMode DrawEmaEvents { get; set; }
+
+        [Parameter("VWAP evt", Group = "Structure Events", DefaultValue = EventToggleMode.On)]
+        public EventToggleMode DrawVwapEvents { get; set; }
+
+        [Parameter("BB evt", Group = "Structure Events", DefaultValue = EventToggleMode.On)]
+        public EventToggleMode DrawBollingerEvents { get; set; }
+
+        [Parameter("RSI evt", Group = "Structure Events", DefaultValue = EventToggleMode.On)]
+        public EventToggleMode DrawRsiEvents { get; set; }
+
+        [Parameter("Stoch evt", Group = "Structure Events", DefaultValue = EventToggleMode.On)]
+        public EventToggleMode DrawStochasticEvents { get; set; }
+
+        [Parameter("MACD evt", Group = "Structure Events", DefaultValue = EventToggleMode.On)]
+        public EventToggleMode DrawMacdEvents { get; set; }
+
+
+        [Parameter("Inline w/ zones", Group = "Candles", DefaultValue = true)]
+        public bool KeepCandlePatternsInlineWithZones { get; set; }
+
+        [Parameter("Pin Bar", Group = "Candles", DefaultValue = true)]
+        public bool DrawPinBarPatterns { get; set; }
+
+        [Parameter("Engulfing", Group = "Candles", DefaultValue = true)]
+        public bool DrawEngulfingPatterns { get; set; }
+
+        [Parameter("Big Candle", Group = "Candles", DefaultValue = true)]
+        public bool DrawBigCandlePatterns { get; set; }
+
+        [Parameter("Morning Star", Group = "Candles", DefaultValue = true)]
+        public bool DrawMorningStarPatterns { get; set; }
+
+        [Parameter("Evening Star", Group = "Candles", DefaultValue = true)]
+        public bool DrawEveningStarPatterns { get; set; }
+
+        [Parameter("Hammer", Group = "Candles", DefaultValue = true)]
+        public bool DrawHammerPatterns { get; set; }
+
+        [Parameter("Hanging Man", Group = "Candles", DefaultValue = true)]
+        public bool DrawHangingManPatterns { get; set; }
+
+        [Parameter("Shooting Star", Group = "Candles", DefaultValue = true)]
+        public bool DrawShootingStarPatterns { get; set; }
+
+        [Parameter("Inverted Hammer", Group = "Candles", DefaultValue = true)]
+        public bool DrawInvertedHammerPatterns { get; set; }
+
+        [Parameter("Piercing Line", Group = "Candles", DefaultValue = true)]
+        public bool DrawPiercingLinePatterns { get; set; }
+
+        [Parameter("Dark Cloud Cover", Group = "Candles", DefaultValue = true)]
+        public bool DrawDarkCloudCoverPatterns { get; set; }
+
+        [Parameter("Three White Soldiers", Group = "Candles", DefaultValue = true)]
+        public bool DrawThreeWhiteSoldiersPatterns { get; set; }
+
+        [Parameter("Three Black Crows", Group = "Candles", DefaultValue = true)]
+        public bool DrawThreeBlackCrowsPatterns { get; set; }
+
+        [Parameter("Harami", Group = "Candles", DefaultValue = true)]
+        public bool DrawHaramiPatterns { get; set; }
 
         [Parameter("Price push", Group = "Sync with server", DefaultValue = true)]
         public bool PricePushEnabled { get; set; }
@@ -403,93 +1063,6 @@ namespace cAlgo.Robots
         [Parameter("Alert Sound", Group = "Logging", DefaultValue = false)]
         public bool EnableAlertSound { get; set; }
 
-        [Parameter("Killer Zones", Group = "Chart Visuals", DefaultValue = true)]
-        public bool DrawKillerZones { get; set; }
-
-        [Parameter("Liquidity", Group = "Chart Visuals", DefaultValue = true)]
-        public bool DrawLiquidityLevels { get; set; }
-
-        [Parameter("Sweep", Group = "Chart Visuals", DefaultValue = true)]
-        public bool DrawSweepDetections { get; set; }
-
-        [Parameter("BOS", Group = "Chart Visuals", DefaultValue = true)]
-        public bool DrawBosDetections { get; set; }
-
-        [Parameter("CHOCH", Group = "Chart Visuals", DefaultValue = true)]
-        public bool DrawChochDetections { get; set; }
-
-        [Parameter("Rejection", Group = "Chart Visuals", DefaultValue = true)]
-        public bool DrawRejectionDetections { get; set; }
-
-        [Parameter("Breakout", Group = "Chart Visuals", DefaultValue = true)]
-        public bool DrawBreakoutDetections { get; set; }
-
-        [Parameter("Pullback", Group = "Chart Visuals", DefaultValue = true)]
-        public bool DrawPullbackDetections { get; set; }
-
-        [Parameter("Continuation", Group = "Chart Visuals", DefaultValue = true)]
-        public bool DrawContinuationDetections { get; set; }
-
-        [Parameter("Impulse", Group = "Chart Visuals", DefaultValue = true)]
-        public bool DrawImpulseDetections { get; set; }
-
-        [Parameter("KZ Days", Group = "Chart Visuals", DefaultValue = 10, MinValue = 1, MaxValue = 10)]
-        public int KillerZoneDays { get; set; }
-
-        [Parameter("FVG", Group = "Chart Visuals", DefaultValue = true)]
-        public bool DrawFvgZones { get; set; }
-
-        [Parameter("OB", Group = "Chart Visuals", DefaultValue = true)]
-        public bool DrawOrderBlocks { get; set; }
-
-        [Parameter("HTF Zones", Group = "Chart Visuals", DefaultValue = true)]
-        public bool DrawHigherTimeframeZones { get; set; }
-
-        [Parameter("HTF Mini", Group = "Chart Visuals", DefaultValue = true)]
-        public bool DrawHtfMiniChart { get; set; }
-
-        [Parameter("Strategy", Group = "Chart Visuals", DefaultValue = true)]
-        public bool DrawStrategyMarkers { get; set; }
-
-        [Parameter("EMA", Group = "Chart Visuals", DefaultValue = true)]
-        public bool DrawEmaOverlay { get; set; }
-
-        [Parameter("VWAP", Group = "Chart Visuals", DefaultValue = true)]
-        public bool DrawVwapOverlay { get; set; }
-
-        [Parameter("Bollinger", Group = "Chart Visuals", DefaultValue = true)]
-        public bool DrawBollingerOverlay { get; set; }
-
-        [Parameter("EMA evt", Group = "Chart Visuals", DefaultValue = true)]
-        public bool DrawEmaEvents { get; set; }
-
-        [Parameter("VWAP evt", Group = "Chart Visuals", DefaultValue = true)]
-        public bool DrawVwapEvents { get; set; }
-
-        [Parameter("BB evt", Group = "Chart Visuals", DefaultValue = true)]
-        public bool DrawBollingerEvents { get; set; }
-
-        [Parameter("RSI evt", Group = "Chart Visuals", DefaultValue = true)]
-        public bool DrawRsiEvents { get; set; }
-
-        [Parameter("Stoch evt", Group = "Chart Visuals", DefaultValue = true)]
-        public bool DrawStochasticEvents { get; set; }
-
-        [Parameter("MACD evt", Group = "Chart Visuals", DefaultValue = true)]
-        public bool DrawMacdEvents { get; set; }
-
-        [Parameter("Marker Font", Group = "Chart Visuals", DefaultValue = ChartMarkerFontSizeMode.Small)]
-        public ChartMarkerFontSizeMode MarkerFontSize { get; set; }
-
-        [Parameter("Marker Symbol", Group = "Chart Visuals", DefaultValue = ChartMarkerSymbolMode.Triangles)]
-        public ChartMarkerSymbolMode MarkerSymbol { get; set; }
-
-        [Parameter("Label", Group = "Chart Visuals", DefaultValue = ChartLabelVisibilityMode.Yes)]
-        public ChartLabelVisibilityMode ShowMarkerLabel { get; set; }
-
-        [Parameter("OB Full Wick", Group = "Chart Visuals", DefaultValue = true)]
-        public bool OrderBlockUseFullWick { get; set; }
-
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -510,6 +1083,7 @@ namespace cAlgo.Robots
         private int _lastWatchlistSymbolCount = 0;
         private string _lastPanelMessage = "Ready";
         private bool _lastPanelMessageIsError = false;
+        private int _suppressedLogCount = 0;
         private int _lastPullServerTradeCount = 0;
         private int _lastPullServerSymbolCount = 0;
         private int _lastPullServerStrategyCount = 0;
@@ -581,6 +1155,12 @@ namespace cAlgo.Robots
             public T Value;
         }
 
+        private sealed class PersistedCanonicalEventCache
+        {
+            public HashSet<long> ComputedBarTimesUnix = new HashSet<long>();
+            public List<CanonicalMarketEvent> Events = new List<CanonicalMarketEvent>();
+        }
+
         private sealed class NewsGateEvent
         {
             public string Title;
@@ -606,6 +1186,8 @@ namespace cAlgo.Robots
         private readonly Dictionary<string, TimedCacheEntry<List<ChartEntryCandidate>>> _chartEntryCandidatesCache = new Dictionary<string, TimedCacheEntry<List<ChartEntryCandidate>>>();
         private readonly Dictionary<string, TimedCacheEntry<List<ChartLevelCandidate>>> _chartStructuralLevelsCache = new Dictionary<string, TimedCacheEntry<List<ChartLevelCandidate>>>();
         private readonly Dictionary<string, TimedCacheEntry<List<NewsGateEvent>>> _newsGateEventsCache = new Dictionary<string, TimedCacheEntry<List<NewsGateEvent>>>();
+        private readonly Dictionary<string, TimedCacheEntry<Tuple<int, int, int>>> _symbolTrendBiasCache = new Dictionary<string, TimedCacheEntry<Tuple<int, int, int>>>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, TimedCacheEntry<int>> _symbolTrendBiasTimeFrameCache = new Dictionary<string, TimedCacheEntry<int>>(StringComparer.OrdinalIgnoreCase);
         private HashSet<string> _notFoundSymbols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private HashSet<string> _noQuoteSymbols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -749,6 +1331,7 @@ namespace cAlgo.Robots
 
             switch (configured[0])
             {
+                case BacktestStrategyMode.CustomTrade: return "custom_trade";
                 case BacktestStrategyMode.HtfEventMarket: return "htf_event_market";
                 case BacktestStrategyMode.LtfEventMarket: return "ltf_event_market";
                 case BacktestStrategyMode.EmaCrossV1: return "ema_cross_v1";
@@ -1025,6 +1608,8 @@ namespace cAlgo.Robots
         {
             switch (mode)
             {
+                case BacktestStrategyMode.CustomTrade:
+                    return "CustomTrade";
                 case BacktestStrategyMode.Trend:
                     return "Trend";
                 case BacktestStrategyMode.Impulse:
@@ -1616,6 +2201,25 @@ namespace cAlgo.Robots
             return symbols.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         }
 
+        private IEnumerable<string> GetConfiguredStrategySymbolInputs()
+        {
+            var symbols = new List<string>();
+            var tokens = (StrategySymbols ?? "").Split(new[] { ',', ';', '|' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var strategySymbol in tokens)
+            {
+                if (IsNullStrategyInputToken(strategySymbol))
+                    continue;
+
+                var normalized = NormalizeSymbolAlias(strategySymbol);
+                if (string.IsNullOrWhiteSpace(normalized) || IsChartAllSymbolsSelection(normalized))
+                    continue;
+
+                symbols.Add(normalized);
+            }
+
+            return symbols.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
         private TimeFrame ResolveSharedStrategyTimeFrame(TimeFrame fallbackTimeFrame)
         {
             return ResolveSharedStrategyTimeFrames(fallbackTimeFrame).FirstOrDefault();
@@ -1670,6 +2274,26 @@ namespace cAlgo.Robots
             return targets;
         }
 
+        private void PreloadCanonicalEventsForStrategyTarget(StrategyExecutionTarget target, IEnumerable<BacktestStrategyMode> configuredStrategies)
+        {
+            if (target == null || string.IsNullOrWhiteSpace(target.SymbolName))
+                return;
+
+            var framesToWarm = new List<TimeFrame> { target.TimeFrame };
+            var strategyModes = configuredStrategies != null
+                ? configuredStrategies.Distinct().ToList()
+                : new List<BacktestStrategyMode>();
+
+            if (strategyModes.Contains(BacktestStrategyMode.HtfEventMarket))
+                framesToWarm.AddRange(GetBacktestStrategyHigherTimeFrames(target.TimeFrame));
+
+            if (strategyModes.Contains(BacktestStrategyMode.LtfEventMarket))
+                framesToWarm.AddRange(GetBacktestStrategyLowerTimeFrames(target.TimeFrame));
+
+            foreach (var frame in framesToWarm.Distinct())
+                GetCanonicalEventsForSymbolTimeFrame(target.SymbolName, frame, 24);
+        }
+
         private bool ShouldStrategyEngineRun()
         {
             return IsBacktestingRuntime() || EnableLiveStrategyTrading;
@@ -1705,22 +2329,22 @@ namespace cAlgo.Robots
 
         private bool ShouldRunStrategiesOnMasterTimer()
         {
-            return SelectedStrategyTriggerMode == StrategyTriggerMode.Timer1s;
+            return false;
         }
 
         private bool ShouldRunStrategiesOnBarEvent()
         {
-            return SelectedStrategyTriggerMode == StrategyTriggerMode.OnBar;
+            return false;
         }
 
         private bool ShouldRunStrategiesOnBarClosedEvent()
         {
-            return SelectedStrategyTriggerMode == StrategyTriggerMode.OnBarClosed;
+            return true;
         }
 
         private bool ShouldRunStrategiesOnTickEvent()
         {
-            return SelectedStrategyTriggerMode == StrategyTriggerMode.Ticker;
+            return false;
         }
 
         private bool TryResolveStrategySymbolAndTimeFrame(BacktestStrategyMode mode, string fallbackSymbolName, TimeFrame fallbackTimeFrame, out string symbolName, out TimeFrame timeFrame)
@@ -1832,6 +2456,338 @@ namespace cAlgo.Robots
             if (System.IO.File.Exists(filePath))
                 System.IO.File.Delete(filePath);
             System.IO.File.Move(tempPath, filePath);
+        }
+
+        private string NormalizeCanonicalEventCacheTimeFrameKey(TimeFrame timeFrame)
+        {
+            var minutes = TimeFrameToMinutes(timeFrame);
+            if (minutes == 1) return "1";
+            if (minutes == 5) return "5";
+            if (minutes == 15) return "15";
+            if (minutes == 60) return "60";
+            if (minutes == 240) return "240";
+            if (minutes == 1440) return "1440";
+            return SafePathPart(minutes > 0 ? minutes.ToString(CultureInfo.InvariantCulture) : GetMiniChartLabel(timeFrame), "default");
+        }
+
+        private string GetCanonicalEventCacheFilePath(string symbolName, TimeFrame timeFrame)
+        {
+            var baseRoot = GetBaseServerRootPath();
+            var safeSymbol = SafePathPart(string.IsNullOrWhiteSpace(symbolName) ? "UNKNOWN" : symbolName.Trim().ToUpperInvariant(), "UNKNOWN");
+            var tfKey = NormalizeCanonicalEventCacheTimeFrameKey(timeFrame);
+            return Path.Combine(baseRoot, "data", "market_data", safeSymbol, "chart", tfKey, CanonicalEventCacheFileName);
+        }
+
+        private PersistedCanonicalEventCache LoadPersistedCanonicalEventCache(string symbolName, TimeFrame timeFrame)
+        {
+            var cacheKey = BuildDashboardEventCacheKey(symbolName, timeFrame);
+
+            // Read the persisted snapshot from disk at most once per runtime (start of day).
+            // After that, memory is the single source of truth until the end-of-day flush.
+            if (_persistedCacheLoadedFromDisk.Contains(cacheKey))
+            {
+                TimedCacheEntry<PersistedCanonicalEventCache> cached;
+                if (_persistedCanonicalEventCache.TryGetValue(cacheKey, out cached) &&
+                    cached != null &&
+                    cached.Value != null)
+                {
+                    return cached.Value;
+                }
+                return new PersistedCanonicalEventCache();
+            }
+
+            var snapshot = new PersistedCanonicalEventCache();
+            try
+            {
+                var filePath = GetCanonicalEventCacheFilePath(symbolName, timeFrame);
+                if (System.IO.File.Exists(filePath))
+                {
+                    foreach (var rawLine in System.IO.File.ReadAllLines(filePath))
+                    {
+                        var line = string.IsNullOrWhiteSpace(rawLine) ? "" : rawLine.Trim();
+                        if (string.IsNullOrWhiteSpace(line))
+                            continue;
+
+                        var parts = line.Split('\t');
+                        if (parts.Length < 3)
+                            continue;
+
+                        if (!string.Equals(parts[1], CanonicalEventCacheVersion, StringComparison.Ordinal))
+                            continue;
+
+                        long barTimeUnix;
+                        if (!long.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out barTimeUnix) || barTimeUnix <= 0)
+                            continue;
+
+                        if (string.Equals(parts[0], "BAR", StringComparison.OrdinalIgnoreCase))
+                        {
+                            snapshot.ComputedBarTimesUnix.Add(barTimeUnix);
+                            continue;
+                        }
+
+                        if (!string.Equals(parts[0], "EVT", StringComparison.OrdinalIgnoreCase) || parts.Length < 11)
+                            continue;
+
+                        CanonicalEventType eventType;
+                        CanonicalEventReason reason;
+                        CanonicalEventAction action;
+                        if (!Enum.TryParse(parts[4], true, out eventType) ||
+                            !Enum.TryParse(parts[6], true, out reason) ||
+                            !Enum.TryParse(parts[7], true, out action))
+                            continue;
+
+                        double priceRef;
+                        int score;
+                        int confidence;
+                        if (!double.TryParse(parts[8], NumberStyles.Float, CultureInfo.InvariantCulture, out priceRef))
+                            priceRef = 0;
+                        if (!int.TryParse(parts[9], NumberStyles.Integer, CultureInfo.InvariantCulture, out score))
+                            score = 0;
+                        if (!int.TryParse(parts[10], NumberStyles.Integer, CultureInfo.InvariantCulture, out confidence))
+                            confidence = 0;
+
+                        double zoneLow = 0;
+                        double zoneHigh = 0;
+                        if (parts.Length > 12)
+                        {
+                            if (!double.TryParse(parts[11], NumberStyles.Float, CultureInfo.InvariantCulture, out zoneLow))
+                                zoneLow = 0;
+                            if (!double.TryParse(parts[12], NumberStyles.Float, CultureInfo.InvariantCulture, out zoneHigh))
+                                zoneHigh = 0;
+                        }
+
+                        var evtTime = DateTimeOffset.FromUnixTimeSeconds(barTimeUnix).UtcDateTime;
+                        snapshot.Events.Add(new CanonicalMarketEvent
+                        {
+                            EventKey = parts[3] ?? "",
+                            SymbolName = string.IsNullOrWhiteSpace(symbolName) ? "" : symbolName.Trim().ToUpperInvariant(),
+                            TimeFrameLabel = GetMiniChartLabel(timeFrame),
+                            EventType = eventType,
+                            IsBullish = string.Equals(parts[5], "bullish", StringComparison.OrdinalIgnoreCase),
+                            Reason = reason,
+                            Action = action,
+                            BarTime = evtTime,
+                            PriceRef = priceRef,
+                            Score = score,
+                            Confidence = confidence,
+                            SourceTimeFrame = timeFrame,
+                            ZoneLow = zoneLow,
+                            ZoneHigh = zoneHigh
+                        });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                SafePrint("[Perf] CanonicalEventsCacheLoad failed: {0}", ex.Message);
+            }
+
+            snapshot.Events = DeduplicateCanonicalEvents(snapshot.Events);
+            _persistedCanonicalEventCache[cacheKey] = new TimedCacheEntry<PersistedCanonicalEventCache>
+            {
+                CreatedAtUtc = DateTime.UtcNow,
+                Value = snapshot
+            };
+            _persistedCacheLoadedFromDisk.Add(cacheKey);
+            TrackPersistedCanonicalEventCacheKey(symbolName, timeFrame);
+            return snapshot;
+        }
+
+        private void TrackPersistedCanonicalEventCacheKey(string symbolName, TimeFrame timeFrame)
+        {
+            if (string.IsNullOrWhiteSpace(symbolName) || timeFrame == null)
+                return;
+
+            var key = BuildDashboardEventCacheKey(symbolName, timeFrame);
+            if (!_persistedCacheKeys.Any(t =>
+                string.Equals(BuildDashboardEventCacheKey(t.Item1, t.Item2), key, StringComparison.OrdinalIgnoreCase)))
+            {
+                _persistedCacheKeys.Add(Tuple.Create(symbolName.Trim().ToUpperInvariant(), timeFrame));
+            }
+        }
+
+        private void StorePersistedCanonicalEventCache(string symbolName, TimeFrame timeFrame, PersistedCanonicalEventCache snapshot)
+        {
+            if (snapshot == null)
+                return;
+
+            // During the trading day, recomputed events are kept in memory only; the single
+            // disk write is deferred to the end-of-day flush (CheckCanonicalCacheDayFlush).
+            _persistedCanonicalEventCache[BuildDashboardEventCacheKey(symbolName, timeFrame)] = new TimedCacheEntry<PersistedCanonicalEventCache>
+            {
+                CreatedAtUtc = DateTime.UtcNow,
+                Value = snapshot
+            };
+            TrackPersistedCanonicalEventCacheKey(symbolName, timeFrame);
+        }
+
+        // Writes a single persisted snapshot to disk. Only called by the end-of-day flush
+        // (and best-effort on stop), so the trading day never pays per-recompute disk I/O.
+        private void WritePersistedCanonicalEventCacheToDisk(string symbolName, TimeFrame timeFrame, PersistedCanonicalEventCache snapshot)
+        {
+            if (snapshot == null)
+                return;
+
+            try
+            {
+                var lines = new List<string>();
+                foreach (var barTimeUnix in snapshot.ComputedBarTimesUnix.OrderBy(value => value))
+                {
+                    lines.Add(string.Format(
+                        CultureInfo.InvariantCulture,
+                        "BAR\t{0}\t{1}",
+                        CanonicalEventCacheVersion,
+                        barTimeUnix));
+                }
+
+                foreach (var evt in DeduplicateCanonicalEvents(snapshot.Events).OrderBy(value => value.BarTime).ThenBy(value => value.Score))
+                {
+                    lines.Add(string.Format(
+                        CultureInfo.InvariantCulture,
+                        "EVT\t{0}\t{1}\t{2}\t{3}\t{4}\t{5}\t{6}\t{7}\t{8}\t{9}\t{10}\t{11}",
+                        CanonicalEventCacheVersion,
+                        ToUnixSecondsSafe(evt.BarTime),
+                        evt.EventKey ?? "",
+                        evt.EventType,
+                        evt.IsBullish ? "bullish" : "bearish",
+                        evt.Reason,
+                        evt.Action,
+                        evt.PriceRef.ToString("0.#####", CultureInfo.InvariantCulture),
+                        evt.Score,
+                        evt.Confidence,
+                        evt.ZoneLow.ToString("0.#####", CultureInfo.InvariantCulture),
+                        evt.ZoneHigh.ToString("0.#####", CultureInfo.InvariantCulture)));
+                }
+
+                var filePath = GetCanonicalEventCacheFilePath(symbolName, timeFrame);
+                var folder = Path.GetDirectoryName(filePath);
+                if (!string.IsNullOrWhiteSpace(folder))
+                    Directory.CreateDirectory(folder);
+
+                var tempPath = string.Format(
+                    CultureInfo.InvariantCulture,
+                    "{0}.{1}.{2}.tmp",
+                    filePath,
+                    Process.GetCurrentProcess().Id,
+                    DateTime.UtcNow.Ticks);
+                System.IO.File.WriteAllLines(tempPath, lines, new UTF8Encoding(false));
+                if (System.IO.File.Exists(filePath))
+                    System.IO.File.Delete(filePath);
+                System.IO.File.Move(tempPath, filePath);
+            }
+            catch (Exception ex)
+            {
+                SafePrint("[Perf] CanonicalEventsCacheStore failed: {0}", ex.Message);
+            }
+        }
+
+        // End-of-day flush: writes every in-memory persisted snapshot to disk exactly once.
+        private void FlushPersistedCanonicalEventCachesToDisk()
+        {
+            if (_persistedCacheKeys.Count == 0)
+                return;
+
+            try
+            {
+                var keys = new List<Tuple<string, TimeFrame>>(_persistedCacheKeys);
+                foreach (var key in keys)
+                {
+                    TimedCacheEntry<PersistedCanonicalEventCache> cached;
+                    if (!_persistedCanonicalEventCache.TryGetValue(BuildDashboardEventCacheKey(key.Item1, key.Item2), out cached))
+                        continue;
+                    if (cached == null || cached.Value == null)
+                        continue;
+                    WritePersistedCanonicalEventCacheToDisk(key.Item1, key.Item2, cached.Value);
+                }
+            }
+            catch (Exception ex)
+            {
+                SafePrint("[Perf] CanonicalEventsCacheFlush failed: {0}", ex.Message);
+            }
+        }
+
+        // Called every master tick: when the reference day rolls over, persist the day's
+        // in-memory canonical events once (write-once-after-end-of-day).
+        private void CheckCanonicalCacheDayFlush()
+        {
+            if (_persistedCanonicalEventCache.Count == 0)
+                return;
+
+            var dayStart = GetCurrentDayStartTime(GetReferenceNow());
+            if (_lastCanonicalCacheFlushDay != DateTime.MinValue && dayStart != _lastCanonicalCacheFlushDay)
+                FlushPersistedCanonicalEventCachesToDisk();
+            _lastCanonicalCacheFlushDay = dayStart;
+        }
+
+        private List<CanonicalMarketEvent> DeduplicateCanonicalEvents(IEnumerable<CanonicalMarketEvent> events)
+        {
+            return (events ?? Enumerable.Empty<CanonicalMarketEvent>())
+                .OrderByDescending(evt => evt.BarTime)
+                .ThenByDescending(evt => evt.Score)
+                .ThenByDescending(evt => evt.PriceRef)
+                .GroupBy(evt => string.Format(
+                    CultureInfo.InvariantCulture,
+                    "{0}|{1}|{2}|{3}",
+                    evt.EventKey,
+                    evt.TimeFrameLabel,
+                    evt.BarTime.Ticks,
+                    Math.Round(evt.PriceRef, 6)))
+                .Select(group => group.First())
+                .ToList();
+        }
+
+        private bool HasCanonicalEventCacheCoverage(PersistedCanonicalEventCache snapshot, Bars bars, int startIndex, int endIndex)
+        {
+            if (snapshot == null || bars == null || startIndex < 0 || endIndex < startIndex || endIndex >= bars.Count)
+                return false;
+
+            for (var index = startIndex; index <= endIndex; index++)
+            {
+                var barTimeUnix = ToUnixSecondsSafe(bars.OpenTimes[index]);
+                if (barTimeUnix <= 0 || !snapshot.ComputedBarTimesUnix.Contains(barTimeUnix))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private void MergeCanonicalEventCacheCoverage(PersistedCanonicalEventCache snapshot, Bars bars, int startIndex, int endIndex, IEnumerable<CanonicalMarketEvent> events)
+        {
+            if (snapshot == null || bars == null || startIndex < 0 || endIndex < startIndex)
+                return;
+
+            var startUnix = ToUnixSecondsSafe(bars.OpenTimes[startIndex]);
+            var endUnix = ToUnixSecondsSafe(bars.OpenTimes[Math.Min(endIndex, bars.Count - 1)]);
+            for (var index = startIndex; index <= endIndex && index < bars.Count; index++)
+            {
+                var barTimeUnix = ToUnixSecondsSafe(bars.OpenTimes[index]);
+                if (barTimeUnix > 0)
+                    snapshot.ComputedBarTimesUnix.Add(barTimeUnix);
+            }
+
+            snapshot.Events = snapshot.Events
+                .Where(evt =>
+                {
+                    var barTimeUnix = ToUnixSecondsSafe(evt.BarTime);
+                    return barTimeUnix < startUnix || barTimeUnix > endUnix;
+                })
+                .ToList();
+
+            snapshot.Events.AddRange(events ?? Enumerable.Empty<CanonicalMarketEvent>());
+            snapshot.Events = DeduplicateCanonicalEvents(snapshot.Events);
+        }
+
+        private void PruneCanonicalEventCache(PersistedCanonicalEventCache snapshot, Bars bars, int latestClosedIndex)
+        {
+            if (snapshot == null || bars == null || latestClosedIndex < 0 || bars.Count == 0)
+                return;
+
+            var oldestIndex = Math.Max(0, latestClosedIndex - CanonicalEventCacheMaxBars + 1);
+            var minUnix = ToUnixSecondsSafe(bars.OpenTimes[oldestIndex]);
+            snapshot.ComputedBarTimesUnix = new HashSet<long>(snapshot.ComputedBarTimesUnix.Where(value => value >= minUnix));
+            snapshot.Events = snapshot.Events
+                .Where(evt => ToUnixSecondsSafe(evt.BarTime) >= minUnix)
+                .ToList();
         }
 
         private string BuildServerApiUrl(string relativePath)
@@ -1989,28 +2945,100 @@ namespace cAlgo.Robots
             if (DisableCustomUiSettingsPersistenceForIsolation)
                 return;
 
-            try
-            {
-                var serialized = SerializeCustomUiSettingsSnapshot();
-                if (string.Equals(serialized, _customUiSettingsSerializedSnapshot, StringComparison.Ordinal))
-                    return;
+            var serialized = SerializeCustomUiSettingsSnapshot();
+            if (string.Equals(serialized, _customUiSettingsSerializedSnapshot, StringComparison.Ordinal))
+                return;
 
-                var path = GetCustomUiSettingsFilePath();
-                var folder = Path.GetDirectoryName(path);
-                if (!string.IsNullOrWhiteSpace(folder))
-                    Directory.CreateDirectory(folder);
+            // Mark the snapshot saved in memory FIRST so repeated combo changes don't
+            // re-fire saves, then persist off the UI thread (local file) and mirror to the
+            // 42trade API asynchronously - combo changes never block on disk I/O or HTTP.
+            _customUiSettingsSerializedSnapshot = serialized;
 
-                var lines = string.IsNullOrEmpty(serialized)
-                    ? new string[0]
-                    : serialized.Split(new[] { Environment.NewLine }, StringSplitOptions.None);
-                System.IO.File.WriteAllLines(path, lines);
-                _customUiSettingsSerializedSnapshot = serialized;
-                PrintBypassLogFilter("[Settings] Saved custom UI settings to {0}", path);
-            }
-            catch (Exception ex)
+            Task.Run(() =>
             {
-                PrintBypassLogFilter("[Settings] Save failed: {0}", ex.Message);
+                try
+                {
+                    WriteCustomUiSettingsFile(serialized);
+                }
+                catch (Exception ex)
+                {
+                    PrintBypassLogFilter("[Settings] Save failed: {0}", ex.Message);
+                }
+            });
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await SaveUiSettingsToApiAsync(serialized);
+                }
+                catch (Exception ex)
+                {
+                    SafePrint("[Settings] API save failed: {0}", ex.Message);
+                }
+            });
+        }
+
+        private void WriteCustomUiSettingsFile(string serialized)
+        {
+            var path = GetCustomUiSettingsFilePath();
+            var folder = Path.GetDirectoryName(path);
+            if (!string.IsNullOrWhiteSpace(folder))
+                Directory.CreateDirectory(folder);
+
+            var lines = string.IsNullOrEmpty(serialized)
+                ? new string[0]
+                : serialized.Split(new[] { Environment.NewLine }, StringSplitOptions.None);
+            // Atomic write (temp + rename) so concurrent saves from rapid combo changes can
+            // never interleave and corrupt the file.
+            var tempPath = string.Format(
+                CultureInfo.InvariantCulture,
+                "{0}.{1}.{2}.tmp",
+                path,
+                Process.GetCurrentProcess().Id,
+                DateTime.UtcNow.Ticks);
+            System.IO.File.WriteAllLines(tempPath, lines, new UTF8Encoding(false));
+            if (System.IO.File.Exists(path))
+                System.IO.File.Delete(path);
+            System.IO.File.Move(tempPath, path);
+            PrintBypassLogFilter("[Settings] Saved custom UI settings to {0}", path);
+        }
+
+        // Mirrors the chart UI settings to the 42trade API as a fire-and-forget async call.
+        // The local file remains the load source at startup; the API copy lets other
+        // consumers (or a future multi-machine setup) read the same selections.
+        private async Task SaveUiSettingsToApiAsync(string serializedSettings)
+        {
+            var payload = new Dictionary<string, object>
+            {
+                ["source_id"] = BridgeSourceId,
+                ["settings"] = ParseCustomUiSettingsDictionary(serializedSettings)
+            };
+            var content = new StringContent(SerializeJsonValue(payload), Encoding.UTF8, "application/json");
+            content.Headers.Add("x-api-key", EaApiKey);
+            var response = await _httpClient.PostAsync(BuildServerApiUrl("broker/ui-settings"), content);
+            if (response == null || !response.IsSuccessStatusCode)
+                SafePrint("[Settings] API save HTTP {0}", response == null ? "null" : ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture));
+        }
+
+        private Dictionary<string, string> ParseCustomUiSettingsDictionary(string serialized)
+        {
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(serialized))
+                return result;
+
+            foreach (var rawLine in serialized.Split(new[] { Environment.NewLine }, StringSplitOptions.None))
+            {
+                var line = rawLine ?? "";
+                var separatorIndex = line.IndexOf('=');
+                if (separatorIndex <= 0)
+                    continue;
+                var key = line.Substring(0, separatorIndex).Trim();
+                var value = line.Substring(separatorIndex + 1);
+                if (string.IsNullOrWhiteSpace(key))
+                    continue;
+                result[key] = value ?? "";
             }
+            return result;
         }
 
         private string GetCustomUiSetting(string key, string fallback = "")
@@ -2078,53 +3106,9 @@ namespace cAlgo.Robots
             if (!string.IsNullOrWhiteSpace(selectedDirection))
                 _chartSelectedDirection = NormalizeChartDirectionSelection(selectedDirection);
 
-            var selectedTradeProfile = GetCustomUiSetting("chart.trade_profile", "");
-            if (!string.IsNullOrWhiteSpace(selectedTradeProfile))
-                _chartSelectedTradeProfile = NormalizeChartTradeProfileSelection(selectedTradeProfile);
-
-            bool savedValue;
-            if (TryGetCustomUiBool("toggle.htf_1d", out savedValue)) _toggleHtf1D = savedValue;
-            if (TryGetCustomUiBool("toggle.htf_4h", out savedValue)) _toggleHtf4H = savedValue;
-            if (TryGetCustomUiBool("toggle.htf_15m", out savedValue)) _toggleHtf15 = savedValue;
-            if (TryGetCustomUiBool("toggle.killer_zones", out savedValue)) _toggleKillerZones = savedValue;
-            if (TryGetCustomUiBool("toggle.liquidity", out savedValue)) _toggleLiquidityLevels = savedValue;
-            if (TryGetCustomUiBool("toggle.sweep", out savedValue)) _toggleSweepDetections = savedValue;
-            if (TryGetCustomUiBool("toggle.bos", out savedValue)) _toggleBosDetections = savedValue;
-            if (TryGetCustomUiBool("toggle.choch", out savedValue)) _toggleChochDetections = savedValue;
-            if (TryGetCustomUiBool("toggle.rejection", out savedValue)) _toggleRejectionDetections = savedValue;
-            if (TryGetCustomUiBool("toggle.breakout", out savedValue)) _toggleBreakoutDetections = savedValue;
-            if (TryGetCustomUiBool("toggle.pullback", out savedValue)) _togglePullbackDetections = savedValue;
-            if (TryGetCustomUiBool("toggle.continuation", out savedValue)) _toggleContinuationDetections = savedValue;
-            if (TryGetCustomUiBool("toggle.impulse", out savedValue)) _toggleImpulseDetections = savedValue;
-            if (TryGetCustomUiBool("toggle.pin_bar", out savedValue)) _togglePinBarPatterns = savedValue;
-            if (TryGetCustomUiBool("toggle.engulfing", out savedValue)) _toggleEngulfingPatterns = savedValue;
-            if (TryGetCustomUiBool("toggle.big_candle", out savedValue)) _toggleBigCandlePatterns = savedValue;
-            if (TryGetCustomUiBool("toggle.morning_star", out savedValue)) _toggleMorningStarPatterns = savedValue;
-            if (TryGetCustomUiBool("toggle.evening_star", out savedValue)) _toggleEveningStarPatterns = savedValue;
-            if (TryGetCustomUiBool("toggle.hammer", out savedValue)) _toggleHammerPatterns = savedValue;
-            if (TryGetCustomUiBool("toggle.hanging_man", out savedValue)) _toggleHangingManPatterns = savedValue;
-            if (TryGetCustomUiBool("toggle.shooting_star", out savedValue)) _toggleShootingStarPatterns = savedValue;
-            if (TryGetCustomUiBool("toggle.inverted_hammer", out savedValue)) _toggleInvertedHammerPatterns = savedValue;
-            if (TryGetCustomUiBool("toggle.piercing_line", out savedValue)) _togglePiercingLinePatterns = savedValue;
-            if (TryGetCustomUiBool("toggle.dark_cloud_cover", out savedValue)) _toggleDarkCloudCoverPatterns = savedValue;
-            if (TryGetCustomUiBool("toggle.three_white_soldiers", out savedValue)) _toggleThreeWhiteSoldiersPatterns = savedValue;
-            if (TryGetCustomUiBool("toggle.three_black_crows", out savedValue)) _toggleThreeBlackCrowsPatterns = savedValue;
-            if (TryGetCustomUiBool("toggle.harami", out savedValue)) _toggleHaramiPatterns = savedValue;
-            if (TryGetCustomUiBool("toggle.ema_overlay", out savedValue)) _toggleEmaOverlay = savedValue;
-            if (TryGetCustomUiBool("toggle.vwap_overlay", out savedValue)) _toggleVwapOverlay = savedValue;
-            if (TryGetCustomUiBool("toggle.bollinger_overlay", out savedValue)) _toggleBollingerOverlay = savedValue;
-            if (TryGetCustomUiBool("toggle.ema_events", out savedValue)) _toggleEmaEvents = savedValue;
-            if (TryGetCustomUiBool("toggle.vwap_events", out savedValue)) _toggleVwapEvents = savedValue;
-            if (TryGetCustomUiBool("toggle.bollinger_events", out savedValue)) _toggleBollingerEvents = savedValue;
-            if (TryGetCustomUiBool("toggle.rsi_events", out savedValue)) _toggleRsiEvents = savedValue;
-            if (TryGetCustomUiBool("toggle.stochastic_events", out savedValue)) _toggleStochasticEvents = savedValue;
-            if (TryGetCustomUiBool("toggle.macd_events", out savedValue)) _toggleMacdEvents = savedValue;
-            if (TryGetCustomUiBool("toggle.fvg", out savedValue)) _toggleFvgZones = savedValue;
-            if (TryGetCustomUiBool("toggle.ob", out savedValue)) _toggleOrderBlocks = savedValue;
-            if (TryGetCustomUiBool("toggle.htf_mini", out savedValue)) _toggleHtfMiniChart = savedValue;
-            if (TryGetCustomUiBool("toggle.key_levels", out savedValue)) _toggleKeyLevels = savedValue;
-            if (TryGetCustomUiBool("toggle.htf_zones", out savedValue)) _toggleHigherTimeframeZones = savedValue;
-            if (TryGetCustomUiBool("toggle.strategy_markers", out savedValue)) _toggleStrategyMarkers = savedValue;
+            var selectedOrderCount = GetCustomUiSetting("chart.orders_per_click", "");
+            if (!string.IsNullOrWhiteSpace(selectedOrderCount))
+                _chartSelectedOrderCount = NormalizeChartOrderCountSelection(selectedOrderCount);
         }
 
         private void PersistCustomUiSettingsSnapshot()
@@ -2134,50 +3118,7 @@ namespace cAlgo.Robots
 
             SetCustomUiSetting("chart.symbol", _chartSelectedSymbol ?? "");
             SetCustomUiSetting("chart.direction", _chartSelectedDirection ?? "");
-            SetCustomUiSetting("chart.trade_profile", _chartSelectedTradeProfile ?? "");
-
-            SetCustomUiSetting("toggle.htf_1d", _toggleHtf1D.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.htf_4h", _toggleHtf4H.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.htf_15m", _toggleHtf15.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.killer_zones", _toggleKillerZones.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.liquidity", _toggleLiquidityLevels.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.sweep", _toggleSweepDetections.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.bos", _toggleBosDetections.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.choch", _toggleChochDetections.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.rejection", _toggleRejectionDetections.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.breakout", _toggleBreakoutDetections.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.pullback", _togglePullbackDetections.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.continuation", _toggleContinuationDetections.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.impulse", _toggleImpulseDetections.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.pin_bar", _togglePinBarPatterns.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.engulfing", _toggleEngulfingPatterns.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.big_candle", _toggleBigCandlePatterns.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.morning_star", _toggleMorningStarPatterns.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.evening_star", _toggleEveningStarPatterns.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.hammer", _toggleHammerPatterns.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.hanging_man", _toggleHangingManPatterns.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.shooting_star", _toggleShootingStarPatterns.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.inverted_hammer", _toggleInvertedHammerPatterns.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.piercing_line", _togglePiercingLinePatterns.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.dark_cloud_cover", _toggleDarkCloudCoverPatterns.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.three_white_soldiers", _toggleThreeWhiteSoldiersPatterns.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.three_black_crows", _toggleThreeBlackCrowsPatterns.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.harami", _toggleHaramiPatterns.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.ema_overlay", _toggleEmaOverlay.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.vwap_overlay", _toggleVwapOverlay.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.bollinger_overlay", _toggleBollingerOverlay.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.ema_events", _toggleEmaEvents.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.vwap_events", _toggleVwapEvents.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.bollinger_events", _toggleBollingerEvents.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.rsi_events", _toggleRsiEvents.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.stochastic_events", _toggleStochasticEvents.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.macd_events", _toggleMacdEvents.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.fvg", _toggleFvgZones.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.ob", _toggleOrderBlocks.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.htf_mini", _toggleHtfMiniChart.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.key_levels", _toggleKeyLevels.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.htf_zones", _toggleHigherTimeframeZones.ToString(CultureInfo.InvariantCulture));
-            SetCustomUiSetting("toggle.strategy_markers", _toggleStrategyMarkers.ToString(CultureInfo.InvariantCulture));
+            SetCustomUiSetting("chart.orders_per_click", _chartSelectedOrderCount ?? "Auto");
 
             SaveCustomUiSettings();
         }
@@ -2229,6 +3170,37 @@ namespace cAlgo.Robots
             return frames
                 .Where(tf => tf != null)
                 .Distinct()
+                .ToList();
+        }
+
+        private TimeFrame GetChartEntrySourceTimeFrame(string profileRaw)
+        {
+            return Chart != null ? Chart.TimeFrame : GetChartTradeStructureTimeFrame(profileRaw);
+        }
+
+        private List<TimeFrame> GetChartProtectionSourceTimeFrames(string profileRaw)
+        {
+            var frames = new List<TimeFrame>();
+            var chartTimeFrame = Chart != null ? Chart.TimeFrame : GetChartTradeStructureTimeFrame(profileRaw);
+            var chartMinutes = Math.Max(1, TimeFrameToMinutes(chartTimeFrame));
+
+            foreach (var tf in GetAutoHigherTimeframes(chartTimeFrame))
+            {
+                if (TimeFrameToMinutes(tf) > chartMinutes)
+                    frames.Add(tf);
+            }
+
+            var structureTimeFrame = GetChartTradeStructureTimeFrame(profileRaw);
+            if (TimeFrameToMinutes(structureTimeFrame) > chartMinutes)
+                frames.Add(structureTimeFrame);
+
+            if (frames.Count == 0)
+                frames.Add(structureTimeFrame);
+
+            return frames
+                .Where(tf => tf != null)
+                .Distinct()
+                .OrderBy(tf => TimeFrameToMinutes(tf))
                 .ToList();
         }
 
@@ -2609,6 +3581,281 @@ namespace cAlgo.Robots
             TrySetPropertyValue(chartText, "IsBold", isBold);
         }
 
+        private bool _displayPrefsApplied;
+
+        private void ApplyChartDisplayPreferences()
+        {
+            if (_displayPrefsApplied)
+                return;
+            try
+            {
+                var displaySettings = Chart != null ? Chart.DisplaySettings : null;
+                if (displaySettings == null)
+                    return; // Chart not ready yet — retried on the next lite pass.
+
+                var chartTfMinutes = Math.Max(1, TimeFrameToMinutes(Chart != null ? Chart.TimeFrame : TimeFrame.Minute));
+                TrySetPropertyValue(displaySettings, "Grid", false);
+                // Native cTrader period separators draw at each 4H bar boundary on a 4H chart
+                // (and each bar on 1D/1W) — the bot draws its own period grid there instead, so
+                // disable the native one on 4H+ charts. Sub-4H charts keep the native day grid.
+                TrySetPropertyValue(displaySettings, "PeriodSeparators", chartTfMinutes < 240);
+                _displayPrefsApplied = true;
+            }
+            catch
+            {
+            }
+        }
+
+        // Apply the Chart Visuals master combos once at startup: All/None/specific-item override
+        // the per-item toggles. Per Item (default) keeps the per-item params/toolbar settings.
+        private void ApplyVisualGroupCombos()
+        {
+            ApplySmcZoneCombo();
+            ApplyStructureEventCombo();
+            ApplyMomentumTechnicalCombo();
+            ApplyCandleCombo();
+            // Re-sync native chart indicators against the final combo state. The startup sync
+            // ran BEFORE the combos were applied (from the per-item params), so None / All
+            // Custom would otherwise leave the native EMA/VWAP/BB/Ichimoku/RSI/Stoch/MACD
+            // indicators on the chart. All Custom removes them inside SyncChartTechnicalOverlays.
+            try { SyncChartOscillatorIndicators(); } catch (Exception ex) { SafePrint("[Visuals] Oscillator re-sync failed: {0}", ex.Message); }
+            try { SyncChartTechnicalOverlays(); } catch (Exception ex) { SafePrint("[Visuals] Overlay re-sync failed: {0}", ex.Message); }
+        }
+
+        private void ApplySmcZoneCombo()
+        {
+            var ob = false; var fvg = false; var key = false; var liq = false; var htfZones = false; var kz = false; var sd = false;
+            switch (SmcZonesCombo)
+            {
+                case SmcZoneComboMode.None:
+                    break;
+                case SmcZoneComboMode.All:
+                    ob = true; fvg = true; key = true; liq = true; htfZones = true; kz = true; sd = true;
+                    break;
+                case SmcZoneComboMode.OrderBlocks:
+                    ob = true;
+                    break;
+                case SmcZoneComboMode.FvgZones:
+                    fvg = true;
+                    break;
+                case SmcZoneComboMode.KeyLevels:
+                    key = true;
+                    break;
+                case SmcZoneComboMode.Liquidity:
+                    liq = true;
+                    break;
+                case SmcZoneComboMode.HigherTimeframeZones:
+                    htfZones = true;
+                    break;
+                case SmcZoneComboMode.KillerZones:
+                    kz = true;
+                    break;
+                case SmcZoneComboMode.SupplyDemand:
+                    sd = true;
+                    break;
+                default:
+                    return;
+            }
+            _toggleOrderBlocks = ob;
+            _toggleFvgZones = fvg;
+            _toggleKeyLevels = key;
+            _toggleLiquidityLevels = liq;
+            _toggleHigherTimeframeZones = htfZones;
+            _toggleKillerZones = kz;
+            _toggleSupplyDemand = sd;
+        }
+
+        private void ApplyStructureEventCombo()
+        {
+            var sweep = false; var bos = false; var choch = false; var rj = false; var br = false;
+            var pb = false; var ct = false; var im = false;
+            switch (StructureEventsCombo)
+            {
+                case StructureEventComboMode.None:
+                    break;
+                case StructureEventComboMode.All:
+                    sweep = true; bos = true; choch = true; rj = true; br = true; pb = true; ct = true; im = true;
+                    break;
+                case StructureEventComboMode.Sweep:
+                    sweep = true;
+                    break;
+                case StructureEventComboMode.Bos:
+                    bos = true;
+                    break;
+                case StructureEventComboMode.Choch:
+                    choch = true;
+                    break;
+                case StructureEventComboMode.Rejection:
+                    rj = true;
+                    break;
+                case StructureEventComboMode.Breakout:
+                    br = true;
+                    break;
+                case StructureEventComboMode.Pullback:
+                    pb = true;
+                    break;
+                case StructureEventComboMode.Continuation:
+                    ct = true;
+                    break;
+                case StructureEventComboMode.Impulse:
+                    im = true;
+                    break;
+                default:
+                    return;
+            }
+            _toggleSweepDetections = sweep;
+            _toggleBosDetections = bos;
+            _toggleChochDetections = choch;
+            _toggleRejectionDetections = rj;
+            _toggleBreakoutDetections = br;
+            _togglePullbackDetections = pb;
+            _toggleContinuationDetections = ct;
+            _toggleImpulseDetections = im;
+        }
+
+        private void ApplyMomentumTechnicalCombo()
+        {
+            _forceCustomTechnicalOverlays = MomentumTechnicalCombo == MomentumTechnicalComboMode.AllCustom;
+            var ema = false; var vwap = false; var bb = false; var ichi = false;
+            var emaE = false; var vwapE = false; var bbE = false; var rsiE = false; var stoE = false; var macdE = false;
+            switch (MomentumTechnicalCombo)
+            {
+                case MomentumTechnicalComboMode.None:
+                    break;
+                case MomentumTechnicalComboMode.All:
+                case MomentumTechnicalComboMode.AllCustom:
+                    ema = true; vwap = true; bb = true; ichi = true;
+                    emaE = true; vwapE = true; bbE = true; rsiE = true; stoE = true; macdE = true;
+                    break;
+                case MomentumTechnicalComboMode.Ema:
+                    ema = true;
+                    break;
+                case MomentumTechnicalComboMode.Vwap:
+                    vwap = true;
+                    break;
+                case MomentumTechnicalComboMode.Bollinger:
+                    bb = true;
+                    break;
+                case MomentumTechnicalComboMode.Ichimoku:
+                    ichi = true;
+                    break;
+                case MomentumTechnicalComboMode.EmaEvents:
+                    emaE = true;
+                    break;
+                case MomentumTechnicalComboMode.VwapEvents:
+                    vwapE = true;
+                    break;
+                case MomentumTechnicalComboMode.BollingerEvents:
+                    bbE = true;
+                    break;
+                case MomentumTechnicalComboMode.RsiEvents:
+                    rsiE = true;
+                    break;
+                case MomentumTechnicalComboMode.StochasticEvents:
+                    stoE = true;
+                    break;
+                case MomentumTechnicalComboMode.MacdEvents:
+                    macdE = true;
+                    break;
+                default:
+                    return;
+            }
+            _toggleEmaOverlay = ema;
+            _toggleVwapOverlay = vwap;
+            _toggleBollingerOverlay = bb;
+            _toggleIchimokuOverlay = ichi;
+            _toggleEmaEvents = emaE;
+            _toggleVwapEvents = vwapE;
+            _toggleBollingerEvents = bbE;
+            _toggleRsiEvents = rsiE;
+            _toggleStochasticEvents = stoE;
+            _toggleMacdEvents = macdE;
+        }
+
+        private void ApplyCandleCombo()
+        {
+            var pin = false; var eng = false; var big = false; var mor = false; var eve = false;
+            var ham = false; var hgm = false; var sst = false; var ihm = false; var prc = false;
+            var dcc = false; var tws = false; var tbc = false; var har = false;
+            switch (CandlesCombo)
+            {
+                case CandleComboMode.None:
+                    break;
+                case CandleComboMode.All:
+                    pin = true; eng = true; big = true; mor = true; eve = true;
+                    ham = true; hgm = true; sst = true; ihm = true; prc = true;
+                    dcc = true; tws = true; tbc = true; har = true;
+                    break;
+                case CandleComboMode.PinBar:
+                    pin = true;
+                    break;
+                case CandleComboMode.Engulfing:
+                    eng = true;
+                    break;
+                case CandleComboMode.BigCandle:
+                    big = true;
+                    break;
+                case CandleComboMode.MorningStar:
+                    mor = true;
+                    break;
+                case CandleComboMode.EveningStar:
+                    eve = true;
+                    break;
+                case CandleComboMode.Hammer:
+                    ham = true;
+                    break;
+                case CandleComboMode.HangingMan:
+                    hgm = true;
+                    break;
+                case CandleComboMode.ShootingStar:
+                    sst = true;
+                    break;
+                case CandleComboMode.InvertedHammer:
+                    ihm = true;
+                    break;
+                case CandleComboMode.PiercingLine:
+                    prc = true;
+                    break;
+                case CandleComboMode.DarkCloudCover:
+                    dcc = true;
+                    break;
+                case CandleComboMode.ThreeWhiteSoldiers:
+                    tws = true;
+                    break;
+                case CandleComboMode.ThreeBlackCrows:
+                    tbc = true;
+                    break;
+                case CandleComboMode.Harami:
+                    har = true;
+                    break;
+                default:
+                    return;
+            }
+            _togglePinBarPatterns = pin; _toggleEngulfingPatterns = eng; _toggleBigCandlePatterns = big;
+            _toggleMorningStarPatterns = mor; _toggleEveningStarPatterns = eve; _toggleHammerPatterns = ham;
+            _toggleHangingManPatterns = hgm; _toggleShootingStarPatterns = sst; _toggleInvertedHammerPatterns = ihm;
+            _togglePiercingLinePatterns = prc; _toggleDarkCloudCoverPatterns = dcc;
+            _toggleThreeWhiteSoldiersPatterns = tws; _toggleThreeBlackCrowsPatterns = tbc; _toggleHaramiPatterns = har;
+        }
+
+        // The RSI/Stoch/MACD sub-panels are driven by their mode params directly, so they need a
+        // live effective check on top of the Momentum Technical combo.
+        private bool EffectiveMomentumOscillatorEnabled(bool individualEnabled, MomentumTechnicalComboMode item)
+        {
+            switch (MomentumTechnicalCombo)
+            {
+                case MomentumTechnicalComboMode.None:
+                    return false;
+                case MomentumTechnicalComboMode.All:
+                case MomentumTechnicalComboMode.AllCustom:
+                    return individualEnabled;
+                case MomentumTechnicalComboMode.PerItem:
+                    return individualEnabled;
+                default:
+                    return MomentumTechnicalCombo == item;
+            }
+        }
+
         private int GetChartMarkerFontSize()
         {
             switch (MarkerFontSize)
@@ -2684,17 +3931,169 @@ namespace cAlgo.Robots
         private string FormatDirectionalMarkerText(string label, bool isBullish)
         {
             if (ShowMarkerLabel == ChartLabelVisibilityMode.No)
-                return MarkerSymbol == ChartMarkerSymbolMode.Triangles
-                    ? (isBullish ? "▲" : "▼")
-                    : (isBullish ? "↑" : "↓");
+                return GetDirectionalMarkerIcon(isBullish);
 
             var normalized = string.IsNullOrWhiteSpace(label)
                 ? "evt"
-                : label.Trim().ToLowerInvariant();
-            var prefix = MarkerSymbol == ChartMarkerSymbolMode.Triangles
+                : label.Trim().ToUpperInvariant();
+            var prefix = GetDirectionalMarkerIcon(isBullish);
+            return prefix + " " + normalized;
+        }
+
+        private string FormatCanonicalEventMarkerText(CanonicalMarketEvent evt, string shortLabel)
+        {
+            return FormatDirectionalMarkerText(shortLabel, evt.IsBullish);
+        }
+
+        private string GetDirectionalMarkerIcon(bool isBullish)
+        {
+            return MarkerSymbol == ChartMarkerSymbolMode.Triangles
                 ? (isBullish ? "▲" : "▼")
                 : (isBullish ? "↑" : "↓");
-            return prefix + " " + normalized;
+        }
+
+        private static string GetDirectionalArrowIcon(bool isBullish)
+        {
+            return isBullish ? "↑" : "↓";
+        }
+
+        private static ChartIconType GetDirectionalChartIconType(bool isBullish)
+        {
+            return isBullish ? ChartIconType.UpArrow : ChartIconType.DownArrow;
+        }
+
+        private static string FormatStrategyMarkerText(StrategyChartMarker marker)
+        {
+            var isEntry = marker.Kind == StrategyMarkerKind.Entry;
+            if (isEntry)
+                return marker.TradeType == TradeType.Buy ? "B" : "S";
+
+            var pnl = marker.Pnl;
+            if (double.IsNaN(pnl))
+                return "0";
+
+            return pnl >= 0
+                ? "+" + pnl.ToString("F0", CultureInfo.InvariantCulture)
+                : pnl.ToString("F0", CultureInfo.InvariantCulture);
+        }
+
+        private double ResolveDirectionalIconAnchorPrice(bool isBullish, double wickPrice, double barRange, double fallbackRange = 0.0)
+        {
+            return wickPrice;
+        }
+
+        private double ResolveDirectionalLabelPrice(bool isBullish, double wickPrice, double barRange, int slotIndex, double fallbackRange = 0.0)
+        {
+            var effectiveRange = Math.Max(Math.Max(barRange, fallbackRange), Symbol != null ? Symbol.PipSize * 8.0 : 0.0000001);
+            var textPad = Math.Max(Symbol != null ? Symbol.PipSize * (0.8 + (slotIndex * 0.4)) : 0.0000001, effectiveRange * (0.012 + (slotIndex * 0.007)));
+            return isBullish ? wickPrice - textPad : wickPrice + textPad;
+        }
+
+        private void DrawDirectionalArrowShape(string objectPrefix, DateTime anchorTime, double wickPrice, bool isBullish, TimeFrame sourceTimeFrame, double barRange, Color color, int zIndex, double sizeMultiplier = 1.0)
+        {
+            if (Chart == null)
+                return;
+
+            var tfMinutes = Math.Max(1.0, TimeFrameToMinutes(sourceTimeFrame));
+            var effectiveRange = Math.Max(barRange, Symbol != null ? Symbol.PipSize * 8.0 : 0.0000001);
+            var headPriceSpan = Math.Max(Symbol != null ? Symbol.PipSize * 1.2 : 0.0000001, effectiveRange * 0.018) * sizeMultiplier;
+            var headHalfMinutes = Math.Max(0.02, tfMinutes * 0.018) * sizeMultiplier;
+
+            var leftHead = Chart.DrawTrendLine(
+                objectPrefix + "_HEAD_L",
+                anchorTime.AddMinutes(-headHalfMinutes),
+                isBullish ? wickPrice - headPriceSpan : wickPrice + headPriceSpan,
+                anchorTime,
+                wickPrice,
+                color);
+            TrySetPropertyValue(leftHead, "Thickness", 1);
+            TrySetEnumPropertyValue(leftHead, "LineStyle", "Lines");
+            TrySetPropertyValue(leftHead, "ZIndex", zIndex);
+
+            var rightHead = Chart.DrawTrendLine(
+                objectPrefix + "_HEAD_R",
+                anchorTime.AddMinutes(headHalfMinutes),
+                isBullish ? wickPrice - headPriceSpan : wickPrice + headPriceSpan,
+                anchorTime,
+                wickPrice,
+                color);
+            TrySetPropertyValue(rightHead, "Thickness", 1);
+            TrySetEnumPropertyValue(rightHead, "LineStyle", "Lines");
+            TrySetPropertyValue(rightHead, "ZIndex", zIndex);
+        }
+
+        private Tuple<DateTime, DateTime, double, double> ResolvePatternRangeBox(Bars sourceBars, TimeFrame sourceTimeFrame, int barIndex, int patternSpan)
+        {
+            if (sourceBars == null || sourceBars.Count == 0 || barIndex < 0 || barIndex >= sourceBars.Count)
+                return null;
+
+            var span = Math.Max(1, patternSpan);
+            var startIndex = Math.Max(0, barIndex - span + 1);
+            var endIndex = Math.Max(startIndex, barIndex);
+            var startBarTime = sourceBars.OpenTimes[startIndex];
+            var endBarTime = ResolveSourceBarEndTime(sourceBars, sourceBars.OpenTimes[endIndex], sourceTimeFrame);
+            var firstBarEndTime = ResolveSourceBarEndTime(sourceBars, sourceBars.OpenTimes[startIndex], sourceTimeFrame);
+            var lastBarEndTime = endBarTime;
+            var firstBarMinutes = Math.Max(1.0, (firstBarEndTime - startBarTime).TotalMinutes);
+            var lastBarMinutes = Math.Max(1.0, (lastBarEndTime - sourceBars.OpenTimes[endIndex]).TotalMinutes);
+            var startTime = startBarTime.AddMinutes(-(firstBarMinutes * 0.5));
+            var endTime = sourceBars.OpenTimes[endIndex].AddMinutes(lastBarMinutes * 0.5);
+            var high = double.MinValue;
+            var low = double.MaxValue;
+            for (var i = startIndex; i <= endIndex; i++)
+            {
+                high = Math.Max(high, sourceBars.HighPrices[i]);
+                low = Math.Min(low, sourceBars.LowPrices[i]);
+            }
+
+            if (!IsFiniteNumber(high) || !IsFiniteNumber(low))
+                return null;
+
+            var minPatternHeight = Symbol != null ? Symbol.PipSize * 2.0 : 0.0000001;
+            if (high - low < minPatternHeight)
+            {
+                var mid = (high + low) * 0.5;
+                high = mid + (minPatternHeight * 0.5);
+                low = mid - (minPatternHeight * 0.5);
+            }
+
+            var verticalPad = Math.Max(Symbol != null ? Symbol.PipSize * 2.0 : 0.0000001, (high - low) * 0.06);
+            high += verticalPad;
+            low -= verticalPad;
+
+            if (endTime <= startTime)
+            {
+                var center = startBarTime.AddMinutes(Math.Max(1.0, (endBarTime - startBarTime).TotalMinutes) * 0.5);
+                var halfWidthMinutes = Math.Max(0.2, Math.Max(firstBarMinutes, lastBarMinutes) * 0.12);
+                startTime = center.AddMinutes(-halfWidthMinutes);
+                endTime = center.AddMinutes(halfWidthMinutes);
+            }
+
+            return Tuple.Create(startTime, endTime, high, low);
+        }
+
+        private void DrawPatternRangeBox(string objectPrefix, Bars sourceBars, TimeFrame sourceTimeFrame, int barIndex, int patternSpan, Color color, int zIndex, int fillAlpha = 24)
+        {
+            if (Chart == null)
+                return;
+
+            var box = ResolvePatternRangeBox(sourceBars, sourceTimeFrame, barIndex, patternSpan);
+            if (box == null || box.Item2 <= box.Item1)
+                return;
+
+            var fillColor = WithAlpha(color, fillAlpha);
+            var rect = Chart.DrawRectangle(
+                objectPrefix + "_BOX",
+                box.Item1,
+                box.Item3,
+                box.Item2,
+                box.Item4,
+                fillColor);
+            TrySetPropertyValue(rect, "IsFilled", true);
+            TrySetPropertyValue(rect, "Thickness", 0);
+            TrySetPropertyValue(rect, "Color", fillColor);
+            TrySetPropertyValue(rect, "BorderColor", WithAlpha(color, 0));
+            TrySetPropertyValue(rect, "ZIndex", zIndex);
         }
 
         private bool ShouldDrawChartMarkers()
@@ -2917,31 +4316,25 @@ namespace cAlgo.Robots
                 };
                 if (template != RiskTemplate.Custom)
                 {
-                    var configuredTradeRiskLimit = Math.Max(0.0, MaxRiskPercent);
-                    var configuredOpenRiskLimit = Math.Max(0.0, MaxTotalOpenRiskPercent);
+                    var configuredTradeRiskLimit = GetRiskLimitPresetLabel(MaxRiskPreset);
+                    var configuredOpenRiskLimit = GetRiskLimitPresetLabel(MaxTotalOpenRiskPreset);
                     lines.Add(buildRiskRow("Day Loss", riskState.DailyLossPercent, GetEffectiveMaxDailyLossPercent(template)));
                     lines.Add(buildRiskRow("Drawdown", riskState.EquityDrawdownPercent, GetEffectiveMaxEquityDrawdownPercent(template)));
                     lines.Add(buildInfoRow("DD Mode", GetRiskDrawdownModeLabel(template), GetRiskDrawdownModeLabel(template)));
                     lines.Add(buildSectionRow("--- Trade Config ---"));
-                    lines.Add(buildRiskRow("M. Trade Risk", riskState.MaxSingleOpenRiskPercent, configuredTradeRiskLimit));
-                    lines.Add(buildRiskRow("M. Total Risk", riskState.TotalOpenRiskPercent, configuredOpenRiskLimit));
+                    lines.Add(buildRiskRowWithLimitText("M. Trade Risk", riskState.MaxSingleOpenRiskPercent, configuredTradeRiskLimit));
+                    lines.Add(buildRiskRowWithLimitText("M. Total Risk", riskState.TotalOpenRiskPercent, configuredOpenRiskLimit));
                     lines.Add(buildRiskRowWithLimitText("Same idea Risk", GetCurrentSymbolDirectionalRiskPercent(), GetRiskSameDirectionLimitLabel(RiskTemplate.Custom)));
-                    lines.Add(buildInfoRow("News", GetEffectiveHighImpactNewsBlockEnabled(RiskTemplate.Custom) ? "ON" : "OFF", GetRiskNewsLimitLabel(RiskTemplate.Custom)));
-                    lines.Add(buildInfoRow("Overnight", GetEffectiveNoOvernightHold(RiskTemplate.Custom) ? "BLOCK" : "ALLOW", GetRiskOvernightLimitLabel(RiskTemplate.Custom)));
-                    lines.Add(buildInfoRow("Weekend", GetEffectiveNoWeekendHold(RiskTemplate.Custom) ? "BLOCK" : "ALLOW", GetRiskWeekendLimitLabel(RiskTemplate.Custom)));
                     return lines;
                 }
 
-                lines.Add(buildRiskRow("Day Loss", riskState.DailyLossPercent, GetEffectiveMaxDailyLossPercent(template)));
-                lines.Add(buildRiskRow("Drawdown", riskState.EquityDrawdownPercent, GetEffectiveMaxEquityDrawdownPercent(template)));
+                lines.Add(buildRiskRowWithLimitText("Day Loss", riskState.DailyLossPercent, GetRiskLimitPresetLabel(MaxDailyLossPreset)));
+                lines.Add(buildRiskRowWithLimitText("Drawdown", riskState.EquityDrawdownPercent, GetRiskLimitPresetLabel(MaxEquityDrawdownPreset)));
                 lines.Add(buildInfoRow("DD Mode", GetRiskDrawdownModeLabel(template), GetRiskDrawdownModeLabel(template)));
                 lines.Add(buildSectionRow("--- Trade Config ---"));
-                lines.Add(buildRiskRow("M. Trade Risk", riskState.MaxSingleOpenRiskPercent, Math.Max(0.0, MaxRiskPercent)));
-                lines.Add(buildRiskRow("M. Total Risk", riskState.TotalOpenRiskPercent, Math.Max(0.0, MaxTotalOpenRiskPercent)));
+                lines.Add(buildRiskRowWithLimitText("M. Trade Risk", riskState.MaxSingleOpenRiskPercent, GetRiskLimitPresetLabel(MaxRiskPreset)));
+                lines.Add(buildRiskRowWithLimitText("M. Total Risk", riskState.TotalOpenRiskPercent, GetRiskLimitPresetLabel(MaxTotalOpenRiskPreset)));
                 lines.Add(buildRiskRowWithLimitText("Same idea Risk", GetCurrentSymbolDirectionalRiskPercent(), GetRiskSameDirectionLimitLabel(RiskTemplate.Custom)));
-                lines.Add(buildInfoRow("News", GetEffectiveHighImpactNewsBlockEnabled(RiskTemplate.Custom) ? "ON" : "OFF", GetRiskNewsLimitLabel(RiskTemplate.Custom)));
-                lines.Add(buildInfoRow("Overnight", GetEffectiveNoOvernightHold(RiskTemplate.Custom) ? "BLOCK" : "ALLOW", GetRiskOvernightLimitLabel(RiskTemplate.Custom)));
-                lines.Add(buildInfoRow("Weekend", GetEffectiveNoWeekendHold(RiskTemplate.Custom) ? "BLOCK" : "ALLOW", GetRiskWeekendLimitLabel(RiskTemplate.Custom)));
                 return lines;
             };
 
@@ -2973,9 +4366,745 @@ namespace cAlgo.Robots
             return newlineIndex >= 0 && newlineIndex + 1 < text.Length ? text.Substring(newlineIndex + 1) : "";
         }
 
+        private static string CompactPanelDebugMessage(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return "";
+
+            var compact = text.Trim();
+            compact = compact.Replace("[Perf]", "P");
+            compact = compact.Replace("CanonicalEventsCacheHit", "CEHit");
+            compact = compact.Replace("CanonicalEventsDiskCacheHit", "CEDisk");
+            compact = compact.Replace("CanonicalEvents.Total", "CET");
+            compact = compact.Replace("CanonicalEvents.", "CE.");
+            compact = compact.Replace("ExecuteChartQuick", "CQ");
+            compact = compact.Replace("ProtectionReady", "Prot");
+            compact = compact.Replace("VolumeReady", "Vol");
+            compact = compact.Replace("GatePassed", "Gate");
+            compact = compact.Replace("Submitted", "Sub");
+            compact = compact.Replace("Bars unavailable", "NoBars");
+            compact = Regex.Replace(compact, "\\s+", " ").Trim();
+            return compact;
+        }
+
         private static Color WithAlpha(Color color, int alpha)
         {
             return Color.FromArgb(alpha, color.R, color.G, color.B);
+        }
+
+        private static string FormatCompactDecimal(double value)
+        {
+            if (double.IsNaN(value) || double.IsInfinity(value))
+                return "-";
+
+            if (Math.Abs(value - Math.Round(value)) < 0.0001)
+                return Math.Round(value).ToString("0", CultureInfo.InvariantCulture);
+
+            return value.ToString("0.#", CultureInfo.InvariantCulture);
+        }
+
+        private double MinStopPips
+        {
+            get
+            {
+                return ResolveMinStopPips(Symbol, Bars);
+            }
+        }
+
+        private double ResolveMinStopPips(Symbol symbol, Bars sourceBars = null)
+        {
+            var fixedFloor = SelectedRiskMode == RiskMode.Risky ? 5.0 : 15.0;
+            var spreadMultiplier = SelectedRiskMode == RiskMode.Risky ? 3.0 : 5.0;
+            var atrMultiplier = SelectedRiskMode == RiskMode.Risky ? 0.25 : 0.5;
+
+            var spreadPips = ResolveSpreadPips(symbol);
+            var atrPips = ResolveAtrPips(symbol, sourceBars, 14);
+
+            var spreadFloor = spreadPips * spreadMultiplier;
+            var atrFloor = atrPips * atrMultiplier;
+
+            return Math.Max(fixedFloor, Math.Max(spreadFloor, atrFloor));
+        }
+
+        private double ResolveSpreadPips(Symbol symbol)
+        {
+            if (symbol == null || symbol.PipSize <= 0)
+                return 0.0;
+
+            var ask = !double.IsNaN(symbol.Ask) ? symbol.Ask : 0.0;
+            var bid = !double.IsNaN(symbol.Bid) ? symbol.Bid : 0.0;
+            if (ask > 0 && bid > 0 && ask >= bid)
+                return Math.Abs(ask - bid) / symbol.PipSize;
+
+            var spread = !double.IsNaN(symbol.Spread) ? symbol.Spread : 0.0;
+            return Math.Max(0.0, spread);
+        }
+
+        private double ResolveAtrPips(Symbol symbol, Bars sourceBars = null, int period = 14)
+        {
+            if (symbol == null || symbol.PipSize <= 0)
+                return 0.0;
+
+            var bars = sourceBars;
+            if (bars == null)
+            {
+                try
+                {
+                    var tf = Chart != null ? Chart.TimeFrame : TimeFrame.Minute;
+                    bars = MarketData.GetBars(tf, symbol.Name);
+                }
+                catch
+                {
+                    bars = null;
+                }
+            }
+
+            if (bars == null || bars.Count < Math.Max(period + 2, 5))
+                return 0.0;
+
+            var lastClosedIndex = Math.Max(1, bars.Count - 2);
+            var startIndex = Math.Max(1, lastClosedIndex - period + 1);
+            var count = 0;
+            var totalTrueRange = 0.0;
+
+            for (var i = startIndex; i <= lastClosedIndex; i++)
+            {
+                var high = bars.HighPrices[i];
+                var low = bars.LowPrices[i];
+                var previousClose = bars.ClosePrices[i - 1];
+                var trueRange = Math.Max(high - low, Math.Max(Math.Abs(high - previousClose), Math.Abs(low - previousClose)));
+                if (double.IsNaN(trueRange) || double.IsInfinity(trueRange) || trueRange <= 0)
+                    continue;
+
+                totalTrueRange += trueRange;
+                count++;
+            }
+
+            if (count <= 0)
+                return 0.0;
+
+            return (totalTrueRange / count) / symbol.PipSize;
+        }
+
+        private int GetChartEventsPerTypeLimit()
+        {
+            switch (ChartEventsPerType)
+            {
+                case ChartEventsPerTypeMode.None:
+                    return 0;
+                case ChartEventsPerTypeMode.All:
+                    return -1;
+                case ChartEventsPerTypeMode._2:
+                    return 2;
+                case ChartEventsPerTypeMode._3:
+                    return 3;
+                case ChartEventsPerTypeMode._4:
+                    return 4;
+                case ChartEventsPerTypeMode._5:
+                    return 5;
+                case ChartEventsPerTypeMode._1:
+                default:
+                    return 1;
+            }
+        }
+
+        private int GetCollectorMarkerLimit()
+        {
+            var limit = GetChartEventsPerTypeLimit();
+            return limit < 0 ? int.MaxValue : limit;
+        }
+
+        private EmaIndicatorConfig ResolveEmaIndicatorConfig(EmaVisualMode mode, bool forEvents)
+        {
+            switch (mode)
+            {
+                case EmaVisualMode.E9_21_55:
+                    return new EmaIndicatorConfig { PriceCrossPeriod = 9, FastPeriod = 9, MidPeriod = 21, SlowPeriod = 55 };
+                case EmaVisualMode.E20_50_200:
+                    return new EmaIndicatorConfig { PriceCrossPeriod = 20, FastPeriod = 20, MidPeriod = 50, SlowPeriod = 200 };
+                case EmaVisualMode.E34_49:
+                    return new EmaIndicatorConfig { PriceCrossPeriod = 34, FastPeriod = 34, MidPeriod = 49, SlowPeriod = 49 };
+                case EmaVisualMode.Off:
+                    return new EmaIndicatorConfig();
+                case EmaVisualMode.Auto:
+                default:
+                    return forEvents
+                        ? new EmaIndicatorConfig { PriceCrossPeriod = 20, FastPeriod = 9, MidPeriod = 21, SlowPeriod = 55 }
+                        : new EmaIndicatorConfig { PriceCrossPeriod = 20, FastPeriod = 20, MidPeriod = 50, SlowPeriod = 200 };
+            }
+        }
+
+        private VwapIndicatorConfig ResolveVwapIndicatorConfig(VwapVisualMode mode)
+        {
+            switch (mode)
+            {
+                case VwapVisualMode.V30:
+                    return new VwapIndicatorConfig { Length = 30 };
+                case VwapVisualMode.V50:
+                    return new VwapIndicatorConfig { Length = 50 };
+                case VwapVisualMode.Off:
+                    return new VwapIndicatorConfig();
+                case VwapVisualMode.V20:
+                case VwapVisualMode.Auto:
+                default:
+                    return new VwapIndicatorConfig { Length = 20 };
+            }
+        }
+
+        private BollingerIndicatorConfig ResolveBollingerIndicatorConfig(BollingerVisualMode mode)
+        {
+            switch (mode)
+            {
+                case BollingerVisualMode.BB20_25:
+                    return new BollingerIndicatorConfig { Period = 20, StdDevMultiplier = 2.5 };
+                case BollingerVisualMode.BB34_2:
+                    return new BollingerIndicatorConfig { Period = 34, StdDevMultiplier = 2.0 };
+                case BollingerVisualMode.Off:
+                    return new BollingerIndicatorConfig();
+                case BollingerVisualMode.BB20_2:
+                case BollingerVisualMode.Auto:
+                default:
+                    return new BollingerIndicatorConfig { Period = 20, StdDevMultiplier = 2.0 };
+            }
+        }
+
+        private IchimokuIndicatorConfig ResolveIchimokuIndicatorConfig(IchimokuVisualMode mode)
+        {
+            switch (mode)
+            {
+                case IchimokuVisualMode.I7_22_44:
+                    return new IchimokuIndicatorConfig { ConversionPeriod = 7, BasePeriod = 22, SpanBPeriod = 44 };
+                case IchimokuVisualMode.I20_60_120:
+                    return new IchimokuIndicatorConfig { ConversionPeriod = 20, BasePeriod = 60, SpanBPeriod = 120 };
+                case IchimokuVisualMode.Off:
+                    return new IchimokuIndicatorConfig();
+                case IchimokuVisualMode.I9_26_52:
+                case IchimokuVisualMode.Auto:
+                default:
+                    return new IchimokuIndicatorConfig { ConversionPeriod = 9, BasePeriod = 26, SpanBPeriod = 52 };
+            }
+        }
+
+        private RsiIndicatorConfig ResolveRsiIndicatorConfig(RsiVisualMode mode)
+        {
+            switch (mode)
+            {
+                case RsiVisualMode.R21:
+                    return new RsiIndicatorConfig { Period = 21, Midline = 50.0, Oversold = 25.0, Overbought = 60.0 };
+                case RsiVisualMode.Off:
+                    return new RsiIndicatorConfig();
+                case RsiVisualMode.R14:
+                case RsiVisualMode.Auto:
+                default:
+                    return new RsiIndicatorConfig { Period = 14, Midline = 50.0, Oversold = 25.0, Overbought = 60.0 };
+            }
+        }
+
+        private StochasticIndicatorConfig ResolveStochasticIndicatorConfig(StochasticVisualMode mode)
+        {
+            switch (mode)
+            {
+                case StochasticVisualMode.S9_3_3:
+                    return new StochasticIndicatorConfig { KPeriod = 9, DPeriod = 3, OversoldLevel = 20, OverboughtLevel = 80 };
+                case StochasticVisualMode.S21_5_5:
+                    return new StochasticIndicatorConfig { KPeriod = 21, DPeriod = 5, OversoldLevel = 20, OverboughtLevel = 80 };
+                case StochasticVisualMode.Off:
+                    return new StochasticIndicatorConfig();
+                case StochasticVisualMode.S14_3_3:
+                case StochasticVisualMode.Auto:
+                default:
+                    return new StochasticIndicatorConfig { KPeriod = 14, DPeriod = 3, OversoldLevel = 20, OverboughtLevel = 80 };
+            }
+        }
+
+        private MacdIndicatorConfig ResolveMacdIndicatorConfig(MacdVisualMode mode)
+        {
+            switch (mode)
+            {
+                case MacdVisualMode.M8_21_5:
+                    return new MacdIndicatorConfig { FastPeriod = 8, SlowPeriod = 21, SignalPeriod = 5 };
+                case MacdVisualMode.M5_34_5:
+                    return new MacdIndicatorConfig { FastPeriod = 5, SlowPeriod = 34, SignalPeriod = 5 };
+                case MacdVisualMode.Off:
+                    return new MacdIndicatorConfig();
+                case MacdVisualMode.M12_26_9:
+                case MacdVisualMode.Auto:
+                default:
+                    return new MacdIndicatorConfig { FastPeriod = 12, SlowPeriod = 26, SignalPeriod = 9 };
+            }
+        }
+
+        private string GetEmaOverlayPairLabel()
+        {
+            return "EMA";
+        }
+
+        private string GetVwapOverlayPairLabel()
+        {
+            return "VWAP";
+        }
+
+        private string GetBollingerOverlayPairLabel()
+        {
+            return "BB";
+        }
+
+        private string GetIchimokuOverlayPairLabel()
+        {
+            return "ICHI";
+        }
+
+        private string BuildOscillatorPanelSignature()
+        {
+            return string.Join(
+                "|",
+                new[]
+                {
+                    DrawRsiMode.ToString(),
+                    DrawStochasticMode.ToString(),
+                    DrawMacdMode.ToString(),
+                    _resolvedRsiEventConfig.Period.ToString(CultureInfo.InvariantCulture),
+                    _resolvedStochasticEventConfig.KPeriod.ToString(CultureInfo.InvariantCulture),
+                    _resolvedStochasticEventConfig.DPeriod.ToString(CultureInfo.InvariantCulture),
+                    _resolvedMacdEventConfig.FastPeriod.ToString(CultureInfo.InvariantCulture),
+                    _resolvedMacdEventConfig.SlowPeriod.ToString(CultureInfo.InvariantCulture),
+                    _resolvedMacdEventConfig.SignalPeriod.ToString(CultureInfo.InvariantCulture)
+                });
+        }
+
+        private void SyncChartOscillatorIndicators()
+        {
+            if (ChartIndicators == null)
+                return;
+
+            // All Custom takes over ALL technicals: hide the native RSI/Stoch/MACD panels too
+            // (or remove them when the API exposes no visibility switch), like the price-panel
+            // overlays. The RSI/Stoch/MACD events on the main chart stay under their own toggles.
+            if (_forceCustomTechnicalOverlays)
+            {
+                if (SetManagedOscillatorIndicatorsVisible(false))
+                    return;
+                RemoveManagedOscillatorIndicators();
+                return;
+            }
+
+            var rsiEnabled = EffectiveMomentumOscillatorEnabled(DrawRsiMode != RsiVisualMode.Off, MomentumTechnicalComboMode.RsiEvents);
+            var stochasticEnabled = EffectiveMomentumOscillatorEnabled(DrawStochasticMode != StochasticVisualMode.Off, MomentumTechnicalComboMode.StochasticEvents);
+            var macdEnabled = EffectiveMomentumOscillatorEnabled(DrawMacdMode != MacdVisualMode.Off, MomentumTechnicalComboMode.MacdEvents);
+
+            var signature = BuildOscillatorPanelSignature();
+            if (string.Equals(_chartOscillatorSignature, signature, StringComparison.Ordinal) &&
+                ((_chartRsiIndicator != null) == rsiEnabled) &&
+                ((_chartStochasticIndicator != null) == stochasticEnabled) &&
+                ((_chartMacdIndicator != null) == macdEnabled))
+            {
+                // Same config as last built: bring the native oscillators back (e.g. after
+                // All Custom hid them), without re-adding anything.
+                SetManagedOscillatorIndicatorsVisible(true);
+                return;
+            }
+
+            RemoveManagedOscillatorIndicators();
+
+            var nextPanelIndex = ResolveOscillatorBasePanelIndex();
+
+            if (rsiEnabled)
+            {
+                _chartRsiIndicator = ChartIndicators.Add(
+                    "Relative Strength Index",
+                    new object[] { Bars.ClosePrices, _resolvedRsiEventConfig.Period });
+                if (_chartRsiIndicator != null)
+                    _chartRsiIndicator.PanelIndex = nextPanelIndex++;
+            }
+
+            if (stochasticEnabled)
+            {
+                _chartStochasticIndicator = ChartIndicators.Add(
+                    "Stochastic Oscillator",
+                    new object[]
+                    {
+                        _resolvedStochasticEventConfig.KPeriod,
+                        _resolvedStochasticEventConfig.DPeriod,
+                        _resolvedStochasticEventConfig.DPeriod,
+                        MovingAverageType.Simple
+                    });
+                if (_chartStochasticIndicator != null)
+                    _chartStochasticIndicator.PanelIndex = nextPanelIndex++;
+            }
+
+            if (macdEnabled)
+            {
+                _chartMacdIndicator = ChartIndicators.Add(
+                    "Macd Histogram",
+                    new object[]
+                    {
+                        Bars.ClosePrices,
+                        _resolvedMacdEventConfig.SlowPeriod,
+                        _resolvedMacdEventConfig.FastPeriod,
+                        _resolvedMacdEventConfig.SignalPeriod
+                    });
+                if (_chartMacdIndicator != null)
+                    _chartMacdIndicator.PanelIndex = nextPanelIndex++;
+            }
+
+            _chartOscillatorSignature = signature;
+        }
+
+        private int ResolveOscillatorBasePanelIndex()
+        {
+            var maxPanelIndex = 0;
+            var volumePanelIndex = -1;
+
+            foreach (var indicator in ChartIndicators)
+            {
+                if (indicator == null)
+                    continue;
+
+                maxPanelIndex = Math.Max(maxPanelIndex, indicator.PanelIndex);
+                var name = indicator.Name ?? "";
+                if (volumePanelIndex < 0 &&
+                    (name.IndexOf("volume", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                     name.IndexOf("tick volume", StringComparison.OrdinalIgnoreCase) >= 0))
+                {
+                    volumePanelIndex = indicator.PanelIndex;
+                }
+            }
+
+            return Math.Max(maxPanelIndex + 1, volumePanelIndex >= 0 ? volumePanelIndex + 1 : 1);
+        }
+
+        private void RemoveManagedOscillatorIndicators()
+        {
+            TryRemoveManagedChartIndicator(ref _chartRsiIndicator);
+            TryRemoveManagedChartIndicator(ref _chartStochasticIndicator);
+            TryRemoveManagedChartIndicator(ref _chartMacdIndicator);
+            RemoveStaleManagedOscillatorIndicators();
+            _chartOscillatorSignature = "";
+        }
+
+        // Hides/shows the native RSI/Stoch/MACD panels without removing them (when the API
+        // supports it). Returns false when no visibility switch could be applied, so the caller
+        // falls back to removing them.
+        private bool SetManagedOscillatorIndicatorsVisible(bool visible)
+        {
+            var allApplied = true;
+            allApplied &= SetManagedChartIndicatorVisible(_chartRsiIndicator, visible);
+            allApplied &= SetManagedChartIndicatorVisible(_chartStochasticIndicator, visible);
+            allApplied &= SetManagedChartIndicatorVisible(_chartMacdIndicator, visible);
+            return allApplied;
+        }
+
+        private void TryRemoveManagedChartIndicator(ref ChartIndicator indicator)
+        {
+            if (indicator == null || ChartIndicators == null)
+            {
+                indicator = null;
+                return;
+            }
+
+            try
+            {
+                ChartIndicators.Remove(indicator);
+            }
+            catch
+            {
+            }
+
+            indicator = null;
+        }
+
+        private void SyncChartTechnicalOverlays()
+        {
+            if (ChartIndicators == null || Bars == null || Bars.Count < 5)
+                return;
+
+            // All Custom renders the overlays with our own line styles; never add native
+            // chart indicators in that mode. Prefer hiding them (keeps them loaded so switching
+            // back is cheap); fall back to removing them when the API exposes no visibility switch.
+            if (_forceCustomTechnicalOverlays)
+            {
+                if (SetManagedTechnicalOverlaysVisible(false))
+                {
+                    if (!_indicatorVisibilityDiagLogged)
+                    {
+                        _indicatorVisibilityDiagLogged = true;
+                        PrintBypassLogFilter("[Visuals] All Custom: native technical overlays hidden (IsVisible/Opacity applied)");
+                    }
+                }
+                else
+                {
+                    if (!_indicatorVisibilityDiagLogged)
+                    {
+                        _indicatorVisibilityDiagLogged = true;
+                        PrintBypassLogFilter("[Visuals] All Custom: native overlay hide unsupported -> removed instead");
+                    }
+                    RemoveManagedTechnicalOverlays();
+                }
+                return;
+            }
+
+            var signature = BuildTechnicalOverlaySignature();
+            if (string.Equals(_chartTechnicalOverlaySignature, signature, StringComparison.Ordinal))
+            {
+                // Same config as last built: bring the native indicators back (e.g. after
+                // All Custom hid them), without re-adding anything.
+                SetManagedTechnicalOverlaysVisible(true);
+                return;
+            }
+
+            RemoveManagedTechnicalOverlays();
+
+            const int pricePanel = 0;
+
+            if (_toggleEmaOverlay)
+            {
+                _chartEmaFastIndicator = ChartIndicators.Add(
+                    "Exponential Moving Average",
+                    new object[] { Bars.ClosePrices, _resolvedEmaOverlayConfig.FastPeriod });
+                _chartEmaMidIndicator = ChartIndicators.Add(
+                    "Exponential Moving Average",
+                    new object[] { Bars.ClosePrices, _resolvedEmaOverlayConfig.MidPeriod });
+                if (_resolvedEmaOverlayConfig.SlowPeriod > 0 && _resolvedEmaOverlayConfig.SlowPeriod != _resolvedEmaOverlayConfig.MidPeriod)
+                {
+                    _chartEmaSlowIndicator = ChartIndicators.Add(
+                        "Exponential Moving Average",
+                        new object[] { Bars.ClosePrices, _resolvedEmaOverlayConfig.SlowPeriod });
+                }
+                foreach (var ind in new[] { _chartEmaFastIndicator, _chartEmaMidIndicator, _chartEmaSlowIndicator })
+                {
+                    if (ind != null)
+                        ind.PanelIndex = pricePanel;
+                }
+            }
+
+            if (_toggleVwapOverlay)
+            {
+                _chartVwapIndicator = ChartIndicators.Add(
+                    "VWAP",
+                    new object[] { _resolvedVwapOverlayConfig.Length });
+                if (_chartVwapIndicator != null)
+                    _chartVwapIndicator.PanelIndex = pricePanel;
+            }
+
+            if (_toggleBollingerOverlay)
+            {
+                _chartBollingerIndicator = ChartIndicators.Add(
+                    "Bollinger Bands",
+                    new object[]
+                    {
+                        Bars.ClosePrices,
+                        _resolvedBollingerOverlayConfig.Period,
+                        _resolvedBollingerOverlayConfig.StdDevMultiplier,
+                        MovingAverageType.Simple
+                    });
+                if (_chartBollingerIndicator != null)
+                    _chartBollingerIndicator.PanelIndex = pricePanel;
+            }
+
+            if (_toggleIchimokuOverlay)
+            {
+                _chartIchimokuIndicator = ChartIndicators.Add(
+                    "Ichimoku Kinko Hyo",
+                    new object[]
+                    {
+                        _resolvedIchimokuOverlayConfig.ConversionPeriod,
+                        _resolvedIchimokuOverlayConfig.BasePeriod,
+                        _resolvedIchimokuOverlayConfig.SpanBPeriod,
+                        26
+                    });
+                if (_chartIchimokuIndicator != null)
+                    _chartIchimokuIndicator.PanelIndex = pricePanel;
+            }
+
+            _chartTechnicalOverlaySignature = signature;
+        }
+
+        private void RemoveManagedTechnicalOverlays()
+        {
+            TryRemoveManagedChartIndicator(ref _chartEmaFastIndicator);
+            TryRemoveManagedChartIndicator(ref _chartEmaMidIndicator);
+            TryRemoveManagedChartIndicator(ref _chartEmaSlowIndicator);
+            TryRemoveManagedChartIndicator(ref _chartVwapIndicator);
+            TryRemoveManagedChartIndicator(ref _chartBollingerIndicator);
+            TryRemoveManagedChartIndicator(ref _chartIchimokuIndicator);
+            _chartTechnicalOverlaySignature = "";
+        }
+
+        // Hides/shows the native EMA/VWAP/Bollinger/Ichimoku indicators without removing them,
+        // so All Custom can take over visually and switching back is instant and cheap. Returns
+        // false when the API exposes no working visibility switch (caller then removes them).
+        private bool SetManagedTechnicalOverlaysVisible(bool visible)
+        {
+            var allApplied = true;
+            allApplied &= SetManagedChartIndicatorVisible(_chartEmaFastIndicator, visible);
+            allApplied &= SetManagedChartIndicatorVisible(_chartEmaMidIndicator, visible);
+            allApplied &= SetManagedChartIndicatorVisible(_chartEmaSlowIndicator, visible);
+            allApplied &= SetManagedChartIndicatorVisible(_chartVwapIndicator, visible);
+            allApplied &= SetManagedChartIndicatorVisible(_chartBollingerIndicator, visible);
+            allApplied &= SetManagedChartIndicatorVisible(_chartIchimokuIndicator, visible);
+            return allApplied;
+        }
+
+        private static bool SetManagedChartIndicatorVisible(ChartIndicator indicator, bool visible)
+        {
+            if (indicator == null)
+                return true;
+
+            // Try every visibility mechanism the API may expose; the caller falls back to
+            // removing the indicator if none of them can be applied.
+            var applied = TryApplyPropertyValue(indicator, "IsVisible", visible);
+            applied |= TryApplyPropertyValue(indicator, "Opacity", visible ? 1.0 : 0.0);
+            applied |= TryApplyPropertyValue(indicator, "IsEnabled", visible);
+            var chartObject = TryGetPropertyValue(indicator, "ChartObject");
+            if (chartObject != null)
+                applied |= TryApplyPropertyValue(chartObject, "IsVisible", visible);
+            return applied;
+        }
+
+        private static bool TryApplyPropertyValue(object target, string propertyName, object value)
+        {
+            if (target == null || string.IsNullOrWhiteSpace(propertyName) || value == null)
+                return false;
+            try
+            {
+                var prop = target.GetType().GetProperty(propertyName);
+                if (prop == null || !prop.CanWrite)
+                    return false;
+                var targetType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
+                object converted = value;
+                if (targetType != value.GetType())
+                    converted = Convert.ChangeType(value, targetType, CultureInfo.InvariantCulture);
+                prop.SetValue(target, converted, null);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        // True when every enabled overlay is rendered by a native chart indicator, so the
+        // per-bar custom drawing can be skipped. Any null (Add failed / wrong name) falls
+        // back to the custom path.
+        private bool NativeTechnicalOverlaysActive()
+        {
+            if (_forceCustomTechnicalOverlays)
+                return false;
+            if (_toggleEmaOverlay && (_chartEmaFastIndicator == null || _chartEmaMidIndicator == null))
+                return false;
+            if (_toggleVwapOverlay && _chartVwapIndicator == null)
+                return false;
+            if (_toggleBollingerOverlay && _chartBollingerIndicator == null)
+                return false;
+            if (_toggleIchimokuOverlay && _chartIchimokuIndicator == null)
+                return false;
+            return true;
+        }
+
+        private string BuildTechnicalOverlaySignature()
+        {
+            return string.Join("|",
+                _toggleEmaOverlay,
+                _resolvedEmaOverlayConfig.FastPeriod,
+                _resolvedEmaOverlayConfig.MidPeriod,
+                _resolvedEmaOverlayConfig.SlowPeriod,
+                _toggleVwapOverlay,
+                _resolvedVwapOverlayConfig.Length,
+                _toggleBollingerOverlay,
+                _resolvedBollingerOverlayConfig.Period,
+                _resolvedBollingerOverlayConfig.StdDevMultiplier,
+                _toggleIchimokuOverlay,
+                _resolvedIchimokuOverlayConfig.ConversionPeriod,
+                _resolvedIchimokuOverlayConfig.BasePeriod,
+                _resolvedIchimokuOverlayConfig.SpanBPeriod);
+        }
+
+        private void RemoveStaleManagedOscillatorIndicators()
+        {
+            if (ChartIndicators == null)
+                return;
+
+            var removable = new List<ChartIndicator>();
+            foreach (var indicator in ChartIndicators)
+            {
+                if (indicator == null)
+                    continue;
+
+                var name = (indicator.Name ?? string.Empty).Trim();
+                if (string.Equals(name, "Relative Strength Index", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(name, "Stochastic Oscillator", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(name, "Macd Histogram", StringComparison.OrdinalIgnoreCase))
+                {
+                    removable.Add(indicator);
+                }
+            }
+
+            foreach (var indicator in removable)
+            {
+                try
+                {
+                    ChartIndicators.Remove(indicator);
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        private double ResolveRiskLimitPresetPercent(RiskLimitPreset preset, double balance)
+        {
+            switch (preset)
+            {
+                case RiskLimitPreset.None: return 0.0;
+                case RiskLimitPreset._0_05pct: return 0.05;
+                case RiskLimitPreset._0_1pct: return 0.1;
+                case RiskLimitPreset._0_2pct: return 0.2;
+                case RiskLimitPreset._0_5pct: return 0.5;
+                case RiskLimitPreset._1pct: return 1.0;
+                case RiskLimitPreset._2pct: return 2.0;
+                case RiskLimitPreset._3pct: return 3.0;
+                case RiskLimitPreset._4pct: return 4.0;
+                case RiskLimitPreset._5pct: return 5.0;
+                case RiskLimitPreset._10pct: return 10.0;
+                case RiskLimitPreset._15pct: return 15.0;
+                case RiskLimitPreset._20pct: return 20.0;
+                case RiskLimitPreset._25usd: return balance > 0 ? (25.0 / balance) * 100.0 : 0.0;
+                case RiskLimitPreset._50usd: return balance > 0 ? (50.0 / balance) * 100.0 : 0.0;
+                case RiskLimitPreset._100usd: return balance > 0 ? (100.0 / balance) * 100.0 : 0.0;
+                case RiskLimitPreset._200usd: return balance > 0 ? (200.0 / balance) * 100.0 : 0.0;
+                case RiskLimitPreset._500usd: return balance > 0 ? (500.0 / balance) * 100.0 : 0.0;
+                case RiskLimitPreset._1000usd: return balance > 0 ? (1000.0 / balance) * 100.0 : 0.0;
+                case RiskLimitPreset._2000usd: return balance > 0 ? (2000.0 / balance) * 100.0 : 0.0;
+                default: return 0.0;
+            }
+        }
+
+        private string GetRiskLimitPresetLabel(RiskLimitPreset preset)
+        {
+            switch (preset)
+            {
+                case RiskLimitPreset.None: return "None";
+                case RiskLimitPreset._0_05pct: return "0.05%";
+                case RiskLimitPreset._0_1pct: return "0.10%";
+                case RiskLimitPreset._0_2pct: return "0.20%";
+                case RiskLimitPreset._0_5pct: return "0.50%";
+                case RiskLimitPreset._1pct: return "1.00%";
+                case RiskLimitPreset._2pct: return "2.00%";
+                case RiskLimitPreset._3pct: return "3.00%";
+                case RiskLimitPreset._4pct: return "4.00%";
+                case RiskLimitPreset._5pct: return "5.00%";
+                case RiskLimitPreset._10pct: return "10.00%";
+                case RiskLimitPreset._15pct: return "15.00%";
+                case RiskLimitPreset._20pct: return "20.00%";
+                case RiskLimitPreset._25usd: return "$25";
+                case RiskLimitPreset._50usd: return "$50";
+                case RiskLimitPreset._100usd: return "$100";
+                case RiskLimitPreset._200usd: return "$200";
+                case RiskLimitPreset._500usd: return "$500";
+                case RiskLimitPreset._1000usd: return "$1000";
+                case RiskLimitPreset._2000usd: return "$2000";
+                default: return "-";
+            }
         }
 
         private static TimeSpan ParseTimeSpanOrDefault(string value, TimeSpan fallback)
@@ -2985,134 +5114,361 @@ namespace cAlgo.Robots
             return TimeSpan.TryParse(value.Trim(), CultureInfo.InvariantCulture, out parsed) ? parsed : fallback;
         }
 
-        private void RemoveChartVisualObjects()
+        // Removes every chart object whose name starts with one of the given prefixes.
+        // A single pass over Chart.Objects replaces the old fixed 4096-iteration sweeps
+        // (~1.2M RemoveObject calls per refresh) with one call per object that actually
+        // exists — the previous version stalled the UI thread for seconds and could make
+        // cTrader kill/restart the chart.
+        private void RemoveChartObjectsByPrefixes(params string[] prefixes)
         {
-            for (var i = 0; i < 256; i++)
-            {
-                Chart.RemoveObject("H4BG_BODY_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("H4BG_WICK_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("H4BG_WICK_U_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("H4BG_WICK_L_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("MINI_BODY_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("MINI_WICK_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("MINI_WICK_U_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("MINI_WICK_L_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("MINI_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("MINI_PAD_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("KZ_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("KZ_TOP_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("KZ_BOT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("KZ_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("KZ_TXT2_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("LIQ_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("LIQ_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("SWEEP_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("SWEEP_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("BOS_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("BOS_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("CHOCH_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("CHOCH_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("RJ_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("RJ_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("BR_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("BR_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("PB_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("PB_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("CT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("CT_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("IM_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("IM_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("EMA20_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("EMA50_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("EMA200_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("PIN_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("PIN_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("ENG_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("ENG_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("STR_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("STR_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("SEQ_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("SEQ_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("BIG_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("BIG_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("FVG_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("OB_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("HTF_FVG_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("HTF_OB_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("KEY_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("KEY_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("STRAT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("STRAT_TXT_" + i.ToString(CultureInfo.InvariantCulture));
+            if (Chart == null || prefixes == null || prefixes.Length == 0)
+                return;
 
-                foreach (var tfLabel in new[] { "1m", "5m", "15m", "1H", "4H", "1D" })
+            try
+            {
+                var namesToRemove = new List<string>();
+                foreach (var chartObject in Chart.Objects)
                 {
-                    Chart.RemoveObject("PAT_" + tfLabel + "_" + i.ToString(CultureInfo.InvariantCulture));
-                    Chart.RemoveObject("RJ_" + tfLabel + "_" + i.ToString(CultureInfo.InvariantCulture));
-                    Chart.RemoveObject("RJ_TXT_" + tfLabel + "_" + i.ToString(CultureInfo.InvariantCulture));
-                    Chart.RemoveObject("BR_" + tfLabel + "_" + i.ToString(CultureInfo.InvariantCulture));
-                    Chart.RemoveObject("BR_TXT_" + tfLabel + "_" + i.ToString(CultureInfo.InvariantCulture));
-                    Chart.RemoveObject("PB_" + tfLabel + "_" + i.ToString(CultureInfo.InvariantCulture));
-                    Chart.RemoveObject("PB_TXT_" + tfLabel + "_" + i.ToString(CultureInfo.InvariantCulture));
-                    Chart.RemoveObject("CT_" + tfLabel + "_" + i.ToString(CultureInfo.InvariantCulture));
-                    Chart.RemoveObject("CT_TXT_" + tfLabel + "_" + i.ToString(CultureInfo.InvariantCulture));
-                    Chart.RemoveObject("IM_" + tfLabel + "_" + i.ToString(CultureInfo.InvariantCulture));
-                    Chart.RemoveObject("IM_TXT_" + tfLabel + "_" + i.ToString(CultureInfo.InvariantCulture));
+                    if (chartObject == null)
+                        continue;
+
+                    var name = chartObject.Name;
+                    if (string.IsNullOrWhiteSpace(name))
+                        continue;
+
+                    for (var i = 0; i < prefixes.Length; i++)
+                    {
+                        if (name.StartsWith(prefixes[i], StringComparison.Ordinal))
+                        {
+                            namesToRemove.Add(name);
+                            break;
+                        }
+                    }
                 }
+
+                foreach (var name in namesToRemove)
+                {
+                    try
+                    {
+                        Chart.RemoveObject(name);
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                SafePrint("[Visuals] Object sweep failed: {0}", ex.Message);
             }
         }
 
-        private void RemoveLiteZoneObjects()
+        private void RemoveChartVisualObjects()
         {
-            for (var i = 0; i < 256; i++)
+            RemoveChartObjectsByPrefixes(
+                "H4BG_", "MINI_", "H4SPLIT_", "DSPLIT_", "SPLIT_", "VWAP20_", "BBMID_", "BBUP_", "BBDN_", "ICHI_",
+                "KZ_", "LIQ_", "SWEEP_", "BOS_", "CHOCH_", "RJ_", "BR_", "PB_", "CT_", "IM_",
+                "EMA20_", "EMA50_", "EMA200_", "PIN_", "ENG_", "STR_", "SEQ_", "BIG_",
+                "FVG_", "OB_", "HTF_FVG_", "HTF_OB_", "KEY_", "ZONE_TXT_", "STRAT_", "TL_", "DIV_",
+                "PAT_", "HTFBG_", "PZ_");
+        }
+
+        // True once the per-refresh chart object budget is reached; the heavy overlay
+        // draw functions skip (lower priority first) so the total never exceeds the limit.
+        private bool ChartObjectsOverBudget()
+        {
+            try
             {
-                Chart.RemoveObject("MINI_BODY_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("MINI_WICK_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("MINI_WICK_U_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("MINI_WICK_L_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("MINI_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("MINI_PAD_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("KZ_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("KZ_TOP_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("KZ_BOT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("KZ_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("KZ_TXT2_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("FVG_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("OB_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("HTF_FVG_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("HTF_OB_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("KEY_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("KEY_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("LIQ_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("LIQ_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("SWEEP_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("SWEEP_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("BOS_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("BOS_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("CHOCH_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("CHOCH_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("RJ_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("RJ_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("BR_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("BR_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("PB_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("PB_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("CT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("CT_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("IM_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("IM_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("PIN_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("PIN_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("ENG_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("ENG_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("BIG_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("BIG_TXT_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("PAT_1m_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("PAT_5m_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("PAT_15m_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("PAT_1H_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("PAT_4H_" + i.ToString(CultureInfo.InvariantCulture));
-                Chart.RemoveObject("PAT_1D_" + i.ToString(CultureInfo.InvariantCulture));
+                return Chart != null && Chart.Objects.Count >= MaxChartObjectBudget;
             }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private void RemoveTechnicalOverlayObjects()
+        {
+            RemoveChartObjectsByPrefixes(
+                "EMA20_", "EMA50_", "EMA200_", "VWAP20_", "BBMID_", "BBUP_", "BBDN_", "ICHI_");
+        }
+
+        private string BuildTechnicalOverlayStateKey()
+        {
+            return string.Join(
+                "|",
+                new[]
+                {
+                    _toggleEmaOverlay ? "ema:on" : "ema:off",
+                    _toggleVwapOverlay ? "vwap:on" : "vwap:off",
+                    _toggleBollingerOverlay ? "bb:on" : "bb:off",
+                    _toggleIchimokuOverlay ? "ichi:on" : "ichi:off",
+                    _resolvedEmaOverlayConfig.FastPeriod.ToString(CultureInfo.InvariantCulture),
+                    _resolvedEmaOverlayConfig.MidPeriod.ToString(CultureInfo.InvariantCulture),
+                    _resolvedEmaOverlayConfig.SlowPeriod.ToString(CultureInfo.InvariantCulture),
+                    _resolvedVwapOverlayConfig.Length.ToString(CultureInfo.InvariantCulture),
+                    _resolvedBollingerOverlayConfig.Period.ToString(CultureInfo.InvariantCulture),
+                    _resolvedBollingerOverlayConfig.StdDevMultiplier.ToString(CultureInfo.InvariantCulture),
+                    _resolvedIchimokuOverlayConfig.ConversionPeriod.ToString(CultureInfo.InvariantCulture),
+                    _resolvedIchimokuOverlayConfig.BasePeriod.ToString(CultureInfo.InvariantCulture),
+                    _resolvedIchimokuOverlayConfig.SpanBPeriod.ToString(CultureInfo.InvariantCulture)
+                });
+        }
+
+        private string GetChartSymbolKey()
+        {
+            return Chart != null ? (Chart.SymbolName ?? "") : (Symbol != null ? Symbol.Name ?? "" : "");
+        }
+
+        private string GetChartTimeFrameKey()
+        {
+            return Chart != null ? Convert.ToString(Chart.TimeFrame, CultureInfo.InvariantCulture) ?? "" : "";
+        }
+
+        // Dirty-check key for the 4H splitter grid. The drawn set only changes when a 4H
+        // boundary enters/leaves the visible window, a new 4H bar opens, or the day rolls
+        // over - so splitters no longer redraw on every forming-bar tick.
+        private string Build4HSplitterStateKey()
+        {
+            var currentSymbol = GetChartSymbolKey();
+            var currentTimeFrame = GetChartTimeFrameKey();
+            var chartStart = Bars != null && Bars.Count > 0 ? Bars.OpenTimes[0] : DateTime.MinValue;
+            var chartEnd = GetCurrentChartEndTime();
+
+            var firstBoundaryTicks = 0L;
+            var lastBoundaryTicks = 0L;
+            try
+            {
+                var fourHourBars = MarketData.GetBars(TimeFrame.Hour4, currentSymbol);
+                if (fourHourBars != null)
+                {
+                    foreach (var boundary in fourHourBars.OpenTimes)
+                    {
+                        if (boundary < chartStart)
+                            continue;
+                        if (boundary > chartEnd)
+                            break;
+                        if (firstBoundaryTicks == 0L)
+                            firstBoundaryTicks = boundary.Ticks;
+                        lastBoundaryTicks = boundary.Ticks;
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            return string.Join(
+                "|",
+                new[]
+                {
+                    currentSymbol,
+                    currentTimeFrame,
+                    firstBoundaryTicks.ToString(CultureInfo.InvariantCulture),
+                    lastBoundaryTicks.ToString(CultureInfo.InvariantCulture),
+                    GetNextDayStartTime(chartEnd).Ticks.ToString(CultureInfo.InvariantCulture)
+                });
+        }
+
+        // Dirty-check key for the HTF background candles. They only change when a completed
+        // 1D/4H/NY-30 bar changes, so the background overlay no longer redraws on
+        // forming-bar ticks.
+        private bool ShouldDrawHtfBackground()
+        {
+            return DrawHtfMiniChartMode == HtfMiniChartMode.Background || DrawHtfMiniChartMode == HtfMiniChartMode.Both;
+        }
+
+        private bool ShouldDrawHtfMiniChart()
+        {
+            return DrawHtfMiniChartMode == HtfMiniChartMode.Mini_chart || DrawHtfMiniChartMode == HtfMiniChartMode.Both;
+        }
+
+        private string BuildHtfBackgroundStateKey()
+        {
+            var currentSymbol = GetChartSymbolKey();
+            var currentTimeFrame = GetChartTimeFrameKey();
+            var chartTfMinutes = TimeFrameToMinutes(Chart != null ? Chart.TimeFrame : TimeFrame.Minute);
+            var dailyOpen = 0L;
+            var fourHourOpen = 0L;
+            var ny30Open = 0L;
+            if (ShouldDrawHtfBackground())
+            {
+                dailyOpen = GetPreviousCompletedBarOpenTimeTicks(TimeFrame.Daily, currentSymbol);
+                fourHourOpen = chartTfMinutes < 15 ? GetPreviousCompletedBarOpenTimeTicks(TimeFrame.Hour4, currentSymbol) : 0L;
+                ny30Open = chartTfMinutes <= 15 ? GetSecondToLastBarOpenTimeTicks(TimeFrame.Minute30, currentSymbol) : 0L;
+            }
+            return string.Join(
+                "|",
+                new[]
+                {
+                    currentSymbol,
+                    currentTimeFrame,
+                    ShouldDrawHtfBackground() ? "htfbg:on" : "htfbg:off",
+                    dailyOpen.ToString(CultureInfo.InvariantCulture),
+                    fourHourOpen.ToString(CultureInfo.InvariantCulture),
+                    ny30Open.ToString(CultureInfo.InvariantCulture)
+                });
+        }
+
+        private long GetPreviousCompletedBarOpenTimeTicks(TimeFrame timeFrame, string symbolName)
+        {
+            try
+            {
+                var sourceBars = MarketData.GetBars(timeFrame, symbolName);
+                int index;
+                if (sourceBars == null || !TryGetPreviousCompletedPeriodBarIndex(sourceBars, timeFrame, out index) || index < 0 || index >= sourceBars.Count)
+                    return 0L;
+                return sourceBars.OpenTimes[index].Ticks;
+            }
+            catch
+            {
+                return 0L;
+            }
+        }
+
+        private long GetSecondToLastBarOpenTimeTicks(TimeFrame timeFrame, string symbolName)
+        {
+            try
+            {
+                var sourceBars = MarketData.GetBars(timeFrame, symbolName);
+                if (sourceBars == null || sourceBars.Count < 2)
+                    return 0L;
+                return sourceBars.OpenTimes[sourceBars.Count - 2].Ticks;
+            }
+            catch
+            {
+                return 0L;
+            }
+        }
+
+        // Dirty-check key for the HTF mini chart strip. It is anchored to the chart's right
+        // edge (forming bar open time) and to completed HTF bars, so it refreshes once per
+        // chart bar instead of on every forming-bar tick.
+        private string BuildMiniChartStateKey()
+        {
+            var currentSymbol = GetChartSymbolKey();
+            var currentTimeFrame = GetChartTimeFrameKey();
+            return string.Join(
+                "|",
+                new[]
+                {
+                    currentSymbol,
+                    currentTimeFrame,
+                    ShouldDrawHtfMiniChart() ? "mini:on" : "mini:off",
+                    GetCurrentChartEndTime().Ticks.ToString(CultureInfo.InvariantCulture),
+                    DateTime.UtcNow.Date.Ticks.ToString(CultureInfo.InvariantCulture)
+                });
+        }
+
+        // Dirty-check key for ALL completed-bar detections (killer zones, HTF zones, key
+        // levels, liquidity, canonical events, FVG/order blocks, sweeps, BOS/CHOCH, scored
+        // price zones, candle patterns). Intentionally excludes the forming bar's OHLC
+        // (churns every tick) - the heavy detection redraw runs at most once per completed
+        // bar, capped further by LiteRedrawMinIntervalSeconds on fast timeframes.
+        private string BuildDetectionsStateKey()
+        {
+            var currentSymbol = GetChartSymbolKey();
+            var currentTimeFrame = GetChartTimeFrameKey();
+            var completedIndex = Bars != null && Bars.Count >= 2 ? Bars.Count - 2 : -1;
+            var completedOpenTime = completedIndex >= 0 ? Bars.OpenTimes[completedIndex].Ticks.ToString(CultureInfo.InvariantCulture) : "";
+            var patternToggles = (_togglePinBarPatterns || _toggleEngulfingPatterns || _toggleBigCandlePatterns ||
+                _toggleMorningStarPatterns || _toggleEveningStarPatterns || _toggleHammerPatterns ||
+                _toggleHangingManPatterns || _toggleShootingStarPatterns || _toggleInvertedHammerPatterns ||
+                _togglePiercingLinePatterns || _toggleDarkCloudCoverPatterns || _toggleThreeWhiteSoldiersPatterns ||
+                _toggleThreeBlackCrowsPatterns || _toggleHaramiPatterns) ? "pat:on" : "pat:off";
+            return string.Join(
+                "|",
+                new[]
+                {
+                    currentSymbol,
+                    currentTimeFrame,
+                    _toggleKillerZones ? "kz:on" : "kz:off",
+                    _toggleFvgZones ? "fvg:on" : "fvg:off",
+                    _toggleOrderBlocks ? "ob:on" : "ob:off",
+                    _toggleHigherTimeframeZones ? "htfz:on" : "htfz:off",
+                    _toggleKeyLevels ? "key:on" : "key:off",
+                    _toggleSupplyDemand ? "sd:on" : "sd:off",
+                    _toggleLiquidityLevels ? "liq:on" : "liq:off",
+                    _toggleSweepDetections ? "swp:on" : "swp:off",
+                    _toggleBosDetections ? "bos:on" : "bos:off",
+                    _toggleChochDetections ? "choch:on" : "choch:off",
+                    _toggleRejectionDetections ? "rj:on" : "rj:off",
+                    _toggleBreakoutDetections ? "br:on" : "br:off",
+                    _togglePullbackDetections ? "pb:on" : "pb:off",
+                    _toggleContinuationDetections ? "ct:on" : "ct:off",
+                    _toggleImpulseDetections ? "im:on" : "im:off",
+                    patternToggles,
+                    completedOpenTime,
+                    DateTime.UtcNow.Date.Ticks.ToString(CultureInfo.InvariantCulture)
+                });
+        }
+
+        // Dirty-check key for the FULL visual rebuild (mini chart, background HTF candle, patterns,
+        // zones, markers). Unlike the lite key it intentionally excludes the forming bar's OHLC
+        // (churns every tick) and instead keys on completed bars + day rollover + marker count, so
+        // the heavy remove+redraw only happens when something it draws actually changed.
+        private string BuildFullOverlayStateKey()
+        {
+            var currentSymbol = Chart != null ? (Chart.SymbolName ?? "") : (Symbol != null ? Symbol.Name ?? "" : "");
+            var currentTimeFrame = Chart != null ? Convert.ToString(Chart.TimeFrame, CultureInfo.InvariantCulture) ?? "" : "";
+            var completedIndex = Bars != null && Bars.Count >= 2 ? Bars.Count - 2 : -1;
+            var completedOpenTime = completedIndex >= 0 ? Bars.OpenTimes[completedIndex].Ticks.ToString(CultureInfo.InvariantCulture) : "";
+
+            return string.Join(
+                "|",
+                new[]
+                {
+                    currentSymbol,
+                    currentTimeFrame,
+                    ShouldDrawHtfBackground() ? "htfbg:on" : "htfbg:off",
+                    ShouldDrawHtfMiniChart() ? "mini:on" : "mini:off",
+                    _toggleKillerZones ? "kz:on" : "kz:off",
+                    _toggleFvgZones ? "fvg:on" : "fvg:off",
+                    _toggleOrderBlocks ? "ob:on" : "ob:off",
+                    _toggleHigherTimeframeZones ? "htfz:on" : "htfz:off",
+                    _toggleKeyLevels ? "key:on" : "key:off",
+                    _toggleSupplyDemand ? "sd:on" : "sd:off",
+                    _toggleLiquidityLevels ? "liq:on" : "liq:off",
+                    _toggleSweepDetections ? "swp:on" : "swp:off",
+                    _toggleBosDetections ? "bos:on" : "bos:off",
+                    _toggleChochDetections ? "choch:on" : "choch:off",
+                    _toggleRejectionDetections ? "rj:on" : "rj:off",
+                    _toggleBreakoutDetections ? "br:on" : "br:off",
+                    _togglePullbackDetections ? "pb:on" : "pb:off",
+                    _toggleContinuationDetections ? "ct:on" : "ct:off",
+                    _toggleImpulseDetections ? "im:on" : "im:off",
+                    _toggleTrendlines ? "tl:on" : "tl:off",
+                    _toggleDivergence ? "div:on" : "div:off",
+                    _togglePinBarPatterns ? "pin:on" : "pin:off",
+                    _toggleEngulfingPatterns ? "eng:on" : "eng:off",
+                    _toggleBigCandlePatterns ? "big:on" : "big:off",
+                    _toggleMorningStarPatterns ? "mor:on" : "mor:off",
+                    _toggleEveningStarPatterns ? "eve:on" : "eve:off",
+                    _toggleHammerPatterns ? "ham:on" : "ham:off",
+                    _toggleHangingManPatterns ? "hgm:on" : "hgm:off",
+                    _toggleShootingStarPatterns ? "sst:on" : "sst:off",
+                    _toggleInvertedHammerPatterns ? "ihm:on" : "ihm:off",
+                    _togglePiercingLinePatterns ? "pln:on" : "pln:off",
+                    _toggleDarkCloudCoverPatterns ? "dcc:on" : "dcc:off",
+                    _toggleThreeWhiteSoldiersPatterns ? "3ws:on" : "3ws:off",
+                    _toggleThreeBlackCrowsPatterns ? "3bc:on" : "3bc:off",
+                    _toggleHaramiPatterns ? "har:on" : "har:off",
+                    _toggleEmaOverlay ? "ema:on" : "ema:off",
+                    _toggleVwapOverlay ? "vwap:on" : "vwap:off",
+                    _toggleBollingerOverlay ? "bb:on" : "bb:off",
+                    _toggleIchimokuOverlay ? "ichi:on" : "ichi:off",
+                    _toggleEmaEvents ? "emae:on" : "emae:off",
+                    _toggleVwapEvents ? "vwape:on" : "vwape:off",
+                    _toggleBollingerEvents ? "bbe:on" : "bbe:off",
+                    _toggleRsiEvents ? "rsi:on" : "rsi:off",
+                    _toggleStochasticEvents ? "sto:on" : "sto:off",
+                    _toggleMacdEvents ? "macd:on" : "macd:off",
+                    _toggleStrategyMarkers ? "sm:on" : "sm:off",
+                    Bars != null ? Bars.Count.ToString(CultureInfo.InvariantCulture) : "",
+                    completedOpenTime,
+                    _strategyChartMarkers.Count.ToString(CultureInfo.InvariantCulture),
+                    DateTime.UtcNow.Date.Ticks.ToString(CultureInfo.InvariantCulture)
+                });
         }
 
         private void DrawLiteZoneOverlays()
@@ -3122,41 +5478,29 @@ namespace cAlgo.Robots
                 if (Chart == null || Bars == null || Bars.Count < 5)
                     return;
 
-                RemoveLiteZoneObjects();
+                // Native chart display prefs (grid / period separators) may not be available
+                // during OnStart — retry here until they apply.
+                try { ApplyChartDisplayPreferences(); } catch { }
 
+                var sw = Stopwatch.StartNew();
+                var breakdown = new List<string>();
                 var objectIndex = 0;
-                if (_toggleHtfMiniChart)
-                    objectIndex = DrawHtfMiniCharts(objectIndex);
-                if (_toggleKillerZones)
-                    objectIndex = DrawConfiguredKillerZones(objectIndex);
-                if (_toggleFvgZones)
-                    objectIndex = DrawRecentFvgZones(Bars, Chart.TimeFrame, "FVG_", objectIndex, GetCurrentChartEndTime());
-                if (_toggleOrderBlocks)
-                    objectIndex = DrawRecentOrderBlocks(Bars, Chart.TimeFrame, "OB_", objectIndex, GetCurrentChartEndTime());
-                if (_toggleHigherTimeframeZones)
-                    objectIndex = DrawHigherTimeframeZonesOnChart(objectIndex);
-                if (_toggleKeyLevels)
-                    objectIndex = DrawKeyLevelsOnChart(objectIndex);
-                if (_toggleLiquidityLevels)
-                    objectIndex = DrawLiquidityLevelsOnChart(objectIndex);
-                if (_toggleSweepDetections)
-                    objectIndex = DrawSweepDetectionsOnChart(objectIndex);
-                if (_toggleBosDetections)
-                    objectIndex = DrawStructureBreakDetectionsOnChart(objectIndex, false);
-                if (_toggleChochDetections)
-                    objectIndex = DrawStructureBreakDetectionsOnChart(objectIndex, true);
-                if (_toggleRejectionDetections)
-                    objectIndex = DrawCanonicalEventsOnChart(objectIndex, CanonicalEventType.Rejection);
-                if (_toggleBreakoutDetections)
-                    objectIndex = DrawCanonicalEventsOnChart(objectIndex, CanonicalEventType.Breakout);
-                if (_togglePullbackDetections)
-                    objectIndex = DrawCanonicalEventsOnChart(objectIndex, CanonicalEventType.Pullback);
-                if (_toggleContinuationDetections)
-                    objectIndex = DrawCanonicalEventsOnChart(objectIndex, CanonicalEventType.Continuation);
-                if (_toggleImpulseDetections)
-                    objectIndex = DrawCanonicalEventsOnChart(objectIndex, CanonicalEventType.Impulse);
-                if (_toggleEmaOverlay)
-                    objectIndex = DrawLiteEmaOverlays(objectIndex);
+
+                // Per-family dirty checks: each family only redraws when something it actually
+                // draws changed. Previously the whole lite overlay (4H splitters, HTF background
+                // candles, mini charts, zones, markers) was removed and redrawn every 5 ticks
+                // because the forming bar's OHLC churns on almost every tick.
+                objectIndex = RefreshLite4HSplitters(objectIndex, breakdown);
+                objectIndex = RefreshLiteHtfBackground(objectIndex, breakdown);
+                objectIndex = RefreshLiteMiniCharts(objectIndex, breakdown);
+                objectIndex = RefreshLiteDetections(objectIndex, breakdown);
+                objectIndex = RefreshLiteTechnicalOverlays(objectIndex, breakdown);
+
+                sw.Stop();
+                _lastLiteOverlayDrawMs = sw.ElapsedMilliseconds;
+                _lastLiteOverlayObjectCount = objectIndex;
+                _lastLiteOverlayBreakdown = string.Join(" ", breakdown.ToArray());
+                _lastLiteOverlayAtUtc = DateTime.UtcNow;
             }
             catch (Exception ex)
             {
@@ -3164,20 +5508,231 @@ namespace cAlgo.Robots
             }
         }
 
-        private int DrawLiteEmaOverlays(int objectIndex)
+        private static void CommitLiteBreakdown(List<string> breakdown, int beforeCount, int afterCount, string label)
+        {
+            var added = afterCount - beforeCount;
+            if (added > 0)
+                breakdown.Add(label + ":" + added.ToString(CultureInfo.InvariantCulture));
+        }
+
+        // 4H splitter grid: only changes at 4H boundaries / visible window edge / day rollover.
+        private int RefreshLite4HSplitters(int objectIndex, List<string> breakdown)
+        {
+            var stateKey = Build4HSplitterStateKey();
+            if (_last4HSplitterBarsCount == Bars.Count &&
+                string.Equals(_last4HSplitterStateKey, stateKey, StringComparison.Ordinal))
+                return objectIndex;
+            _last4HSplitterBarsCount = Bars.Count;
+            _last4HSplitterStateKey = stateKey;
+
+            var before = objectIndex;
+            RemoveChartObjectsByPrefixes("H4SPLIT_", "DSPLIT_", "SPLIT_");
+            objectIndex = DrawFourHourSplitters(objectIndex);
+            CommitLiteBreakdown(breakdown, before, objectIndex, "h4split");
+            return objectIndex;
+        }
+
+        // HTF background candles: only change when a completed 1D/4H/NY-30 bar changes.
+        private int RefreshLiteHtfBackground(int objectIndex, List<string> breakdown)
+        {
+            var stateKey = BuildHtfBackgroundStateKey();
+            if (_lastHtfBackgroundBarsCount == Bars.Count &&
+                string.Equals(_lastHtfBackgroundStateKey, stateKey, StringComparison.Ordinal))
+                return objectIndex;
+            _lastHtfBackgroundBarsCount = Bars.Count;
+            _lastHtfBackgroundStateKey = stateKey;
+
+            var before = objectIndex;
+            RemoveChartObjectsByPrefixes("HTFBG_");
+            if (ShouldDrawHtfBackground())
+                objectIndex = DrawBackgroundAutoHigherTimeframeCandles(objectIndex);
+            CommitLiteBreakdown(breakdown, before, objectIndex, "bg");
+            return objectIndex;
+        }
+
+        // HTF mini charts: anchored to the chart's right edge + completed HTF bars, so they
+        // refresh once per chart bar instead of on every forming-bar tick; throttled on fast
+        // timeframes so the strip doesn't rebuild every few seconds.
+        private int RefreshLiteMiniCharts(int objectIndex, List<string> breakdown)
+        {
+            var stateKey = BuildMiniChartStateKey();
+            if (_lastMiniChartBarsCount == Bars.Count &&
+                string.Equals(_lastMiniChartStateKey, stateKey, StringComparison.Ordinal))
+                return objectIndex;
+
+            var nowUtc = DateTime.UtcNow;
+            if (_lastMiniChartRedrawAtUtc != DateTime.MinValue &&
+                (nowUtc - _lastMiniChartRedrawAtUtc).TotalSeconds < LiteRedrawMinIntervalSeconds)
+                return objectIndex;
+            _lastMiniChartBarsCount = Bars.Count;
+            _lastMiniChartStateKey = stateKey;
+            _lastMiniChartRedrawAtUtc = nowUtc;
+
+            var before = objectIndex;
+            RemoveChartObjectsByPrefixes("MINI_");
+            if (ShouldDrawHtfMiniChart())
+                objectIndex = DrawHtfMiniCharts(objectIndex);
+            CommitLiteBreakdown(breakdown, before, objectIndex, "mini");
+            return objectIndex;
+        }
+
+        // Completed-bar detections (killer zones, HTF zones, key levels, liquidity, canonical
+        // events): keyed on the last completed bar, never the forming bar.
+        // All completed-bar detections in one family (killer zones, HTF zones, key levels,
+        // liquidity, canonical events, FVG/order blocks, sweeps, BOS/CHOCH, scored price
+        // zones, candle patterns): keyed on the last completed bar (+ toggles + day rollover)
+        // and throttled so fast timeframes can't redraw the heavy set every few seconds.
+        private int RefreshLiteDetections(int objectIndex, List<string> breakdown)
+        {
+            var stateKey = BuildDetectionsStateKey();
+            if (_lastDetectionsBarsCount == Bars.Count &&
+                string.Equals(_lastDetectionsStateKey, stateKey, StringComparison.Ordinal))
+                return objectIndex;
+
+            // Hard cap on redraw frequency: on 1s/5s charts a completed bar arrives every few
+            // seconds, but the heavy detection redraw only needs to run at most this often.
+            var nowUtc = DateTime.UtcNow;
+            if (_lastDetectionsRedrawAtUtc != DateTime.MinValue &&
+                (nowUtc - _lastDetectionsRedrawAtUtc).TotalSeconds < LiteRedrawMinIntervalSeconds)
+                return objectIndex;
+            _lastDetectionsBarsCount = Bars.Count;
+            _lastDetectionsStateKey = stateKey;
+            _lastDetectionsRedrawAtUtc = nowUtc;
+
+            var before = objectIndex;
+            RemoveChartObjectsByPrefixes(
+                "KZ_", "FVG_", "OB_", "HTF_FVG_", "HTF_OB_", "KEY_", "LIQ_",
+                "SWEEP_", "BOS_", "CHOCH_", "RJ_", "BR_", "PB_", "CT_", "IM_", "PZ_",
+                "PIN_", "ENG_", "BIG_", "PAT_", "STR_", "SEQ_", "ZONE_TXT_");
+            if (_toggleKillerZones)
+                objectIndex = DrawConfiguredKillerZones(objectIndex);
+            if (_toggleFvgZones)
+                objectIndex = DrawRecentFvgZones(Bars, Chart.TimeFrame, "FVG_", objectIndex, GetCurrentChartEndTime());
+            if (_toggleOrderBlocks)
+                objectIndex = DrawRecentOrderBlocks(Bars, Chart.TimeFrame, "OB_", objectIndex, GetCurrentChartEndTime());
+            if (_toggleHigherTimeframeZones)
+                objectIndex = DrawHigherTimeframeZonesOnChart(objectIndex);
+            if (_toggleKeyLevels)
+                objectIndex = DrawKeyLevelsOnChart(objectIndex);
+            if (_toggleSupplyDemand)
+                objectIndex = DrawScoredPriceZones(objectIndex);
+            if (_toggleLiquidityLevels)
+                objectIndex = DrawLiquidityLevelsOnChart(objectIndex);
+            if (_toggleSweepDetections)
+                objectIndex = DrawSweepDetectionsOnChart(objectIndex);
+            if (_toggleBosDetections)
+                objectIndex = DrawStructureBreakDetectionsOnChart(objectIndex, false);
+            if (_toggleChochDetections)
+                objectIndex = DrawStructureBreakDetectionsOnChart(objectIndex, true);
+            if (_toggleRejectionDetections)
+                objectIndex = DrawCanonicalEventsOnChart(objectIndex, CanonicalEventType.Rejection);
+            if (_toggleBreakoutDetections)
+                objectIndex = DrawCanonicalEventsOnChart(objectIndex, CanonicalEventType.Breakout);
+            if (_togglePullbackDetections)
+                objectIndex = DrawCanonicalEventsOnChart(objectIndex, CanonicalEventType.Pullback);
+            if (_toggleContinuationDetections)
+                objectIndex = DrawCanonicalEventsOnChart(objectIndex, CanonicalEventType.Continuation);
+            if (_toggleImpulseDetections)
+                objectIndex = DrawCanonicalEventsOnChart(objectIndex, CanonicalEventType.Impulse);
+            if (_togglePinBarPatterns || _toggleEngulfingPatterns || _toggleBigCandlePatterns ||
+                _toggleMorningStarPatterns || _toggleEveningStarPatterns || _toggleHammerPatterns ||
+                _toggleHangingManPatterns || _toggleShootingStarPatterns || _toggleInvertedHammerPatterns ||
+                _togglePiercingLinePatterns || _toggleDarkCloudCoverPatterns || _toggleThreeWhiteSoldiersPatterns ||
+                _toggleThreeBlackCrowsPatterns || _toggleHaramiPatterns)
+                objectIndex = DrawDirectionalCandlePatternsOnChart(objectIndex);
+            CommitLiteBreakdown(breakdown, before, objectIndex, "det");
+            return objectIndex;
+        }
+
+        // Technical overlays (EMA/VWAP/Bollinger/Ichimoku): already dirty-keyed separately.
+        private int RefreshLiteTechnicalOverlays(int objectIndex, List<string> breakdown)
+        {
+            var shouldShowTechnicalOverlays = _toggleEmaOverlay || _toggleVwapOverlay || _toggleBollingerOverlay || _toggleIchimokuOverlay;
+            if (!shouldShowTechnicalOverlays)
+            {
+                if (_lastTechnicalOverlayBarsCount >= 0 || !string.IsNullOrEmpty(_lastTechnicalOverlayStateKey))
+                {
+                    RemoveTechnicalOverlayObjects();
+                    _lastTechnicalOverlayBarsCount = -1;
+                    _lastTechnicalOverlayStateKey = "";
+                }
+                return objectIndex;
+            }
+            if (NativeTechnicalOverlaysActive())
+            {
+                // Clean any custom overlay objects drawn before native indicators took
+                // over (one-time, only if custom was previously rendered).
+                if (_lastTechnicalOverlayBarsCount >= 0 || !string.IsNullOrEmpty(_lastTechnicalOverlayStateKey))
+                {
+                    RemoveTechnicalOverlayObjects();
+                    _lastTechnicalOverlayBarsCount = -1;
+                    _lastTechnicalOverlayStateKey = "";
+                }
+                return objectIndex;
+            }
+
+            var technicalStateKey = BuildTechnicalOverlayStateKey();
+            var technicalNeedsRefresh = _lastTechnicalOverlayBarsCount != Bars.Count ||
+                                        !string.Equals(_lastTechnicalOverlayStateKey, technicalStateKey, StringComparison.Ordinal);
+            if (technicalNeedsRefresh)
+            {
+                // Throttle on fast timeframes: indicator series are rebuilt per bar, but on
+                // 1s/5s charts that would still rebuild every few seconds.
+                var nowUtc = DateTime.UtcNow;
+                if (_lastTechOverlayRedrawAtUtc != DateTime.MinValue &&
+                    (nowUtc - _lastTechOverlayRedrawAtUtc).TotalSeconds < LiteRedrawMinIntervalSeconds)
+                    return objectIndex;
+                _lastTechOverlayRedrawAtUtc = nowUtc;
+                RemoveTechnicalOverlayObjects();
+                var before = objectIndex;
+                objectIndex = DrawLiteTrendOverlays(objectIndex);
+                CommitLiteBreakdown(breakdown, before, objectIndex, "tech");
+                _lastTechnicalOverlayBarsCount = Bars.Count;
+                _lastTechnicalOverlayStateKey = technicalStateKey;
+            }
+            return objectIndex;
+        }
+
+        private int DrawLiteTrendOverlays(int objectIndex)
         {
             if (Chart == null || Bars == null || Bars.Count < 24)
                 return objectIndex;
 
             try
             {
-                objectIndex = DrawIndicatorSeriesLine(objectIndex, "EMA20_", index => ComputeExponentialMovingAverage(Bars, index, 20), Color.FromArgb(255, 56, 189, 248), 1, "Lines", 180);
-                objectIndex = DrawIndicatorSeriesLine(objectIndex, "EMA50_", index => ComputeExponentialMovingAverage(Bars, index, 50), Color.FromArgb(255, 251, 113, 133), 1, "Lines", 180);
-                objectIndex = DrawIndicatorSeriesLine(objectIndex, "EMA200_", index => ComputeExponentialMovingAverage(Bars, index, 200), Color.FromArgb(255, 132, 204, 22), 2, "Lines", 220);
+                if (_toggleEmaOverlay)
+                {
+                    var emaColor = Color.FromArgb(255, 56, 189, 248);
+                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "EMA20_", index => ComputeExponentialMovingAverage(Bars, index, _resolvedEmaOverlayConfig.FastPeriod), emaColor, 1, "DotsRare", 180);
+                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "EMA50_", index => ComputeExponentialMovingAverage(Bars, index, _resolvedEmaOverlayConfig.MidPeriod), emaColor, 1, "Dots", 180);
+                    if (_resolvedEmaOverlayConfig.SlowPeriod > 0 && _resolvedEmaOverlayConfig.SlowPeriod != _resolvedEmaOverlayConfig.MidPeriod)
+                        objectIndex = DrawIndicatorSeriesLine(objectIndex, "EMA200_", index => ComputeExponentialMovingAverage(Bars, index, _resolvedEmaOverlayConfig.SlowPeriod), emaColor, 1, "Lines", 220, GetEmaOverlayPairLabel(), 9, 1);
+                    else
+                        DrawRightEdgeIndicatorLabel("EMA200_", objectIndex, ComputeExponentialMovingAverage(Bars, Bars.Count - 1, _resolvedEmaOverlayConfig.MidPeriod), emaColor, GetEmaOverlayPairLabel(), 9, 1);
+                }
+
+                if (_toggleVwapOverlay)
+                {
+                    var vwapColor = Color.FromArgb(255, 250, 204, 21);
+                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "VWAP20_", index => ComputeRollingVwapAtIndex(Bars, _resolvedVwapOverlayConfig.Length, index), vwapColor, 1, "Dots", 180, GetVwapOverlayPairLabel(), 9, 0);
+                }
+
+                if (_toggleBollingerOverlay)
+                {
+                    var bollingerColor = Color.FromArgb(255, 244, 114, 182);
+                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "BBMID_", index => ComputeSimpleMovingAverage(Bars, index, _resolvedBollingerOverlayConfig.Period), bollingerColor, 1, "Lines", 180, GetBollingerOverlayPairLabel(), 9, -1);
+                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "BBUP_", index => ComputeBollingerUpper(Bars, index, _resolvedBollingerOverlayConfig.Period, _resolvedBollingerOverlayConfig.StdDevMultiplier), bollingerColor, 1, "Dots", 180);
+                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "BBDN_", index => ComputeBollingerLower(Bars, index, _resolvedBollingerOverlayConfig.Period, _resolvedBollingerOverlayConfig.StdDevMultiplier), bollingerColor, 1, "Dots", 180);
+                }
+
+                if (_toggleIchimokuOverlay)
+                {
+                    objectIndex = RenderIchimokuOverlay(objectIndex, 180);
+                }
             }
             catch (Exception ex)
             {
-                SafePrint("[Visuals] Lite EMA failed: {0}", ex.Message);
+                SafePrint("[Visuals] Lite trend overlays failed: {0}", ex.Message);
             }
 
             return objectIndex;
@@ -3187,14 +5742,39 @@ namespace cAlgo.Robots
         {
             try
             {
+                try { SyncChartOscillatorIndicators(); } catch (Exception ex) { SafePrint("[Visuals] Oscillator panels refresh failed: {0}", ex.Message); }
+                try { SyncChartTechnicalOverlays(); } catch (Exception ex) { SafePrint("[Visuals] Technical overlays sync failed: {0}", ex.Message); }
+
+                // Only rebuild the heavy chart objects when something they draw actually changed
+                // (new completed bar, toggle change, symbol/timeframe change, day rollover, marker
+                // added). The forming bar's OHLC is intentionally NOT part of the key, so ticks
+                // don't force a full remove+redraw every few seconds.
+                var fullStateKey = BuildFullOverlayStateKey();
+                var fullNeedsRefresh = _forceChartVisualsRefresh ||
+                                       _lastFullOverlayBarsCount != (Bars != null ? Bars.Count : -1) ||
+                                       !string.Equals(_lastFullOverlayStateKey, fullStateKey, StringComparison.Ordinal);
+                if (!fullNeedsRefresh)
+                    return;
+
+                // Throttle: rapid state changes (e.g. strategy markers added mid-bar) can
+                // otherwise trigger the heavy remove+redraw several times a minute on low TFs.
+                // Skipped when the user pressed the manual refresh button.
+                var nowUtc = DateTime.UtcNow;
+                if (!_forceChartVisualsRefresh &&
+                    _lastFullOverlayRedrawAtUtc != DateTime.MinValue &&
+                    (nowUtc - _lastFullOverlayRedrawAtUtc).TotalSeconds < FullOverlayRedrawMinIntervalSeconds)
+                    return;
+                _forceChartVisualsRefresh = false;
+                _lastFullOverlayRedrawAtUtc = nowUtc;
+
                 RemoveChartVisualObjects();
                 if (Bars == null || Bars.Count < 5 || Chart == null)
                     return;
 
                 var objectIndex = 0;
-                if (_toggleHtf4H)
+                if (ShouldDrawHtfBackground())
                     objectIndex = DrawBackgroundAutoHigherTimeframeCandles(objectIndex);
-                if (_toggleHtfMiniChart)
+                if (ShouldDrawHtfMiniChart())
                     objectIndex = DrawHtfMiniCharts(objectIndex);
                 if (_toggleKillerZones)
                 {
@@ -3236,7 +5816,15 @@ namespace cAlgo.Robots
                 {
                     objectIndex = DrawCanonicalEventsOnChart(objectIndex, CanonicalEventType.Impulse);
                 }
-                if (!DisableTechnicalVisualRenderingForIsolation && (_toggleEmaOverlay || _toggleVwapOverlay || _toggleBollingerOverlay))
+                if (_toggleTrendlines)
+                {
+                    objectIndex = DrawTrendlinesOnChart(objectIndex);
+                }
+                if (_toggleDivergence)
+                {
+                    objectIndex = DrawDivergenceOnChart(objectIndex);
+                }
+                if (!DisableTechnicalVisualRenderingForIsolation && !NativeTechnicalOverlaysActive() && (_toggleEmaOverlay || _toggleVwapOverlay || _toggleBollingerOverlay || _toggleIchimokuOverlay))
                 {
                     objectIndex = DrawIndicatorOverlaysOnChart(objectIndex);
                 }
@@ -3266,12 +5854,62 @@ namespace cAlgo.Robots
                 }
                 if (_toggleKeyLevels)
                     objectIndex = DrawKeyLevelsOnChart(objectIndex);
+                if (_toggleSupplyDemand)
+                    objectIndex = DrawScoredPriceZones(objectIndex);
                 if (_toggleStrategyMarkers)
                     objectIndex = DrawStrategyMarkersOnChart(objectIndex);
+
+                _lastFullOverlayBarsCount = Bars.Count;
+                _lastFullOverlayStateKey = fullStateKey;
+                if (_toggleEmaOverlay || _toggleVwapOverlay || _toggleBollingerOverlay || _toggleIchimokuOverlay)
+                {
+                    _lastTechnicalOverlayBarsCount = Bars.Count;
+                    _lastTechnicalOverlayStateKey = BuildTechnicalOverlayStateKey();
+                }
+                else
+                {
+                    _lastTechnicalOverlayBarsCount = -1;
+                    _lastTechnicalOverlayStateKey = "";
+                }
             }
             catch (Exception ex)
             {
                 SafePrint("[Visuals] Draw failed: {0}", ex.Message);
+            }
+        }
+
+        // Manual refresh: recalculate and redraw every visual layer (zones, artifacts,
+        // technicals, events, candles, mini charts, HTF background) for the current view,
+        // bypassing the dirty-check and throttle that normally govern per-tick redraws.
+        private void ForceRefreshChartVisuals()
+        {
+            try
+            {
+                if (Chart == null || Bars == null || Bars.Count < 5)
+                    return;
+
+                _forceChartVisualsRefresh = true;
+                // Invalidate all lite-family dirty keys + throttles so the per-family
+                // redraws also run on the next lite pass instead of being skipped.
+                _last4HSplitterBarsCount = -1;
+                _last4HSplitterStateKey = "";
+                _lastHtfBackgroundBarsCount = -1;
+                _lastHtfBackgroundStateKey = "";
+                _lastMiniChartBarsCount = -1;
+                _lastMiniChartStateKey = "";
+                _lastDetectionsBarsCount = -1;
+                _lastDetectionsStateKey = "";
+                _lastTechnicalOverlayBarsCount = -1;
+                _lastTechnicalOverlayStateKey = "";
+                _lastMiniChartRedrawAtUtc = DateTime.MinValue;
+                _lastDetectionsRedrawAtUtc = DateTime.MinValue;
+                _lastTechOverlayRedrawAtUtc = DateTime.MinValue;
+
+                DrawChartVisualOverlays();
+            }
+            catch (Exception ex)
+            {
+                SafePrint("[Visuals] Manual refresh failed: {0}", ex.Message);
             }
         }
 
@@ -3280,50 +5918,23 @@ namespace cAlgo.Robots
             var chartTfMinutes = TimeFrameToMinutes(Chart != null ? Chart.TimeFrame : TimeFrame.Minute);
             if (chartTfMinutes <= 0)
                 return objectIndex;
+            if (ChartObjectsOverBudget())
+                return objectIndex;
 
             try
             {
-                var autoFrames = GetAutoHigherTimeframes(Chart != null ? Chart.TimeFrame : TimeFrame.Minute);
-                var sourceTimeFrame = autoFrames.Count > 1 ? autoFrames[1] : (autoFrames.Count > 0 ? autoFrames[0] : TimeFrame.Minute);
-                if (TimeFrameToMinutes(sourceTimeFrame) <= chartTfMinutes)
-                    return objectIndex;
+                var drawnFixedFrames = new HashSet<TimeFrame>();
+                objectIndex = DrawLatestCompletedBackgroundCandle(objectIndex, TimeFrame.Daily, "HTFBG_1D");
+                drawnFixedFrames.Add(TimeFrame.Daily);
 
-                var sourceBars = MarketData.GetBars(sourceTimeFrame, Chart.SymbolName);
-                if (sourceBars == null || sourceBars.Count < 4)
-                    return objectIndex;
-
-                var baseColor = GetTimeFrameStructureColor(sourceTimeFrame);
-                var wickFill = Color.FromArgb(12, 230, 230, 230);
-                var bodyFill = Color.FromArgb(18, 230, 230, 230);
-                var borderColor = WithAlpha(baseColor, 72);
-                var chartStartTime = Bars.OpenTimes[0];
-                var lastCompletedIndex = sourceBars.Count - 2;
-                var firstIndex = 0;
-                while (firstIndex < lastCompletedIndex && sourceBars.OpenTimes[firstIndex + 1] < chartStartTime)
-                    firstIndex++;
-
-                for (var i = firstIndex; i <= lastCompletedIndex; i++)
+                if (chartTfMinutes < 15)
                 {
-                    var startTime = sourceBars.OpenTimes[i];
-                    var endTime = i + 1 < sourceBars.Count ? sourceBars.OpenTimes[i + 1] : startTime.AddMinutes(Math.Max(1, TimeFrameToMinutes(sourceTimeFrame)));
-                    if (endTime <= startTime)
-                        endTime = startTime.AddMinutes(Math.Max(1, TimeFrameToMinutes(sourceTimeFrame)));
-                    if (endTime < chartStartTime)
-                        continue;
-                    objectIndex = DrawBlurredCandleOverlay(
-                        "HTFBG_" + GetMiniChartLabel(sourceTimeFrame),
-                        objectIndex,
-                        startTime,
-                        endTime,
-                        sourceBars.HighPrices[i],
-                        sourceBars.LowPrices[i],
-                        sourceBars.OpenPrices[i],
-                        sourceBars.ClosePrices[i],
-                        wickFill,
-                        borderColor,
-                        bodyFill,
-                        borderColor);
+                    objectIndex = DrawLatestCompletedBackgroundCandle(objectIndex, TimeFrame.Hour4, "HTFBG_4H");
+                    drawnFixedFrames.Add(TimeFrame.Hour4);
                 }
+
+                if (chartTfMinutes <= 15)
+                    objectIndex = DrawFirstNewYorkThirtyMinuteBackground(objectIndex);
             }
             catch (Exception ex)
             {
@@ -3333,32 +5944,514 @@ namespace cAlgo.Robots
             return objectIndex;
         }
 
+        private int DrawLatestCompletedBackgroundCandle(int objectIndex, TimeFrame sourceTimeFrame, string objectPrefix)
+        {
+            var sourceBars = MarketData.GetBars(sourceTimeFrame, Chart.SymbolName);
+            if (sourceBars == null || sourceBars.Count < 4)
+                return objectIndex;
+
+            int sourceIndex;
+            if (!TryGetPreviousCompletedPeriodBarIndex(sourceBars, sourceTimeFrame, out sourceIndex))
+                return objectIndex;
+
+            return DrawBackgroundCandleOverlayAtIndex(objectIndex, sourceBars, sourceTimeFrame, sourceIndex, objectPrefix);
+        }
+
+        private int DrawFirstNewYorkThirtyMinuteBackground(int objectIndex)
+        {
+            var sourceTimeFrame = TimeFrame.Minute30;
+            var sourceBars = MarketData.GetBars(sourceTimeFrame, Chart.SymbolName);
+            if (sourceBars == null || sourceBars.Count < 4)
+                return objectIndex;
+
+            var lastCompletedIndex = sourceBars.Count - 2;
+            if (lastCompletedIndex < 0)
+                return objectIndex;
+
+            var sourceIndex = -1;
+            for (var dayOffset = 1; dayOffset <= 6 && sourceIndex < 0; dayOffset++)
+            {
+                DateTime sessionStartUtc;
+                DateTime sessionEndUtc;
+                if (!TryGetSessionUtcRange("NY", sourceBars.OpenTimes[lastCompletedIndex].Date.AddDays(-dayOffset), out sessionStartUtc, out sessionEndUtc))
+                    continue;
+
+                for (var i = 0; i <= lastCompletedIndex; i++)
+                {
+                    if (sourceBars.OpenTimes[i] >= sessionStartUtc && sourceBars.OpenTimes[i] < sessionEndUtc)
+                    {
+                        sourceIndex = i;
+                        break;
+                    }
+                }
+            }
+
+            if (sourceIndex < 0)
+                return objectIndex;
+
+            return DrawBackgroundCandleOverlayAtIndex(objectIndex, sourceBars, sourceTimeFrame, sourceIndex, "HTFBG_NY30", "NY m30");
+        }
+
+        private int DrawPatternQualifiedHigherTimeframeBackgroundCandles(int objectIndex, HashSet<TimeFrame> drawnFixedFrames)
+        {
+            if (Chart == null || Bars == null || Bars.Count < 8)
+                return objectIndex;
+
+            var patternDefinitions = BuildEnabledCandlePatternDefinitions();
+            if (patternDefinitions == null || patternDefinitions.Count == 0)
+                return objectIndex;
+
+            var chartTimeFrame = Chart.TimeFrame;
+            var chartTfMinutes = Math.Max(1, TimeFrameToMinutes(chartTimeFrame));
+            var higherFrames = GetEnabledAutoHigherTimeframes(chartTimeFrame)
+                .Where(tf => TimeFrameToMinutes(tf) > chartTfMinutes)
+                .Distinct()
+                .OrderBy(tf => TimeFrameToMinutes(tf))
+                .ToList();
+
+            foreach (var sourceTimeFrame in higherFrames)
+            {
+                if (drawnFixedFrames != null && drawnFixedFrames.Contains(sourceTimeFrame))
+                    continue;
+
+                try
+                {
+                    var sourceBars = MarketData.GetBars(sourceTimeFrame, Chart.SymbolName);
+                    if (sourceBars == null || sourceBars.Count < 4)
+                        continue;
+
+                    int sourceIndex;
+                    if (!TryGetPreviousCompletedPeriodBarIndex(sourceBars, sourceTimeFrame, out sourceIndex))
+                        continue;
+
+                    if (!HasAnyEnabledCandlePatternAtIndex(sourceBars, sourceTimeFrame, sourceIndex, patternDefinitions))
+                        continue;
+
+                    var objectPrefix = "HTFBG_" + GetMiniChartLabel(sourceTimeFrame);
+                    objectIndex = DrawBackgroundCandleOverlayAtIndex(objectIndex, sourceBars, sourceTimeFrame, sourceIndex, objectPrefix);
+                }
+                catch (Exception ex)
+                {
+                    SafePrint("[Visuals] HTF pattern background {0} skipped: {1}", sourceTimeFrame, ex.Message);
+                }
+            }
+
+            return objectIndex;
+        }
+
+        private bool HasAnyEnabledCandlePatternAtIndex(Bars sourceBars, TimeFrame sourceTimeFrame, int barIndex, List<CandlePatternDefinition> patternDefinitions)
+        {
+            if (sourceBars == null || patternDefinitions == null || patternDefinitions.Count == 0 || barIndex <= 0 || barIndex >= sourceBars.Count)
+                return false;
+
+            HashSet<string> sharedDetections = null;
+            foreach (var definition in patternDefinitions)
+            {
+                if (definition == null)
+                    continue;
+
+                if (definition.NativeMatch != null)
+                {
+                    if (definition.NativeMatch(sourceBars, barIndex))
+                        return true;
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(definition.SharedPatternType))
+                    continue;
+
+                if (sharedDetections == null)
+                    sharedDetections = GetDetectedSharedRulePatternSet(sourceBars, sourceTimeFrame, barIndex);
+
+                if (sharedDetections.Contains(definition.SharedPatternType))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private int DrawBackgroundCandleOverlayAtIndex(int objectIndex, Bars sourceBars, TimeFrame sourceTimeFrame, int sourceIndex, string objectPrefix, string overlayLabel = null)
+        {
+            if (sourceBars == null || sourceIndex < 0 || sourceIndex >= sourceBars.Count)
+                return objectIndex;
+
+            var startTime = sourceBars.OpenTimes[sourceIndex];
+            var endTime = sourceIndex + 1 < sourceBars.Count
+                ? sourceBars.OpenTimes[sourceIndex + 1]
+                : startTime.AddMinutes(Math.Max(1, TimeFrameToMinutes(sourceTimeFrame)));
+            if (endTime <= startTime)
+                endTime = startTime.AddMinutes(Math.Max(1, TimeFrameToMinutes(sourceTimeFrame)));
+            if (Bars != null && Bars.Count > 0 && endTime < Bars.OpenTimes[0])
+                return objectIndex;
+
+            var baseColor = GetTimeFrameStructureColor(sourceTimeFrame);
+            var open = sourceBars.OpenPrices[sourceIndex];
+            var close = sourceBars.ClosePrices[sourceIndex];
+            var high = sourceBars.HighPrices[sourceIndex];
+            var low = sourceBars.LowPrices[sourceIndex];
+            var durationMinutes = Math.Max(1.0, (endTime - startTime).TotalMinutes);
+            // Background HTF candle body spans the true period [startTime, endTime) so it
+            // aligns flush with the day's first/last LTF bars (no horizontal inset).
+            var horizontalInset = 0.0;
+            var candleStartTime = startTime.AddMinutes(horizontalInset);
+            var candleEndTime = endTime.AddMinutes(-horizontalInset);
+            if (candleEndTime <= candleStartTime)
+            {
+                candleStartTime = startTime;
+                candleEndTime = endTime;
+            }
+
+            var isBullish = close >= open;
+            var bullishFill = Color.FromArgb(34, 38, 166, 154);
+            var bearishFill = Color.FromArgb(34, 239, 83, 80);
+            var bullishWickFill = Color.FromArgb(22, 38, 166, 154);
+            var bearishWickFill = Color.FromArgb(22, 239, 83, 80);
+            var wickFill = isBullish ? bullishWickFill : bearishWickFill;
+            var bodyFill = isBullish ? bullishFill : bearishFill;
+            var borderColor = WithAlpha(baseColor, 96);
+
+            var nextObjectIndex = DrawBlurredCandleOverlay(
+                objectPrefix,
+                objectIndex,
+                candleStartTime,
+                candleEndTime,
+                high,
+                low,
+                open,
+                close,
+                wickFill,
+                borderColor,
+                bodyFill,
+                borderColor);
+
+            return nextObjectIndex;
+        }
+
+        private Color GetSessionAccentColor(string sessionName)
+        {
+            switch (NormalizeSessionAlias(sessionName))
+            {
+                case "Asia":
+                    return Color.FromArgb(235, 0, 224, 255);
+                case "London":
+                    return Color.FromArgb(235, 110, 255, 120);
+                case "NewYork":
+                    return Color.FromArgb(235, 255, 196, 64);
+                default:
+                    return Color.FromArgb(235, 180, 180, 180);
+            }
+        }
+
+        private Color GetSessionLabelColor()
+        {
+            return Color.FromArgb(235, 210, 210, 210);
+        }
+
+        private bool TryGetKillerZoneUtcRange(string sessionName, DateTime referenceDate, out DateTime startUtc, out DateTime endUtc)
+        {
+            startUtc = DateTime.MinValue;
+            endUtc = DateTime.MinValue;
+
+            SessionWindowDefinition definition;
+            if (!TryGetSessionWindowDefinition(sessionName, out definition))
+                return false;
+
+            TimeZoneInfo timeZone;
+            if (!TryGetSessionTimeZone(definition, out timeZone))
+                return false;
+
+            var localDate = referenceDate.Date;
+            var localStart = DateTime.SpecifyKind(localDate.Add(definition.LocalStart), DateTimeKind.Unspecified);
+            var localEnd = localStart.AddHours(3);
+            var fullLocalEnd = DateTime.SpecifyKind(localDate.Add(definition.LocalEnd), DateTimeKind.Unspecified);
+            if (localEnd > fullLocalEnd)
+                localEnd = fullLocalEnd;
+
+            startUtc = TimeZoneInfo.ConvertTimeToUtc(localStart, timeZone);
+            endUtc = TimeZoneInfo.ConvertTimeToUtc(localEnd, timeZone);
+            return endUtc > startUtc;
+        }
+
+        private bool TryGetContextUtcRange(string sessionName, DateTime referenceDate, bool useFullSession, out DateTime startUtc, out DateTime endUtc)
+        {
+            if (useFullSession)
+                return TryGetSessionUtcRange(sessionName, referenceDate, out startUtc, out endUtc);
+
+            return TryGetKillerZoneUtcRange(sessionName, referenceDate, out startUtc, out endUtc);
+        }
+
+        // Very faint dotted vertical grid lines at the configured period step (Splitter Grid):
+        // No = off, Auto = HTF1's timeframe, or a fixed 30m/1h/2h/4h/8h/1d/1w step. Same style
+        // as the HTF mini chart divider.
+        private int DrawFourHourSplitters(int objectIndex)
+        {
+            if (Bars == null || Bars.Count < 2)
+                return objectIndex;
+
+            var chartTfMinutes = Math.Max(1, TimeFrameToMinutes(Chart != null ? Chart.TimeFrame : TimeFrame.Minute));
+
+            // Splitter Grid = No (or an unresolvable Auto step): sweep any leftover grid
+            // objects and stop so the chart goes clean immediately.
+            var stepMinutes = ResolveSplitterGridStepMinutes(chartTfMinutes);
+            if (stepMinutes <= 0)
+            {
+                RemoveChartObjectsByPrefixes("H4SPLIT_", "DSPLIT_", "SPLIT_");
+                return objectIndex;
+            }
+            RemoveChartObjectsByPrefixes("H4SPLIT_", "DSPLIT_", "SPLIT_");
+
+            try
+            {
+                var chartStart = Bars.OpenTimes[0];
+                var chartEnd = GetCurrentChartEndTime();
+                if (chartEnd <= chartStart)
+                    return objectIndex;
+
+                // Resolve the largest native timeframe that divides the step evenly, so the
+                // grid stays aligned to real bar boundaries (broker roll time, not 00:00 UTC).
+                var baseTf = ResolveSplitterBaseTimeFrame(stepMinutes, out int baseMinutes, out int nth);
+                if (baseTf == null)
+                    return objectIndex;
+                var baseBars = MarketData.GetBars(baseTf, Chart.SymbolName);
+                if (baseBars == null || baseBars.Count < 2)
+                    return objectIndex;
+
+                var splitterColor = WithAlpha(Color.White, 40);
+                var boundaries = new List<DateTime>();
+                DateTime? lastBoundary = null;
+                var absoluteIndex = 0;
+                foreach (var boundary in baseBars.OpenTimes)
+                {
+                    if (boundary > chartEnd)
+                        break;
+                    // Every Nth base boundary forms the step grid (N = 1 for native steps).
+                    if (absoluteIndex % nth == 0 && boundary >= chartStart)
+                    {
+                        boundaries.Add(boundary);
+                        lastBoundary = boundary;
+                    }
+                    absoluteIndex++;
+                }
+
+                // Extend the grid into the future (no bars there yet) until the current day ends.
+                if (lastBoundary.HasValue)
+                {
+                    var todayEnd = GetNextDayStartTime(chartEnd);
+                    if (stepMinutes >= 1440)
+                    {
+                        if (todayEnd > lastBoundary.Value)
+                            boundaries.Add(todayEnd);
+                    }
+                    else
+                    {
+                        var nextBoundary = lastBoundary.Value.AddMinutes(stepMinutes);
+                        while (nextBoundary < todayEnd)
+                        {
+                            boundaries.Add(nextBoundary);
+                            nextBoundary = nextBoundary.AddMinutes(stepMinutes);
+                        }
+                    }
+                }
+
+                // The background HTF candles draw their border exactly on the previous completed
+                // period's open times — a splitter there would stack on top of that border and
+                // look bold on trading days. Skip those times (only when the background candle is
+                // actually enabled) so every splitter renders at the same faint weight.
+                var skipTimes = new HashSet<DateTime>();
+                try
+                {
+                    if (ShouldDrawHtfBackground())
+                    {
+                        var dailyBars = MarketData.GetBars(TimeFrame.Daily, Chart.SymbolName);
+                        if (dailyBars != null && dailyBars.Count >= 2)
+                        {
+                            skipTimes.Add(dailyBars.OpenTimes[dailyBars.Count - 2]);
+                            skipTimes.Add(dailyBars.OpenTimes[dailyBars.Count - 1]);
+                        }
+                        if (baseTf == TimeFrame.Hour4 && chartTfMinutes < 15 && baseBars.Count >= 2)
+                        {
+                            skipTimes.Add(baseBars.OpenTimes[baseBars.Count - 2]);
+                            skipTimes.Add(baseBars.OpenTimes[baseBars.Count - 1]);
+                        }
+                    }
+                }
+                catch
+                {
+                }
+
+                foreach (var boundary in boundaries)
+                {
+                    if (skipTimes.Contains(boundary))
+                        continue;
+
+                    var splitter = Chart.DrawVerticalLine(
+                        "SPLIT_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                        boundary,
+                        splitterColor);
+                    TrySetPropertyValue(splitter, "Thickness", 1);
+                    TrySetEnumPropertyValue(splitter, "LineStyle", "Dots");
+                    objectIndex++;
+                }
+            }
+            catch (Exception ex)
+            {
+                SafePrint("[Visuals] Splitter grid skipped: {0}", ex.Message);
+            }
+
+            return objectIndex;
+        }
+
+        // Splitter Grid step in minutes: Auto = HTF1 (first auto higher timeframe slot).
+        private int ResolveSplitterGridStepMinutes(int chartTfMinutes)
+        {
+            switch (DrawSplitterGrid)
+            {
+                case SplitterGridMode.Auto:
+                    var htf1 = ResolveConfiguredHtfSlotTimeFrame(Chart != null ? Chart.TimeFrame : TimeFrame.Minute, 0);
+                    return htf1 != null ? Math.Max(1, TimeFrameToMinutes(htf1)) : 0;
+                case SplitterGridMode._30m:
+                    return 30;
+                case SplitterGridMode._1h:
+                    return 60;
+                case SplitterGridMode._2h:
+                    return 120;
+                case SplitterGridMode._4h:
+                    return 240;
+                case SplitterGridMode._8h:
+                    return 480;
+                case SplitterGridMode._1d:
+                    return 1440;
+                case SplitterGridMode._1w:
+                    return 10080;
+                default:
+                    return 0; // No
+            }
+        }
+
+        // Largest native timeframe that divides the step evenly, so non-native steps (2h/8h)
+        // still land on real bar boundaries; N = number of base bars per step.
+        private TimeFrame ResolveSplitterBaseTimeFrame(int stepMinutes, out int baseMinutes, out int nth)
+        {
+            var candidates = new[]
+            {
+                Tuple.Create(TimeFrame.Weekly, 10080),
+                Tuple.Create(TimeFrame.Daily, 1440),
+                Tuple.Create(TimeFrame.Hour4, 240),
+                Tuple.Create(TimeFrame.Hour, 60),
+                Tuple.Create(TimeFrame.Minute30, 30),
+                Tuple.Create(TimeFrame.Minute15, 15),
+                Tuple.Create(TimeFrame.Minute5, 5),
+                Tuple.Create(TimeFrame.Minute, 1)
+            };
+            foreach (var candidate in candidates)
+            {
+                if (stepMinutes % candidate.Item2 == 0)
+                {
+                    baseMinutes = candidate.Item2;
+                    nth = stepMinutes / candidate.Item2;
+                    return candidate.Item1;
+                }
+            }
+            baseMinutes = stepMinutes;
+            nth = 1;
+            return null;
+        }
+
         private int DrawHtfMiniCharts(int objectIndex)
         {
-            var chartTfMinutes = TimeFrameToMinutes(Chart != null ? Chart.TimeFrame : TimeFrame.Minute);
+            var chartTimeFrame = Chart != null ? Chart.TimeFrame : TimeFrame.Minute;
+            var chartTfMinutes = TimeFrameToMinutes(chartTimeFrame);
             if (chartTfMinutes <= 0 || Bars == null || Bars.Count < 40)
+                return objectIndex;
+            if (ChartObjectsOverBudget())
                 return objectIndex;
 
             try
             {
-                var miniFrames = GetEnabledAutoHigherTimeframes(Chart != null ? Chart.TimeFrame : TimeFrame.Minute)
+                // HTF1 (lower TF) leads the strip and its first bar starts exactly on the
+                // day splitter; HTF2 follows after the divider. Order by TF size ascending
+                // so the finer frame is drawn first (HTF1 -> HTF2).
+                var miniFrames = GetEnabledAutoHigherTimeframes(chartTimeFrame)
                     .Where(tf => TimeFrameToMinutes(tf) > chartTfMinutes)
                     .OrderBy(tf => TimeFrameToMinutes(tf))
                     .Take(2)
                     .ToList();
                 if (miniFrames.Count == 0)
+                {
+                    SafePrint("[Mini] {0} chartTf={1} frames=none mode={2} auto1={3} auto2={4}", Chart != null ? Chart.SymbolName : "", chartTfMinutes, DrawHtfMiniChartMode, DrawAutoHtf1, DrawAutoHtf2);
                     return objectIndex;
+                }
 
-                var slotSpacingBars = 2;
-                var totalFutureBars = miniFrames.Sum(GetMiniChartBarsForTimeFrame) + (Math.Max(0, miniFrames.Count - 1) * slotSpacingBars) + 2;
-                objectIndex = DrawMiniChartSpacer(chartTfMinutes, totalFutureBars, objectIndex);
+                // Shared price levels: lowest low (label baseline) and highest high across all
+                // mini frames so labels and the divider line align across the slots.
+                var sharedLabelPrice = double.MaxValue;
+                var sharedHighPrice = double.MinValue;
+                foreach (var tf in miniFrames)
+                {
+                    var effectiveCount = GetMiniChartBarsForTimeFrame(tf);
+                    sharedLabelPrice = Math.Min(sharedLabelPrice, GetMiniChartWindowedLow(tf, effectiveCount));
+                    sharedHighPrice = Math.Max(sharedHighPrice, GetMiniChartWindowedHigh(tf, effectiveCount));
+                }
+                if (sharedLabelPrice == double.MaxValue || sharedLabelPrice <= 0)
+                    sharedLabelPrice = 0;
+                if (sharedHighPrice == double.MinValue || sharedHighPrice <= 0)
+                    sharedHighPrice = sharedLabelPrice > 0 ? sharedLabelPrice + Math.Max(Symbol.PipSize * 200.0, 0.000001) : 0;
 
-                var futureOffsetBars = 1;
+                // Each mini candle is roughly 3 chart bars wide (per-frame, sized by the
+                // frame's own candle count) so the strip stays compact.
+                const double slotSpacingBars = 6.0;
+                // Lead gap: the strip anchors to the NEXT 4H boundary on low timeframes
+                // (1m/5m) — anchoring to tomorrow would leave a full day of empty space —
+                // and to the next day boundary on higher TFs. HTF1 is drawn one chart-bar
+                // width to the LEFT of the anchor (see the slot loop below).
+                var chartEndTime = GetCurrentChartEndTime();
+                var leadGapBars = GetMiniChartLeadGapBars(chartTfMinutes);
+                objectIndex = DrawMiniChartSpacer(chartTfMinutes, GetMiniChartTotalFutureBars(chartTfMinutes), objectIndex);
+
+                var futureOffsetBars = leadGapBars;
+                SafePrint("[Mini] {0} chartTf={1} frames={2} leadGap={3:F1} mode={4}",
+                    Chart != null ? Chart.SymbolName : "",
+                    chartTfMinutes,
+                    string.Join("/", miniFrames.Select(tf => GetMiniChartDisplayLabel(tf))),
+                    leadGapBars,
+                    DrawHtfMiniChartMode);
                 for (var slotIndex = 0; slotIndex < miniFrames.Count; slotIndex++)
                 {
-                    var tf = miniFrames[slotIndex];
-                    objectIndex = DrawSingleMiniChart(tf, chartTfMinutes, futureOffsetBars, slotIndex, objectIndex);
-                    futureOffsetBars += GetMiniChartBarsForTimeFrame(tf) + slotSpacingBars;
+                    try
+                    {
+                        var tf = miniFrames[slotIndex];
+                        // Per-timeframe mini chart config: bar count and candle width are
+                        // keyed by the frame (D=7×2, W=4×3, 4H=12×1, 1H/15m=24×1).
+                        var miniBarCount = GetMiniChartBarsForTimeFrame(tf);
+                        var slotWidthBars = GetMiniChartSlotWidthBars(tf, miniBarCount);
+                        // HTF1 (slot 0) sits one chart-bar width to the LEFT of the day splitter;
+                        // the divider follows it so the spacing to HTF2 stays symmetric.
+                        var slotStartBars = slotIndex == 0
+                            ? Math.Max(0.0, futureOffsetBars - 1.0)
+                            : futureOffsetBars;
+                        objectIndex = DrawSingleMiniChart(tf, chartTfMinutes, slotStartBars, slotIndex, objectIndex, sharedLabelPrice, miniBarCount, slotWidthBars);
+
+                        // Tiny dotted vertical divider between the mini charts.
+                        if (slotIndex < miniFrames.Count - 1)
+                        {
+                            var dividerBars = slotStartBars + slotWidthBars + (slotSpacingBars * 0.5);
+                            var dividerTime = chartEndTime.AddMinutes(dividerBars * Math.Max(1, chartTfMinutes));
+                            var divider = Chart.DrawVerticalLine(
+                                "MINI_DIV_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                                dividerTime,
+                                WithAlpha(Color.White, 25));
+                            TrySetPropertyValue(divider, "Thickness", 1);
+                            TrySetEnumPropertyValue(divider, "LineStyle", "Dots");
+                            objectIndex++;
+                        }
+
+                        futureOffsetBars += slotWidthBars + slotSpacingBars;
+                    }
+                    catch (Exception ex)
+                    {
+                        SafePrint("[Mini] Slot {0} ({1}) skipped: {2}", slotIndex, GetMiniChartDisplayLabel(miniFrames[slotIndex]), ex.Message);
+                        futureOffsetBars += slotSpacingBars;
+                    }
                 }
             }
             catch (Exception ex)
@@ -3369,22 +6462,173 @@ namespace cAlgo.Robots
             return objectIndex;
         }
 
-        private int DrawSingleMiniChart(TimeFrame timeFrame, int chartTfMinutes, int futureOffsetBars, int miniSlotIndex, int objectIndex)
+        // Lead gap (in chart-TF bars) between the last bar and the start of the HTF mini
+        // chart strip. The anchor tightens as the chart TF drops: 1m anchors to the next
+        // 1H boundary (strip appears within the next hour), 5m to the next even-2H boundary,
+        // and higher TFs keep the next day boundary. Small floors keep the strip visible on
+        // closed markets (weekend) where the next boundary can collapse to ~0.
+        private double GetMiniChartLeadGapBars(int chartTfMinutes)
+        {
+            try
+            {
+                var chartEndTime = GetCurrentChartEndTime();
+                var anchorStart = GetNextDayStartTime(chartEndTime);
+
+                if (chartTfMinutes <= 1)
+                {
+                    // 1m: next 1H boundary — the strip appears within the next hour.
+                    var hourBars = MarketData.GetBars(TimeFrame.Hour, Chart.SymbolName);
+                    if (hourBars != null && hourBars.Count > 0)
+                    {
+                        foreach (var openTime in hourBars.OpenTimes)
+                        {
+                            if (openTime > chartEndTime)
+                            {
+                                anchorStart = openTime;
+                                break;
+                            }
+                        }
+                    }
+                }
+                else if (chartTfMinutes <= 5)
+                {
+                    // 5m: next even-2H boundary — closer than 4H, looser than 1m.
+                    var hourOfDay = chartEndTime.Hour;
+                    var nextEvenHour = (hourOfDay % 2 == 0) ? hourOfDay + 2 : hourOfDay + 1;
+                    anchorStart = nextEvenHour >= 24
+                        ? chartEndTime.Date.AddDays(1)
+                        : chartEndTime.Date.AddHours(nextEvenHour);
+                }
+
+                var naturalGapBars = Math.Max(0.0, (anchorStart - chartEndTime).TotalMinutes / Math.Max(1, chartTfMinutes));
+                return Math.Max(chartTfMinutes <= 5 ? 2.0 : 10.0, naturalGapBars);
+            }
+            catch
+            {
+                return 10.0;
+            }
+        }
+
+        // Per-frame mini chart slot width in chart bars: each mini candle is drawn
+        // GetMiniChartBarWidthBars(timeFrame) normal chart bars wide, so the strip
+        // stays compact (D=2, W=3, intraday=1 normal bar per candle).
+        private double GetMiniChartSlotWidthBars(TimeFrame timeFrame, int miniBarCount)
+        {
+            var candleCount = Math.Max(2, miniBarCount);
+            return Math.Max(4.0, candleCount * GetMiniChartBarWidthBars(timeFrame));
+        }
+
+        // Candle width (in normal chart bars) for the HTF mini charts, keyed by TF.
+        private double GetMiniChartBarWidthBars(TimeFrame timeFrame)
+        {
+            var tfMinutes = Math.Max(1, TimeFrameToMinutes(timeFrame));
+            if (tfMinutes >= 10080) // weekly+
+                return 3.0;
+            if (tfMinutes >= 1440)  // daily
+                return 2.0;
+            return 1.0;             // intraday
+        }
+
+        // Total width (in chart-TF bars) of the HTF mini chart area to the right of the
+        // last bar: next-day lead gap + day-split slots + divider spacing + trailing pad.
+        // Shared by DrawHtfMiniCharts and the zoom buttons so the viewport can end exactly
+        // at the mini chart's right edge (no dead space).
+        private double GetMiniChartTotalFutureBars(int chartTfMinutes)
+        {
+            try
+            {
+                var miniFrames = GetEnabledAutoHigherTimeframes(Chart != null ? Chart.TimeFrame : TimeFrame.Minute)
+                    .Where(tf => TimeFrameToMinutes(tf) > chartTfMinutes)
+                    .Take(2)
+                    .ToList();
+                if (miniFrames.Count == 0)
+                    return 0;
+
+                var leadGapBars = GetMiniChartLeadGapBars(chartTfMinutes);
+                const double slotSpacingBars = 6.0;
+
+                var totalSlotBars = miniFrames
+                    .Select(tf => GetMiniChartSlotWidthBars(tf, GetMiniChartBarsForTimeFrame(tf)))
+                    .Sum();
+                return leadGapBars + totalSlotBars + (Math.Max(0, miniFrames.Count - 1) * slotSpacingBars) + 2.0;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+
+        private double GetMiniChartWindowedLow(TimeFrame timeFrame, int miniBarCount = 0)
+        {
+            try
+            {
+                var sourceBars = MarketData.GetBars(timeFrame, Chart.SymbolName);
+                if (sourceBars == null || sourceBars.Count < 4)
+                    return double.MaxValue;
+
+                var lastVisibleIndex = sourceBars.Count - 1;
+                var candlesToDraw = miniBarCount > 0
+                    ? Math.Max(2, Math.Min(miniBarCount, lastVisibleIndex + 1))
+                    : Math.Max(2, Math.Min(GetMiniChartBarsForTimeFrame(timeFrame), lastVisibleIndex + 1));
+                var firstSourceIndex = Math.Max(0, lastVisibleIndex - candlesToDraw + 1);
+
+                var low = double.MaxValue;
+                for (var i = firstSourceIndex; i <= lastVisibleIndex; i++)
+                    low = Math.Min(low, sourceBars.LowPrices[i]);
+                return low;
+            }
+            catch
+            {
+                return double.MaxValue;
+            }
+        }
+
+        private double GetMiniChartWindowedHigh(TimeFrame timeFrame, int miniBarCount = 0)
+        {
+            try
+            {
+                var sourceBars = MarketData.GetBars(timeFrame, Chart.SymbolName);
+                if (sourceBars == null || sourceBars.Count < 4)
+                    return double.MinValue;
+
+                var lastVisibleIndex = sourceBars.Count - 1;
+                var candlesToDraw = miniBarCount > 0
+                    ? Math.Max(2, Math.Min(miniBarCount, lastVisibleIndex + 1))
+                    : Math.Max(2, Math.Min(GetMiniChartBarsForTimeFrame(timeFrame), lastVisibleIndex + 1));
+                var firstSourceIndex = Math.Max(0, lastVisibleIndex - candlesToDraw + 1);
+
+                var high = double.MinValue;
+                for (var i = firstSourceIndex; i <= lastVisibleIndex; i++)
+                    high = Math.Max(high, sourceBars.HighPrices[i]);
+                return high;
+            }
+            catch
+            {
+                return double.MinValue;
+            }
+        }
+
+        private int DrawSingleMiniChart(TimeFrame timeFrame, int chartTfMinutes, double futureOffsetBars, int miniSlotIndex, int objectIndex, double sharedLabelPrice = 0, int miniBarCount = 0, double slotWidthBars = 0)
         {
             var sourceBars = MarketData.GetBars(timeFrame, Chart.SymbolName);
             if (sourceBars == null || sourceBars.Count < 4)
                 return objectIndex;
 
-            var lastCompletedIndex = sourceBars.Count - 2;
-            var candlesToDraw = Math.Max(3, Math.Min(GetMiniChartBarsForTimeFrame(timeFrame), lastCompletedIndex + 1));
-            var firstSourceIndex = Math.Max(0, lastCompletedIndex - candlesToDraw + 1);
-            var actualCount = lastCompletedIndex - firstSourceIndex + 1;
+            var lastVisibleIndex = sourceBars.Count - 1;
+            if (lastVisibleIndex < 0)
+                return objectIndex;
+
+            var candlesToDraw = miniBarCount > 0
+                ? Math.Max(2, Math.Min(miniBarCount, lastVisibleIndex + 1))
+                : Math.Max(2, Math.Min(GetMiniChartBarsForTimeFrame(timeFrame), lastVisibleIndex + 1));
+            var firstSourceIndex = Math.Max(0, lastVisibleIndex - candlesToDraw + 1);
+            var actualCount = lastVisibleIndex - firstSourceIndex + 1;
             if (actualCount <= 0)
                 return objectIndex;
 
             var priceHigh = double.MinValue;
             var priceLow = double.MaxValue;
-            for (var i = firstSourceIndex; i <= lastCompletedIndex; i++)
+            for (var i = firstSourceIndex; i <= lastVisibleIndex; i++)
             {
                 priceHigh = Math.Max(priceHigh, sourceBars.HighPrices[i]);
                 priceLow = Math.Min(priceLow, sourceBars.LowPrices[i]);
@@ -3394,20 +6638,23 @@ namespace cAlgo.Robots
                 return objectIndex;
 
             var tfBaseColor = GetTimeFrameStructureColor(timeFrame);
-            var bullishFill = Color.FromArgb(56, 38, 166, 154);
-            var bearishFill = Color.FromArgb(56, 239, 83, 80);
             var bullishWickFill = Color.FromArgb(44, 38, 166, 154);
             var bearishWickFill = Color.FromArgb(44, 239, 83, 80);
             var borderColor = WithAlpha(tfBaseColor, 184);
             var labelColor = WithAlpha(tfBaseColor, 220);
-            var labelSlotOffset = Math.Max(priceHigh - priceLow, Symbol.PipSize * 20) * 0.08;
-            var latestLabelTime = GetCurrentChartEndTime().AddMinutes((futureOffsetBars + actualCount - 0.5) * Math.Max(1, chartTfMinutes));
+            var priceRange = Math.Max(priceHigh - priceLow, Symbol.PipSize * 20);
+            var displayWidthBars = slotWidthBars > 0 ? slotWidthBars : GetBarsPerFullDay(chartTfMinutes);
+            var slotBarWidth = Math.Max(0.9, displayWidthBars / Math.Max(1, actualCount));
+            var labelTime = GetCurrentChartEndTime().AddMinutes((futureOffsetBars + (displayWidthBars * 0.5)) * Math.Max(1, chartTfMinutes));
+            var slotTimesByBarIndex = new Dictionary<int, Tuple<DateTime, DateTime>>();
 
             for (var localIndex = 0; localIndex < actualCount; localIndex++)
             {
                 var sourceIndex = firstSourceIndex + localIndex;
-                var slotLeftTime = GetCurrentChartEndTime().AddMinutes((futureOffsetBars + localIndex) * Math.Max(1, chartTfMinutes));
-                var slotRightTime = GetCurrentChartEndTime().AddMinutes((futureOffsetBars + localIndex + 1) * Math.Max(1, chartTfMinutes));
+                var slotLeftBars = futureOffsetBars + (localIndex * slotBarWidth);
+                var slotRightBars = futureOffsetBars + ((localIndex + 1) * slotBarWidth);
+                var slotLeftTime = GetCurrentChartEndTime().AddMinutes(slotLeftBars * Math.Max(1, chartTfMinutes));
+                var slotRightTime = GetCurrentChartEndTime().AddMinutes(slotRightBars * Math.Max(1, chartTfMinutes));
                 if (slotRightTime <= slotLeftTime)
                     slotRightTime = slotLeftTime.AddMinutes(Math.Max(1, TimeFrameToMinutes(timeFrame)));
 
@@ -3420,12 +6667,13 @@ namespace cAlgo.Robots
                     leftTime = slotLeftTime;
                     rightTime = slotRightTime;
                 }
+                slotTimesByBarIndex[sourceIndex] = Tuple.Create(leftTime, rightTime);
                 var high = sourceBars.HighPrices[sourceIndex];
                 var low = sourceBars.LowPrices[sourceIndex];
                 var open = sourceBars.OpenPrices[sourceIndex];
                 var close = sourceBars.ClosePrices[sourceIndex];
                 var wickFill = close >= open ? bullishWickFill : bearishWickFill;
-                var bodyFill = close >= open ? bullishFill : bearishFill;
+                var bodyFill = wickFill;
                 objectIndex = DrawBlurredCandleOverlay(
                     "MINI",
                     objectIndex,
@@ -3441,23 +6689,527 @@ namespace cAlgo.Robots
                     borderColor);
             }
 
-            var labelY = priceLow - labelSlotOffset;
-            var labelText = Chart.DrawText("MINI_TXT_" + objectIndex.ToString(CultureInfo.InvariantCulture), GetMiniChartLabel(timeFrame), latestLabelTime, labelY, labelColor);
-            TryStyleChartText(labelText, 9, "Courier New", true);
-            TrySetChartObjectBackground(labelText);
+            // Markers/events are best-effort: a failure here must not kill the candles.
+            try
+            {
+                objectIndex = DrawMiniChartMarkersForTimeFrame(
+                    objectIndex,
+                    sourceBars,
+                    timeFrame,
+                    firstSourceIndex,
+                    lastVisibleIndex,
+                    slotTimesByBarIndex,
+                    priceRange);
+            }
+            catch (Exception ex)
+            {
+                SafePrint("[Mini] Marker layer skipped for {0}: {1}", GetMiniChartDisplayLabel(timeFrame), ex.Message);
+            }
+
+            try
+            {
+                // Timeframe tag (e.g. "4H", "D") at the bottom of the mini chart, aligned to the
+                // shared price level (lowest low across all mini frames) so labels line up.
+                var labelGap = Math.Max(Symbol.PipSize * 20.0, 0.000001);
+                var bottomLabelPrice = sharedLabelPrice > 0 ? sharedLabelPrice : priceLow;
+                var bottomLabelY = bottomLabelPrice - labelGap;
+
+                var bottomLabelText = Chart.DrawText(
+                    "MINI_TXT_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                    GetMiniChartDisplayLabel(timeFrame),
+                    labelTime,
+                    bottomLabelY,
+                    labelColor);
+                TryStyleChartText(bottomLabelText, 9, "Courier New", true);
+                TrySetChartObjectBackground(bottomLabelText);
+            }
+            catch (Exception ex)
+            {
+                SafePrint("[Mini] Label skipped for {0}: {1}", GetMiniChartDisplayLabel(timeFrame), ex.Message);
+            }
             return objectIndex + 1;
         }
 
-        private int GetMiniChartBarsForTimeFrame(TimeFrame timeFrame)
+        private int DrawMiniChartMarkersForTimeFrame(
+            int objectIndex,
+            Bars sourceBars,
+            TimeFrame sourceTimeFrame,
+            int firstSourceIndex,
+            int lastVisibleIndex,
+            Dictionary<int, Tuple<DateTime, DateTime>> slotTimesByBarIndex,
+            double priceRange)
         {
-            if (timeFrame == TimeFrame.Daily)
-                return 7;
-            if (timeFrame == TimeFrame.Hour4)
-                return 42;
-            return 6;
+            if (sourceBars == null || slotTimesByBarIndex == null || slotTimesByBarIndex.Count == 0)
+                return objectIndex;
+
+            var aggregatedMarkers = new List<DirectionalPatternMarkerAggregate>();
+
+            var patternDefinitions = BuildEnabledCandlePatternDefinitions();
+            if (patternDefinitions != null && patternDefinitions.Count > 0)
+            {
+                CollectRecentDirectionalCandlePatternMarkersOptimized(
+                    aggregatedMarkers,
+                    sourceBars,
+                    sourceTimeFrame,
+                    patternDefinitions);
+            }
+
+            foreach (var marker in aggregatedMarkers
+                .Where(item => item != null && item.BarIndex >= firstSourceIndex && item.BarIndex <= lastVisibleIndex)
+                .Where(item => slotTimesByBarIndex.ContainsKey(item.BarIndex))
+                .OrderByDescending(item => item.BarIndex)
+                .ThenBy(item => item.IsBullish ? 0 : 1)
+                .ThenBy(item => item.SlotIndex)
+                .Take(2)
+                .OrderBy(item => item.BarIndex)
+                .ThenBy(item => item.IsBullish ? 0 : 1))
+            {
+                var slotTimes = slotTimesByBarIndex[marker.BarIndex];
+                objectIndex = DrawMiniChartDirectionalMarker(
+                    objectIndex,
+                    marker.SourceBars,
+                    marker.SourceTimeFrame,
+                    marker.BarIndex,
+                    marker.IsBullish,
+                    marker.SlotIndex,
+                    marker.PatternSpan,
+                    marker.HighlightPatternRange,
+                    FormatAggregatedMarkerLabel(marker.Labels),
+                    slotTimes.Item1,
+                    slotTimes.Item2,
+                    priceRange);
+            }
+
+            objectIndex = DrawMiniChartCanonicalEventsForRange(
+                objectIndex,
+                sourceBars,
+                sourceTimeFrame,
+                firstSourceIndex,
+                lastVisibleIndex,
+                slotTimesByBarIndex,
+                priceRange);
+
+            return objectIndex;
         }
 
-        private int DrawMiniChartSpacer(int chartTfMinutes, int futureOffsetBars, int objectIndex)
+        private int DrawMiniChartBarMarkers(
+            int objectIndex,
+            Bars sourceBars,
+            TimeFrame sourceTimeFrame,
+            int chartTfMinutes,
+            double futureOffsetBars,
+            double displayWidthBars,
+            int firstSourceIndex,
+            int actualCount,
+            int sourceIndex,
+            DateTime leftTime,
+            DateTime rightTime,
+            double priceRange)
+        {
+            if (sourceBars == null || Symbol == null || sourceIndex < 0 || sourceIndex >= sourceBars.Count)
+                return objectIndex;
+
+            var markerTexts = new List<Tuple<string, bool, int>>();
+
+            var patternDefinitions = BuildEnabledCandlePatternDefinitions();
+            if (patternDefinitions != null && patternDefinitions.Count > 0 && sourceIndex < sourceBars.Count - 1)
+            {
+                var sharedPatternCache = new Dictionary<int, HashSet<string>>();
+                for (var i = 0; i < patternDefinitions.Count; i++)
+                {
+                    var definition = patternDefinitions[i];
+                    if (definition == null)
+                        continue;
+
+                    var matched = false;
+                    if (definition.NativeMatch != null)
+                        matched = definition.NativeMatch(sourceBars, sourceIndex);
+                    else if (!string.IsNullOrWhiteSpace(definition.SharedPatternType))
+                        matched = GetDetectedSharedRulePatternSetCached(sourceBars, sourceTimeFrame, sourceIndex, sharedPatternCache).Contains(definition.SharedPatternType);
+
+                    if (!matched)
+                        continue;
+
+                    markerTexts.Add(Tuple.Create((definition.ShortLabel ?? "").Trim().ToLowerInvariant(), definition.IsBullish, i));
+                }
+            }
+
+            var indicatorDefinitions = BuildIndicatorEventDefinitions();
+            if (indicatorDefinitions != null && indicatorDefinitions.Count > 0 && sourceIndex > 0 && sourceIndex < sourceBars.Count)
+            {
+                var requirements = GetIndicatorSnapshotRequirements();
+                var scanCache = BuildIndicatorEventScanCache(sourceBars, Math.Max(0, sourceIndex - 1), requirements);
+                var previousSnapshot = GetSharedIndicatorSnapshotCached(sourceBars, sourceIndex - 1, scanCache);
+                var currentSnapshot = GetSharedIndicatorSnapshotCached(sourceBars, sourceIndex, scanCache);
+                foreach (var definition in indicatorDefinitions)
+                {
+                    if (definition == null || definition.Match == null)
+                        continue;
+                    if (!definition.Match(sourceBars, sourceIndex, previousSnapshot, currentSnapshot))
+                        continue;
+
+                    markerTexts.Add(Tuple.Create((definition.ShortLabel ?? "").Trim().ToLowerInvariant(), definition.IsBullish, definition.SlotIndex));
+                }
+            }
+
+            if (markerTexts.Count > 0)
+            {
+                var uniqueMarkerTexts = markerTexts
+                    .GroupBy(item => string.Format(CultureInfo.InvariantCulture, "{0}|{1}|{2}", item.Item1, item.Item2 ? "B" : "S", item.Item3))
+                    .Select(group => group.First())
+                    .OrderBy(item => item.Item3)
+                    .ToList();
+                foreach (var marker in uniqueMarkerTexts)
+                {
+                    objectIndex = DrawMiniChartDirectionalMarker(
+                        objectIndex,
+                        sourceBars,
+                        sourceTimeFrame,
+                        sourceIndex,
+                        marker.Item2,
+                        marker.Item3,
+                        1,
+                        false,
+                        marker.Item1,
+                        leftTime,
+                        rightTime,
+                        priceRange);
+                }
+            }
+
+            objectIndex = DrawMiniChartCanonicalEventsForBar(
+                objectIndex,
+                sourceBars,
+                sourceTimeFrame,
+                sourceIndex,
+                leftTime,
+                rightTime,
+                priceRange);
+
+            return objectIndex;
+        }
+
+        private int DrawMiniChartCanonicalEventsForRange(
+            int objectIndex,
+            Bars sourceBars,
+            TimeFrame sourceTimeFrame,
+            int firstSourceIndex,
+            int lastVisibleIndex,
+            Dictionary<int, Tuple<DateTime, DateTime>> slotTimesByBarIndex,
+            double priceRange)
+        {
+            if (sourceBars == null || Symbol == null || slotTimesByBarIndex == null || slotTimesByBarIndex.Count == 0)
+                return objectIndex;
+
+            var symbolName = Chart != null && !string.IsNullOrWhiteSpace(Chart.SymbolName)
+                ? Chart.SymbolName
+                : Symbol.Name;
+            if (string.IsNullOrWhiteSpace(symbolName))
+                return objectIndex;
+
+            var enabledEventTypes = new List<Tuple<CanonicalEventType, string>>();
+            if (_toggleRejectionDetections) enabledEventTypes.Add(Tuple.Create(CanonicalEventType.Rejection, "RJ"));
+            if (_toggleBreakoutDetections) enabledEventTypes.Add(Tuple.Create(CanonicalEventType.Breakout, "BR"));
+            if (_togglePullbackDetections) enabledEventTypes.Add(Tuple.Create(CanonicalEventType.Pullback, "PB"));
+            if (_toggleContinuationDetections) enabledEventTypes.Add(Tuple.Create(CanonicalEventType.Continuation, "CT"));
+            if (_toggleImpulseDetections) enabledEventTypes.Add(Tuple.Create(CanonicalEventType.Impulse, "IM"));
+            if (enabledEventTypes.Count == 0)
+                return objectIndex;
+
+            var tfMinutes = Math.Max(1, TimeFrameToMinutes(sourceTimeFrame));
+            var drawnKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var candidates = new List<Tuple<int, CanonicalMarketEvent, string>>();
+
+            foreach (var eventType in enabledEventTypes)
+            {
+                var matchingEvents = GetCanonicalEventsForSymbolTimeFrame(symbolName, sourceTimeFrame, 24)
+                    .Where(evt => evt.EventType == eventType.Item1)
+                    .OrderByDescending(evt => evt.BarTime)
+                    .ThenByDescending(evt => evt.Score)
+                    .ToList();
+                if (matchingEvents.Count == 0)
+                    continue;
+
+                foreach (var evt in matchingEvents.OrderBy(item => item.BarTime))
+                {
+                    var sourceIndex = -1;
+                    for (var i = firstSourceIndex; i <= lastVisibleIndex; i++)
+                    {
+                        if (Math.Abs((sourceBars.OpenTimes[i] - evt.BarTime).TotalMinutes) <= tfMinutes)
+                        {
+                            sourceIndex = i;
+                            break;
+                        }
+                    }
+
+                    if (sourceIndex < firstSourceIndex || sourceIndex > lastVisibleIndex)
+                        continue;
+                    if (!slotTimesByBarIndex.ContainsKey(sourceIndex))
+                        continue;
+
+                    var dedupeKey = string.Format(
+                        CultureInfo.InvariantCulture,
+                        "{0}:{1}:{2}",
+                        sourceIndex,
+                        eventType.Item2,
+                        evt.IsBullish ? "B" : "S");
+                    if (!drawnKeys.Add(dedupeKey))
+                        continue;
+
+                    candidates.Add(Tuple.Create(sourceIndex, evt, eventType.Item2));
+                }
+            }
+
+            foreach (var candidate in candidates
+                .OrderByDescending(item => item.Item2.BarTime)
+                .ThenByDescending(item => item.Item2.Score)
+                .Take(2)
+                .OrderBy(item => item.Item2.BarTime))
+            {
+                var slotTimes = slotTimesByBarIndex[candidate.Item1];
+                objectIndex = DrawMiniChartCanonicalEventAtSlot(
+                    objectIndex,
+                    sourceBars,
+                    sourceTimeFrame,
+                    candidate.Item1,
+                    candidate.Item2,
+                    candidate.Item3,
+                    slotTimes.Item1,
+                    slotTimes.Item2,
+                    priceRange);
+            }
+
+            return objectIndex;
+        }
+
+        private int DrawMiniChartDirectionalMarker(
+            int objectIndex,
+            Bars sourceBars,
+            TimeFrame sourceTimeFrame,
+            int barIndex,
+            bool isBullish,
+            int slotIndex,
+            int patternSpan,
+            bool highlightPatternRange,
+            string labelText,
+            DateTime leftTime,
+            DateTime rightTime,
+            double priceRange)
+        {
+            if (sourceBars == null || Symbol == null || barIndex < 0 || barIndex >= sourceBars.Count)
+                return objectIndex;
+
+            var anchorPrice = isBullish ? sourceBars.LowPrices[barIndex] : sourceBars.HighPrices[barIndex];
+            var barRange = Math.Max(sourceBars.HighPrices[barIndex] - sourceBars.LowPrices[barIndex], Symbol.PipSize * 8.0);
+            // Bullish icons/labels use a darker green tone; bearish a red tone. The surrounding box
+            // was removed: its x-position used real HTF bar times, which never matched the mini
+            // chart's compressed per-bar slots, so it rendered off-position.
+            var patternBoxColor = isBullish ? Color.FromArgb(255, 34, 139, 34) : Color.FromArgb(255, 239, 68, 68);
+            var textY = ResolveDirectionalLabelPrice(isBullish, anchorPrice, barRange, slotIndex, priceRange);
+            // Icon sits left of the horizontal middle of the bar slot (label follows to its right).
+            var iconTime = leftTime.AddMinutes(Math.Max(0.2, (rightTime - leftTime).TotalMinutes * 0.45));
+            DrawDirectionalArrowShape(
+                "MINI_PAT_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                iconTime,
+                anchorPrice,
+                isBullish,
+                sourceTimeFrame,
+                barRange,
+                patternBoxColor,
+                14,
+                2.0);
+
+            var cleanLabel = string.IsNullOrWhiteSpace(labelText) ? "pat" : labelText.Trim().ToLowerInvariant();
+            var label = Chart.DrawText(
+                "MINI_PAT_LBL_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                " " + cleanLabel,
+                iconTime.AddMinutes(Math.Max(0.01, (rightTime - leftTime).TotalMinutes * 0.01)),
+                textY,
+                patternBoxColor);
+            TryStyleChartText(label, Math.Max(7, ResolveChartMarkerFontSize(sourceTimeFrame) - 2), "Courier New", true);
+            TrySetPropertyValue(label, "ZIndex", 14);
+            return objectIndex + 1;
+        }
+
+        private int DrawMiniChartCanonicalEventAtSlot(
+            int objectIndex,
+            Bars sourceBars,
+            TimeFrame sourceTimeFrame,
+            int sourceIndex,
+            CanonicalMarketEvent evt,
+            string shortLabel,
+            DateTime leftTime,
+            DateTime rightTime,
+            double priceRange)
+        {
+            if (sourceBars == null || Symbol == null || sourceIndex < 0 || sourceIndex >= sourceBars.Count)
+                return objectIndex;
+
+            var baseColor = GetTimeFrameStructureColor(sourceTimeFrame);
+            if (evt.EventType == CanonicalEventType.Rejection || evt.EventType == CanonicalEventType.Breakout)
+            {
+                var levelLine = Chart.DrawTrendLine(
+                    "MINI_EVT_LVL_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                    leftTime,
+                    evt.PriceRef,
+                    rightTime,
+                    evt.PriceRef,
+                    WithAlpha(baseColor, evt.EventType == CanonicalEventType.Breakout ? 132 : 118));
+                TrySetPropertyValue(levelLine, "Thickness", 2);
+                TrySetEnumPropertyValue(levelLine, "LineStyle", "Dots");
+                TrySetPropertyValue(levelLine, "ZIndex", 13);
+            }
+
+            var anchorPrice = evt.IsBullish ? sourceBars.LowPrices[sourceIndex] : sourceBars.HighPrices[sourceIndex];
+            var barRange = Math.Max(sourceBars.HighPrices[sourceIndex] - sourceBars.LowPrices[sourceIndex], Symbol.PipSize * 8.0);
+            var textY = ResolveDirectionalLabelPrice(evt.IsBullish, anchorPrice, barRange, 0, priceRange);
+            var textTime = leftTime.AddMinutes(Math.Max(0.2, (rightTime - leftTime).TotalMinutes * 0.22));
+            // Normal text icon (respects the Marker Symbol param) instead of the custom V shape.
+            var icon = Chart.DrawText(
+                "MINI_EVT_ICON_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                GetDirectionalMarkerIcon(evt.IsBullish),
+                textTime,
+                anchorPrice,
+                baseColor);
+            TryStyleChartText(icon, Math.Max(7, ResolveChartMarkerFontSize(sourceTimeFrame) + 1), "Courier New", true);
+            TrySetPropertyValue(icon, "ZIndex", 14);
+
+            var text = Chart.DrawText(
+                "MINI_EVT_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                " " + shortLabel.Trim().ToUpperInvariant(),
+                textTime.AddMinutes(Math.Max(0.02, (rightTime - leftTime).TotalMinutes * 0.025)),
+                textY,
+                baseColor);
+            TryStyleChartText(text, Math.Max(7, ResolveChartMarkerFontSize(sourceTimeFrame) - 2), "Courier New", true);
+            TrySetPropertyValue(text, "ZIndex", 14);
+
+            if (evt.EventType == CanonicalEventType.Rejection || evt.EventType == CanonicalEventType.Breakout)
+            {
+                var levelLabel = ResolveCanonicalReactionLevelLabel(evt, shortLabel, sourceBars);
+                var label = Chart.DrawText(
+                    "MINI_EVT_LBL_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                    " " + levelLabel,
+                    rightTime.AddMinutes(Math.Max(0.08, (rightTime - leftTime).TotalMinutes * 0.08)),
+                    evt.PriceRef,
+                    baseColor);
+                TryStyleChartText(label, Math.Max(7, ResolveChartMarkerFontSize(sourceTimeFrame) - 2), "Courier New", true);
+                TrySetPropertyValue(label, "ZIndex", 14);
+            }
+
+            return objectIndex + 1;
+        }
+
+        private int DrawMiniChartCanonicalEventsForBar(
+            int objectIndex,
+            Bars sourceBars,
+            TimeFrame sourceTimeFrame,
+            int sourceIndex,
+            DateTime leftTime,
+            DateTime rightTime,
+            double priceRange)
+        {
+            if (sourceBars == null || Symbol == null || sourceIndex < 0 || sourceIndex >= sourceBars.Count)
+                return objectIndex;
+
+            var symbolName = Chart != null && !string.IsNullOrWhiteSpace(Chart.SymbolName)
+                ? Chart.SymbolName
+                : Symbol.Name;
+            if (string.IsNullOrWhiteSpace(symbolName))
+                return objectIndex;
+
+            var enabledEventTypes = new List<Tuple<CanonicalEventType, string>>();
+            if (_toggleRejectionDetections) enabledEventTypes.Add(Tuple.Create(CanonicalEventType.Rejection, "RJ"));
+            if (_toggleBreakoutDetections) enabledEventTypes.Add(Tuple.Create(CanonicalEventType.Breakout, "BR"));
+            if (_togglePullbackDetections) enabledEventTypes.Add(Tuple.Create(CanonicalEventType.Pullback, "PB"));
+            if (_toggleContinuationDetections) enabledEventTypes.Add(Tuple.Create(CanonicalEventType.Continuation, "CT"));
+            if (_toggleImpulseDetections) enabledEventTypes.Add(Tuple.Create(CanonicalEventType.Impulse, "IM"));
+            if (enabledEventTypes.Count == 0)
+                return objectIndex;
+
+            var barTime = sourceBars.OpenTimes[sourceIndex];
+            var tfMinutes = Math.Max(1, TimeFrameToMinutes(sourceTimeFrame));
+            var relevantEvents = GetCanonicalEventsForSymbolTimeFrame(symbolName, sourceTimeFrame, 24)
+                .Where(evt => enabledEventTypes.Any(item => item.Item1 == evt.EventType))
+                .Where(evt => Math.Abs((evt.BarTime - barTime).TotalMinutes) <= tfMinutes)
+                .OrderByDescending(evt => evt.Score)
+                .ThenBy(evt => evt.EventType)
+                .ToList();
+
+            if (relevantEvents.Count == 0)
+                return objectIndex;
+
+            foreach (var evt in relevantEvents)
+            {
+                var shortLabel = enabledEventTypes.First(item => item.Item1 == evt.EventType).Item2;
+                var baseColor = GetTimeFrameStructureColor(sourceTimeFrame);
+                if (evt.EventType == CanonicalEventType.Rejection || evt.EventType == CanonicalEventType.Breakout)
+                {
+                    var levelLine = Chart.DrawTrendLine(
+                        "MINI_EVT_LVL_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                        leftTime,
+                        evt.PriceRef,
+                        rightTime,
+                        evt.PriceRef,
+                        WithAlpha(baseColor, evt.EventType == CanonicalEventType.Breakout ? 132 : 118));
+                    TrySetPropertyValue(levelLine, "Thickness", 2);
+                    TrySetEnumPropertyValue(levelLine, "LineStyle", "Dots");
+                    TrySetPropertyValue(levelLine, "ZIndex", 13);
+                }
+
+                var anchorPrice = evt.IsBullish ? sourceBars.LowPrices[sourceIndex] : sourceBars.HighPrices[sourceIndex];
+                var verticalPad = Math.Max(Symbol.PipSize * 7.0, priceRange * 0.03);
+                var textY = evt.IsBullish ? anchorPrice - verticalPad : anchorPrice + verticalPad;
+                var textTime = leftTime.AddMinutes(Math.Max(0.2, (rightTime - leftTime).TotalMinutes * 0.18));
+            var text = Chart.DrawText(
+                "MINI_EVT_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                FormatDirectionalMarkerText(shortLabel, evt.IsBullish),
+                textTime,
+                textY,
+                baseColor);
+                TryStyleChartText(text, Math.Max(7, ResolveChartMarkerFontSize(sourceTimeFrame) - 2), "Courier New", true);
+                TrySetPropertyValue(text, "ZIndex", 14);
+
+                if (evt.EventType == CanonicalEventType.Rejection || evt.EventType == CanonicalEventType.Breakout)
+                {
+                    var levelLabel = ResolveCanonicalReactionLevelLabel(evt, shortLabel, sourceBars);
+                    var label = Chart.DrawText(
+                        "MINI_EVT_LBL_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                        " " + levelLabel,
+                        rightTime.AddMinutes(Math.Max(0.08, (rightTime - leftTime).TotalMinutes * 0.08)),
+                        evt.PriceRef,
+                        baseColor);
+                    TryStyleChartText(label, Math.Max(7, ResolveChartMarkerFontSize(sourceTimeFrame) - 2), "Courier New", true);
+                    TrySetPropertyValue(label, "ZIndex", 14);
+                }
+
+                objectIndex++;
+            }
+
+            return objectIndex;
+        }
+
+        // Number of source bars that fit inside one full day (1440 minutes).
+        private static int GetBarsPerFullDay(int tfMinutes)
+        {
+            var minutes = Math.Max(1, tfMinutes);
+            return Math.Max(1, (int)Math.Ceiling(1440.0 / minutes));
+        }
+
+        // Per-timeframe mini chart bar count (what each HTF mini chart shows):
+        // W=4, D=7, 4H=12, 1H/30m/15m and below=24.
+        private int GetMiniChartBarsForTimeFrame(TimeFrame timeFrame)
+        {
+            var tfMinutes = Math.Max(1, TimeFrameToMinutes(timeFrame));
+            if (tfMinutes >= 10080) // weekly+
+                return 4;
+            if (tfMinutes >= 1440)  // daily
+                return 7;
+            if (tfMinutes >= 240)   // 4h
+                return 12;
+            return 24;              // <= 1h (15m/30m/1h and below)
+        }
+
+        private int DrawMiniChartSpacer(int chartTfMinutes, double futureOffsetBars, int objectIndex)
         {
             if (Bars == null || Bars.Count < 10)
                 return objectIndex;
@@ -3573,23 +7325,54 @@ namespace cAlgo.Robots
             return new List<TimeFrame> { TimeFrame.Weekly };
         }
 
+        private TimeFrame ResolveConfiguredHtfSlotTimeFrame(TimeFrame chartTimeFrame, int slotIndex)
+        {
+            var selection = slotIndex == 0
+                ? DrawAutoHtf1
+                : DrawAutoHtf2;
+
+            switch (selection)
+            {
+                case HtfSlotMode.Off:
+                    return null;
+                case HtfSlotMode.Auto:
+                    var autoFrames = GetAutoHigherTimeframes(chartTimeFrame);
+                    return slotIndex >= 0 && slotIndex < autoFrames.Count ? autoFrames[slotIndex] : null;
+                case HtfSlotMode._15m:
+                    return TimeFrame.Minute15;
+                case HtfSlotMode._1h:
+                    return TimeFrame.Hour;
+                case HtfSlotMode._4h:
+                    return TimeFrame.Hour4;
+                case HtfSlotMode._1d:
+                    return TimeFrame.Daily;
+                case HtfSlotMode._1w:
+                    return TimeFrame.Weekly;
+                default:
+                    return null;
+            }
+        }
+
         private List<TimeFrame> GetEnabledAutoHigherTimeframes(TimeFrame chartTimeFrame)
         {
-            var frames = GetAutoHigherTimeframes(chartTimeFrame);
             var enabled = new List<TimeFrame>();
-            if (frames.Count > 0 && _toggleHtf15)
-                enabled.Add(frames[0]);
-            if (frames.Count > 1 && _toggleHtf4H)
-                enabled.Add(frames[1]);
+            for (var slotIndex = 0; slotIndex < 2; slotIndex++)
+            {
+                var resolved = ResolveConfiguredHtfSlotTimeFrame(chartTimeFrame, slotIndex);
+                if (resolved == null)
+                    continue;
+                if (!enabled.Contains(resolved))
+                    enabled.Add(resolved);
+            }
             return enabled;
         }
 
         private string GetAutoHigherTimeframeButtonLabel(TimeFrame chartTimeFrame, int slotIndex)
         {
-            var frames = GetAutoHigherTimeframes(chartTimeFrame);
-            if (slotIndex < 0 || slotIndex >= frames.Count)
+            var resolved = ResolveConfiguredHtfSlotTimeFrame(chartTimeFrame, slotIndex);
+            if (resolved == null)
                 return slotIndex == 0 ? "HTF1" : "HTF2";
-            return GetMiniChartLabel(frames[slotIndex]);
+            return GetMiniChartLabel(resolved);
         }
 
         private DateTime GetCurrentChartEndTime()
@@ -3597,6 +7380,57 @@ namespace cAlgo.Robots
             if (Bars != null && Bars.Count > 0)
                 return Bars.OpenTimes[Bars.Count - 1];
             return Server.Time;
+        }
+
+        private DateTime GetNextDayStartTime(DateTime referenceTime)
+        {
+            try
+            {
+                var dailyBars = MarketData.GetBars(TimeFrame.Daily, Chart.SymbolName);
+                if (dailyBars != null && dailyBars.Count > 0)
+                {
+                    foreach (var openTime in dailyBars.OpenTimes)
+                    {
+                        if (openTime > referenceTime)
+                            return openTime;
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            return referenceTime.Date.AddDays(1);
+        }
+
+        private DateTime GetCurrentDayStartTime(DateTime referenceTime)
+        {
+            try
+            {
+                var dailyBars = MarketData.GetBars(TimeFrame.Daily, Chart.SymbolName);
+                if (dailyBars != null && dailyBars.Count > 0)
+                {
+                    for (var i = dailyBars.Count - 1; i >= 0; i--)
+                    {
+                        if (dailyBars.OpenTimes[i] <= referenceTime)
+                            return dailyBars.OpenTimes[i];
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            return referenceTime.Date;
+        }
+
+        private DateTime GetCurrentWeekStartTime(DateTime referenceTime)
+        {
+            var dayStart = GetCurrentDayStartTime(referenceTime);
+            // Trading week starts Monday; Sunday (DayOfWeek=0) belongs to the prior week.
+            var dayOfWeek = (int)dayStart.DayOfWeek;
+            var daysBack = dayOfWeek == 0 ? 6 : dayOfWeek - 1;
+            return dayStart.AddDays(-daysBack);
         }
 
         private int DrawHigherTimeframeZonesOnChart(int objectIndex)
@@ -3819,6 +7653,20 @@ namespace cAlgo.Robots
             if (minutes >= 1440) return "1D";
             if (minutes >= 240) return "4H";
             if (minutes >= 60) return "1H";
+            if (minutes >= 30) return "30m";
+            if (minutes >= 15) return "15m";
+            if (minutes >= 5) return "5m";
+            return "1m";
+        }
+
+        private string GetMiniChartDisplayLabel(TimeFrame timeFrame)
+        {
+            var minutes = TimeFrameToMinutes(timeFrame);
+            if (minutes >= 10080) return "W";
+            if (minutes >= 1440) return "D";
+            if (minutes >= 240) return "4H";
+            if (minutes >= 60) return "1H";
+            if (minutes >= 30) return "30m";
             if (minutes >= 15) return "15m";
             if (minutes >= 5) return "5m";
             return "1m";
@@ -3848,6 +7696,7 @@ namespace cAlgo.Robots
             if (minutes >= 1440) return "D";
             if (minutes >= 240) return "4h";
             if (minutes >= 60) return "1h";
+            if (minutes >= 30) return "30m";
             if (minutes >= 15) return "15m";
             if (minutes >= 5) return "5m";
             return "1m";
@@ -3856,12 +7705,14 @@ namespace cAlgo.Robots
         private Color GetTimeFrameStructureColor(TimeFrame timeFrame)
         {
             var minutes = TimeFrameToMinutes(timeFrame);
+            if (minutes >= 10080) return Color.Orchid;
             if (minutes >= 1440) return Color.Gold;
-            if (minutes >= 240) return Color.MediumPurple;
-            if (minutes >= 60) return Color.SlateBlue;
-            if (minutes >= 15) return Color.DeepSkyBlue;
-            if (minutes >= 5) return Color.Gainsboro;
-            return Color.WhiteSmoke;
+            if (minutes >= 240) return Color.DarkOrange;
+            if (minutes >= 60) return Color.MediumSlateBlue;
+            if (minutes >= 30) return Color.Aqua;
+            if (minutes >= 15) return Color.DodgerBlue;
+            if (minutes >= 5) return Color.WhiteSmoke;
+            return Color.Gainsboro;
         }
 
         private List<TimeFrame> GetDashboardEventTimeFrames()
@@ -3896,7 +7747,9 @@ namespace cAlgo.Robots
             DateTime barTime,
             double priceRef,
             int score,
-            int confidence)
+            int confidence,
+            double zoneLow = 0,
+            double zoneHigh = 0)
         {
             var eventSuffix = eventType == CanonicalEventType.Choch
                 ? "choch"
@@ -3931,7 +7784,9 @@ namespace cAlgo.Robots
                 PriceRef = priceRef,
                 Score = score,
                 Confidence = confidence,
-                SourceTimeFrame = timeFrame
+                SourceTimeFrame = timeFrame,
+                ZoneLow = zoneLow,
+                ZoneHigh = zoneHigh
             };
         }
 
@@ -3982,13 +7837,16 @@ namespace cAlgo.Robots
             foreach (var swing in CollectConfirmedSwings(sourceBars, 120).TakeLast(10))
                 AddChartLevelCandidate(candidates, swing.Price, tolerance, 2);
 
-            var fvgLevels = new List<double>();
-            AddFvgLevelCandidates(fvgLevels, sourceBars, tolerance);
-            AddChartLevelCandidatesFromRaw(candidates, fvgLevels, tolerance, 1);
+            AddFvgZoneCandidates(candidates, sourceBars, tolerance, 1);
+            AddOrderBlockZoneCandidates(candidates, sourceBars, tolerance, 1);
 
-            var obLevels = new List<double>();
-            AddOrderBlockLevelCandidates(obLevels, sourceBars, tolerance);
-            AddChartLevelCandidatesFromRaw(candidates, obLevels, tolerance, 1);
+            foreach (var zone in DetectScoredPriceZones(sourceBars, symbol, 80))
+            {
+                var zoneWeight = Math.Max(1, Math.Min(4, zone.Score / 4));
+                AddChartLevelCandidate(candidates, (zone.Low + zone.High) * 0.5, tolerance, zoneWeight);
+                AddChartLevelCandidate(candidates, zone.Low, tolerance, 1);
+                AddChartLevelCandidate(candidates, zone.High, tolerance, 1);
+            }
 
             return candidates
                 .Where(x => x.Price > 0 && x.Weight > 0)
@@ -4018,6 +7876,9 @@ namespace cAlgo.Robots
             var startBar = Math.Max(2, sourceBars.Count - Math.Min(Math.Max(lookbackBars, 12), 36));
             for (var reclaimBarIndex = startBar; reclaimBarIndex < sourceBars.Count; reclaimBarIndex++)
             {
+                if (!HasEventVolumeSurge(sourceBars, reclaimBarIndex))
+                    continue;
+
                 foreach (var candidate in candidates)
                 {
                     if (candidate.BarIndex >= reclaimBarIndex)
@@ -4070,13 +7931,18 @@ namespace cAlgo.Robots
 
             for (var barIndex = startBar; barIndex < sourceBars.Count; barIndex++)
             {
+                if (!HasEventVolumeSurge(sourceBars, barIndex))
+                    continue;
+
                 var openV = sourceBars.OpenPrices[barIndex];
                 var highV = sourceBars.HighPrices[barIndex];
                 var lowV = sourceBars.LowPrices[barIndex];
                 var closeV = sourceBars.ClosePrices[barIndex];
                 var prevClose = sourceBars.ClosePrices[barIndex - 1];
+                var prevOpen = sourceBars.OpenPrices[barIndex - 1];
                 var barTime = sourceBars.OpenTimes[barIndex];
                 var span = Math.Max(highV - lowV, tolerance);
+                var sharedDetections = GetDetectedSharedRulePatternSet(sourceBars, sourceTimeFrame, barIndex);
                 var nearbyLevels = candidates
                     .OrderByDescending(x => x.Weight)
                     .ThenBy(x => Math.Abs(x.Price - closeV))
@@ -4087,9 +7953,15 @@ namespace cAlgo.Robots
                 {
                     var levelPrice = level.Price;
 
-                    var bullishReject = lowV <= levelPrice + tolerance &&
-                        closeV > levelPrice + (tolerance * 0.25) &&
-                        (closeV - levelPrice) / span >= 0.35;
+                    var bullishReject = IsStrictBullishLevelRejection(
+                        sourceBars,
+                        barIndex,
+                        levelPrice,
+                        tolerance,
+                        span,
+                        sharedDetections,
+                        prevOpen,
+                        prevClose);
                     if (bullishReject)
                     {
                         events.Add(BuildCanonicalMarketEvent(
@@ -4102,12 +7974,20 @@ namespace cAlgo.Robots
                             barTime,
                             levelPrice,
                             2 + Math.Min(level.Weight, 2),
-                            68 + Math.Min(level.Weight * 2, 8)));
+                            68 + Math.Min(level.Weight * 2, 8),
+                            level.ZoneLow,
+                            level.ZoneHigh));
                     }
 
-                    var bearishReject = highV >= levelPrice - tolerance &&
-                        closeV < levelPrice - (tolerance * 0.25) &&
-                        (levelPrice - closeV) / span >= 0.35;
+                    var bearishReject = IsStrictBearishLevelRejection(
+                        sourceBars,
+                        barIndex,
+                        levelPrice,
+                        tolerance,
+                        span,
+                        sharedDetections,
+                        prevOpen,
+                        prevClose);
                     if (bearishReject)
                     {
                         events.Add(BuildCanonicalMarketEvent(
@@ -4120,13 +8000,20 @@ namespace cAlgo.Robots
                             barTime,
                             levelPrice,
                             2 + Math.Min(level.Weight, 2),
-                            68 + Math.Min(level.Weight * 2, 8)));
+                            68 + Math.Min(level.Weight * 2, 8),
+                            level.ZoneLow,
+                            level.ZoneHigh));
                     }
 
-                    var bullishBreakout = prevClose <= levelPrice + (tolerance * 0.25) &&
-                        closeV > levelPrice + (tolerance * 0.25) &&
-                        (closeV - levelPrice) / span >= 0.30 &&
-                        closeV > openV;
+                    var bullishBreakout = IsStrictBullishLevelBreakout(
+                        sourceBars,
+                        barIndex,
+                        levelPrice,
+                        tolerance,
+                        span,
+                        sharedDetections,
+                        prevOpen,
+                        prevClose);
                     if (bullishBreakout)
                     {
                         events.Add(BuildCanonicalMarketEvent(
@@ -4139,13 +8026,20 @@ namespace cAlgo.Robots
                             barTime,
                             levelPrice,
                             3 + Math.Min(level.Weight, 2),
-                            72 + Math.Min(level.Weight * 2, 8)));
+                            72 + Math.Min(level.Weight * 2, 8),
+                            level.ZoneLow,
+                            level.ZoneHigh));
                     }
 
-                    var bearishBreakout = prevClose >= levelPrice - (tolerance * 0.25) &&
-                        closeV < levelPrice - (tolerance * 0.25) &&
-                        (levelPrice - closeV) / span >= 0.30 &&
-                        closeV < openV;
+                    var bearishBreakout = IsStrictBearishLevelBreakout(
+                        sourceBars,
+                        barIndex,
+                        levelPrice,
+                        tolerance,
+                        span,
+                        sharedDetections,
+                        prevOpen,
+                        prevClose);
                     if (bearishBreakout)
                     {
                         events.Add(BuildCanonicalMarketEvent(
@@ -4158,12 +8052,180 @@ namespace cAlgo.Robots
                             barTime,
                             levelPrice,
                             3 + Math.Min(level.Weight, 2),
-                            72 + Math.Min(level.Weight * 2, 8)));
+                            72 + Math.Min(level.Weight * 2, 8),
+                            level.ZoneLow,
+                            level.ZoneHigh));
                     }
                 }
             }
 
             return events;
+        }
+
+        private bool IsStrictBullishLevelRejection(
+            Bars sourceBars,
+            int barIndex,
+            double levelPrice,
+            double tolerance,
+            double span,
+            HashSet<string> sharedDetections,
+            double prevOpen,
+            double prevClose)
+        {
+            if (sourceBars == null || barIndex <= 0 || barIndex >= sourceBars.Count)
+                return false;
+
+            var openV = sourceBars.OpenPrices[barIndex];
+            var highV = sourceBars.HighPrices[barIndex];
+            var lowV = sourceBars.LowPrices[barIndex];
+            var closeV = sourceBars.ClosePrices[barIndex];
+            var penetration = levelPrice - lowV;
+            var minPenetration = Math.Max(tolerance * 0.35, span * 0.18);
+            var closeBackAbove = closeV > levelPrice + (tolerance * 0.15);
+            var bodyMid = (openV + closeV) * 0.5;
+            var bodyRecovered = bodyMid >= levelPrice + (tolerance * 0.05);
+            var bullishReversalColor = closeV > openV && prevClose < prevOpen;
+            var patternConfirmed =
+                sharedDetections.Contains("bullish_pin_bar") ||
+                sharedDetections.Contains("bullish_hammer") ||
+                sharedDetections.Contains("bullish_inverted_hammer") ||
+                sharedDetections.Contains("bullish_engulfing") ||
+                sharedDetections.Contains("bullish_harami") ||
+                sharedDetections.Contains("bullish_morning_star") ||
+                sharedDetections.Contains("bullish_piercing_line");
+
+            return penetration >= minPenetration &&
+                   highV >= levelPrice &&
+                   closeBackAbove &&
+                   bodyRecovered &&
+                   bullishReversalColor &&
+                   patternConfirmed;
+        }
+
+        private bool IsStrictBearishLevelRejection(
+            Bars sourceBars,
+            int barIndex,
+            double levelPrice,
+            double tolerance,
+            double span,
+            HashSet<string> sharedDetections,
+            double prevOpen,
+            double prevClose)
+        {
+            if (sourceBars == null || barIndex <= 0 || barIndex >= sourceBars.Count)
+                return false;
+
+            var openV = sourceBars.OpenPrices[barIndex];
+            var highV = sourceBars.HighPrices[barIndex];
+            var lowV = sourceBars.LowPrices[barIndex];
+            var closeV = sourceBars.ClosePrices[barIndex];
+            var penetration = highV - levelPrice;
+            var minPenetration = Math.Max(tolerance * 0.35, span * 0.18);
+            var closeBackBelow = closeV < levelPrice - (tolerance * 0.15);
+            var bodyMid = (openV + closeV) * 0.5;
+            var bodyRecovered = bodyMid <= levelPrice - (tolerance * 0.05);
+            var bearishReversalColor = closeV < openV && prevClose > prevOpen;
+            var patternConfirmed =
+                sharedDetections.Contains("bearish_pin_bar") ||
+                sharedDetections.Contains("shooting_star") ||
+                sharedDetections.Contains("hanging_man") ||
+                sharedDetections.Contains("bearish_engulfing") ||
+                sharedDetections.Contains("bearish_harami") ||
+                sharedDetections.Contains("bearish_evening_star") ||
+                sharedDetections.Contains("bearish_dark_cloud_cover");
+
+            return penetration >= minPenetration &&
+                   lowV <= levelPrice &&
+                   closeBackBelow &&
+                   bodyRecovered &&
+                   bearishReversalColor &&
+                   patternConfirmed;
+        }
+
+        private bool IsStrictBullishLevelBreakout(
+            Bars sourceBars,
+            int barIndex,
+            double levelPrice,
+            double tolerance,
+            double span,
+            HashSet<string> sharedDetections,
+            double prevOpen,
+            double prevClose)
+        {
+            if (sourceBars == null || barIndex <= 0 || barIndex >= sourceBars.Count)
+                return false;
+
+            var openV = sourceBars.OpenPrices[barIndex];
+            var highV = sourceBars.HighPrices[barIndex];
+            var lowV = sourceBars.LowPrices[barIndex];
+            var closeV = sourceBars.ClosePrices[barIndex];
+            var body = Math.Abs(closeV - openV);
+            var bodyMid = (openV + closeV) * 0.5;
+            var closeThrough = closeV > levelPrice + Math.Max(tolerance * 0.25, span * 0.06);
+            var bodyCommitted = bodyMid >= levelPrice + Math.Max(tolerance * 0.10, span * 0.04);
+            var openedNearOrBelow = openV <= levelPrice + Math.Max(tolerance * 0.35, span * 0.10);
+            var priorContext = prevClose <= levelPrice + Math.Max(tolerance * 0.25, span * 0.08);
+            var strongBody = IsStrongDirectionalCandle(sourceBars, barIndex, true);
+            var bullishContinuationColor = closeV > openV && (prevClose >= prevOpen || openV <= prevClose + tolerance);
+            var lowHeld = lowV >= levelPrice - Math.Max(tolerance * 0.35, span * 0.08);
+            var patternConfirmed =
+                IsBigDirectionalCandle(sourceBars, barIndex, true) ||
+                sharedDetections.Contains("bullish_engulfing") ||
+                sharedDetections.Contains("bullish_three_white_soldiers") ||
+                sharedDetections.Contains("bullish_morning_star");
+
+            return closeThrough &&
+                   bodyCommitted &&
+                   openedNearOrBelow &&
+                   priorContext &&
+                   strongBody &&
+                   bullishContinuationColor &&
+                   lowHeld &&
+                   body >= Math.Max(tolerance * 0.75, span * 0.28) &&
+                   patternConfirmed;
+        }
+
+        private bool IsStrictBearishLevelBreakout(
+            Bars sourceBars,
+            int barIndex,
+            double levelPrice,
+            double tolerance,
+            double span,
+            HashSet<string> sharedDetections,
+            double prevOpen,
+            double prevClose)
+        {
+            if (sourceBars == null || barIndex <= 0 || barIndex >= sourceBars.Count)
+                return false;
+
+            var openV = sourceBars.OpenPrices[barIndex];
+            var highV = sourceBars.HighPrices[barIndex];
+            var lowV = sourceBars.LowPrices[barIndex];
+            var closeV = sourceBars.ClosePrices[barIndex];
+            var body = Math.Abs(closeV - openV);
+            var bodyMid = (openV + closeV) * 0.5;
+            var closeThrough = closeV < levelPrice - Math.Max(tolerance * 0.25, span * 0.06);
+            var bodyCommitted = bodyMid <= levelPrice - Math.Max(tolerance * 0.10, span * 0.04);
+            var openedNearOrAbove = openV >= levelPrice - Math.Max(tolerance * 0.35, span * 0.10);
+            var priorContext = prevClose >= levelPrice - Math.Max(tolerance * 0.25, span * 0.08);
+            var strongBody = IsStrongDirectionalCandle(sourceBars, barIndex, false);
+            var bearishContinuationColor = closeV < openV && (prevClose <= prevOpen || openV >= prevClose - tolerance);
+            var highHeld = highV <= levelPrice + Math.Max(tolerance * 0.35, span * 0.08);
+            var patternConfirmed =
+                IsBigDirectionalCandle(sourceBars, barIndex, false) ||
+                sharedDetections.Contains("bearish_engulfing") ||
+                sharedDetections.Contains("bearish_three_black_crows") ||
+                sharedDetections.Contains("bearish_evening_star");
+
+            return closeThrough &&
+                   bodyCommitted &&
+                   openedNearOrAbove &&
+                   priorContext &&
+                   strongBody &&
+                   bearishContinuationColor &&
+                   highHeld &&
+                   body >= Math.Max(tolerance * 0.75, span * 0.28) &&
+                   patternConfirmed;
         }
 
         private double ComputeEmaAtIndex(Bars sourceBars, int period, int index)
@@ -4277,6 +8339,9 @@ namespace cAlgo.Robots
 
             for (var barIndex = startBar; barIndex < sourceBars.Count; barIndex++)
             {
+                if (!HasEventVolumeSurge(sourceBars, barIndex))
+                    continue;
+
                 var barTime = sourceBars.OpenTimes[barIndex];
                 var latestSeed = FindLatestDirectionalSeedEvent(seedEvents, barTime);
                 if (!latestSeed.HasValue)
@@ -4434,12 +8499,19 @@ namespace cAlgo.Robots
 
             var normalizedSymbol = symbolName.Trim().ToUpperInvariant();
             var cacheKey = BuildDashboardEventCacheKey(normalizedSymbol, timeFrame);
-            List<CanonicalMarketEvent> cached;
-            if (_dashboardEventCache.TryGetValue(cacheKey, out cached) && cached != null && cached.Count > 0)
-                return cached.Take(Math.Max(1, maxEvents)).ToList();
+            TimedCacheEntry<List<CanonicalMarketEvent>> cached;
+            if (_dashboardEventCache.TryGetValue(cacheKey, out cached) &&
+                cached != null &&
+                cached.Value != null &&
+                (DateTime.UtcNow - cached.CreatedAtUtc) <= TimeSpan.FromSeconds(3))
+            {
+                LogPerfStep("CanonicalEventsCacheHit", 25, string.Format(CultureInfo.InvariantCulture, "{0} {1} -> {2}", normalizedSymbol, GetMiniChartLabel(timeFrame), cached.Value.Count));
+                return cached.Value.Take(Math.Max(1, maxEvents)).ToList();
+            }
 
             try
             {
+                var started = Stopwatch.StartNew();
                 var symbol = ResolveLoadedSymbol(normalizedSymbol);
                 if (symbol == null)
                     return empty;
@@ -4448,29 +8520,70 @@ namespace cAlgo.Robots
                 if (bars == null || bars.Count < 20)
                     return empty;
 
+                var latestClosedIndex = bars.Count - 2;
+                if (latestClosedIndex < 0)
+                    return empty;
+
+                var coverageStartIndex = Math.Max(0, latestClosedIndex - 180);
+                var latestClosedUnix = ToUnixSecondsSafe(bars.OpenTimes[latestClosedIndex]);
+                var persisted = LoadPersistedCanonicalEventCache(normalizedSymbol, timeFrame);
+                if (HasCanonicalEventCacheCoverage(persisted, bars, coverageStartIndex, latestClosedIndex))
+                {
+                    var persistedEvents = DeduplicateCanonicalEvents(
+                        persisted.Events.Where(evt =>
+                        {
+                            var eventUnix = ToUnixSecondsSafe(evt.BarTime);
+                            return eventUnix >= ToUnixSecondsSafe(bars.OpenTimes[coverageStartIndex]) && eventUnix <= latestClosedUnix;
+                        }));
+                    _dashboardEventCache[cacheKey] = new TimedCacheEntry<List<CanonicalMarketEvent>>
+                    {
+                        CreatedAtUtc = DateTime.UtcNow,
+                        Value = persistedEvents
+                    };
+                    LogPerfStep("CanonicalEventsDiskCacheHit", 20, string.Format(CultureInfo.InvariantCulture, "{0} {1} -> {2}", normalizedSymbol, GetMiniChartLabel(timeFrame), persistedEvents.Count));
+                    return persistedEvents.Take(Math.Max(1, maxEvents)).ToList();
+                }
+
                 var canonical = new List<CanonicalMarketEvent>();
+                var structureStarted = Stopwatch.StartNew();
                 canonical.AddRange(
                     CollectStructureEvents(bars, timeFrame, 180)
                         .Select(evt => MapStructureEventToCanonical(normalizedSymbol, evt)));
+                LogSlowChartStep("CanonicalEvents.Structure", structureStarted, string.Format(CultureInfo.InvariantCulture, "{0} {1} -> {2}", normalizedSymbol, GetMiniChartLabel(timeFrame), canonical.Count));
+
+                var sweepStarted = Stopwatch.StartNew();
                 canonical.AddRange(CollectCanonicalSweepReclaimEvents(normalizedSymbol, symbol, bars, timeFrame, 180));
+                LogSlowChartStep("CanonicalEvents.Sweep", sweepStarted, string.Format(CultureInfo.InvariantCulture, "{0} {1} -> {2}", normalizedSymbol, GetMiniChartLabel(timeFrame), canonical.Count));
+
+                var reactionStarted = Stopwatch.StartNew();
                 canonical.AddRange(CollectCanonicalLevelReactionEvents(normalizedSymbol, symbol, bars, timeFrame, 180));
+                LogSlowChartStep("CanonicalEvents.LevelReaction", reactionStarted, string.Format(CultureInfo.InvariantCulture, "{0} {1} -> {2}", normalizedSymbol, GetMiniChartLabel(timeFrame), canonical.Count));
+
+                var phaseStarted = Stopwatch.StartNew();
                 canonical.AddRange(CollectCanonicalPhaseEvents(normalizedSymbol, symbol, bars, timeFrame, canonical.ToList(), 180));
+                LogSlowChartStep("CanonicalEvents.Phase", phaseStarted, string.Format(CultureInfo.InvariantCulture, "{0} {1} -> {2}", normalizedSymbol, GetMiniChartLabel(timeFrame), canonical.Count));
 
+                var normalizeStarted = Stopwatch.StartNew();
                 canonical = canonical
-                    .OrderByDescending(evt => evt.BarTime)
-                    .ThenByDescending(evt => evt.Score)
-                    .ThenByDescending(evt => evt.PriceRef)
-                    .GroupBy(evt => string.Format(
-                        CultureInfo.InvariantCulture,
-                        "{0}|{1}|{2}|{3}",
-                        evt.EventKey,
-                        evt.TimeFrameLabel,
-                        evt.BarTime.Ticks,
-                        Math.Round(evt.PriceRef, 6)))
-                    .Select(group => group.First())
+                    .Where(evt => ToUnixSecondsSafe(evt.BarTime) <= latestClosedUnix)
                     .ToList();
+                canonical = DeduplicateCanonicalEvents(canonical);
+                LogSlowChartStep("CanonicalEvents.Normalize", normalizeStarted, string.Format(CultureInfo.InvariantCulture, "{0} {1} -> {2}", normalizedSymbol, GetMiniChartLabel(timeFrame), canonical.Count));
 
-                _dashboardEventCache[cacheKey] = canonical;
+                MergeCanonicalEventCacheCoverage(persisted, bars, coverageStartIndex, latestClosedIndex, canonical.Where(evt =>
+                {
+                    var eventUnix = ToUnixSecondsSafe(evt.BarTime);
+                    return eventUnix >= ToUnixSecondsSafe(bars.OpenTimes[coverageStartIndex]) && eventUnix <= latestClosedUnix;
+                }));
+                PruneCanonicalEventCache(persisted, bars, latestClosedIndex);
+                StorePersistedCanonicalEventCache(normalizedSymbol, timeFrame, persisted);
+
+                _dashboardEventCache[cacheKey] = new TimedCacheEntry<List<CanonicalMarketEvent>>
+                {
+                    CreatedAtUtc = DateTime.UtcNow,
+                    Value = canonical
+                };
+                LogSlowChartStep("CanonicalEvents.Total", started, string.Format(CultureInfo.InvariantCulture, "{0} {1} -> {2}", normalizedSymbol, GetMiniChartLabel(timeFrame), canonical.Count));
                 return canonical.Take(Math.Max(1, maxEvents)).ToList();
             }
             catch
@@ -4547,12 +8660,10 @@ namespace cAlgo.Robots
         {
             try
             {
-                if (!ShouldShowLowerTimeframeSessionContext())
-                    return objectIndex;
-
                 objectIndex = DrawPreviousPeriodLevels(objectIndex, TimeFrame.Hour, "1H", GetTimeFrameStructureColor(TimeFrame.Hour));
                 objectIndex = DrawPreviousPeriodLevels(objectIndex, TimeFrame.Hour4, "4H", GetTimeFrameStructureColor(TimeFrame.Hour4));
                 objectIndex = DrawPreviousPeriodLevels(objectIndex, TimeFrame.Daily, "1D", GetTimeFrameStructureColor(TimeFrame.Daily));
+                objectIndex = DrawSwingAndSrLevels(objectIndex);
             }
             catch (Exception ex)
             {
@@ -4560,6 +8671,76 @@ namespace cAlgo.Robots
             }
 
             return objectIndex;
+        }
+
+        private int DrawScoredPriceZones(int objectIndex)
+        {
+            if (Bars == null || Bars.Count < 20 || Symbol == null)
+                return objectIndex;
+
+            var zones = DetectScoredPriceZones(Bars, Symbol, 80);
+            if (zones.Count == 0)
+                return objectIndex;
+
+            var currentPrice = Symbol.Bid > 0 ? Symbol.Bid : (Symbol.Ask > 0 ? Symbol.Ask : 0);
+            if (currentPrice <= 0)
+                return objectIndex;
+
+            // SMC role flip: a zone price has broken through changes role — a supply zone now
+            // below price is demand (support), a demand zone now above price is supply (resistance).
+            var resolved = new List<ScoredPriceZone>();
+            foreach (var zone in zones)
+            {
+                if (zone.High < currentPrice)
+                    resolved.Add(WithZoneKind(zone, ScoredPriceZoneKind.Demand));
+                else if (zone.Low > currentPrice)
+                    resolved.Add(WithZoneKind(zone, ScoredPriceZoneKind.Supply));
+            }
+
+            // Only the 2 nearest zones per side: DEMAND (support) below price, SPLY (resistance) above.
+            var shown = resolved
+                .Where(zone => zone.High > zone.Low)
+                .OrderByDescending(zone => zone.High)
+                .Take(2)
+                .Concat(resolved
+                    .Where(zone => zone.High > zone.Low)
+                    .OrderBy(zone => zone.Low)
+                    .Take(2))
+                .ToList();
+            if (shown.Count == 0)
+                return objectIndex;
+
+            var currentEndTime = GetCurrentChartEndTime();
+            foreach (var zone in shown)
+            {
+                var color = zone.Kind == ScoredPriceZoneKind.Demand
+                    ? Color.LimeGreen
+                    : Color.IndianRed;
+                var fillColor = WithAlpha(color, 18);
+                var endTime = zone.EndTime > zone.StartTime ? zone.EndTime : currentEndTime;
+
+                var rect = Chart.DrawRectangle("PZ_" + objectIndex.ToString(CultureInfo.InvariantCulture), zone.StartTime, zone.High, endTime, zone.Low, fillColor);
+                TrySetPropertyValue(rect, "IsFilled", true);
+                TrySetPropertyValue(rect, "Color", fillColor);
+                TrySetPropertyValue(rect, "BorderColor", WithAlpha(color, 80));
+                TrySetPropertyValue(rect, "Thickness", 1);
+                TrySetEnumPropertyValue(rect, "LineStyle", "Dots");
+                TrySetChartObjectBackground(rect);
+
+                // Label at the right edge (current time), same position as the FVG/OB zone labels.
+                var label = zone.Kind == ScoredPriceZoneKind.Supply ? "SPLY" : "DEM";
+                DrawRightEdgeZoneLabel("PZ", objectIndex, (zone.High + zone.Low) * 0.5, color, label, GetChartMarkerFontSize());
+
+                objectIndex++;
+            }
+
+            return objectIndex;
+        }
+
+        private ScoredPriceZone WithZoneKind(ScoredPriceZone zone, ScoredPriceZoneKind kind)
+        {
+            zone.Kind = kind;
+            return zone;
         }
 
         private bool ShouldShowLowerTimeframeSessionContext()
@@ -4572,9 +8753,9 @@ namespace cAlgo.Robots
         private int DrawPreviousSessionLevels(int objectIndex)
         {
             var prevDate = GetReferenceNow().Date.AddDays(-1);
-            objectIndex = DrawSessionHighLow(objectIndex, "London", prevDate, Color.FromArgb(160, 60, 179, 113));
-            objectIndex = DrawSessionHighLow(objectIndex, "NY", prevDate, Color.FromArgb(180, 255, 215, 0));
-            objectIndex = DrawSessionHighLow(objectIndex, "Asia", prevDate, Color.FromArgb(150, 70, 130, 180));
+            objectIndex = DrawSessionHighLow(objectIndex, "London", prevDate, GetSessionAccentColor("London"));
+            objectIndex = DrawSessionHighLow(objectIndex, "NY", prevDate, GetSessionAccentColor("NY"));
+            objectIndex = DrawSessionHighLow(objectIndex, "Asia", prevDate, GetSessionAccentColor("Asia"));
             return objectIndex;
         }
 
@@ -4668,6 +8849,216 @@ namespace cAlgo.Robots
                 objectIndex = DrawHorizontalGuide(objectIndex, "SUP", supportTime, support, Color.PaleGreen);
 
             return objectIndex;
+        }
+
+        private List<ScoredPriceZone> DetectScoredPriceZones(Bars sourceBars, Symbol symbol, int lookbackBars)
+        {
+            var zones = new List<ScoredPriceZone>();
+            if (sourceBars == null || symbol == null || sourceBars.Count < 20 || symbol.PipSize <= 0)
+                return zones;
+
+            var lastClosedIndex = Math.Max(1, sourceBars.Count - 2);
+            var startIndex = Math.Max(5, lastClosedIndex - Math.Max(lookbackBars, 20) + 1);
+            var windowBars = lastClosedIndex - startIndex + 1;
+            if (windowBars < 12)
+                return zones;
+
+            var atrPips = ResolveAtrPips(symbol, sourceBars, 14);
+            var atrPrice = atrPips > 0 ? atrPips * symbol.PipSize : symbol.PipSize * 20;
+            var binSize = Math.Max(symbol.PipSize * 8.0, atrPrice * 0.20);
+
+            var minPrice = double.MaxValue;
+            var maxPrice = double.MinValue;
+            for (var i = startIndex; i <= lastClosedIndex; i++)
+            {
+                minPrice = Math.Min(minPrice, sourceBars.LowPrices[i]);
+                maxPrice = Math.Max(maxPrice, sourceBars.HighPrices[i]);
+            }
+
+            if (!(maxPrice > minPrice))
+                return zones;
+
+            var binCount = Math.Max(3, (int)Math.Ceiling((maxPrice - minPrice) / binSize) + 1);
+            if (binCount > 80)
+            {
+                binSize = (maxPrice - minPrice) / 80.0;
+                binCount = 80;
+            }
+
+            var closeHits = new int[binCount];
+            var lowTouches = new int[binCount];
+            var highTouches = new int[binCount];
+            var bullishRejections = new int[binCount];
+            var bearishRejections = new int[binCount];
+            var swingLowHits = new int[binCount];
+            var swingHighHits = new int[binCount];
+
+            Func<double, int> toBinIndex = price =>
+            {
+                if (!(price > 0) || !(binSize > 0))
+                    return 0;
+                var rawIndex = (int)Math.Floor((price - minPrice) / binSize);
+                if (rawIndex < 0) rawIndex = 0;
+                if (rawIndex >= binCount) rawIndex = binCount - 1;
+                return rawIndex;
+            };
+
+            for (var i = startIndex; i <= lastClosedIndex; i++)
+            {
+                var open = sourceBars.OpenPrices[i];
+                var high = sourceBars.HighPrices[i];
+                var low = sourceBars.LowPrices[i];
+                var close = sourceBars.ClosePrices[i];
+                var body = Math.Abs(close - open);
+                var lowerWick = Math.Max(0.0, Math.Min(open, close) - low);
+                var upperWick = Math.Max(0.0, high - Math.Max(open, close));
+                var closeIndex = toBinIndex(close);
+                var lowIndex = toBinIndex(low);
+                var highIndex = toBinIndex(high);
+
+                closeHits[closeIndex] += 3;
+                lowTouches[lowIndex] += 1;
+                highTouches[highIndex] += 1;
+
+                if (close > open && lowerWick > body * 1.2 && lowerWick > upperWick)
+                {
+                    bullishRejections[lowIndex] += 3;
+                    var bounce = 0.0;
+                    for (var j = i + 1; j <= Math.Min(lastClosedIndex, i + 3); j++)
+                        bounce = Math.Max(bounce, sourceBars.ClosePrices[j] - low);
+                    if (bounce >= atrPrice * 0.5)
+                        bullishRejections[lowIndex] += 2;
+                }
+
+                if (close < open && upperWick > body * 1.2 && upperWick > lowerWick)
+                {
+                    bearishRejections[highIndex] += 3;
+                    var drop = 0.0;
+                    for (var j = i + 1; j <= Math.Min(lastClosedIndex, i + 3); j++)
+                        drop = Math.Max(drop, high - sourceBars.ClosePrices[j]);
+                    if (drop >= atrPrice * 0.5)
+                        bearishRejections[highIndex] += 2;
+                }
+            }
+
+            foreach (var swing in CollectConfirmedSwings(sourceBars, Math.Max(lookbackBars, 80)))
+            {
+                if (swing.BarIndex < startIndex || swing.BarIndex > lastClosedIndex)
+                    continue;
+
+                var swingIndex = toBinIndex(swing.Price);
+                if (swing.IsHigh)
+                    swingHighHits[swingIndex] += 3;
+                else
+                    swingLowHits[swingIndex] += 3;
+            }
+
+            var sidewayIndex = -1;
+            var sidewayScore = 0;
+            for (var i = 0; i < binCount; i++)
+            {
+                var score = closeHits[i];
+                if (i > 0) score += closeHits[i - 1] / 2;
+                if (i + 1 < binCount) score += closeHits[i + 1] / 2;
+                if (score > sidewayScore)
+                {
+                    sidewayScore = score;
+                    sidewayIndex = i;
+                }
+            }
+
+            var totalRangePips = (maxPrice - minPrice) / symbol.PipSize;
+            if (sidewayIndex >= 0 &&
+                sidewayScore >= Math.Max(10, windowBars / 4) &&
+                totalRangePips <= Math.Max(atrPips * 12.0, 30.0))
+            {
+                zones.Add(BuildScoredPriceZone(sourceBars, startIndex, lastClosedIndex, sidewayIndex, binSize, minPrice, "SWZ", ScoredPriceZoneKind.Sideways, sidewayScore));
+            }
+
+            var minZoneScore = Math.Max(8, windowBars / 5);
+            var lowerSearchLimit = Math.Max(1, (int)Math.Ceiling(binCount * 0.60));
+            var demandBins = SelectTopZoneBins(binCount, 3, 0, lowerSearchLimit, minZoneScore, i => (lowTouches[i] * 2) + bullishRejections[i] + swingLowHits[i] + (closeHits[i] / 2));
+            foreach (var binIndex in demandBins)
+            {
+                zones.Add(BuildScoredPriceZone(
+                    sourceBars, startIndex, lastClosedIndex, binIndex, binSize, minPrice,
+                    "DEM", ScoredPriceZoneKind.Demand,
+                    (lowTouches[binIndex] * 2) + bullishRejections[binIndex] + swingLowHits[binIndex] + (closeHits[binIndex] / 2)));
+            }
+
+            // Demand scans the lower 60% of the range, supply the upper 40%; disjoint so a bin
+            // can never be both demand and supply.
+            var upperSearchStart = Math.Min(binCount - 1, Math.Max(lowerSearchLimit, (int)Math.Floor(binCount * 0.40)));
+            var supplyBins = SelectTopZoneBins(binCount, 3, upperSearchStart, binCount, minZoneScore, i => (highTouches[i] * 2) + bearishRejections[i] + swingHighHits[i] + (closeHits[i] / 2));
+            foreach (var binIndex in supplyBins)
+            {
+                zones.Add(BuildScoredPriceZone(
+                    sourceBars, startIndex, lastClosedIndex, binIndex, binSize, minPrice,
+                    "SPLY", ScoredPriceZoneKind.Supply,
+                    (highTouches[binIndex] * 2) + bearishRejections[binIndex] + swingHighHits[binIndex] + (closeHits[binIndex] / 2)));
+            }
+
+            return zones
+                .Where(zone => zone.High > zone.Low && zone.Score > 0)
+                .OrderByDescending(zone => zone.Score)
+                .ToList();
+        }
+
+        // Picks up to maxZones non-adjacent bins with the best scores above minScore, so the
+        // same level is not double-counted across two neighboring bins.
+        private List<int> SelectTopZoneBins(int binCount, int maxZones, int fromBin, int toBinExclusive, double minScore, Func<int, int> scoreOf)
+        {
+            var selected = new List<int>();
+            var ordered = Enumerable.Range(Math.Max(0, fromBin), Math.Max(0, Math.Min(binCount, toBinExclusive) - Math.Max(0, fromBin)))
+                .Select(binIndex => new { Bin = binIndex, Score = scoreOf(binIndex) })
+                .Where(item => item.Score >= minScore)
+                .OrderByDescending(item => item.Score)
+                .ThenBy(item => item.Bin)
+                .ToList();
+            foreach (var item in ordered)
+            {
+                if (selected.Count >= maxZones)
+                    break;
+                if (selected.Any(existing => Math.Abs(existing - item.Bin) <= 1))
+                    continue;
+                selected.Add(item.Bin);
+            }
+            return selected;
+        }
+
+        private ScoredPriceZone BuildScoredPriceZone(Bars sourceBars, int startIndex, int lastClosedIndex, int binIndex, double binSize, double minPrice, string label, ScoredPriceZoneKind kind, int score)
+        {
+            var low = minPrice + (binIndex * binSize);
+            var high = low + binSize;
+
+            // Anchor the zone to the bars that actually traded inside it: start at the first
+            // touch, end at the last touch, instead of spanning the whole lookback window.
+            var firstTouch = -1;
+            var lastTouch = -1;
+            for (var i = startIndex; i <= lastClosedIndex; i++)
+            {
+                var touches = kind == ScoredPriceZoneKind.Supply
+                    ? sourceBars.HighPrices[i] >= low && sourceBars.HighPrices[i] <= high
+                    : kind == ScoredPriceZoneKind.Demand
+                        ? sourceBars.LowPrices[i] >= low && sourceBars.LowPrices[i] <= high
+                        : sourceBars.ClosePrices[i] >= low && sourceBars.ClosePrices[i] <= high;
+                if (!touches)
+                    continue;
+                if (firstTouch < 0)
+                    firstTouch = i;
+                lastTouch = i;
+            }
+
+            return new ScoredPriceZone
+            {
+                Kind = kind,
+                Label = label,
+                Low = low,
+                High = high,
+                Score = score,
+                StartTime = sourceBars.OpenTimes[firstTouch >= 0 ? firstTouch : Math.Max(0, startIndex)],
+                EndTime = sourceBars.OpenTimes[lastTouch >= 0 ? lastTouch : Math.Max(0, lastClosedIndex)]
+            };
         }
 
         private struct SweepCandidate
@@ -4769,6 +9160,9 @@ namespace cAlgo.Robots
             public int Score;
             public int Confidence;
             public TimeFrame SourceTimeFrame;
+            // Bounds of the related zone (OB/FVG) when the event reacted at a zone; 0 = none.
+            public double ZoneLow;
+            public double ZoneHigh;
         }
 
         private struct ChartEntryCandidate
@@ -4784,6 +9178,27 @@ namespace cAlgo.Robots
         {
             public double Price;
             public int Weight;
+            // Zone bounds when the candidate is an OB/FVG zone edge; 0 = none.
+            public double ZoneLow;
+            public double ZoneHigh;
+        }
+
+        private enum ScoredPriceZoneKind
+        {
+            Sideways,
+            Demand,
+            Supply
+        }
+
+        private struct ScoredPriceZone
+        {
+            public ScoredPriceZoneKind Kind;
+            public string Label;
+            public double Low;
+            public double High;
+            public int Score;
+            public DateTime StartTime;
+            public DateTime EndTime;
         }
 
         private struct ChartTradePlan
@@ -4834,31 +9249,111 @@ namespace cAlgo.Robots
             public int BarIndex;
             public bool IsBullish;
             public int SlotIndex;
+            public int PatternSpan = 1;
+            public bool HighlightPatternRange;
             public List<string> Labels = new List<string>();
+        }
+
+        private sealed class CandlePatternDefinition
+        {
+            public string ShortLabel;
+            public bool IsBullish;
+            public int PatternSpan = 1;
+            public Func<Bars, int, bool> NativeMatch;
+            public string SharedPatternType;
+        }
+
+        private struct EmaIndicatorConfig
+        {
+            public int PriceCrossPeriod;
+            public int FastPeriod;
+            public int MidPeriod;
+            public int SlowPeriod;
+        }
+
+        private struct VwapIndicatorConfig
+        {
+            public int Length;
+        }
+
+        private struct BollingerIndicatorConfig
+        {
+            public int Period;
+            public double StdDevMultiplier;
+        }
+
+        private struct IchimokuIndicatorConfig
+        {
+            public int ConversionPeriod;
+            public int BasePeriod;
+            public int SpanBPeriod;
+        }
+
+        private struct RsiIndicatorConfig
+        {
+            public int Period;
+            public double Midline;
+            public double Oversold;
+            public double Overbought;
+        }
+
+        private struct StochasticIndicatorConfig
+        {
+            public int KPeriod;
+            public int DPeriod;
+            public int OversoldLevel;
+            public int OverboughtLevel;
+        }
+
+        private struct MacdIndicatorConfig
+        {
+            public int FastPeriod;
+            public int SlowPeriod;
+            public int SignalPeriod;
         }
 
         private sealed class SharedIndicatorSnapshot
         {
-            public double Ema9;
-            public double Ema20;
-            public double Ema21;
-            public double Ema50;
-            public double Ema55;
-            public double Ema200;
-            public double Sma20;
-            public double Sma50;
-            public double Sma200;
-            public double Vwap20;
+            public double EmaPrice;
+            public double EmaFast;
+            public double EmaMid;
+            public double EmaSlow;
+            public double VwapMain;
             public double BbMid;
             public double BbUpper;
             public double BbLower;
-            public double Rsi14;
+            public double RsiMain;
             public double StochK;
             public double StochD;
             public double MacdLine;
             public double MacdSignal;
             public double MacdHistogram;
             public double Roc12;
+        }
+
+        private sealed class IndicatorEventScanCache
+        {
+            public SharedIndicatorSnapshot[] Snapshots;
+        }
+
+        [Flags]
+        private enum IndicatorSnapshotRequirements
+        {
+            None = 0,
+            EmaPrice = 1 << 0,
+            EmaFast = 1 << 1,
+            EmaMid = 1 << 2,
+            EmaSlow = 1 << 3,
+            VwapMain = 1 << 4,
+            BbMid = 1 << 5,
+            BbUpper = 1 << 6,
+            BbLower = 1 << 7,
+            RsiMain = 1 << 8,
+            StochK = 1 << 9,
+            StochD = 1 << 10,
+            MacdLine = 1 << 11,
+            MacdSignal = 1 << 12,
+            MacdHistogram = 1 << 13
         }
 
         private int FindBarIndexForMarkerTime(DateTime time)
@@ -4906,6 +9401,8 @@ namespace cAlgo.Robots
             public double StopLoss;
             public double TakeProfit;
             public string Note;
+            // Custom-trade events: default SL distance = height of the related event (candle / OB / FVG zone). 0 = use structural levels.
+            public double EventSlDistance;
         }
 
         private struct BacktestExportTradeSnapshot
@@ -4943,7 +9440,7 @@ namespace cAlgo.Robots
                 {
                     var line = Chart.DrawTrendLine("LIQ_" + objectIndex.ToString(CultureInfo.InvariantCulture), level.Time, level.Price, currentEndTime, level.Price, WithAlpha(level.Color, 80));
                     TrySetPropertyValue(line, "Thickness", 1);
-                    TrySetEnumPropertyValue(line, "LineStyle", "DotsRare");
+                    TrySetEnumPropertyValue(line, "LineStyle", "Dots");
 
                     if (ShouldDrawLiquidityLabel(level) && labeled.Add(level.Label))
                     {
@@ -5021,7 +9518,7 @@ namespace cAlgo.Robots
 
                 var text = Chart.DrawText(
                     "STRAT_TXT_" + objectIndex.ToString(CultureInfo.InvariantCulture),
-                    marker.Text ?? (isEntry ? "ST IN" : "ST OUT"),
+                    FormatStrategyMarkerText(marker),
                     marker.Time,
                     textY,
                     iconColor);
@@ -5039,6 +9536,10 @@ namespace cAlgo.Robots
 
             try
             {
+                var markerLimit = GetChartEventsPerTypeLimit();
+                if (markerLimit == 0)
+                    return objectIndex;
+
                 var candidates = CollectSweepCandidates();
                 if (candidates.Count == 0)
                     return objectIndex;
@@ -5048,7 +9549,7 @@ namespace cAlgo.Robots
                 var currentEndTime = GetCurrentChartEndTime();
                 var shownBull = 0;
                 var shownBear = 0;
-                const int maxPerSide = 3;
+                var maxPerSide = markerLimit < 0 ? int.MaxValue : markerLimit;
 
                 for (var barIndex = Bars.Count - 1; barIndex >= Math.Max(5, Bars.Count - 48); barIndex--)
                 {
@@ -5075,7 +9576,7 @@ namespace cAlgo.Robots
                         var pad = Math.Max(Symbol.PipSize * 8.0, (Bars.HighPrices[anchorBarIndex] - Bars.LowPrices[anchorBarIndex]) * 0.12);
                         var textY = isBullishSweep ? candidate.Price - pad : candidate.Price + pad;
                         var line = Chart.DrawTrendLine("SWEEP_" + objectIndex.ToString(CultureInfo.InvariantCulture), Bars.OpenTimes[anchorBarIndex], candidate.Price, currentEndTime, candidate.Price, WithAlpha(color, 70));
-                        TrySetPropertyValue(line, "LineStyle", LineStyle.DotsRare);
+                        TrySetPropertyValue(line, "LineStyle", LineStyle.Dots);
                         TrySetPropertyValue(line, "Thickness", 1);
                         var text = Chart.DrawText("SWEEP_TXT_" + objectIndex.ToString(CultureInfo.InvariantCulture), FormatDirectionalMarkerText("swp", isBullishSweep), Bars.OpenTimes[anchorBarIndex], textY, color);
                         TryStyleChartText(text, GetChartMarkerFontSize(), "Courier New", true);
@@ -5169,34 +9670,32 @@ namespace cAlgo.Robots
         private bool TryGetPreviousCompletedPeriodBarIndex(Bars sourceBars, TimeFrame timeFrame, out int index)
         {
             index = -1;
-            if (sourceBars == null || sourceBars.Count == 0)
+            if (sourceBars == null || sourceBars.Count < 2)
                 return false;
 
-            var currentPeriodStart = GetPeriodStartTime(Server.Time, timeFrame);
-            for (var i = sourceBars.Count - 1; i >= 0; i--)
+            var referenceTime = NormalizeBotTimeToUtc(Server.Time);
+            var lastIndex = sourceBars.Count - 1;
+            for (var i = 0; i < lastIndex; i++)
             {
-                if (sourceBars.OpenTimes[i] < currentPeriodStart)
+                var barStart = sourceBars.OpenTimes[i];
+                var nextBarStart = sourceBars.OpenTimes[i + 1];
+                if (referenceTime >= barStart && referenceTime < nextBarStart)
                 {
-                    index = i;
-                    return true;
+                    if (i <= 0)
+                        return false;
+
+                    index = i - 1;
+                    return index >= 0;
                 }
             }
 
-            return false;
-        }
-
-        private DateTime GetPeriodStartTime(DateTime time, TimeFrame timeFrame)
-        {
-            var minutes = TimeFrameToMinutes(timeFrame);
-            if (minutes >= 1440)
-                return time.Date;
-            if (minutes > 0)
+            if (referenceTime >= sourceBars.OpenTimes[lastIndex])
             {
-                var totalMinutes = (int)(time.TimeOfDay.TotalMinutes / minutes) * minutes;
-                return time.Date.AddMinutes(totalMinutes);
+                index = Math.Max(0, lastIndex - 1);
+                return index >= 0;
             }
 
-            return time;
+            return false;
         }
 
         private void AddRecentSwingLiquidityLevels(List<LiquidityLevel> levels)
@@ -5273,29 +9772,39 @@ namespace cAlgo.Robots
 
             try
             {
-                var latestEvent = CollectStructureEvents()
+                var markerLimit = GetChartEventsPerTypeLimit();
+                if (markerLimit == 0)
+                    return objectIndex;
+
+                var matchingEvents = CollectStructureEvents()
                     .Where(evt => evt.IsChoch == drawChoch)
-                    .LastOrDefault();
-                if (latestEvent.Time == DateTime.MinValue)
+                    .OrderByDescending(evt => evt.Time)
+                    .ToList();
+                if (matchingEvents.Count == 0)
                     return objectIndex;
 
-                var evt = latestEvent;
-                if (!IsHigherTimeframeEnabled(evt.SourceTimeFrame))
-                    return objectIndex;
+                if (markerLimit > 0)
+                    matchingEvents = matchingEvents.Take(markerLimit).ToList();
 
-                var baseColor = GetTimeFrameStructureColor(evt.SourceTimeFrame);
-                var color = evt.IsChoch ? WithAlpha(baseColor, 230) : baseColor;
-                var prefix = evt.IsChoch ? "CHOCH_" : "BOS_";
-                var textPrefix = evt.IsChoch ? "CHOCH_TXT_" : "BOS_TXT_";
-                var line = Chart.DrawTrendLine(prefix + objectIndex.ToString(CultureInfo.InvariantCulture), evt.Time, evt.Price, GetCurrentChartEndTime(), evt.Price, WithAlpha(color, 88));
-                TrySetPropertyValue(line, "Thickness", evt.IsChoch ? 2 : 1);
-                TrySetEnumPropertyValue(line, "LineStyle", evt.IsChoch ? "DotsRare" : "Lines");
+                foreach (var evt in matchingEvents.OrderBy(value => value.Time))
+                {
+                    if (!IsHigherTimeframeEnabled(evt.SourceTimeFrame))
+                        continue;
 
-                var yPad = Math.Max(Symbol.PipSize * 12.0, 0.0000001);
-                var textY = evt.IsBullish ? evt.Price + yPad : evt.Price - yPad;
-                var text = Chart.DrawText(textPrefix + objectIndex.ToString(CultureInfo.InvariantCulture), FormatDirectionalMarkerText(evt.Label, evt.IsBullish), evt.Time, textY, color);
-                TryStyleChartText(text, ResolveChartMarkerFontSize(evt.SourceTimeFrame), "Courier New", true);
-                objectIndex++;
+                    var baseColor = GetTimeFrameStructureColor(evt.SourceTimeFrame);
+                    var color = evt.IsChoch ? WithAlpha(baseColor, 230) : baseColor;
+                    var prefix = evt.IsChoch ? "CHOCH_" : "BOS_";
+                    var textPrefix = evt.IsChoch ? "CHOCH_TXT_" : "BOS_TXT_";
+                    var line = Chart.DrawTrendLine(prefix + objectIndex.ToString(CultureInfo.InvariantCulture), evt.Time, evt.Price, GetCurrentChartEndTime(), evt.Price, WithAlpha(color, 88));
+                    TrySetPropertyValue(line, "Thickness", evt.IsChoch ? 2 : 1);
+                    TrySetEnumPropertyValue(line, "LineStyle", evt.IsChoch ? "Dots" : "Lines");
+
+                    var yPad = Math.Max(Symbol.PipSize * 12.0, 0.0000001);
+                    var textY = evt.IsBullish ? evt.Price + yPad : evt.Price - yPad;
+                    var text = Chart.DrawText(textPrefix + objectIndex.ToString(CultureInfo.InvariantCulture), FormatDirectionalMarkerText(evt.Label, evt.IsBullish), evt.Time, textY, color);
+                    TryStyleChartText(text, ResolveChartMarkerFontSize(evt.SourceTimeFrame), "Courier New", true);
+                    objectIndex++;
+                }
             }
             catch (Exception ex)
             {
@@ -5309,23 +9818,23 @@ namespace cAlgo.Robots
         {
             if (!ShouldDrawChartMarkers() || Chart == null || Bars == null || Bars.Count < 20 || Symbol == null)
                 return objectIndex;
+            if (ChartObjectsOverBudget())
+                return objectIndex;
 
             try
             {
+                var markerLimit = GetChartEventsPerTypeLimit();
+                if (markerLimit == 0)
+                    return objectIndex;
+
                 var symbolName = Chart != null && !string.IsNullOrWhiteSpace(Chart.SymbolName)
                     ? Chart.SymbolName
                     : Symbol.Name;
-                var chartTfMinutes = TimeFrameToMinutes(Chart.TimeFrame);
-                var overlayFrames = new List<TimeFrame> { Chart.TimeFrame };
-                overlayFrames.AddRange(GetEnabledAutoHigherTimeframes(Chart.TimeFrame)
-                    .Where(tf => TimeFrameToMinutes(tf) > chartTfMinutes));
-
-                var uniqueFrames = overlayFrames
-                    .Distinct()
-                    .OrderBy(tf => TimeFrameToMinutes(tf))
-                    .ToList();
+                var uniqueFrames = new List<TimeFrame> { Chart.TimeFrame };
                 if (uniqueFrames.Count == 0)
                     return objectIndex;
+
+                var drawnKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
                 string prefix;
                 string shortLabel;
@@ -5358,27 +9867,89 @@ namespace cAlgo.Robots
                 for (var frameIndex = 0; frameIndex < uniqueFrames.Count; frameIndex++)
                 {
                     var sourceTimeFrame = uniqueFrames[frameIndex];
-                    var latestEvent = GetCanonicalEventsForSymbolTimeFrame(symbolName, sourceTimeFrame, 24)
+                    Bars sourceBars = null;
+                    try
+                    {
+                        sourceBars = sourceTimeFrame == Chart.TimeFrame ? Bars : MarketData.GetBars(sourceTimeFrame, symbolName);
+                    }
+                    catch
+                    {
+                        sourceBars = null;
+                    }
+
+                    var matchingEvents = GetCanonicalEventsForSymbolTimeFrame(symbolName, sourceTimeFrame, 24)
                         .Where(evt => evt.EventType == eventType)
                         .OrderByDescending(evt => evt.BarTime)
                         .ThenByDescending(evt => evt.Score)
-                        .FirstOrDefault();
-                    if (latestEvent.BarTime == DateTime.MinValue)
+                        .ToList();
+                    if (matchingEvents.Count == 0)
                         continue;
 
-                    var evt = latestEvent;
-                    var baseColor = GetTimeFrameStructureColor(sourceTimeFrame);
-                    var yPad = Math.Max(Symbol.PipSize * (14.0 + (frameIndex * 8.0)), 0.0000001);
-                    var anchorPrice = evt.IsBullish ? evt.PriceRef - yPad : evt.PriceRef + yPad;
-                    var textY = evt.IsBullish ? anchorPrice - Math.Max(Symbol.PipSize * 10.0, 0.0000001) : anchorPrice + Math.Max(Symbol.PipSize * 10.0, 0.0000001);
-                    var text = Chart.DrawText(
-                        prefix + "_TXT_" + GetMiniChartLabel(sourceTimeFrame) + "_" + objectIndex.ToString(CultureInfo.InvariantCulture),
-                        FormatDirectionalMarkerText(shortLabel, evt.IsBullish),
-                        evt.BarTime,
-                        textY,
-                        baseColor);
-                    TryStyleChartText(text, ResolveChartMarkerFontSize(sourceTimeFrame), "Courier New", true);
-                    objectIndex++;
+                    if (markerLimit > 0)
+                        matchingEvents = matchingEvents.Take(markerLimit).ToList();
+
+                    foreach (var evt in matchingEvents.OrderBy(value => value.BarTime))
+                    {
+                        var chartBarIndex = FindBarIndexForMarkerTime(evt.BarTime);
+                        var sourceBarIndex = ResolveSourceBarIndex(sourceBars, evt.BarTime);
+                        var dedupeKey = string.Format(
+                            CultureInfo.InvariantCulture,
+                            "{0}:{1}:{2}:{3}",
+                            chartBarIndex,
+                            shortLabel,
+                            evt.IsBullish ? "B" : "S",
+                            GetMiniChartLabel(sourceTimeFrame));
+                        if (!drawnKeys.Add(dedupeKey))
+                            continue;
+
+                        var baseColor = GetTimeFrameStructureColor(sourceTimeFrame);
+                        if (eventType == CanonicalEventType.Rejection || eventType == CanonicalEventType.Breakout)
+                        {
+                            var eventEndTime = ResolveSourceBarEndTime(sourceBars, evt.BarTime, sourceTimeFrame);
+                            var eventLine = Chart.DrawTrendLine(
+                                prefix + "_LVL_" + GetMiniChartLabel(sourceTimeFrame) + "_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                                evt.BarTime,
+                                evt.PriceRef,
+                                eventEndTime,
+                                evt.PriceRef,
+                                WithAlpha(baseColor, eventType == CanonicalEventType.Breakout ? 132 : 118));
+                            TrySetPropertyValue(eventLine, "Thickness", eventType == CanonicalEventType.Breakout ? 2 : 2);
+                            TrySetEnumPropertyValue(eventLine, "LineStyle", "Dots");
+                            TrySetPropertyValue(eventLine, "ZIndex", 5);
+
+                            var levelLabel = ResolveCanonicalReactionLevelLabel(evt, shortLabel, sourceBars);
+                            DrawRightEdgeZoneLabel("ZONE", objectIndex, evt.PriceRef, WithAlpha(baseColor, 220), levelLabel, ResolveChartMarkerFontSize(sourceTimeFrame));
+                        }
+                        var anchorPrice = evt.PriceRef;
+                        var eventBarRange = Symbol.PipSize * 8.0;
+                        if (sourceBars != null && sourceBarIndex >= 0 && sourceBarIndex < sourceBars.Count)
+                        {
+                            anchorPrice = evt.IsBullish
+                                ? sourceBars.LowPrices[sourceBarIndex]
+                                : sourceBars.HighPrices[sourceBarIndex];
+                            eventBarRange = Math.Max(sourceBars.HighPrices[sourceBarIndex] - sourceBars.LowPrices[sourceBarIndex], Symbol.PipSize * 8.0);
+                        }
+                        var textY = ResolveDirectionalLabelPrice(evt.IsBullish, anchorPrice, eventBarRange, frameIndex);
+                        var barMidTime = evt.BarTime.AddMinutes(Math.Max(0.65, TimeFrameToMinutes(sourceTimeFrame) * 0.68));
+                        var icon = Chart.DrawText(
+                            prefix + "_ICON_" + GetMiniChartLabel(sourceTimeFrame) + "_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                            GetDirectionalArrowIcon(evt.IsBullish),
+                            barMidTime,
+                            anchorPrice,
+                            baseColor);
+                        TryStyleChartText(icon, ResolveChartMarkerFontSize(sourceTimeFrame) + 1, "Courier New", true);
+                        TrySetPropertyValue(icon, "ZIndex", 12);
+
+                        var text = Chart.DrawText(
+                            prefix + "_TXT_" + GetMiniChartLabel(sourceTimeFrame) + "_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                            " " + shortLabel.Trim().ToUpperInvariant(),
+                            barMidTime.AddMinutes(Math.Max(0.015, TimeFrameToMinutes(sourceTimeFrame) * 0.015)),
+                            textY,
+                            baseColor);
+                        TryStyleChartText(text, ResolveChartMarkerFontSize(sourceTimeFrame), "Courier New", true);
+                        TrySetPropertyValue(text, "ZIndex", 12);
+                        objectIndex++;
+                    }
                 }
             }
             catch (Exception ex)
@@ -5391,24 +9962,24 @@ namespace cAlgo.Robots
 
         private int DrawDirectionalCandlePatternsOnChart(int objectIndex)
         {
+            if (DisableCandlePatternRenderingForIsolation)
+                return objectIndex;
+
             if (!ShouldDrawChartMarkers() || Chart == null || Bars == null || Bars.Count < 8 || Symbol == null)
+                return objectIndex;
+            if (ChartObjectsOverBudget())
+                return objectIndex;
+
+            if (GetChartEventsPerTypeLimit() == 0)
                 return objectIndex;
 
             try
             {
                 var chartTf = Chart != null ? Chart.TimeFrame : TimeFrame.Minute;
-                var chartTfMinutes = Math.Max(1, TimeFrameToMinutes(chartTf));
-                var overlayFrames = new List<TimeFrame> { chartTf };
-                overlayFrames.AddRange(GetEnabledAutoHigherTimeframes(chartTf)
-                    .Where(tf => TimeFrameToMinutes(tf) > chartTfMinutes));
-
-                var uniqueFrames = overlayFrames
-                    .Distinct()
-                    .OrderBy(tf => TimeFrameToMinutes(tf))
-                    .ToList();
+                var uniqueFrames = new List<TimeFrame> { chartTf };
 
                 var aggregatedMarkers = new List<DirectionalPatternMarkerAggregate>();
-                var slotIndex = 0;
+                var patternDefinitions = BuildEnabledCandlePatternDefinitions();
                 foreach (var sourceTimeFrame in uniqueFrames)
                 {
                     Bars sourceBars = sourceTimeFrame == chartTf ? Bars : null;
@@ -5426,35 +9997,14 @@ namespace cAlgo.Robots
 
                     if (sourceBars == null || sourceBars.Count < 8)
                         continue;
+                    if (patternDefinitions.Count == 0)
+                        continue;
 
-                    if (_togglePinBarPatterns)
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "PIN", MatchBullishPinBar, MatchBearishPinBar, slotIndex++);
-                    if (_toggleEngulfingPatterns)
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "ENG", MatchBullishEngulfingAtIndex, MatchBearishEngulfingAtIndex, slotIndex++);
-                    if (_toggleBigCandlePatterns)
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "BIG", MatchBullishBigCandle, MatchBearishBigCandle, slotIndex++);
-                    if (_toggleMorningStarPatterns)
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "MOR", MatchBullishMorningStar, MatchNever, slotIndex++);
-                    if (_toggleEveningStarPatterns)
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "EVE", MatchNever, MatchBearishEveningStar, slotIndex++);
-                    if (_toggleHammerPatterns)
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "HAM", MatchBullishHammer, MatchNever, slotIndex++);
-                    if (_toggleHangingManPatterns)
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "HGM", MatchNever, MatchBearishHangingMan, slotIndex++);
-                    if (_toggleShootingStarPatterns)
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "SST", MatchNever, MatchBearishShootingStar, slotIndex++);
-                    if (_toggleInvertedHammerPatterns)
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "IHM", MatchBullishInvertedHammer, MatchNever, slotIndex++);
-                    if (_togglePiercingLinePatterns)
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "PRC", MatchBullishPiercingLine, MatchNever, slotIndex++);
-                    if (_toggleDarkCloudCoverPatterns)
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "DCC", MatchNever, MatchBearishDarkCloudCover, slotIndex++);
-                    if (_toggleThreeWhiteSoldiersPatterns)
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "3WS", MatchBullishThreeWhiteSoldiers, MatchNever, slotIndex++);
-                    if (_toggleThreeBlackCrowsPatterns)
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "3BC", MatchNever, MatchBearishThreeBlackCrows, slotIndex++);
-                    if (_toggleHaramiPatterns)
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "HAR", MatchBullishHarami, MatchBearishHarami, slotIndex++);
+                    CollectRecentDirectionalCandlePatternMarkersOptimized(
+                        aggregatedMarkers,
+                        sourceBars,
+                        sourceTimeFrame,
+                        patternDefinitions);
                 }
 
                 foreach (var marker in aggregatedMarkers
@@ -5469,7 +10019,9 @@ namespace cAlgo.Robots
                         marker.BarIndex,
                         marker.IsBullish,
                         marker.SlotIndex,
-                        string.Join(", ", marker.Labels));
+                        marker.PatternSpan,
+                        marker.HighlightPatternRange,
+                        FormatAggregatedMarkerLabel(marker.Labels));
                 }
             }
             catch (Exception ex)
@@ -5480,6 +10032,232 @@ namespace cAlgo.Robots
             return objectIndex;
         }
 
+        private List<CandlePatternDefinition> BuildEnabledCandlePatternDefinitions()
+        {
+            var definitions = new List<CandlePatternDefinition>();
+
+            if (_togglePinBarPatterns && !SkipPinBarForIsolation)
+            {
+                definitions.Add(new CandlePatternDefinition { ShortLabel = "PIN", IsBullish = true, PatternSpan = 1, NativeMatch = MatchBullishPinBar });
+                definitions.Add(new CandlePatternDefinition { ShortLabel = "PIN", IsBullish = false, PatternSpan = 1, NativeMatch = MatchBearishPinBar });
+            }
+            if (RestorePinBarOnlyForIsolation)
+                return definitions;
+
+            if (_toggleEngulfingPatterns && !SkipEngulfingForIsolation)
+            {
+                definitions.Add(new CandlePatternDefinition { ShortLabel = "ENG", IsBullish = true, PatternSpan = 2, NativeMatch = MatchBullishEngulfingAtIndex });
+                definitions.Add(new CandlePatternDefinition { ShortLabel = "ENG", IsBullish = false, PatternSpan = 2, NativeMatch = MatchBearishEngulfingAtIndex });
+            }
+            if (RestoreEngulfingOnlyForIsolation)
+                return definitions;
+
+            if (_toggleBigCandlePatterns && !SkipBigCandleForIsolation)
+            {
+                definitions.Add(new CandlePatternDefinition { ShortLabel = "BIG", IsBullish = true, PatternSpan = 1, NativeMatch = MatchBullishBigCandle });
+                definitions.Add(new CandlePatternDefinition { ShortLabel = "BIG", IsBullish = false, PatternSpan = 1, NativeMatch = MatchBearishBigCandle });
+            }
+            if (RestoreBigCandleOnlyForIsolation)
+                return definitions;
+
+            if (_toggleMorningStarPatterns && !SkipMorningStarForIsolation)
+                definitions.Add(new CandlePatternDefinition { ShortLabel = "MOR", IsBullish = true, PatternSpan = 3, SharedPatternType = "bullish_morning_star" });
+            if (RestoreMorningStarOnlyForIsolation)
+                return definitions;
+            if (_toggleEveningStarPatterns && !SkipEveningStarForIsolation)
+                definitions.Add(new CandlePatternDefinition { ShortLabel = "EVE", IsBullish = false, PatternSpan = 3, SharedPatternType = "bearish_evening_star" });
+            if (RestoreEveningStarOnlyForIsolation)
+                return definitions;
+            if (_toggleHammerPatterns)
+                definitions.Add(new CandlePatternDefinition { ShortLabel = "HAM", IsBullish = true, PatternSpan = 1, SharedPatternType = "bullish_hammer" });
+            if (RestoreHammerOnlyForIsolation)
+                return definitions;
+            if (_toggleHangingManPatterns)
+                definitions.Add(new CandlePatternDefinition { ShortLabel = "HGM", IsBullish = false, PatternSpan = 1, SharedPatternType = "hanging_man" });
+            if (RestoreHangingManOnlyForIsolation)
+                return definitions;
+            if (_toggleShootingStarPatterns)
+                definitions.Add(new CandlePatternDefinition { ShortLabel = "SST", IsBullish = false, PatternSpan = 1, SharedPatternType = "shooting_star" });
+            if (_toggleInvertedHammerPatterns)
+                definitions.Add(new CandlePatternDefinition { ShortLabel = "IHM", IsBullish = true, PatternSpan = 1, SharedPatternType = "bullish_inverted_hammer" });
+            if (_togglePiercingLinePatterns)
+                definitions.Add(new CandlePatternDefinition { ShortLabel = "PRC", IsBullish = true, PatternSpan = 2, SharedPatternType = "bullish_piercing_line" });
+            if (_toggleDarkCloudCoverPatterns)
+                definitions.Add(new CandlePatternDefinition { ShortLabel = "DCC", IsBullish = false, PatternSpan = 2, SharedPatternType = "bearish_dark_cloud_cover" });
+            if (_toggleThreeWhiteSoldiersPatterns)
+                definitions.Add(new CandlePatternDefinition { ShortLabel = "3WS", IsBullish = true, PatternSpan = 3, SharedPatternType = "bullish_three_white_soldiers" });
+            if (_toggleThreeBlackCrowsPatterns)
+                definitions.Add(new CandlePatternDefinition { ShortLabel = "3BC", IsBullish = false, PatternSpan = 3, SharedPatternType = "bearish_three_black_crows" });
+            if (_toggleHaramiPatterns)
+            {
+                definitions.Add(new CandlePatternDefinition { ShortLabel = "HAR", IsBullish = true, PatternSpan = 2, SharedPatternType = "bullish_harami" });
+                definitions.Add(new CandlePatternDefinition { ShortLabel = "HAR", IsBullish = false, PatternSpan = 2, SharedPatternType = "bearish_harami" });
+            }
+
+            return definitions;
+        }
+
+        private void CollectRecentDirectionalCandlePatternMarkersOptimized(
+            List<DirectionalPatternMarkerAggregate> aggregates,
+            Bars sourceBars,
+            TimeFrame sourceTimeFrame,
+            List<CandlePatternDefinition> patternDefinitions)
+        {
+            if (aggregates == null || sourceBars == null || patternDefinitions == null || patternDefinitions.Count == 0)
+                return;
+
+            var matchCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var maxMarkersPerType = GetCollectorMarkerLimit();
+            var slotIndexes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            for (var i = 0; i < patternDefinitions.Count; i++)
+            {
+                var key = GetCandlePatternDefinitionKey(patternDefinitions[i]);
+                if (!slotIndexes.ContainsKey(key))
+                    slotIndexes[key] = i;
+            }
+
+            var sharedPatternCache = new Dictionary<int, HashSet<string>>();
+            var startIndex = Math.Max(2, sourceBars.Count - 120);
+            for (var barIndex = sourceBars.Count - 2; barIndex >= startIndex; barIndex--)
+            {
+                HashSet<string> sharedDetections = null;
+                for (var i = 0; i < patternDefinitions.Count; i++)
+                {
+                    var definition = patternDefinitions[i];
+                    var key = GetCandlePatternDefinitionKey(definition);
+                    int existingCount;
+                    if (matchCounts.TryGetValue(key, out existingCount) && existingCount >= maxMarkersPerType)
+                        continue;
+
+                    var matched = false;
+                    if (definition.NativeMatch != null)
+                    {
+                        matched = definition.NativeMatch(sourceBars, barIndex);
+                    }
+                    else if (!string.IsNullOrWhiteSpace(definition.SharedPatternType))
+                    {
+                        if (sharedDetections == null)
+                            sharedDetections = GetDetectedSharedRulePatternSetCached(sourceBars, sourceTimeFrame, barIndex, sharedPatternCache);
+                        matched = sharedDetections.Contains(definition.SharedPatternType);
+                    }
+
+                    if (!matched)
+                        continue;
+
+                    if (!HasEventVolumeSurge(sourceBars, barIndex, definition.PatternSpan))
+                        continue;
+
+                    if (!ShouldKeepCandlePatternInline(sourceBars, sourceTimeFrame, barIndex, definition.IsBullish))
+                        continue;
+
+                    AddDirectionalPatternAggregate(
+                        aggregates,
+                        sourceBars,
+                        sourceTimeFrame,
+                        barIndex,
+                        definition.IsBullish,
+                        slotIndexes[key],
+                        definition.ShortLabel,
+                        definition.PatternSpan,
+                        true);
+                    matchCounts[key] = existingCount + 1;
+                }
+
+                if (slotIndexes.Keys.All(key => matchCounts.ContainsKey(key) && matchCounts[key] >= maxMarkersPerType))
+                    break;
+            }
+        }
+
+        private string GetCandlePatternDefinitionKey(CandlePatternDefinition definition)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0}:{1}:{2}",
+                definition != null ? (definition.ShortLabel ?? "") : "",
+                definition != null && definition.IsBullish ? "B" : "S",
+                definition != null ? (definition.SharedPatternType ?? (definition.NativeMatch != null ? definition.NativeMatch.Method.Name : "")) : "");
+        }
+
+        private bool ShouldKeepCandlePatternInline(Bars sourceBars, TimeFrame sourceTimeFrame, int barIndex, bool isBullish)
+        {
+            if (!KeepCandlePatternsInlineWithZones)
+                return true;
+
+            if (sourceBars == null || Symbol == null || barIndex < 0 || barIndex >= sourceBars.Count)
+                return false;
+
+            var symbolName = !string.IsNullOrWhiteSpace(Chart != null ? Chart.SymbolName : "")
+                ? Chart.SymbolName
+                : Symbol.Name;
+            if (string.IsNullOrWhiteSpace(symbolName))
+                return false;
+
+            var barTime = sourceBars.OpenTimes[barIndex];
+            var barHigh = sourceBars.HighPrices[barIndex];
+            var barLow = sourceBars.LowPrices[barIndex];
+            var barClose = sourceBars.ClosePrices[barIndex];
+            var anchorPrice = isBullish ? barLow : barHigh;
+            var barSpan = Math.Max(barHigh - barLow, Symbol.PipSize * 4.0);
+            var priceTolerance = Math.Max(Symbol.PipSize * 12.0, barSpan * 0.45);
+            var chartProfile = GetChartTradeProfileRaw(ReadChartTradeTypeComboSelection());
+            var structuralLevels = CollectChartStructuralLevelCandidates(Symbol, symbolName, chartProfile);
+            var nearStructuralLevel = structuralLevels.Any(level =>
+                Math.Abs(level.Price - anchorPrice) <= priceTolerance ||
+                Math.Abs(level.Price - barClose) <= priceTolerance);
+            if (nearStructuralLevel)
+                return true;
+
+            var tfWindowMinutes = Math.Max(1, TimeFrameToMinutes(sourceTimeFrame));
+            var relatedEvent = GetCanonicalEventsForSymbolTimeFrame(symbolName, sourceTimeFrame, 24)
+                .Where(evt =>
+                    evt.IsBullish == isBullish &&
+                    (evt.EventType == CanonicalEventType.Rejection ||
+                     evt.EventType == CanonicalEventType.Breakout ||
+                     evt.EventType == CanonicalEventType.Pullback ||
+                     evt.EventType == CanonicalEventType.Continuation ||
+                     evt.EventType == CanonicalEventType.Impulse) &&
+                    Math.Abs((evt.BarTime - barTime).TotalMinutes) <= tfWindowMinutes &&
+                    Math.Abs(evt.PriceRef - anchorPrice) <= Math.Max(priceTolerance, barSpan * 0.65))
+                .OrderBy(evt => Math.Abs((evt.BarTime - barTime).TotalMinutes))
+                .FirstOrDefault();
+
+            return relatedEvent.BarTime != DateTime.MinValue;
+        }
+
+        private HashSet<string> GetDetectedSharedRulePatternSetCached(
+            Bars sourceBars,
+            TimeFrame sourceTimeFrame,
+            int index,
+            Dictionary<int, HashSet<string>> cache)
+        {
+            if (cache == null)
+                return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            HashSet<string> detected;
+            if (cache.TryGetValue(index, out detected))
+                return detected;
+
+            detected = GetDetectedSharedRulePatternSet(sourceBars, sourceTimeFrame, index);
+            cache[index] = detected;
+            return detected;
+        }
+
+        private HashSet<string> GetDetectedSharedRulePatternSet(Bars sourceBars, TimeFrame sourceTimeFrame, int index)
+        {
+            if (sourceBars == null || index <= 0 || index >= sourceBars.Count)
+                return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            try
+            {
+                var context = BuildSharedRuleContext(sourceBars, index, Symbol, sourceTimeFrame, null);
+                return DetectSharedRulePatterns(context) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            }
+        }
+
         private int DrawDirectionalIndicatorEventsOnChart(int objectIndex)
         {
             if (DisableTechnicalVisualRenderingForIsolation)
@@ -5487,22 +10265,18 @@ namespace cAlgo.Robots
 
             if (!ShouldDrawChartMarkers() || Chart == null || Bars == null || Bars.Count < 16 || Symbol == null)
                 return objectIndex;
+            if (ChartObjectsOverBudget())
+                return objectIndex;
+
+            if (GetChartEventsPerTypeLimit() == 0)
+                return objectIndex;
 
             try
             {
                 var chartTf = Chart != null ? Chart.TimeFrame : TimeFrame.Minute;
-                var chartTfMinutes = Math.Max(1, TimeFrameToMinutes(chartTf));
-                var overlayFrames = new List<TimeFrame> { chartTf };
-                overlayFrames.AddRange(GetEnabledAutoHigherTimeframes(chartTf)
-                    .Where(tf => TimeFrameToMinutes(tf) > chartTfMinutes));
-
-                var uniqueFrames = overlayFrames
-                    .Distinct()
-                    .OrderBy(tf => TimeFrameToMinutes(tf))
-                    .ToList();
+                var uniqueFrames = new List<TimeFrame> { chartTf };
 
                 var aggregatedMarkers = new List<DirectionalPatternMarkerAggregate>();
-                var slotIndex = 0;
                 foreach (var sourceTimeFrame in uniqueFrames)
                 {
                     Bars sourceBars = sourceTimeFrame == chartTf ? Bars : null;
@@ -5521,38 +10295,7 @@ namespace cAlgo.Robots
                     if (sourceBars == null || sourceBars.Count < 16)
                         continue;
 
-                    if (_toggleEmaEvents)
-                    {
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "pxe", MatchBullishPriceCrossesEma20, MatchBearishPriceCrossesEma20, slotIndex++);
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "emx", MatchBullishEma921Cross, MatchBearishEma921Cross, slotIndex++);
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "emt", MatchBullishEma2155Cross, MatchBearishEma2155Cross, slotIndex++);
-                    }
-                    if (_toggleVwapEvents)
-                    {
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "vwx", MatchBullishPriceCrossesVwap20, MatchBearishPriceCrossesVwap20, slotIndex++);
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "vwr", MatchBullishVwapRejection, MatchBearishVwapRejection, slotIndex++);
-                    }
-                    if (_toggleBollingerEvents)
-                    {
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "bbx", MatchBullishPriceCrossesBollingerMid, MatchBearishPriceCrossesBollingerMid, slotIndex++);
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "bbr", MatchBullishBollingerRejection, MatchBearishBollingerRejection, slotIndex++);
-                    }
-                    if (_toggleRsiEvents)
-                    {
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "r50", MatchBullishRsiCross50, MatchBearishRsiCross50, slotIndex++);
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "ros", MatchBullishRsiOversold, MatchNever, slotIndex++);
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "rob", MatchNever, MatchBearishRsiOverbought, slotIndex++);
-                    }
-                    if (_toggleStochasticEvents)
-                    {
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "stx", MatchBullishStochasticCross, MatchBearishStochasticCross, slotIndex++);
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "sto", MatchBullishStochasticExitOversold, MatchBearishStochasticExitOverbought, slotIndex++);
-                    }
-                    if (_toggleMacdEvents)
-                    {
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "mdx", MatchBullishMacdCross, MatchBearishMacdCross, slotIndex++);
-                        CollectRecentDirectionalPatternMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame, "md0", MatchBullishMacdZeroCross, MatchBearishMacdZeroCross, slotIndex++);
-                    }
+                    CollectOptimizedDirectionalIndicatorMarkers(aggregatedMarkers, sourceBars, sourceTimeFrame);
                 }
 
                 foreach (var marker in aggregatedMarkers
@@ -5567,6 +10310,8 @@ namespace cAlgo.Robots
                         marker.BarIndex,
                         marker.IsBullish,
                         marker.SlotIndex,
+                        marker.PatternSpan,
+                        marker.HighlightPatternRange,
                         string.Join(", ", marker.Labels));
                 }
             }
@@ -5576,6 +10321,194 @@ namespace cAlgo.Robots
             }
 
             return objectIndex;
+        }
+
+        private sealed class IndicatorEventDefinition
+        {
+            public string ShortLabel;
+            public bool IsBullish;
+            public int SlotIndex;
+            public Func<Bars, int, SharedIndicatorSnapshot, SharedIndicatorSnapshot, bool> Match;
+        }
+
+        private void CollectOptimizedDirectionalIndicatorMarkers(
+            List<DirectionalPatternMarkerAggregate> aggregates,
+            Bars sourceBars,
+            TimeFrame sourceTimeFrame)
+        {
+            if (aggregates == null || sourceBars == null || sourceBars.Count < 16)
+                return;
+
+            var definitions = BuildIndicatorEventDefinitions();
+            if (definitions.Count == 0)
+                return;
+
+            var maxMarkersPerType = GetCollectorMarkerLimit();
+            var startIndex = Math.Max(2, sourceBars.Count - 120);
+            var scanCache = BuildIndicatorEventScanCache(sourceBars, startIndex - 1, GetIndicatorSnapshotRequirements());
+            var matchCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+            for (var barIndex = sourceBars.Count - 2; barIndex >= startIndex; barIndex--)
+            {
+                var currentSnapshot = GetSharedIndicatorSnapshotCached(sourceBars, barIndex, scanCache);
+                var previousSnapshot = GetSharedIndicatorSnapshotCached(sourceBars, barIndex - 1, scanCache);
+
+                foreach (var definition in definitions)
+                {
+                    int existingCount;
+                    if (matchCounts.TryGetValue(definition.ShortLabel, out existingCount) && existingCount >= maxMarkersPerType)
+                        continue;
+
+                    if (definition.Match == null || !definition.Match(sourceBars, barIndex, previousSnapshot, currentSnapshot))
+                        continue;
+
+                    AddDirectionalPatternAggregate(
+                        aggregates,
+                        sourceBars,
+                        sourceTimeFrame,
+                        barIndex,
+                        definition.IsBullish,
+                        definition.SlotIndex,
+                        definition.ShortLabel);
+
+                    matchCounts[definition.ShortLabel] = existingCount + 1;
+                }
+
+                if (definitions.All(definition =>
+                {
+                    int count;
+                    return matchCounts.TryGetValue(definition.ShortLabel, out count) && count >= maxMarkersPerType;
+                }))
+                    break;
+            }
+        }
+
+        private IndicatorEventScanCache BuildIndicatorEventScanCache(Bars sourceBars, int startIndex, IndicatorSnapshotRequirements requirements)
+        {
+            var cache = new IndicatorEventScanCache();
+            if (sourceBars == null || sourceBars.Count == 0)
+            {
+                cache.Snapshots = new SharedIndicatorSnapshot[0];
+                return cache;
+            }
+
+            cache.Snapshots = new SharedIndicatorSnapshot[sourceBars.Count];
+            var safeStartIndex = Math.Max(0, startIndex);
+            for (var i = safeStartIndex; i < sourceBars.Count; i++)
+                cache.Snapshots[i] = BuildIndicatorEventSnapshot(sourceBars, i, requirements);
+            return cache;
+        }
+
+        private IndicatorSnapshotRequirements GetIndicatorSnapshotRequirements()
+        {
+            var requirements = IndicatorSnapshotRequirements.None;
+
+            if (_toggleEmaEvents)
+                requirements |= IndicatorSnapshotRequirements.EmaPrice |
+                                IndicatorSnapshotRequirements.EmaFast |
+                                IndicatorSnapshotRequirements.EmaMid |
+                                IndicatorSnapshotRequirements.EmaSlow;
+
+            if (_toggleVwapEvents)
+                requirements |= IndicatorSnapshotRequirements.VwapMain;
+
+            if (_toggleBollingerEvents)
+                requirements |= IndicatorSnapshotRequirements.BbMid |
+                                IndicatorSnapshotRequirements.BbUpper |
+                                IndicatorSnapshotRequirements.BbLower;
+
+            if (_toggleRsiEvents)
+                requirements |= IndicatorSnapshotRequirements.RsiMain;
+
+            if (_toggleStochasticEvents)
+                requirements |= IndicatorSnapshotRequirements.StochK |
+                                IndicatorSnapshotRequirements.StochD;
+
+            if (_toggleMacdEvents)
+                requirements |= IndicatorSnapshotRequirements.MacdLine |
+                                IndicatorSnapshotRequirements.MacdSignal |
+                                IndicatorSnapshotRequirements.MacdHistogram;
+
+            return requirements;
+        }
+
+        private List<IndicatorEventDefinition> BuildIndicatorEventDefinitions()
+        {
+            var definitions = new List<IndicatorEventDefinition>();
+            var slotIndex = 0;
+            var emaConfig = _resolvedEmaEventConfig;
+            var rsiConfig = _resolvedRsiEventConfig;
+            var stochConfig = _resolvedStochasticEventConfig;
+
+            if (_toggleEmaEvents)
+            {
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "pxe", IsBullish = true, SlotIndex = slotIndex++, Match = (bars, index, previous, current) => MatchBullishPriceCrossesEmaSnapshot(bars, index, previous, current) });
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "pxe", IsBullish = false, SlotIndex = slotIndex++, Match = (bars, index, previous, current) => MatchBearishPriceCrossesEmaSnapshot(bars, index, previous, current) });
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "emx", IsBullish = true, SlotIndex = slotIndex++, Match = (bars, index, previous, current) => MatchBullishEmaFastMidCrossSnapshot(bars, index, previous, current) });
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "emx", IsBullish = false, SlotIndex = slotIndex++, Match = (bars, index, previous, current) => MatchBearishEmaFastMidCrossSnapshot(bars, index, previous, current) });
+                if (emaConfig.SlowPeriod > 0 && emaConfig.SlowPeriod != emaConfig.MidPeriod)
+                {
+                    definitions.Add(new IndicatorEventDefinition { ShortLabel = "emt", IsBullish = true, SlotIndex = slotIndex++, Match = (bars, index, previous, current) => MatchBullishEmaMidSlowCrossSnapshot(bars, index, previous, current) });
+                    definitions.Add(new IndicatorEventDefinition { ShortLabel = "emt", IsBullish = false, SlotIndex = slotIndex++, Match = (bars, index, previous, current) => MatchBearishEmaMidSlowCrossSnapshot(bars, index, previous, current) });
+                }
+            }
+
+            if (_toggleVwapEvents)
+            {
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "vwx", IsBullish = true, SlotIndex = slotIndex++, Match = MatchBullishPriceCrossesVwapSnapshot });
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "vwx", IsBullish = false, SlotIndex = slotIndex++, Match = MatchBearishPriceCrossesVwapSnapshot });
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "vwr", IsBullish = true, SlotIndex = slotIndex++, Match = MatchBullishVwapRejectionSnapshot });
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "vwr", IsBullish = false, SlotIndex = slotIndex++, Match = MatchBearishVwapRejectionSnapshot });
+            }
+
+            if (_toggleBollingerEvents)
+            {
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "bbx", IsBullish = true, SlotIndex = slotIndex++, Match = MatchBullishPriceCrossesBollingerMidSnapshot });
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "bbx", IsBullish = false, SlotIndex = slotIndex++, Match = MatchBearishPriceCrossesBollingerMidSnapshot });
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "bbr", IsBullish = true, SlotIndex = slotIndex++, Match = MatchBullishBollingerRejectionSnapshot });
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "bbr", IsBullish = false, SlotIndex = slotIndex++, Match = MatchBearishBollingerRejectionSnapshot });
+            }
+
+            if (_toggleRsiEvents)
+            {
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "r50", IsBullish = true, SlotIndex = slotIndex++, Match = (bars, index, previous, current) => MatchBullishRsiCrossSnapshot(bars, index, previous, current, rsiConfig.Midline) });
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "r50", IsBullish = false, SlotIndex = slotIndex++, Match = (bars, index, previous, current) => MatchBearishRsiCrossSnapshot(bars, index, previous, current, rsiConfig.Midline) });
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "ros", IsBullish = true, SlotIndex = slotIndex++, Match = (bars, index, previous, current) => MatchBullishRsiOversoldSnapshot(bars, index, previous, current, rsiConfig.Oversold) });
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "rob", IsBullish = false, SlotIndex = slotIndex++, Match = (bars, index, previous, current) => MatchBearishRsiOverboughtSnapshot(bars, index, previous, current, rsiConfig.Overbought) });
+            }
+
+            if (_toggleStochasticEvents)
+            {
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "stx", IsBullish = true, SlotIndex = slotIndex++, Match = (bars, index, previous, current) => MatchBullishStochasticCrossSnapshot(bars, index, previous, current) });
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "stx", IsBullish = false, SlotIndex = slotIndex++, Match = (bars, index, previous, current) => MatchBearishStochasticCrossSnapshot(bars, index, previous, current) });
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "sto", IsBullish = true, SlotIndex = slotIndex++, Match = (bars, index, previous, current) => MatchBullishStochasticExitOversoldSnapshot(bars, index, previous, current, stochConfig.OversoldLevel) });
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "sto", IsBullish = false, SlotIndex = slotIndex++, Match = (bars, index, previous, current) => MatchBearishStochasticExitOverboughtSnapshot(bars, index, previous, current, stochConfig.OverboughtLevel) });
+            }
+
+            if (_toggleMacdEvents)
+            {
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "mdx", IsBullish = true, SlotIndex = slotIndex++, Match = MatchBullishMacdCrossSnapshot });
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "mdx", IsBullish = false, SlotIndex = slotIndex++, Match = MatchBearishMacdCrossSnapshot });
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "md0", IsBullish = true, SlotIndex = slotIndex++, Match = MatchBullishMacdZeroCrossSnapshot });
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "md0", IsBullish = false, SlotIndex = slotIndex++, Match = MatchBearishMacdZeroCrossSnapshot });
+            }
+
+            return definitions;
+        }
+
+        private SharedIndicatorSnapshot GetSharedIndicatorSnapshotCached(
+            Bars sourceBars,
+            int barIndex,
+            IndicatorEventScanCache cache)
+        {
+            if (sourceBars == null || barIndex < 0 || barIndex >= sourceBars.Count)
+                return new SharedIndicatorSnapshot();
+
+            if (cache == null || cache.Snapshots == null || barIndex >= cache.Snapshots.Length)
+                return BuildSharedIndicatorSnapshot(sourceBars, barIndex);
+
+            var snapshot = cache.Snapshots[barIndex];
+            return snapshot ?? new SharedIndicatorSnapshot();
         }
 
         private int DrawIndicatorOverlaysOnChart(int objectIndex)
@@ -5590,19 +10523,32 @@ namespace cAlgo.Robots
             {
                 if (_toggleEmaOverlay)
                 {
-                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "EMA20_", index => ComputeExponentialMovingAverage(Bars, index, 20), Color.FromArgb(255, 56, 189, 248), 1, "Lines", 180);
-                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "EMA50_", index => ComputeExponentialMovingAverage(Bars, index, 50), Color.FromArgb(255, 251, 113, 133), 1, "Lines", 180);
-                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "EMA200_", index => ComputeExponentialMovingAverage(Bars, index, 200), Color.FromArgb(255, 132, 204, 22), 2, "Lines", 220);
+                    var emaColor = Color.FromArgb(255, 56, 189, 248);
+                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "EMA20_", index => ComputeExponentialMovingAverage(Bars, index, _resolvedEmaOverlayConfig.FastPeriod), emaColor, 1, "DotsRare", 180);
+                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "EMA50_", index => ComputeExponentialMovingAverage(Bars, index, _resolvedEmaOverlayConfig.MidPeriod), emaColor, 1, "Dots", 180);
+                    if (_resolvedEmaOverlayConfig.SlowPeriod > 0 && _resolvedEmaOverlayConfig.SlowPeriod != _resolvedEmaOverlayConfig.MidPeriod)
+                        objectIndex = DrawIndicatorSeriesLine(objectIndex, "EMA200_", index => ComputeExponentialMovingAverage(Bars, index, _resolvedEmaOverlayConfig.SlowPeriod), emaColor, 1, "Lines", 220, GetEmaOverlayPairLabel(), 9, 1);
+                    else
+                        DrawRightEdgeIndicatorLabel("EMA200_", objectIndex, ComputeExponentialMovingAverage(Bars, Bars.Count - 1, _resolvedEmaOverlayConfig.MidPeriod), emaColor, GetEmaOverlayPairLabel(), 9, 1);
                 }
 
                 if (_toggleVwapOverlay)
-                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "VWAP20_", index => ComputeRollingVwapAtIndex(Bars, 20, index), Color.FromArgb(255, 14, 165, 233), 1, "Lines", 180);
+                {
+                    var vwapColor = Color.FromArgb(255, 250, 204, 21);
+                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "VWAP20_", index => ComputeRollingVwapAtIndex(Bars, _resolvedVwapOverlayConfig.Length, index), vwapColor, 1, "Dots", 180, GetVwapOverlayPairLabel(), 9, 0);
+                }
 
                 if (_toggleBollingerOverlay)
                 {
-                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "BBMID_", index => ComputeSimpleMovingAverage(Bars, index, 20), Color.FromArgb(255, 148, 163, 184), 1, "DotsRare", 180);
-                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "BBUP_", index => ComputeBollingerUpper(Bars, index, 20, 2.0), Color.FromArgb(255, 244, 114, 182), 1, "DotsRare", 180);
-                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "BBDN_", index => ComputeBollingerLower(Bars, index, 20, 2.0), Color.FromArgb(255, 244, 114, 182), 1, "DotsRare", 180);
+                    var bollingerColor = Color.FromArgb(255, 244, 114, 182);
+                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "BBMID_", index => ComputeSimpleMovingAverage(Bars, index, _resolvedBollingerOverlayConfig.Period), bollingerColor, 1, "Lines", 180, GetBollingerOverlayPairLabel(), 9, -1);
+                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "BBUP_", index => ComputeBollingerUpper(Bars, index, _resolvedBollingerOverlayConfig.Period, _resolvedBollingerOverlayConfig.StdDevMultiplier), bollingerColor, 1, "Dots", 180);
+                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "BBDN_", index => ComputeBollingerLower(Bars, index, _resolvedBollingerOverlayConfig.Period, _resolvedBollingerOverlayConfig.StdDevMultiplier), bollingerColor, 1, "Dots", 180);
+                }
+
+                if (_toggleIchimokuOverlay)
+                {
+                    objectIndex = RenderIchimokuOverlay(objectIndex, 180);
                 }
             }
             catch (Exception ex)
@@ -5613,12 +10559,15 @@ namespace cAlgo.Robots
             return objectIndex;
         }
 
-        private int DrawIndicatorSeriesLine(int objectIndex, string prefix, Func<int, double> valueSelector, Color color, int thickness, string lineStyle, int lookbackBars)
+        private int DrawIndicatorSeriesLine(int objectIndex, string prefix, Func<int, double> valueSelector, Color color, int thickness, string lineStyle, int lookbackBars, string labelText = null, int labelFontSize = 9, int labelSlot = 0)
         {
             if (Chart == null || Bars == null || valueSelector == null || Bars.Count < 2)
                 return objectIndex;
 
             var start = Math.Max(1, Bars.Count - Math.Max(lookbackBars, 10));
+            var firstObjectIndex = objectIndex;
+            var lastValidIndex = -1;
+            var lastValidValue = double.NaN;
             for (var i = start; i < Bars.Count; i++)
             {
                 var previousValue = valueSelector(i - 1);
@@ -5636,10 +10585,222 @@ namespace cAlgo.Robots
                 TrySetPropertyValue(line, "Thickness", thickness);
                 TrySetEnumPropertyValue(line, "LineStyle", lineStyle);
                 TrySetPropertyValue(line, "ZIndex", 2);
+                lastValidIndex = i;
+                lastValidValue = currentValue;
                 objectIndex++;
             }
 
+            if (!string.IsNullOrWhiteSpace(labelText) && lastValidIndex >= start && IsFiniteNumber(lastValidValue))
+            {
+                var chartTfMinutes = Math.Max(1, TimeFrameToMinutes(Chart != null ? Chart.TimeFrame : TimeFrame.Minute));
+                var labelTime = GetCurrentChartEndTime().AddMinutes(chartTfMinutes * 3);
+                var recentHigh = Bars.HighPrices.Skip(start).Take(Bars.Count - start).DefaultIfEmpty(lastValidValue).Max();
+                var recentLow = Bars.LowPrices.Skip(start).Take(Bars.Count - start).DefaultIfEmpty(lastValidValue).Min();
+                var recentRange = Math.Max(0.0, recentHigh - recentLow);
+                var verticalStep = Math.Max(Symbol != null ? Symbol.PipSize * 30.0 : 0.0, recentRange * 0.035);
+                var familyOffset = verticalStep * labelSlot;
+                var displayLabel = BuildIndicatorValueLabel(labelText, lastValidValue);
+
+                var label = Chart.DrawText(
+                    prefix + "LBL_MAIN",
+                    " " + displayLabel,
+                    labelTime,
+                    lastValidValue + familyOffset,
+                    color);
+                TryStyleChartText(label, labelFontSize, "Courier New", true);
+                TrySetPropertyValue(label, "ZIndex", 3);
+            }
+
             return objectIndex;
+        }
+
+        private int RenderIchimokuOverlay(int objectIndex, int lookbackBars)
+        {
+            if (Chart == null || Bars == null || Bars.Count < Math.Max(lookbackBars / 2, _resolvedIchimokuOverlayConfig.SpanBPeriod + 2))
+                return objectIndex;
+
+            var start = Math.Max(1, Bars.Count - Math.Max(lookbackBars, _resolvedIchimokuOverlayConfig.SpanBPeriod + 20));
+            var bullishCloudColor = Color.FromArgb(255, 34, 197, 94);
+            var bearishCloudColor = Color.FromArgb(255, 239, 68, 68);
+            var lineColor = Color.FromArgb(255, 125, 211, 252);
+            var baseColor = Color.FromArgb(255, 96, 165, 250);
+
+            for (var i = start; i < Bars.Count; i++)
+            {
+                var conversion = ComputeIchimokuConversionLine(Bars, i, _resolvedIchimokuOverlayConfig);
+                var baseLine = ComputeIchimokuBaseLine(Bars, i, _resolvedIchimokuOverlayConfig);
+                var spanA = ComputeIchimokuSpanA(Bars, i, _resolvedIchimokuOverlayConfig);
+                var spanB = ComputeIchimokuSpanB(Bars, i, _resolvedIchimokuOverlayConfig);
+
+                if (i > start)
+                {
+                    var prevConversion = ComputeIchimokuConversionLine(Bars, i - 1, _resolvedIchimokuOverlayConfig);
+                    var prevBaseLine = ComputeIchimokuBaseLine(Bars, i - 1, _resolvedIchimokuOverlayConfig);
+                    var prevSpanA = ComputeIchimokuSpanA(Bars, i - 1, _resolvedIchimokuOverlayConfig);
+                    var prevSpanB = ComputeIchimokuSpanB(Bars, i - 1, _resolvedIchimokuOverlayConfig);
+
+                    if (IsFiniteNumber(prevConversion) && IsFiniteNumber(conversion))
+                        objectIndex = DrawIndicatorSegment(objectIndex, "ICHI_TENKAN_", i, prevConversion, conversion, WithAlpha(lineColor, 180), 1, "DotsRare");
+
+                    if (IsFiniteNumber(prevBaseLine) && IsFiniteNumber(baseLine))
+                        objectIndex = DrawIndicatorSegment(objectIndex, "ICHI_KIJUN_", i, prevBaseLine, baseLine, WithAlpha(baseColor, 210), 1, "Lines");
+
+                    if (IsFiniteNumber(prevSpanA) && IsFiniteNumber(spanA))
+                        objectIndex = DrawIndicatorSegment(objectIndex, "ICHI_SPANA_", i, prevSpanA, spanA, WithAlpha(lineColor, 96), 1, "Dots");
+
+                    if (IsFiniteNumber(prevSpanB) && IsFiniteNumber(spanB))
+                        objectIndex = DrawIndicatorSegment(objectIndex, "ICHI_SPANB_", i, prevSpanB, spanB, WithAlpha(baseColor, 96), 1, "Dots");
+
+                    if (IsFiniteNumber(prevSpanA) && IsFiniteNumber(prevSpanB) && IsFiniteNumber(spanA) && IsFiniteNumber(spanB))
+                    {
+                        var upper = Math.Max(Math.Max(prevSpanA, prevSpanB), Math.Max(spanA, spanB));
+                        var lower = Math.Min(Math.Min(prevSpanA, prevSpanB), Math.Min(spanA, spanB));
+                        var cloudColor = spanA >= spanB ? bullishCloudColor : bearishCloudColor;
+                        var cloud = Chart.DrawRectangle(
+                            "ICHI_CLOUD_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                            Bars.OpenTimes[i - 1],
+                            upper,
+                            Bars.OpenTimes[i],
+                            lower,
+                            WithAlpha(cloudColor, 22));
+                        TrySetPropertyValue(cloud, "BorderColor", WithAlpha(cloudColor, 0));
+                        TrySetPropertyValue(cloud, "ZIndex", 1);
+                        objectIndex++;
+                    }
+                }
+            }
+
+            var kijunValue = ComputeIchimokuBaseLine(Bars, Bars.Count - 1, _resolvedIchimokuOverlayConfig);
+            DrawRightEdgeIndicatorLabel("ICHI_KIJUN_", objectIndex, kijunValue, baseColor, GetIchimokuOverlayPairLabel(), 9, 2);
+            return objectIndex;
+        }
+
+        private int DrawIndicatorSegment(int objectIndex, string prefix, int index, double previousValue, double currentValue, Color color, int thickness, string lineStyle)
+        {
+            if (Chart == null || Bars == null || index <= 0 || index >= Bars.Count || !IsFiniteNumber(previousValue) || !IsFiniteNumber(currentValue))
+                return objectIndex;
+
+            var line = Chart.DrawTrendLine(
+                prefix + objectIndex.ToString(CultureInfo.InvariantCulture),
+                Bars.OpenTimes[index - 1],
+                previousValue,
+                Bars.OpenTimes[index],
+                currentValue,
+                color);
+            TrySetPropertyValue(line, "Thickness", thickness);
+            TrySetEnumPropertyValue(line, "LineStyle", lineStyle);
+            TrySetPropertyValue(line, "ZIndex", 2);
+            return objectIndex + 1;
+        }
+
+        private void DrawRightEdgeIndicatorLabel(string prefix, int objectIndex, double value, Color color, string labelText, int labelFontSize = 9, int labelSlot = 0)
+        {
+            if (Chart == null || Bars == null || Bars.Count < 2 || string.IsNullOrWhiteSpace(labelText) || !IsFiniteNumber(value))
+                return;
+
+            var chartTfMinutes = Math.Max(1, TimeFrameToMinutes(Chart != null ? Chart.TimeFrame : TimeFrame.Minute));
+            var labelTime = GetCurrentChartEndTime().AddMinutes(chartTfMinutes * 3);
+            var start = Math.Max(1, Bars.Count - 180);
+            var recentHigh = Bars.HighPrices.Skip(start).Take(Bars.Count - start).DefaultIfEmpty(value).Max();
+            var recentLow = Bars.LowPrices.Skip(start).Take(Bars.Count - start).DefaultIfEmpty(value).Min();
+            var recentRange = Math.Max(0.0, recentHigh - recentLow);
+            var verticalStep = Math.Max(Symbol != null ? Symbol.PipSize * 30.0 : 0.0, recentRange * 0.035);
+            var familyOffset = verticalStep * labelSlot;
+            var displayLabel = BuildIndicatorValueLabel(labelText, value);
+
+            var label = Chart.DrawText(
+                prefix + "LBL_MAIN",
+                " " + displayLabel,
+                labelTime,
+                value + familyOffset,
+                color);
+            TryStyleChartText(label, labelFontSize, "Courier New", true);
+            TrySetPropertyValue(label, "ZIndex", 3);
+        }
+
+        private void DrawRightEdgeZoneLabel(string prefix, int objectIndex, double value, Color color, string labelText, int labelFontSize = 9)
+        {
+            if (Chart == null || Bars == null || Bars.Count < 2 || string.IsNullOrWhiteSpace(labelText) || !IsFiniteNumber(value))
+                return;
+
+            var chartTfMinutes = Math.Max(1, TimeFrameToMinutes(Chart != null ? Chart.TimeFrame : TimeFrame.Minute));
+            var labelTime = GetCurrentChartEndTime().AddMinutes(chartTfMinutes);
+            // cTrader anchors DrawText text vertically centered on (time, y), so the text's fixed
+            // pixel height reads as a different price distance at every zoom level and the label
+            // appears to drift away from the level line. Anchor half a text-height BELOW the level
+            // price instead: the text then hangs from the line and stays attached at any price scale.
+            var labelY = value + ResolveChartTextHalfHeightPriceOffset(labelFontSize);
+            var label = Chart.DrawText(
+                prefix + "_TXT_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                " " + labelText.Trim(),
+                labelTime,
+                labelY,
+                color);
+            TryStyleChartText(label, labelFontSize, "Courier New", true);
+            TrySetPropertyValue(label, "ZIndex", 4);
+        }
+
+        // Converts half the text's pixel height into price units using the chart's current visible
+        // price scale, so text stays glued to its anchor line under zoom in/out. Returns 0 when the
+        // chart does not expose the scale (falls back to anchoring exactly on the level price).
+        private double ResolveChartTextHalfHeightPriceOffset(int labelFontSize)
+        {
+            try
+            {
+                if (Chart == null) return 0.0;
+                var heightObj = TryGetPropertyValue(Chart, "Height");
+                var topYObj = TryGetPropertyValue(Chart, "TopY");
+                var bottomYObj = TryGetPropertyValue(Chart, "BottomY");
+                if (heightObj == null || topYObj == null || bottomYObj == null)
+                {
+                    if (!_chartScaleDiagLogged)
+                    {
+                        _chartScaleDiagLogged = true;
+                        SafePrint("[Visuals] Chart scale unavailable Height={0} TopY={1} BottomY={2} -> label offset fallback 0", heightObj ?? "<null>", topYObj ?? "<null>", bottomYObj ?? "<null>");
+                    }
+                    return 0.0;
+                }
+                var height = Convert.ToDouble(heightObj, CultureInfo.InvariantCulture);
+                var topY = Convert.ToDouble(topYObj, CultureInfo.InvariantCulture);
+                var bottomY = Convert.ToDouble(bottomYObj, CultureInfo.InvariantCulture);
+                if (height <= 0 || !(topY > bottomY))
+                {
+                    if (!_chartScaleDiagLogged)
+                    {
+                        _chartScaleDiagLogged = true;
+                        SafePrint("[Visuals] Chart scale invalid Height={0} TopY={1} BottomY={2}", height, topY, bottomY);
+                    }
+                    return 0.0;
+                }
+                var pricePerPixel = (topY - bottomY) / height;
+                var halfTextHeightPx = Math.Max(4.0, labelFontSize * 0.7);
+                var offset = halfTextHeightPx * pricePerPixel;
+                if (!_chartScaleDiagLogged)
+                {
+                    _chartScaleDiagLogged = true;
+                    SafePrint("[Visuals] Chart scale OK Height={0:F1}px TopY={1} BottomY={2} -> pricePerPixel={3:G6} labelOffset={4:G6}", height, topY, bottomY, pricePerPixel, offset);
+                }
+                return offset;
+            }
+            catch
+            {
+                return 0.0;
+            }
+        }
+
+        private string BuildIndicatorValueLabel(string labelText, double value)
+        {
+            var cleanLabel = string.IsNullOrWhiteSpace(labelText) ? "" : labelText.Trim();
+            return cleanLabel;
+        }
+
+        private string FormatIndicatorPriceLabelValue(double value)
+        {
+            if (!IsFiniteNumber(value))
+                return "";
+
+            var digits = Symbol != null ? Math.Max(0, Symbol.Digits) : 5;
+            return Math.Round(value, digits).ToString("F" + digits.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
         }
 
         private void CollectRecentDirectionalPatternMarkers(
@@ -5655,10 +10816,13 @@ namespace cAlgo.Robots
                 return;
 
             var drawn = 0;
-            var maxMarkers = 4;
+            var maxMarkers = GetCollectorMarkerLimit();
             var startIndex = Math.Max(2, sourceBars.Count - 120);
             for (var barIndex = sourceBars.Count - 2; barIndex >= startIndex; barIndex--)
             {
+                if (!HasEventVolumeSurge(sourceBars, barIndex))
+                    continue;
+
                 if (bullishMatch(sourceBars, barIndex))
                 {
                     AddDirectionalPatternAggregate(aggregates, sourceBars, sourceTimeFrame, barIndex, true, slotIndex, shortLabel);
@@ -5686,11 +10850,17 @@ namespace cAlgo.Robots
             int barIndex,
             bool isBullish,
             int slotIndex,
-            string shortLabel)
+            string shortLabel,
+            int patternSpan = 1,
+            bool highlightPatternRange = false)
         {
             if (aggregates == null || sourceBars == null || string.IsNullOrWhiteSpace(shortLabel))
                 return;
 
+            // Collapse ALL markers on the same bar + direction into ONE aggregate, so only a
+            // single surrounding box / icon / label is drawn per bar (the label shows how
+            // many patterns were merged). This avoids overlapping boxes when several candle
+            // patterns fire on the same bar.
             var existing = aggregates.FirstOrDefault(item =>
                 item.SourceTimeFrame == sourceTimeFrame &&
                 item.BarIndex == barIndex &&
@@ -5704,44 +10874,85 @@ namespace cAlgo.Robots
                     SourceTimeFrame = sourceTimeFrame,
                     BarIndex = barIndex,
                     IsBullish = isBullish,
-                    SlotIndex = slotIndex
+                    SlotIndex = slotIndex,
+                    PatternSpan = Math.Max(1, patternSpan),
+                    HighlightPatternRange = highlightPatternRange
                 };
                 aggregates.Add(existing);
             }
 
             existing.SlotIndex = Math.Min(existing.SlotIndex, slotIndex);
+            existing.PatternSpan = Math.Max(existing.PatternSpan, Math.Max(1, patternSpan));
+            existing.HighlightPatternRange = existing.HighlightPatternRange || highlightPatternRange;
             if (!existing.Labels.Contains(shortLabel, StringComparer.OrdinalIgnoreCase))
                 existing.Labels.Add(shortLabel);
         }
 
-        private int DrawDirectionalPatternMarker(int objectIndex, Bars sourceBars, TimeFrame sourceTimeFrame, int barIndex, bool isBullish, int slotIndex, string combinedLabel)
+        // Collapse many same-bar markers into "first label + total count" (e.g. "pin (3)").
+        private string FormatAggregatedMarkerLabel(List<string> labels)
+        {
+            if (labels == null || labels.Count == 0)
+                return "";
+            if (labels.Count == 1)
+                return labels[0];
+            return labels[0] + " (" + labels.Count.ToString(CultureInfo.InvariantCulture) + ")";
+        }
+
+        private int DrawDirectionalPatternMarker(int objectIndex, Bars sourceBars, TimeFrame sourceTimeFrame, int barIndex, bool isBullish, int slotIndex, int patternSpan, bool highlightPatternRange, string combinedLabel)
         {
             if (sourceBars == null || Symbol == null || barIndex < 0 || barIndex >= sourceBars.Count)
                 return objectIndex;
 
             var baseColor = GetTimeFrameStructureColor(sourceTimeFrame);
-            var textPad = Math.Max(Symbol.PipSize * (0.6 + (slotIndex * 0.35)), 0.0000001);
             var sourceTfMinutes = Math.Max(1, TimeFrameToMinutes(sourceTimeFrame));
             var chartTfMinutes = Math.Max(1, TimeFrameToMinutes(Chart != null ? Chart.TimeFrame : sourceTimeFrame));
             var anchorPrice = isBullish
                 ? sourceBars.LowPrices[barIndex]
                 : sourceBars.HighPrices[barIndex];
-            var textY = isBullish
-                ? anchorPrice - textPad
-                : anchorPrice + textPad;
-            var textTime = sourceTfMinutes > chartTfMinutes
-                ? sourceBars.OpenTimes[barIndex].AddMinutes(sourceTfMinutes - chartTfMinutes)
-                : sourceBars.OpenTimes[barIndex].AddMinutes(sourceTfMinutes);
-            var markerText = FormatDirectionalMarkerText(string.IsNullOrWhiteSpace(combinedLabel) ? "pat" : combinedLabel, isBullish);
-
-            var text = Chart.DrawText(
+            var barRange = Math.Max(sourceBars.HighPrices[barIndex] - sourceBars.LowPrices[barIndex], Symbol.PipSize * 8.0);
+            var rangeBox = highlightPatternRange ? ResolvePatternRangeBox(sourceBars, sourceTimeFrame, barIndex, patternSpan) : null;
+            // Bearish surrounding boxes use a red tone; bullish a darker green tone.
+            var patternBoxColor = isBullish ? Color.FromArgb(255, 34, 139, 34) : Color.FromArgb(255, 239, 68, 68);
+            if (highlightPatternRange)
+                DrawPatternRangeBox("PAT_" + GetMiniChartLabel(sourceTimeFrame) + "_" + objectIndex.ToString(CultureInfo.InvariantCulture), sourceBars, sourceTimeFrame, barIndex, patternSpan, patternBoxColor, 8, 60);
+            if (rangeBox != null)
+                anchorPrice = isBullish ? rangeBox.Item4 : rangeBox.Item3;
+            // Bearish icon + label sit above the top edge of the surrounding box / candle wick,
+            // pushed further left toward the bar's left edge; bullish stays right-anchored.
+            var halfBarMinutes = sourceTfMinutes * 0.6;
+            var boxWidthMinutes = rangeBox != null ? (rangeBox.Item2 - rangeBox.Item1).TotalMinutes : 0.0;
+            var leftShiftMinutes = isBullish ? 0.0 : Math.Min(halfBarMinutes, Math.Max(0.0, boxWidthMinutes * 0.35));
+            var iconTime = rangeBox != null
+                ? rangeBox.Item1.AddMinutes(Math.Max(0.2, boxWidthMinutes * 0.5) - leftShiftMinutes)
+                : sourceBars.OpenTimes[barIndex].AddMinutes(Math.Max(0.65, sourceTfMinutes * 0.68) - (isBullish ? 0.0 : halfBarMinutes));
+            var upPad = Math.Max(Symbol != null ? Symbol.PipSize * 2.0 : 0.0000001, barRange * 0.03);
+            var iconPrice = isBullish ? anchorPrice : anchorPrice + upPad;
+            var textY = rangeBox != null
+                ? (isBullish ? anchorPrice : iconPrice + Math.Max(Symbol != null ? Symbol.PipSize * 0.8 : 0.0000001, barRange * 0.012))
+                : ResolveDirectionalLabelPrice(isBullish, iconPrice, barRange, slotIndex);
+            var icon = Chart.DrawText(
                 "PAT_" + GetMiniChartLabel(sourceTimeFrame) + "_" + objectIndex.ToString(CultureInfo.InvariantCulture),
-                markerText,
-                textTime,
-                textY,
+                GetDirectionalArrowIcon(isBullish),
+                iconTime,
+                iconPrice,
                 baseColor);
-            TryStyleChartText(text, ResolveChartMarkerFontSize(sourceTimeFrame), "Courier New", true);
-            TrySetPropertyValue(text, "ZIndex", 12);
+            TryStyleChartText(icon, ResolveChartMarkerFontSize(sourceTimeFrame) + 1, "Courier New", true);
+            TrySetPropertyValue(icon, "ZIndex", 12);
+
+            if (ShowMarkerLabel == ChartLabelVisibilityMode.Yes)
+            {
+                var normalizedLabel = string.IsNullOrWhiteSpace(combinedLabel) ? "pat" : combinedLabel.Trim().ToLowerInvariant();
+                var labelOffsetMinutes = Math.Max(0.08, Math.Min(chartTfMinutes * 0.14, sourceTfMinutes * 0.05));
+                var label = Chart.DrawText(
+                    "PAT_LBL_" + GetMiniChartLabel(sourceTimeFrame) + "_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                    " " + normalizedLabel,
+                    iconTime.AddMinutes(Math.Max(0.01, labelOffsetMinutes * 0.08)),
+                    textY,
+                    patternBoxColor);
+                TryStyleChartText(label, ResolveChartMarkerFontSize(sourceTimeFrame), "Courier New", true);
+                TrySetPropertyValue(label, "ZIndex", 12);
+            }
+
             return objectIndex + 1;
         }
 
@@ -5885,26 +11096,34 @@ namespace cAlgo.Robots
             if (sourceBars == null || barIndex < 0 || barIndex >= sourceBars.Count)
                 return snapshot;
 
-            snapshot.Ema9 = ComputeExponentialMovingAverage(sourceBars, barIndex, 9);
-            snapshot.Ema20 = ComputeExponentialMovingAverage(sourceBars, barIndex, 20);
-            snapshot.Ema21 = ComputeExponentialMovingAverage(sourceBars, barIndex, 21);
-            snapshot.Ema50 = ComputeExponentialMovingAverage(sourceBars, barIndex, 50);
-            snapshot.Ema55 = ComputeExponentialMovingAverage(sourceBars, barIndex, 55);
-            snapshot.Ema200 = ComputeExponentialMovingAverage(sourceBars, barIndex, 200);
-            snapshot.Sma20 = ComputeSimpleMovingAverage(sourceBars, barIndex, 20);
-            snapshot.Sma50 = ComputeSimpleMovingAverage(sourceBars, barIndex, 50);
-            snapshot.Sma200 = ComputeSimpleMovingAverage(sourceBars, barIndex, 200);
-            snapshot.Vwap20 = ComputeRollingVwapAtIndex(sourceBars, 20, barIndex);
-            snapshot.BbMid = snapshot.Sma20;
-            snapshot.BbUpper = ComputeBollingerUpper(sourceBars, barIndex, 20, 2.0);
-            snapshot.BbLower = ComputeBollingerLower(sourceBars, barIndex, 20, 2.0);
-            snapshot.Rsi14 = ComputeRelativeStrengthIndex(sourceBars, barIndex, 14);
-            snapshot.StochK = ComputeRawStochasticK(sourceBars, barIndex, 14);
-            snapshot.StochD = ComputeSmoothedStochasticK(sourceBars, barIndex, 14, 3);
+            var emaConfig = _toggleEmaEvents
+                ? _resolvedEmaEventConfig
+                : (_toggleEmaOverlay ? _resolvedEmaOverlayConfig : ResolveEmaIndicatorConfig(EmaVisualMode.Auto, true));
+            var vwapConfig = _toggleVwapEvents
+                ? _resolvedVwapEventConfig
+                : (_toggleVwapOverlay ? _resolvedVwapOverlayConfig : ResolveVwapIndicatorConfig(VwapVisualMode.Auto));
+            var bollingerConfig = _toggleBollingerEvents
+                ? _resolvedBollingerEventConfig
+                : (_toggleBollingerOverlay ? _resolvedBollingerOverlayConfig : ResolveBollingerIndicatorConfig(BollingerVisualMode.Auto));
+            var rsiConfig = _toggleRsiEvents ? _resolvedRsiEventConfig : ResolveRsiIndicatorConfig(RsiVisualMode.Auto);
+            var stochasticConfig = _toggleStochasticEvents ? _resolvedStochasticEventConfig : ResolveStochasticIndicatorConfig(StochasticVisualMode.Auto);
+            var macdConfig = _toggleMacdEvents ? _resolvedMacdEventConfig : ResolveMacdIndicatorConfig(MacdVisualMode.Auto);
+
+            snapshot.EmaPrice = ComputeExponentialMovingAverage(sourceBars, barIndex, emaConfig.PriceCrossPeriod);
+            snapshot.EmaFast = ComputeExponentialMovingAverage(sourceBars, barIndex, emaConfig.FastPeriod);
+            snapshot.EmaMid = ComputeExponentialMovingAverage(sourceBars, barIndex, emaConfig.MidPeriod);
+            snapshot.EmaSlow = ComputeExponentialMovingAverage(sourceBars, barIndex, emaConfig.SlowPeriod);
+            snapshot.VwapMain = ComputeRollingVwapAtIndex(sourceBars, vwapConfig.Length, barIndex);
+            snapshot.BbMid = ComputeSimpleMovingAverage(sourceBars, barIndex, bollingerConfig.Period);
+            snapshot.BbUpper = ComputeBollingerUpper(sourceBars, barIndex, bollingerConfig.Period, bollingerConfig.StdDevMultiplier);
+            snapshot.BbLower = ComputeBollingerLower(sourceBars, barIndex, bollingerConfig.Period, bollingerConfig.StdDevMultiplier);
+            snapshot.RsiMain = ComputeRelativeStrengthIndex(sourceBars, barIndex, rsiConfig.Period);
+            snapshot.StochK = ComputeRawStochasticK(sourceBars, barIndex, stochasticConfig.KPeriod);
+            snapshot.StochD = ComputeSmoothedStochasticK(sourceBars, barIndex, stochasticConfig.KPeriod, stochasticConfig.DPeriod);
             snapshot.Roc12 = ComputeRateOfChange(sourceBars, barIndex, 12);
             double macdLine;
             double signalLine;
-            if (TryComputeMacdValues(sourceBars, barIndex, 12, 26, 9, out macdLine, out signalLine))
+            if (TryComputeMacdValues(sourceBars, barIndex, macdConfig.FastPeriod, macdConfig.SlowPeriod, macdConfig.SignalPeriod, out macdLine, out signalLine))
             {
                 snapshot.MacdLine = macdLine;
                 snapshot.MacdSignal = signalLine;
@@ -5920,29 +11139,76 @@ namespace cAlgo.Robots
             return snapshot;
         }
 
+        private SharedIndicatorSnapshot BuildIndicatorEventSnapshot(Bars sourceBars, int barIndex, IndicatorSnapshotRequirements requirements)
+        {
+            var snapshot = new SharedIndicatorSnapshot();
+            if (sourceBars == null || barIndex < 0 || barIndex >= sourceBars.Count)
+                return snapshot;
+
+            if ((requirements & IndicatorSnapshotRequirements.EmaPrice) != 0)
+                snapshot.EmaPrice = ComputeExponentialMovingAverage(sourceBars, barIndex, _resolvedEmaEventConfig.PriceCrossPeriod);
+            if ((requirements & IndicatorSnapshotRequirements.EmaFast) != 0)
+                snapshot.EmaFast = ComputeExponentialMovingAverage(sourceBars, barIndex, _resolvedEmaEventConfig.FastPeriod);
+            if ((requirements & IndicatorSnapshotRequirements.EmaMid) != 0)
+                snapshot.EmaMid = ComputeExponentialMovingAverage(sourceBars, barIndex, _resolvedEmaEventConfig.MidPeriod);
+            if ((requirements & IndicatorSnapshotRequirements.EmaSlow) != 0)
+                snapshot.EmaSlow = ComputeExponentialMovingAverage(sourceBars, barIndex, _resolvedEmaEventConfig.SlowPeriod);
+
+            if ((requirements & IndicatorSnapshotRequirements.VwapMain) != 0)
+                snapshot.VwapMain = ComputeRollingVwapAtIndex(sourceBars, _resolvedVwapEventConfig.Length, barIndex);
+
+            if ((requirements & IndicatorSnapshotRequirements.BbMid) != 0)
+                snapshot.BbMid = ComputeSimpleMovingAverage(sourceBars, barIndex, _resolvedBollingerEventConfig.Period);
+            if ((requirements & IndicatorSnapshotRequirements.BbUpper) != 0)
+                snapshot.BbUpper = ComputeBollingerUpper(sourceBars, barIndex, _resolvedBollingerEventConfig.Period, _resolvedBollingerEventConfig.StdDevMultiplier);
+            if ((requirements & IndicatorSnapshotRequirements.BbLower) != 0)
+                snapshot.BbLower = ComputeBollingerLower(sourceBars, barIndex, _resolvedBollingerEventConfig.Period, _resolvedBollingerEventConfig.StdDevMultiplier);
+
+            if ((requirements & IndicatorSnapshotRequirements.RsiMain) != 0)
+                snapshot.RsiMain = ComputeRelativeStrengthIndex(sourceBars, barIndex, _resolvedRsiEventConfig.Period);
+
+            if ((requirements & IndicatorSnapshotRequirements.StochK) != 0)
+                snapshot.StochK = ComputeRawStochasticK(sourceBars, barIndex, _resolvedStochasticEventConfig.KPeriod);
+            if ((requirements & IndicatorSnapshotRequirements.StochD) != 0)
+                snapshot.StochD = ComputeSmoothedStochasticK(sourceBars, barIndex, _resolvedStochasticEventConfig.KPeriod, _resolvedStochasticEventConfig.DPeriod);
+
+            if ((requirements & (IndicatorSnapshotRequirements.MacdLine | IndicatorSnapshotRequirements.MacdSignal | IndicatorSnapshotRequirements.MacdHistogram)) != 0)
+            {
+                double macdLine;
+                double signalLine;
+                if (TryComputeMacdValues(sourceBars, barIndex, _resolvedMacdEventConfig.FastPeriod, _resolvedMacdEventConfig.SlowPeriod, _resolvedMacdEventConfig.SignalPeriod, out macdLine, out signalLine))
+                {
+                    snapshot.MacdLine = macdLine;
+                    snapshot.MacdSignal = signalLine;
+                    snapshot.MacdHistogram = macdLine - signalLine;
+                }
+                else
+                {
+                    snapshot.MacdLine = double.NaN;
+                    snapshot.MacdSignal = double.NaN;
+                    snapshot.MacdHistogram = double.NaN;
+                }
+            }
+
+            return snapshot;
+        }
+
         private void PopulateSharedIndicatorDictionary(Dictionary<string, object> sink, SharedIndicatorSnapshot snapshot)
         {
             if (sink == null || snapshot == null)
                 return;
 
-            SetSharedIndicatorValue(sink, "ema_9", snapshot.Ema9);
-            SetSharedIndicatorValue(sink, "ema_20", snapshot.Ema20);
-            SetSharedIndicatorValue(sink, "ema_21", snapshot.Ema21);
-            SetSharedIndicatorValue(sink, "ema_50", snapshot.Ema50);
-            SetSharedIndicatorValue(sink, "ema_55", snapshot.Ema55);
-            SetSharedIndicatorValue(sink, "ema_200", snapshot.Ema200);
-            SetSharedIndicatorValue(sink, "ema_fast", snapshot.Ema9);
-            SetSharedIndicatorValue(sink, "ema_mid", snapshot.Ema21);
-            SetSharedIndicatorValue(sink, "ema_slow", snapshot.Ema55);
-            SetSharedIndicatorValue(sink, "sma_20", snapshot.Sma20);
-            SetSharedIndicatorValue(sink, "sma_50", snapshot.Sma50);
-            SetSharedIndicatorValue(sink, "sma_200", snapshot.Sma200);
-            SetSharedIndicatorValue(sink, "vwap", snapshot.Vwap20);
-            SetSharedIndicatorValue(sink, "vwap_20", snapshot.Vwap20);
+            SetSharedIndicatorValue(sink, "ema_price", snapshot.EmaPrice);
+            SetSharedIndicatorValue(sink, "ema_fast", snapshot.EmaFast);
+            SetSharedIndicatorValue(sink, "ema_mid", snapshot.EmaMid);
+            SetSharedIndicatorValue(sink, "ema_slow", snapshot.EmaSlow);
+            SetSharedIndicatorValue(sink, "vwap", snapshot.VwapMain);
+            SetSharedIndicatorValue(sink, "vwap_20", snapshot.VwapMain);
             SetSharedIndicatorValue(sink, "bb_mid", snapshot.BbMid);
             SetSharedIndicatorValue(sink, "bb_upper", snapshot.BbUpper);
             SetSharedIndicatorValue(sink, "bb_lower", snapshot.BbLower);
-            SetSharedIndicatorValue(sink, "rsi_14", snapshot.Rsi14);
+            SetSharedIndicatorValue(sink, "rsi", snapshot.RsiMain);
+            SetSharedIndicatorValue(sink, "rsi_14", snapshot.RsiMain);
             SetSharedIndicatorValue(sink, "stoch_k", snapshot.StochK);
             SetSharedIndicatorValue(sink, "stoch_d", snapshot.StochD);
             SetSharedIndicatorValue(sink, "macd", snapshot.MacdLine);
@@ -5978,6 +11244,236 @@ namespace cAlgo.Robots
             if (!IsFiniteNumber(mean) || !IsFiniteNumber(stddev))
                 return double.NaN;
             return mean - (stddev * stddevMultiplier);
+        }
+
+        private bool MatchBullishPriceCrossesEmaSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
+        {
+            return sourceBars != null &&
+                   index > 0 &&
+                   previous != null &&
+                   current != null &&
+                   CrossesAbove(sourceBars.ClosePrices[index - 1], sourceBars.ClosePrices[index], previous.EmaPrice, current.EmaPrice);
+        }
+
+        private bool MatchBearishPriceCrossesEmaSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
+        {
+            return sourceBars != null &&
+                   index > 0 &&
+                   previous != null &&
+                   current != null &&
+                   CrossesBelow(sourceBars.ClosePrices[index - 1], sourceBars.ClosePrices[index], previous.EmaPrice, current.EmaPrice);
+        }
+
+        private bool MatchBullishEmaFastMidCrossSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
+        {
+            return sourceBars != null &&
+                   index > 0 &&
+                   previous != null &&
+                   current != null &&
+                   CrossesAbove(previous.EmaFast, current.EmaFast, previous.EmaMid, current.EmaMid);
+        }
+
+        private bool MatchBearishEmaFastMidCrossSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
+        {
+            return sourceBars != null &&
+                   index > 0 &&
+                   previous != null &&
+                   current != null &&
+                   CrossesBelow(previous.EmaFast, current.EmaFast, previous.EmaMid, current.EmaMid);
+        }
+
+        private bool MatchBullishEmaMidSlowCrossSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
+        {
+            return sourceBars != null &&
+                   index > 0 &&
+                   previous != null &&
+                   current != null &&
+                   CrossesAbove(previous.EmaMid, current.EmaMid, previous.EmaSlow, current.EmaSlow);
+        }
+
+        private bool MatchBearishEmaMidSlowCrossSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
+        {
+            return sourceBars != null &&
+                   index > 0 &&
+                   previous != null &&
+                   current != null &&
+                   CrossesBelow(previous.EmaMid, current.EmaMid, previous.EmaSlow, current.EmaSlow);
+        }
+
+        private bool MatchBullishPriceCrossesVwapSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
+        {
+            return sourceBars != null &&
+                   index > 0 &&
+                   previous != null &&
+                   current != null &&
+                   CrossesAbove(sourceBars.ClosePrices[index - 1], sourceBars.ClosePrices[index], previous.VwapMain, current.VwapMain);
+        }
+
+        private bool MatchBearishPriceCrossesVwapSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
+        {
+            return sourceBars != null &&
+                   index > 0 &&
+                   previous != null &&
+                   current != null &&
+                   CrossesBelow(sourceBars.ClosePrices[index - 1], sourceBars.ClosePrices[index], previous.VwapMain, current.VwapMain);
+        }
+
+        private bool MatchBullishVwapRejectionSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
+        {
+            return sourceBars != null &&
+                   current != null &&
+                   index >= 0 &&
+                   IsFiniteNumber(current.VwapMain) &&
+                   sourceBars.LowPrices[index] <= current.VwapMain &&
+                   sourceBars.ClosePrices[index] > current.VwapMain;
+        }
+
+        private bool MatchBearishVwapRejectionSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
+        {
+            return sourceBars != null &&
+                   current != null &&
+                   index >= 0 &&
+                   IsFiniteNumber(current.VwapMain) &&
+                   sourceBars.HighPrices[index] >= current.VwapMain &&
+                   sourceBars.ClosePrices[index] < current.VwapMain;
+        }
+
+        private bool MatchBullishPriceCrossesBollingerMidSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
+        {
+            return sourceBars != null &&
+                   index > 0 &&
+                   previous != null &&
+                   current != null &&
+                   CrossesAbove(sourceBars.ClosePrices[index - 1], sourceBars.ClosePrices[index], previous.BbMid, current.BbMid);
+        }
+
+        private bool MatchBearishPriceCrossesBollingerMidSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
+        {
+            return sourceBars != null &&
+                   index > 0 &&
+                   previous != null &&
+                   current != null &&
+                   CrossesBelow(sourceBars.ClosePrices[index - 1], sourceBars.ClosePrices[index], previous.BbMid, current.BbMid);
+        }
+
+        private bool MatchBullishBollingerRejectionSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
+        {
+            return sourceBars != null &&
+                   current != null &&
+                   index >= 0 &&
+                   IsFiniteNumber(current.BbLower) &&
+                   sourceBars.LowPrices[index] <= current.BbLower &&
+                   sourceBars.ClosePrices[index] > current.BbLower;
+        }
+
+        private bool MatchBearishBollingerRejectionSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
+        {
+            return sourceBars != null &&
+                   current != null &&
+                   index >= 0 &&
+                   IsFiniteNumber(current.BbUpper) &&
+                   sourceBars.HighPrices[index] >= current.BbUpper &&
+                   sourceBars.ClosePrices[index] < current.BbUpper;
+        }
+
+        private bool MatchBullishRsiCrossSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current, double midline)
+        {
+            return sourceBars != null &&
+                   index > 0 &&
+                   previous != null &&
+                   current != null &&
+                   CrossesAbove(previous.RsiMain, current.RsiMain, midline, midline);
+        }
+
+        private bool MatchBearishRsiCrossSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current, double midline)
+        {
+            return sourceBars != null &&
+                   index > 0 &&
+                   previous != null &&
+                   current != null &&
+                   CrossesBelow(previous.RsiMain, current.RsiMain, midline, midline);
+        }
+
+        private bool MatchBullishRsiOversoldSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current, double oversoldLevel)
+        {
+            return current != null && IsFiniteNumber(current.RsiMain) && current.RsiMain < oversoldLevel;
+        }
+
+        private bool MatchBearishRsiOverboughtSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current, double overboughtLevel)
+        {
+            return current != null && IsFiniteNumber(current.RsiMain) && current.RsiMain > overboughtLevel;
+        }
+
+        private bool MatchBullishStochasticCrossSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
+        {
+            return sourceBars != null &&
+                   index > 0 &&
+                   previous != null &&
+                   current != null &&
+                   CrossesAbove(previous.StochK, current.StochK, previous.StochD, current.StochD);
+        }
+
+        private bool MatchBearishStochasticCrossSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
+        {
+            return sourceBars != null &&
+                   index > 0 &&
+                   previous != null &&
+                   current != null &&
+                   CrossesBelow(previous.StochK, current.StochK, previous.StochD, current.StochD);
+        }
+
+        private bool MatchBullishStochasticExitOversoldSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current, double oversoldLevel)
+        {
+            return sourceBars != null &&
+                   index > 0 &&
+                   previous != null &&
+                   current != null &&
+                   CrossesAbove(previous.StochK, current.StochK, oversoldLevel, oversoldLevel);
+        }
+
+        private bool MatchBearishStochasticExitOverboughtSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current, double overboughtLevel)
+        {
+            return sourceBars != null &&
+                   index > 0 &&
+                   previous != null &&
+                   current != null &&
+                   CrossesBelow(previous.StochK, current.StochK, overboughtLevel, overboughtLevel);
+        }
+
+        private bool MatchBullishMacdCrossSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
+        {
+            return sourceBars != null &&
+                   index > 0 &&
+                   previous != null &&
+                   current != null &&
+                   CrossesAbove(previous.MacdLine, current.MacdLine, previous.MacdSignal, current.MacdSignal);
+        }
+
+        private bool MatchBearishMacdCrossSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
+        {
+            return sourceBars != null &&
+                   index > 0 &&
+                   previous != null &&
+                   current != null &&
+                   CrossesBelow(previous.MacdLine, current.MacdLine, previous.MacdSignal, current.MacdSignal);
+        }
+
+        private bool MatchBullishMacdZeroCrossSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
+        {
+            return sourceBars != null &&
+                   index > 0 &&
+                   previous != null &&
+                   current != null &&
+                   CrossesAbove(previous.MacdHistogram, current.MacdHistogram, 0.0, 0.0);
+        }
+
+        private bool MatchBearishMacdZeroCrossSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
+        {
+            return sourceBars != null &&
+                   index > 0 &&
+                   previous != null &&
+                   current != null &&
+                   CrossesBelow(previous.MacdHistogram, current.MacdHistogram, 0.0, 0.0);
         }
 
         private bool MatchBullishPriceCrossesEma20(Bars sourceBars, int index)
@@ -6329,6 +11825,9 @@ namespace cAlgo.Robots
                 var endBar = Math.Min(sourceBars.Count - 1, swing.BarIndex + 16);
                 for (var barIndex = startBar; barIndex <= endBar; barIndex++)
                 {
+                    if (!HasEventVolumeSurge(sourceBars, barIndex))
+                        continue;
+
                     var closeV = sourceBars.ClosePrices[barIndex];
                     if ((bias == StructureBias.Bullish || bias == StructureBias.Neutral) &&
                         closeV > lastHigh.Value.Price &&
@@ -6522,13 +12021,10 @@ namespace cAlgo.Robots
 
             var line = Chart.DrawTrendLine("KEY_" + objectIndex.ToString(CultureInfo.InvariantCulture), startTime, price, endTime, price, color);
             TrySetPropertyValue(line, "Thickness", 1);
-            TrySetEnumPropertyValue(line, "LineStyle", "DotsRare");
+            TrySetEnumPropertyValue(line, "LineStyle", "Dots");
 
             if (drawLabel && !string.IsNullOrWhiteSpace(label))
-            {
-                var text = Chart.DrawText("KEY_TXT_" + objectIndex.ToString(CultureInfo.InvariantCulture), label, startTime, price, color);
-                TryStyleChartText(text, GetChartMarkerFontSize(), "Courier New", false);
-            }
+                DrawRightEdgeZoneLabel("KEY", objectIndex, price, color, label, GetChartMarkerFontSize());
             objectIndex++;
             return objectIndex;
         }
@@ -6539,22 +12035,53 @@ namespace cAlgo.Robots
                 return objectIndex;
 
             var today = GetReferenceNow().Date;
-            var days = Math.Max(1, KillerZoneDays);
+            var days = DefaultKillerZoneDays;
             for (var dayOffset = 0; dayOffset < days; dayOffset++)
             {
                 var date = today.AddDays(-dayOffset);
-                objectIndex = DrawKillerZoneBox(objectIndex, "ASIA", date, Color.FromArgb(32, 70, 130, 180));
-                objectIndex = DrawKillerZoneBox(objectIndex, "LDN", date, Color.FromArgb(34, 60, 179, 113));
-                objectIndex = DrawKillerZoneBox(objectIndex, "NY", date, Color.FromArgb(38, 255, 215, 0));
+                switch (DrawKillerZones)
+                {
+                    case KillerZoneVisualMode.No:
+                        return objectIndex;
+                    case KillerZoneVisualMode.Asia_KZ:
+                        objectIndex = DrawSessionContextBox(objectIndex, "Asia", date, false, "ASIA KZ");
+                        break;
+                    case KillerZoneVisualMode.Asia_Session:
+                        objectIndex = DrawSessionContextBox(objectIndex, "Asia", date, true, "ASIA SESSION");
+                        break;
+                    case KillerZoneVisualMode.LD_KZ:
+                        objectIndex = DrawSessionContextBox(objectIndex, "London", date, false, "LD KZ");
+                        break;
+                    case KillerZoneVisualMode.LD_Session:
+                        objectIndex = DrawSessionContextBox(objectIndex, "London", date, true, "LD SESSION");
+                        break;
+                    case KillerZoneVisualMode.NY_KZ:
+                        objectIndex = DrawSessionContextBox(objectIndex, "NewYork", date, false, "NY KZ");
+                        break;
+                    case KillerZoneVisualMode.NY_Session:
+                        objectIndex = DrawSessionContextBox(objectIndex, "NewYork", date, true, "NY SESSION");
+                        break;
+                    case KillerZoneVisualMode.All_KZs:
+                        objectIndex = DrawSessionContextBox(objectIndex, "Asia", date, false, "ASIA KZ");
+                        objectIndex = DrawSessionContextBox(objectIndex, "London", date, false, "LD KZ");
+                        objectIndex = DrawSessionContextBox(objectIndex, "NewYork", date, false, "NY KZ");
+                        break;
+                    case KillerZoneVisualMode.All_Sessions:
+                    default:
+                        objectIndex = DrawSessionContextBox(objectIndex, "Asia", date, true, "ASIA SESSION");
+                        objectIndex = DrawSessionContextBox(objectIndex, "London", date, true, "LD SESSION");
+                        objectIndex = DrawSessionContextBox(objectIndex, "NewYork", date, true, "NY SESSION");
+                        break;
+                }
             }
             return objectIndex;
         }
 
-        private int DrawKillerZoneBox(int objectIndex, string label, DateTime date, Color color)
+        private int DrawSessionContextBox(int objectIndex, string sessionName, DateTime date, bool useFullSession, string displayLabel)
         {
             DateTime startUtc;
             DateTime endUtc;
-            if (!TryGetSessionUtcRange(label, date, out startUtc, out endUtc))
+            if (!TryGetContextUtcRange(sessionName, date, useFullSession, out startUtc, out endUtc))
                 return objectIndex;
 
             double high;
@@ -6562,38 +12089,200 @@ namespace cAlgo.Robots
             DateTime highTime;
             DateTime lowTime;
             if (!TryGetRangeHighLow(Bars, startUtc, endUtc, out high, out low, out highTime, out lowTime))
-                return objectIndex;
+            {
+                // Session window has no bars yet (future session today): still draw the box so
+                // the whole day's sessions are visible ahead of time. Anchor it to the last price.
+                if (Bars == null || Bars.Count == 0)
+                    return objectIndex;
+                var lastIndex = Bars.Count - 1;
+                var anchor = Bars.ClosePrices[lastIndex];
+                var buffer = Math.Max(Symbol.PipSize * 20.0, Math.Abs(anchor) * 0.0005);
+                high = anchor + buffer;
+                low = anchor - buffer;
+            }
             if (high <= low)
                 return objectIndex;
 
-            var textColor = Color.FromArgb(235, 72, 72, 72);
-            var borderColor = textColor;
+            var textColor = GetSessionLabelColor();
+            var borderColor = Color.White;
             var topLine = Chart.DrawTrendLine("KZ_TOP_" + objectIndex.ToString(CultureInfo.InvariantCulture), startUtc, high, endUtc, high, borderColor);
-            TrySetPropertyValue(topLine, "Thickness", 2);
-            TrySetEnumPropertyValue(topLine, "LineStyle", "DotsRare");
+            TrySetPropertyValue(topLine, "Thickness", 1);
+            TrySetEnumPropertyValue(topLine, "LineStyle", "Dots");
             TrySetChartObjectBackground(topLine);
 
             var bottomLine = Chart.DrawTrendLine("KZ_BOT_" + objectIndex.ToString(CultureInfo.InvariantCulture), startUtc, low, endUtc, low, borderColor);
-            TrySetPropertyValue(bottomLine, "Thickness", 2);
-            TrySetEnumPropertyValue(bottomLine, "LineStyle", "DotsRare");
+            TrySetPropertyValue(bottomLine, "Thickness", 1);
+            TrySetEnumPropertyValue(bottomLine, "LineStyle", "Dots");
             TrySetChartObjectBackground(bottomLine);
 
             var textX = startUtc.AddMinutes(Math.Max(1, (endUtc - startUtc).TotalMinutes * 0.08));
-            var topTextY = high + (Math.Max(high - low, Symbol.PipSize * 20) * 0.02);
+            var topTextY = high + (Math.Max(high - low, Symbol.PipSize * 20) * 0.08);
             var bottomTextY = low - (Math.Max(high - low, Symbol.PipSize * 20) * 0.02);
-            var text = Chart.DrawText("KZ_TXT_" + objectIndex.ToString(CultureInfo.InvariantCulture), (label ?? "KZ") + " KZ", textX, topTextY, textColor);
+            var text = Chart.DrawText("KZ_TXT_" + objectIndex.ToString(CultureInfo.InvariantCulture), displayLabel, textX, topTextY, textColor);
             TryStyleChartText(text, GetChartMarkerFontSize(), "Courier New", true);
-            var text2 = Chart.DrawText("KZ_TXT2_" + objectIndex.ToString(CultureInfo.InvariantCulture), label ?? "SESSION", textX, bottomTextY, textColor);
+            var text2 = Chart.DrawText("KZ_TXT2_" + objectIndex.ToString(CultureInfo.InvariantCulture), displayLabel, textX, bottomTextY, textColor);
             TryStyleChartText(text2, GetChartMarkerFontSize(), "Courier New", true);
+            return objectIndex + 1;
+        }
+
+        private int DrawTrendlinesOnChart(int objectIndex)
+        {
+            if (Chart == null || Bars == null || Bars.Count < 20 || Symbol == null)
+                return objectIndex;
+
+            try
+            {
+                var swings = CollectConfirmedSwings(180);
+                if (swings.Count < 4)
+                    return objectIndex;
+
+                var recentHighs = swings.Where(swing => swing.IsHigh).TakeLast(2).ToList();
+                var recentLows = swings.Where(swing => !swing.IsHigh).TakeLast(2).ToList();
+
+                if (recentHighs.Count == 2)
+                    objectIndex = DrawSwingTrendline(objectIndex, recentHighs[0], recentHighs[1], Color.FromArgb(60, 255, 120, 120), "TL H");
+
+                if (recentLows.Count == 2)
+                    objectIndex = DrawSwingTrendline(objectIndex, recentLows[0], recentLows[1], Color.FromArgb(60, 120, 255, 160), "TL L");
+            }
+            catch (Exception ex)
+            {
+                SafePrint("[Visuals] Trendline failed: {0}", ex.Message);
+            }
+
+            return objectIndex;
+        }
+
+        private int DrawSwingTrendline(int objectIndex, SwingPoint first, SwingPoint second, Color color, string label)
+        {
+            if (Chart == null || second.Time <= first.Time)
+                return objectIndex;
+
+            var minutes = Math.Max(1.0, (second.Time - first.Time).TotalMinutes);
+            var slopePerMinute = (second.Price - first.Price) / minutes;
+            var currentEndTime = GetCurrentChartEndTime();
+            var projectedPrice = second.Price + (slopePerMinute * Math.Max(0.0, (currentEndTime - second.Time).TotalMinutes));
+
+            var line = Chart.DrawTrendLine(
+                "TL_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                first.Time,
+                first.Price,
+                currentEndTime,
+                projectedPrice,
+                color);
+            TrySetPropertyValue(line, "Thickness", 1);
+            TrySetEnumPropertyValue(line, "LineStyle", "Lines");
+            TrySetPropertyValue(line, "ZIndex", 1);
+
+            var text = Chart.DrawText(
+                "TL_TXT_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                label,
+                second.Time,
+                second.Price,
+                color);
+            TryStyleChartText(text, GetChartMarkerFontSize(), "Courier New", true);
+            TrySetPropertyValue(text, "ZIndex", 2);
+            return objectIndex + 1;
+        }
+
+        private int DrawDivergenceOnChart(int objectIndex)
+        {
+            if (Chart == null || Bars == null || Bars.Count < 40 || Symbol == null)
+                return objectIndex;
+
+            try
+            {
+                var swings = CollectConfirmedSwings(220);
+                if (swings.Count < 6)
+                    return objectIndex;
+
+                var rsiConfig = ResolveRsiIndicatorConfig(DrawRsiMode == RsiVisualMode.Off ? RsiVisualMode.Auto : DrawRsiMode);
+                var recentLows = swings.Where(swing => !swing.IsHigh).TakeLast(8).ToList();
+                var recentHighs = swings.Where(swing => swing.IsHigh).TakeLast(8).ToList();
+
+                for (var i = recentLows.Count - 1; i >= 1; i--)
+                {
+                    var left = recentLows[i - 1];
+                    var right = recentLows[i];
+                    var leftRsi = ComputeRelativeStrengthIndex(Bars, left.BarIndex, rsiConfig.Period);
+                    var rightRsi = ComputeRelativeStrengthIndex(Bars, right.BarIndex, rsiConfig.Period);
+                    if (right.Price < left.Price && rightRsi > leftRsi && IsFiniteNumber(leftRsi) && IsFiniteNumber(rightRsi))
+                    {
+                        objectIndex = DrawDivergencePair(objectIndex, left, right, true, Color.FromArgb(60, 80, 220, 160), "div");
+                        break;
+                    }
+                }
+
+                for (var i = recentHighs.Count - 1; i >= 1; i--)
+                {
+                    var left = recentHighs[i - 1];
+                    var right = recentHighs[i];
+                    var leftRsi = ComputeRelativeStrengthIndex(Bars, left.BarIndex, rsiConfig.Period);
+                    var rightRsi = ComputeRelativeStrengthIndex(Bars, right.BarIndex, rsiConfig.Period);
+                    if (right.Price > left.Price && rightRsi < leftRsi && IsFiniteNumber(leftRsi) && IsFiniteNumber(rightRsi))
+                    {
+                        objectIndex = DrawDivergencePair(objectIndex, left, right, false, Color.FromArgb(60, 255, 140, 140), "div");
+                        break;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                SafePrint("[Visuals] Divergence failed: {0}", ex.Message);
+            }
+
+            return objectIndex;
+        }
+
+        private int DrawDivergencePair(int objectIndex, SwingPoint first, SwingPoint second, bool bullish, Color color, string label)
+        {
+            if (Chart == null)
+                return objectIndex;
+
+            var line = Chart.DrawTrendLine(
+                "DIV_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                first.Time,
+                first.Price,
+                second.Time,
+                second.Price,
+                color);
+            TrySetPropertyValue(line, "Thickness", 1);
+            TrySetEnumPropertyValue(line, "LineStyle", "Lines");
+            TrySetPropertyValue(line, "ZIndex", 2);
+
+            // Divergence is an event (usable as a trade trigger): draw the directional icon at
+            // the swing point + a labeled marker, not just a plain label.
+            var icon = Chart.DrawText(
+                "DIV_ICON_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                GetDirectionalMarkerIcon(bullish),
+                second.Time,
+                second.Price,
+                color);
+            TryStyleChartText(icon, GetChartMarkerFontSize(), "Courier New", true);
+            TrySetPropertyValue(icon, "ZIndex", 3);
+
+            var yPad = Math.Max(Symbol.PipSize * 10.0, 0.0000001);
+            var textY = bullish ? second.Price - yPad : second.Price + yPad;
+            var text = Chart.DrawText(
+                "DIV_TXT_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                FormatDirectionalMarkerText(label, bullish),
+                second.Time,
+                textY,
+                color);
+            TryStyleChartText(text, GetChartMarkerFontSize(), "Courier New", true);
+            TrySetPropertyValue(text, "ZIndex", 3);
             return objectIndex + 1;
         }
 
         private int DrawRecentFvgZones(Bars sourceBars, TimeFrame sourceTimeFrame, string objectPrefix, int objectIndex, DateTime endTime)
         {
-            var maxZones = 8;
+            var maxZones = Math.Max(1, ResolveZoneMaxCount(ZoneMaxCount));
             if (sourceBars == null || sourceBars.Count < 3) return objectIndex;
-            var startIndex = Math.Max(2, sourceBars.Count - 80);
-            var zoneColor = WithAlpha(GetTimeFrameStructureColor(sourceTimeFrame), 24);
+            var lookbackBars = ResolveZoneLookbackBars(ZoneLookback);
+            var startIndex = lookbackBars > 0
+                ? Math.Max(2, sourceBars.Count - lookbackBars)
+                : 2;
+            var zoneColor = WithAlpha(GetTimeFrameStructureColor(sourceTimeFrame), 40);
             for (var i = sourceBars.Count - 1; i >= startIndex && maxZones > 0; i--)
             {
                 var leftHigh = sourceBars.HighPrices[i - 2];
@@ -6603,7 +12292,11 @@ namespace cAlgo.Robots
 
                 if (rightLow > leftHigh)
                 {
-                    if (IsZoneTouched(sourceBars, i + 1, leftHigh, rightLow))
+                    if (!IsQualifiedDisplacementFvg(sourceBars, i, true, ResolveZoneFvgDisplacementRatio(ZoneFvgDisplacement), ResolveZoneFvgBodyRatio(ZoneFvgBodyRatio), ResolveZoneFvgGapPercent(ZoneFvgGap)))
+                        continue;
+                    if (!HasZoneVolumeSurge(sourceBars, i - 1))
+                        continue;
+                    if (ZoneRevisit == ZoneRevisitMode.Skip && IsZoneTouched(sourceBars, i + 1, leftHigh, rightLow))
                         continue;
                     var rect = Chart.DrawRectangle(objectPrefix + objectIndex.ToString(CultureInfo.InvariantCulture), sourceBars.OpenTimes[i - 2], rightLow, endTime, leftHigh, zoneColor);
                     TrySetPropertyValue(rect, "IsFilled", true);
@@ -6611,12 +12304,17 @@ namespace cAlgo.Robots
                     TrySetPropertyValue(rect, "BorderColor", Color.FromArgb(0, zoneColor.R, zoneColor.G, zoneColor.B));
                     TrySetPropertyValue(rect, "Thickness", 0);
                     TrySetChartObjectBackground(rect);
+                    DrawRightEdgeZoneLabel(objectPrefix + "ZONE", objectIndex, (rightLow + leftHigh) * 0.5, GetTimeFrameStructureColor(sourceTimeFrame), string.Format(CultureInfo.InvariantCulture, "{0}FVG", objectPrefix.StartsWith("HTF_", StringComparison.OrdinalIgnoreCase) ? GetMiniChartLabel(sourceTimeFrame) + " " : ""), GetChartMarkerFontSize());
                     objectIndex++;
                     maxZones--;
                 }
                 else if (rightHigh < leftLow)
                 {
-                    if (IsZoneTouched(sourceBars, i + 1, rightHigh, leftLow))
+                    if (!IsQualifiedDisplacementFvg(sourceBars, i, false, ResolveZoneFvgDisplacementRatio(ZoneFvgDisplacement), ResolveZoneFvgBodyRatio(ZoneFvgBodyRatio), ResolveZoneFvgGapPercent(ZoneFvgGap)))
+                        continue;
+                    if (!HasZoneVolumeSurge(sourceBars, i - 1))
+                        continue;
+                    if (ZoneRevisit == ZoneRevisitMode.Skip && IsZoneTouched(sourceBars, i + 1, rightHigh, leftLow))
                         continue;
                     var rect = Chart.DrawRectangle(objectPrefix + objectIndex.ToString(CultureInfo.InvariantCulture), sourceBars.OpenTimes[i - 2], leftLow, endTime, rightHigh, zoneColor);
                     TrySetPropertyValue(rect, "IsFilled", true);
@@ -6624,6 +12322,7 @@ namespace cAlgo.Robots
                     TrySetPropertyValue(rect, "BorderColor", Color.FromArgb(0, zoneColor.R, zoneColor.G, zoneColor.B));
                     TrySetPropertyValue(rect, "Thickness", 0);
                     TrySetChartObjectBackground(rect);
+                    DrawRightEdgeZoneLabel(objectPrefix + "ZONE", objectIndex, (rightHigh + leftLow) * 0.5, GetTimeFrameStructureColor(sourceTimeFrame), string.Format(CultureInfo.InvariantCulture, "{0}FVG", objectPrefix.StartsWith("HTF_", StringComparison.OrdinalIgnoreCase) ? GetMiniChartLabel(sourceTimeFrame) + " " : ""), GetChartMarkerFontSize());
                     objectIndex++;
                     maxZones--;
                 }
@@ -6633,10 +12332,13 @@ namespace cAlgo.Robots
 
         private int DrawRecentOrderBlocks(Bars sourceBars, TimeFrame sourceTimeFrame, string objectPrefix, int objectIndex, DateTime endTime)
         {
-            var maxBlocks = 6;
+            var maxBlocks = Math.Max(1, ResolveZoneMaxCount(ZoneMaxCount));
             if (sourceBars == null || sourceBars.Count < 4) return objectIndex;
-            var startIndex = Math.Max(3, sourceBars.Count - 80);
-            var zoneColor = WithAlpha(GetTimeFrameStructureColor(sourceTimeFrame), 28);
+            var lookbackBars = ResolveZoneLookbackBars(ZoneLookback);
+            var startIndex = lookbackBars > 0
+                ? Math.Max(3, sourceBars.Count - lookbackBars)
+                : 3;
+            var zoneColor = WithAlpha(GetTimeFrameStructureColor(sourceTimeFrame), 40);
             for (var i = sourceBars.Count - 1; i >= startIndex && maxBlocks > 0; i--)
             {
                 var leftHigh = sourceBars.HighPrices[i - 2];
@@ -6648,11 +12350,12 @@ namespace cAlgo.Robots
                 {
                     for (var j = i - 1; j >= Math.Max(1, i - 5); j--)
                     {
-                        if (sourceBars.ClosePrices[j] < sourceBars.OpenPrices[j])
+                        if (sourceBars.ClosePrices[j] < sourceBars.OpenPrices[j] && HasZoneVolumeSurge(sourceBars, j))
                         {
-                            if (!IsOrderBlockTouched(sourceBars, j + 1, j))
+                            if (ZoneRevisit != ZoneRevisitMode.Skip || !IsOrderBlockTouched(sourceBars, j + 1, j))
                             {
                                 DrawOrderBlockRectangle(sourceBars, objectPrefix + objectIndex.ToString(CultureInfo.InvariantCulture), j, endTime, zoneColor);
+                                DrawRightEdgeZoneLabel(objectPrefix + "ZONE", objectIndex, (sourceBars.HighPrices[j] + sourceBars.LowPrices[j]) * 0.5, GetTimeFrameStructureColor(sourceTimeFrame), string.Format(CultureInfo.InvariantCulture, "{0}OB", objectPrefix.StartsWith("HTF_", StringComparison.OrdinalIgnoreCase) ? GetMiniChartLabel(sourceTimeFrame) + " " : ""), GetChartMarkerFontSize());
                                 objectIndex++;
                                 maxBlocks--;
                             }
@@ -6664,11 +12367,12 @@ namespace cAlgo.Robots
                 {
                     for (var j = i - 1; j >= Math.Max(1, i - 5); j--)
                     {
-                        if (sourceBars.ClosePrices[j] > sourceBars.OpenPrices[j])
+                        if (sourceBars.ClosePrices[j] > sourceBars.OpenPrices[j] && HasZoneVolumeSurge(sourceBars, j))
                         {
-                            if (!IsOrderBlockTouched(sourceBars, j + 1, j))
+                            if (ZoneRevisit != ZoneRevisitMode.Skip || !IsOrderBlockTouched(sourceBars, j + 1, j))
                             {
                                 DrawOrderBlockRectangle(sourceBars, objectPrefix + objectIndex.ToString(CultureInfo.InvariantCulture), j, endTime, zoneColor);
+                                DrawRightEdgeZoneLabel(objectPrefix + "ZONE", objectIndex, (sourceBars.HighPrices[j] + sourceBars.LowPrices[j]) * 0.5, GetTimeFrameStructureColor(sourceTimeFrame), string.Format(CultureInfo.InvariantCulture, "{0}OB", objectPrefix.StartsWith("HTF_", StringComparison.OrdinalIgnoreCase) ? GetMiniChartLabel(sourceTimeFrame) + " " : ""), GetChartMarkerFontSize());
                                 objectIndex++;
                                 maxBlocks--;
                             }
@@ -6678,6 +12382,28 @@ namespace cAlgo.Robots
                 }
             }
             return objectIndex;
+        }
+
+        private string ResolveCanonicalReactionLevelLabel(CanonicalMarketEvent evt, string shortLabel, Bars sourceBars)
+        {
+            var cleanShortLabel = string.IsNullOrWhiteSpace(shortLabel) ? "RJ" : shortLabel.Trim().ToUpperInvariant();
+            var fallback = cleanShortLabel;
+            if (sourceBars == null || Symbol == null || evt.PriceRef <= 0 || string.IsNullOrWhiteSpace(shortLabel))
+                return fallback;
+
+            var tolerance = Math.Max(Symbol.PipSize * 2.0, 0.0000001);
+
+            var fvgLevels = new List<double>();
+            AddFvgLevelCandidates(fvgLevels, sourceBars, tolerance);
+            if (fvgLevels.Any(level => Math.Abs(level - evt.PriceRef) <= tolerance))
+                return cleanShortLabel + " FVG";
+
+            var obLevels = new List<double>();
+            AddOrderBlockLevelCandidates(obLevels, sourceBars, tolerance);
+            if (obLevels.Any(level => Math.Abs(level - evt.PriceRef) <= tolerance))
+                return cleanShortLabel + " OB";
+
+            return fallback;
         }
 
         private bool IsZoneTouched(Bars sourceBars, int fromBarIndex, double zoneLow, double zoneHigh)
@@ -6693,23 +12419,57 @@ namespace cAlgo.Robots
             return false;
         }
 
+        private DateTime ResolveSourceBarEndTime(Bars sourceBars, DateTime barTime, TimeFrame sourceTimeFrame)
+        {
+            if (sourceBars != null && sourceBars.Count > 1)
+            {
+                for (var i = 0; i < sourceBars.Count - 1; i++)
+                {
+                    if (sourceBars.OpenTimes[i] == barTime)
+                        return sourceBars.OpenTimes[i + 1];
+                }
+            }
+
+            return barTime.AddMinutes(Math.Max(1, TimeFrameToMinutes(sourceTimeFrame)));
+        }
+
+        private int ResolveSourceBarIndex(Bars sourceBars, DateTime barTime)
+        {
+            if (sourceBars == null || sourceBars.Count == 0 || barTime == DateTime.MinValue)
+                return -1;
+
+            for (var i = sourceBars.Count - 1; i >= 0; i--)
+            {
+                if (sourceBars.OpenTimes[i] == barTime)
+                    return i;
+            }
+
+            for (var i = sourceBars.Count - 1; i >= 0; i--)
+            {
+                if (sourceBars.OpenTimes[i] <= barTime)
+                    return i;
+            }
+
+            return -1;
+        }
+
         private bool IsOrderBlockTouched(Bars sourceBars, int fromBarIndex, int obBarIndex)
         {
-            var obHigh = OrderBlockUseFullWick ? sourceBars.HighPrices[obBarIndex] : Math.Max(sourceBars.OpenPrices[obBarIndex], sourceBars.ClosePrices[obBarIndex]);
-            var obLow = OrderBlockUseFullWick ? sourceBars.LowPrices[obBarIndex] : Math.Min(sourceBars.OpenPrices[obBarIndex], sourceBars.ClosePrices[obBarIndex]);
+            var obHigh = sourceBars.HighPrices[obBarIndex];
+            var obLow = sourceBars.LowPrices[obBarIndex];
             return IsZoneTouched(sourceBars, fromBarIndex, obLow, obHigh);
         }
 
         private void DrawOrderBlockRectangle(Bars sourceBars, string objectName, int barIndex, DateTime endTime, Color color)
         {
-            var high = OrderBlockUseFullWick ? sourceBars.HighPrices[barIndex] : Math.Max(sourceBars.OpenPrices[barIndex], sourceBars.ClosePrices[barIndex]);
-            var low = OrderBlockUseFullWick ? sourceBars.LowPrices[barIndex] : Math.Min(sourceBars.OpenPrices[barIndex], sourceBars.ClosePrices[barIndex]);
+            var high = sourceBars.HighPrices[barIndex];
+            var low = sourceBars.LowPrices[barIndex];
             var rect = Chart.DrawRectangle(objectName, sourceBars.OpenTimes[barIndex], high, endTime, low, color);
             TrySetPropertyValue(rect, "IsFilled", true);
             TrySetPropertyValue(rect, "Thickness", 1);
             TrySetPropertyValue(rect, "Color", color);
             TrySetPropertyValue(rect, "BorderColor", WithAlpha(color, 62));
-            TrySetEnumPropertyValue(rect, "LineStyle", "DotsRare");
+            TrySetEnumPropertyValue(rect, "LineStyle", "Dots");
             TrySetChartObjectBackground(rect);
         }
 
@@ -6784,7 +12544,6 @@ namespace cAlgo.Robots
             var lots = 0.0;
             var estimatedMargin = 0.0;
             var marginBudget = 0.0;
-            var marginSafetyMultiplier = Math.Max(0.0, Math.Min(1.0, MarginSafetyPercent / 100.0));
             try
             {
                 if (symbol != null && volumeUnits > 0)
@@ -6798,7 +12557,7 @@ namespace cAlgo.Robots
                 lots = 0;
                 estimatedMargin = 0;
             }
-            marginBudget = Account != null ? Math.Max(0, Account.FreeMargin * marginSafetyMultiplier) : 0;
+            marginBudget = Account != null ? Math.Max(0, Account.FreeMargin) : 0;
 
             var tradableReason = DetectSymbolTradeAvailabilityReason(symbol);
             var tradableState = string.IsNullOrWhiteSpace(tradableReason) ? "OK" : tradableReason;
@@ -6873,8 +12632,7 @@ namespace cAlgo.Robots
         {
             fittedVolumeUnits = 0;
             estimatedMargin = 0;
-            var marginSafetyMultiplier = Math.Max(0.0, Math.Min(1.0, MarginSafetyPercent / 100.0));
-            marginBudget = Account != null ? Math.Max(0, Account.FreeMargin * marginSafetyMultiplier) : 0;
+            marginBudget = Account != null ? Math.Max(0, Account.FreeMargin) : 0;
             note = "";
 
             if (symbol == null)
@@ -7066,7 +12824,7 @@ namespace cAlgo.Robots
             fittedRiskMoney = EstimateRiskAmount(symbol, tradeType, entryPrice, stopLossPrice, Math.Max(minVolume, 0));
             note = string.Format(
                 CultureInfo.InvariantCulture,
-                "risk_unaffordable requested={0:F2} min={1:F2} est={2:F2} cap={3:F2}",
+                "rule=MaxRiskPerTrade violated; risk_unaffordable requested={0:F2} min={1:F2} est={2:F2} cap={3:F2}; fix=reduce_SL_distance_or_raise_MaxRiskPreset",
                 requestedVolumeUnits,
                 minVolume,
                 fittedRiskMoney,
@@ -7856,7 +13614,7 @@ namespace cAlgo.Robots
 
         private double GetEffectiveMaxRiskPercent(RiskTemplate template)
         {
-            var configuredRiskPercent = Math.Max(0.0, MaxRiskPercent);
+            var configuredRiskPercent = Math.Max(0.0, ResolveRiskLimitPresetPercent(MaxRiskPreset, Account != null ? Account.Balance : 0.0));
             switch (template)
             {
                 default:
@@ -7871,7 +13629,7 @@ namespace cAlgo.Robots
 
         private double GetEffectiveMaxTotalOpenRiskPercent(RiskTemplate template)
         {
-            return Math.Max(0.0, MaxTotalOpenRiskPercent);
+            return Math.Max(0.0, ResolveRiskLimitPresetPercent(MaxTotalOpenRiskPreset, Account != null ? Account.Balance : 0.0));
         }
 
         private double GetEffectiveMaxDailyLossPercent()
@@ -7894,7 +13652,7 @@ namespace cAlgo.Robots
                 case RiskTemplate.FTPlus_1Step_Express:
                     return 4.0;
                 default:
-                    return MaxDailyLossPercent;
+                    return ResolveRiskLimitPresetPercent(MaxDailyLossPreset, Account != null ? Account.Balance : 0.0);
             }
         }
 
@@ -7918,7 +13676,7 @@ namespace cAlgo.Robots
                 case RiskTemplate.FundedNext_Stellar_Lite:
                     return 8.0;
                 default:
-                    return MaxEquityDrawdownPercent;
+                    return ResolveRiskLimitPresetPercent(MaxEquityDrawdownPreset, Account != null ? Account.Balance : 0.0);
             }
         }
 
@@ -7929,15 +13687,12 @@ namespace cAlgo.Robots
 
         private double GetEffectiveMaxSameSymbolDirectionRiskPercent(RiskTemplate template)
         {
-            return Math.Max(0.0, MaxSameSymbolDirectionRiskPercent);
+            return Math.Max(0.0, ResolveRiskLimitPresetPercent(MaxSameSymbolDirectionRiskPreset, Account != null ? Account.Balance : 0.0));
         }
 
         private string GetRiskSameDirectionLimitLabel(RiskTemplate template)
         {
-            var value = GetEffectiveMaxSameSymbolDirectionRiskPercent(template);
-            return value > 0
-                ? string.Format(CultureInfo.InvariantCulture, "{0}%", FormatDashboardPercent(value))
-                : "OFF";
+            return GetRiskLimitPresetLabel(MaxSameSymbolDirectionRiskPreset);
         }
 
         private bool GetEffectiveHighImpactNewsBlockEnabled(RiskTemplate template)
@@ -7983,30 +13738,44 @@ namespace cAlgo.Robots
                 GetEffectiveNewsBlockDuringMinutes(template));
         }
 
+        private bool IsTradeBlockModeEnabledForManual(TradeBlockScopeMode mode)
+        {
+            return mode == TradeBlockScopeMode.Manual || mode == TradeBlockScopeMode.Both;
+        }
+
+        private bool IsTradeBlockModeEnabledForCron(TradeBlockScopeMode mode)
+        {
+            return mode == TradeBlockScopeMode.Cron || mode == TradeBlockScopeMode.Both;
+        }
+
         private bool GetEffectiveNoOvernightHold(RiskTemplate template)
         {
-            return NoOvernightHold;
+            return OvernightBlockMode != TradeBlockScopeMode.No;
         }
 
         private string GetRiskOvernightLimitLabel(RiskTemplate template)
         {
-            return GetEffectiveNoOvernightHold(template) ? "BLOCK" : "ALLOW";
+            return OvernightBlockMode.ToString();
         }
 
         private bool GetEffectiveNoWeekendHold(RiskTemplate template)
         {
-            return NoWeekendHold;
+            return WeekendBlockMode != TradeBlockScopeMode.No;
         }
 
         private string GetRiskWeekendLimitLabel(RiskTemplate template)
         {
-            return GetEffectiveNoWeekendHold(template) ? "BLOCK" : "ALLOW";
+            return WeekendBlockMode.ToString();
         }
 
-        private bool TryGetOvernightGateRejectReason(RiskTemplate template, out string rejectReason)
+        private bool TryGetOvernightGateRejectReason(RiskTemplate template, bool isManualTrade, out string rejectReason)
         {
             rejectReason = "";
-            if (!GetEffectiveNoOvernightHold(template))
+            var mode = OvernightBlockMode;
+            var applies = isManualTrade
+                ? IsTradeBlockModeEnabledForManual(mode)
+                : IsTradeBlockModeEnabledForCron(mode);
+            if (!applies)
                 return false;
 
             var riskNow = GetRiskReferenceNow();
@@ -8016,16 +13785,21 @@ namespace cAlgo.Robots
 
             rejectReason = string.Format(
                 CultureInfo.InvariantCulture,
-                "overnight_block ref_time={0}; tz={1}",
+                "rule=OvernightBlockMode={0} violated; ref_time={1}; tz={2}; unlocks=after_17:00_NY",
+                mode,
                 riskNow.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture),
                 GetRiskReferenceTimeZone().StandardName);
             return true;
         }
 
-        private bool TryGetWeekendGateRejectReason(RiskTemplate template, out string rejectReason)
+        private bool TryGetWeekendGateRejectReason(RiskTemplate template, bool isManualTrade, out string rejectReason)
         {
             rejectReason = "";
-            if (!GetEffectiveNoWeekendHold(template))
+            var mode = WeekendBlockMode;
+            var applies = isManualTrade
+                ? IsTradeBlockModeEnabledForManual(mode)
+                : IsTradeBlockModeEnabledForCron(mode);
+            if (!applies)
                 return false;
 
             var riskNow = GetRiskReferenceNow();
@@ -8033,7 +13807,8 @@ namespace cAlgo.Robots
             {
                 rejectReason = string.Format(
                     CultureInfo.InvariantCulture,
-                    "weekend_block ref_time={0}; tz={1}",
+                    "rule=WeekendBlockMode={0} violated; ref_time={1}; tz={2}; unlocks=Monday_00:00",
+                    mode,
                     riskNow.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture),
                     GetRiskReferenceTimeZone().StandardName);
                 return true;
@@ -8044,7 +13819,8 @@ namespace cAlgo.Robots
             {
                 rejectReason = string.Format(
                     CultureInfo.InvariantCulture,
-                    "weekend_block ref_time={0}; tz={1}",
+                    "rule=WeekendBlockMode={0} violated; ref_time={1}; tz={2}; unlocks=Monday_00:00",
+                    mode,
                     riskNow.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture),
                     GetRiskReferenceTimeZone().StandardName);
                 return true;
@@ -8283,7 +14059,7 @@ namespace cAlgo.Robots
                 {
                     rejectReason = string.Format(
                         CultureInfo.InvariantCulture,
-                        "high_impact_news_before symbol={0}; mins={1}; limit={2}; title={3}",
+                        "rule=HighImpactNewsBlock violated; high_impact_news_before symbol={0}; mins_until={1}; block_before={2}; title={3}; fix=wait_until_after_release",
                         normalizedSymbol,
                         evt.MinutesUntilStart,
                         beforeMinutes,
@@ -8295,7 +14071,7 @@ namespace cAlgo.Robots
                 {
                     rejectReason = string.Format(
                         CultureInfo.InvariantCulture,
-                        "high_impact_news_during symbol={0}; mins_left={1}; limit={2}; title={3}",
+                        "rule=HighImpactNewsBlock violated; high_impact_news_during symbol={0}; mins_left={1}; block_during={2}; title={3}; fix=wait_until_release_ends",
                         normalizedSymbol,
                         evt.MinutesUntilEnd,
                         duringMinutes,
@@ -8629,6 +14405,7 @@ namespace cAlgo.Robots
             double volumeUnits,
             double requestedRiskMoney,
             double finalRiskMoney,
+            bool isManualTrade,
             out string rejectReason)
         {
             rejectReason = "";
@@ -8646,7 +14423,7 @@ namespace cAlgo.Robots
             {
                 rejectReason = string.Format(
                     CultureInfo.InvariantCulture,
-                    "per_trade_risk {0:F2}>{1:F2}; requested={2:F2}; entry={3:F5}; sl={4:F5}",
+                    "rule=MaxRiskPerTrade violated; per_trade_risk {0:F2}>{1:F2}; requested={2:F2}; entry={3:F5}; sl={4:F5}; fix=reduce_volume_or_raise_MaxRiskPreset",
                     state.CandidateRiskAmount,
                     finalRiskMoney,
                     requestedRiskMoney,
@@ -8666,7 +14443,7 @@ namespace cAlgo.Robots
                 {
                     rejectReason = string.Format(
                         CultureInfo.InvariantCulture,
-                        "max_risk_pct_per_idea {0:F2}>{1:F2}; symbol={2}; side={3}",
+                        "rule=MaxRiskPctPerIdea violated; max_risk_pct_per_idea {0:F2}>{1:F2}; symbol={2}; side={3}; fix=reduce_volume_or_close_same_direction_positions",
                         sameDirectionRiskPercent,
                         effectiveMaxSameSymbolDirectionRiskPercent,
                         symbol.Name,
@@ -8686,14 +14463,14 @@ namespace cAlgo.Robots
             }
 
             string overnightRejectReason;
-            if (TryGetOvernightGateRejectReason(SelectedRiskTemplate, out overnightRejectReason))
+            if (TryGetOvernightGateRejectReason(SelectedRiskTemplate, isManualTrade, out overnightRejectReason))
             {
                 rejectReason = overnightRejectReason;
                 return false;
             }
 
             string weekendRejectReason;
-            if (TryGetWeekendGateRejectReason(SelectedRiskTemplate, out weekendRejectReason))
+            if (TryGetWeekendGateRejectReason(SelectedRiskTemplate, isManualTrade, out weekendRejectReason))
             {
                 rejectReason = weekendRejectReason;
                 return false;
@@ -8703,7 +14480,7 @@ namespace cAlgo.Robots
             {
                 rejectReason = string.Format(
                     CultureInfo.InvariantCulture,
-                    "total_open_risk_pct {0:F2}>{1:F2}; total_open_risk={2:F2}; balance={3:F2}",
+                    "rule=MaxTotalOpenRiskPct violated; total_open_risk_pct {0:F2}>{1:F2}; total_open_risk={2:F2}; balance={3:F2}; fix=close_positions_or_reduce_size",
                     state.TotalOpenRiskPercent,
                     effectiveMaxTotalOpenRiskPercent,
                     state.TotalOpenRiskAmount,
@@ -8716,7 +14493,7 @@ namespace cAlgo.Robots
             {
                 rejectReason = string.Format(
                     CultureInfo.InvariantCulture,
-                    "daily_loss_pct {0:F2}>={1:F2}; daily_loss={2:F2}; day_start_balance={3:F2}; equity={4:F2}",
+                    "rule=MaxDailyLossPct violated; daily_loss_pct {0:F2}>={1:F2}; daily_loss={2:F2}; day_start_balance={3:F2}; equity={4:F2}; fix=stop_trading_until_next_day",
                     state.DailyLossPercent,
                     effectiveMaxDailyLossPercent,
                     state.DailyLossAmount,
@@ -8730,7 +14507,7 @@ namespace cAlgo.Robots
             {
                 rejectReason = string.Format(
                     CultureInfo.InvariantCulture,
-                    "equity_drawdown_pct {0:F2}>={1:F2}; ftmo_ref={2:F2}; equity={3:F2}",
+                    "rule=MaxEquityDrawdownPct violated; equity_drawdown_pct {0:F2}>={1:F2}; ftmo_ref={2:F2}; equity={3:F2}; fix=stop_trading",
                     state.EquityDrawdownPercent,
                     effectiveMaxEquityDrawdownPercent,
                     state.PeakEquitySeen,
@@ -8891,6 +14668,47 @@ namespace cAlgo.Robots
             out double marginBudget,
             out string rejectReason)
         {
+            return TryPassSharedCreationGate(
+                symbol,
+                action,
+                orderTypeStr,
+                entry,
+                executionPrice,
+                sl,
+                tp,
+                requestedVolumeUnits,
+                requestedRiskMoney,
+                finalRiskMoney,
+                false,
+                out approvedSl,
+                out approvedTp,
+                out approvedVolumeUnits,
+                out approvedRiskMoney,
+                out marginEstimate,
+                out marginBudget,
+                out rejectReason);
+        }
+
+        private bool TryPassSharedCreationGate(
+            Symbol symbol,
+            string action,
+            string orderTypeStr,
+            double entry,
+            double executionPrice,
+            double sl,
+            double tp,
+            double requestedVolumeUnits,
+            double requestedRiskMoney,
+            double finalRiskMoney,
+            bool isManualTrade,
+            out double approvedSl,
+            out double approvedTp,
+            out double approvedVolumeUnits,
+            out double approvedRiskMoney,
+            out double marginEstimate,
+            out double marginBudget,
+            out string rejectReason)
+        {
             approvedSl = sl;
             approvedTp = tp;
             approvedVolumeUnits = 0;
@@ -8914,19 +14732,20 @@ namespace cAlgo.Robots
             var submitReferencePrice = (orderTypeStr == "market" || entry <= 0) ? executionPrice : entry;
             if (symbol.PipSize > 0)
             {
+                var minStopPips = ResolveMinStopPips(symbol);
                 var adjustProtection = String.Equals(OnSlTpError, "Adjust", StringComparison.OrdinalIgnoreCase);
                 if (approvedSl > 0)
                 {
                     var slDistPips = Math.Abs(submitReferencePrice - approvedSl) / symbol.PipSize;
-                    if (slDistPips < MinStopPips)
+                    if (slDistPips < minStopPips)
                     {
                         if (!adjustProtection)
                         {
                             rejectReason = string.Format(
                                 CultureInfo.InvariantCulture,
-                                "sl_too_close {0:F1}<{1:F1}; ref={2:F5}; sl={3:F5}",
+                                "rule=MinStopPips violated; sl_too_close {0:F1}<{1:F1}; ref={2:F5}; sl={3:F5}; fix=widen_SL_or_set_OnSlTpError=Adjust",
                                 slDistPips,
-                                MinStopPips,
+                                minStopPips,
                                 submitReferencePrice,
                                 approvedSl
                             );
@@ -8934,8 +14753,8 @@ namespace cAlgo.Robots
                         }
 
                         approvedSl = action == "SELL"
-                            ? submitReferencePrice + MinStopPips * symbol.PipSize
-                            : submitReferencePrice - MinStopPips * symbol.PipSize;
+                            ? submitReferencePrice + minStopPips * symbol.PipSize
+                            : submitReferencePrice - minStopPips * symbol.PipSize;
                         approvedSl = NormalizePriceToSymbol(symbol, approvedSl);
                     }
                 }
@@ -8943,15 +14762,15 @@ namespace cAlgo.Robots
                 if (approvedTp > 0)
                 {
                     var tpDistPips = Math.Abs(approvedTp - submitReferencePrice) / symbol.PipSize;
-                    if (tpDistPips < MinStopPips)
+                    if (tpDistPips < minStopPips)
                     {
                         if (!adjustProtection)
                         {
                             rejectReason = string.Format(
                                 CultureInfo.InvariantCulture,
-                                "tp_too_close {0:F1}<{1:F1}; ref={2:F5}; tp={3:F5}",
+                                "rule=MinStopPips violated; tp_too_close {0:F1}<{1:F1}; ref={2:F5}; tp={3:F5}; fix=widen_TP_or_set_OnSlTpError=Adjust",
                                 tpDistPips,
-                                MinStopPips,
+                                minStopPips,
                                 submitReferencePrice,
                                 approvedTp
                             );
@@ -8959,8 +14778,8 @@ namespace cAlgo.Robots
                         }
 
                         approvedTp = action == "SELL"
-                            ? submitReferencePrice - MinStopPips * symbol.PipSize
-                            : submitReferencePrice + MinStopPips * symbol.PipSize;
+                            ? submitReferencePrice - minStopPips * symbol.PipSize
+                            : submitReferencePrice + minStopPips * symbol.PipSize;
                         approvedTp = NormalizePriceToSymbol(symbol, approvedTp);
                     }
                 }
@@ -9039,6 +14858,7 @@ namespace cAlgo.Robots
                 approvedVolumeUnits,
                 requestedRiskMoney,
                 finalRiskMoney,
+                isManualTrade,
                 out riskFirewallReason))
             {
                 rejectReason = riskFirewallReason;
@@ -9092,7 +14912,7 @@ namespace cAlgo.Robots
                 {
                     reason = string.Format(
                         CultureInfo.InvariantCulture,
-                        "sl_wrong_side ref={0:F5} sl={1:F5} side=BUY",
+                        "rule=ProtectionDirection violated; sl_wrong_side ref={0:F5} sl={1:F5} side=BUY; fix=SL_must_be_below_entry",
                         referencePrice,
                         sl
                     );
@@ -9102,7 +14922,7 @@ namespace cAlgo.Robots
                 {
                     reason = string.Format(
                         CultureInfo.InvariantCulture,
-                        "sl_wrong_side ref={0:F5} sl={1:F5} side=SELL",
+                        "rule=ProtectionDirection violated; sl_wrong_side ref={0:F5} sl={1:F5} side=SELL; fix=SL_must_be_above_entry",
                         referencePrice,
                         sl
                     );
@@ -9116,7 +14936,7 @@ namespace cAlgo.Robots
                 {
                     reason = string.Format(
                         CultureInfo.InvariantCulture,
-                        "tp_wrong_side ref={0:F5} tp={1:F5} side=BUY",
+                        "rule=ProtectionDirection violated; tp_wrong_side ref={0:F5} tp={1:F5} side=BUY; fix=TP_must_be_above_entry",
                         referencePrice,
                         tp
                     );
@@ -9126,39 +14946,11 @@ namespace cAlgo.Robots
                 {
                     reason = string.Format(
                         CultureInfo.InvariantCulture,
-                        "tp_wrong_side ref={0:F5} tp={1:F5} side=SELL",
+                        "rule=ProtectionDirection violated; tp_wrong_side ref={0:F5} tp={1:F5} side=SELL; fix=TP_must_be_below_entry",
                         referencePrice,
                         tp
                     );
                     return false;
-                }
-            }
-
-            if (symbol.PipSize > 0)
-            {
-                double? slDistPips = sl > 0 ? Math.Abs(referencePrice - sl) / symbol.PipSize : (double?)null;
-                double? tpDistPips = tp > 0 ? Math.Abs(tp - referencePrice) / symbol.PipSize : (double?)null;
-
-                if (
-                    slDistPips.HasValue &&
-                    tpDistPips.HasValue &&
-                    slDistPips.Value > 0 &&
-                    MaxRewardRiskRatio > 0
-                )
-                {
-                    var rewardRisk = tpDistPips.Value / slDistPips.Value;
-                    if (rewardRisk > MaxRewardRiskRatio)
-                    {
-                        reason = string.Format(
-                            CultureInfo.InvariantCulture,
-                            "reward_risk_too_large rr={0:F2} tp_pips={1:F1} sl_pips={2:F1} max={3:F2}",
-                            rewardRisk,
-                            tpDistPips.Value,
-                            slDistPips.Value,
-                            MaxRewardRiskRatio
-                        );
-                        return false;
-                    }
                 }
             }
 
@@ -9220,13 +15012,29 @@ namespace cAlgo.Robots
             if (string.IsNullOrWhiteSpace(LogFilter)) return true;
 
             var haystack = ((level ?? "") + " " + (message ?? "")).ToUpperInvariant();
+            var hasIncludeToken = false;
             foreach (var rawToken in LogFilter.Split(','))
             {
-                var token = (rawToken ?? "").Trim().ToUpperInvariant();
+                var token = (rawToken ?? "").Trim();
                 if (token.Length == 0) continue;
-                if (haystack.Contains(token)) return true;
+
+                // Tokens prefixed with '!' are exclusions: any match suppresses the line even
+                // when an include token also matches (e.g. "Error,!Error.expected").
+                var isExclusion = token.StartsWith("!", StringComparison.Ordinal);
+                var normalizedToken = (isExclusion ? token.Substring(1) : token).Trim().ToUpperInvariant();
+                if (normalizedToken.Length == 0) continue;
+
+                if (isExclusion)
+                {
+                    if (haystack.Contains(normalizedToken)) return false;
+                    continue;
+                }
+
+                hasIncludeToken = true;
+                if (haystack.Contains(normalizedToken)) return true;
             }
-            return false;
+            // Only exclusions present (or empty tokens): emit everything not excluded.
+            return !hasIncludeToken;
         }
 
         private bool ShouldRaisePopupAlert(string level, string message)
@@ -9291,6 +15099,16 @@ namespace cAlgo.Robots
                  message.StartsWith("[Backtest] Signal", StringComparison.OrdinalIgnoreCase) ||
                  message.StartsWith("[Backtest] price_action_event_detector_v1", StringComparison.OrdinalIgnoreCase) ||
                  message.StartsWith("[Backtest] follow_trend", StringComparison.OrdinalIgnoreCase));
+            if (suppressBacktestInfo)
+                return;
+
+            TryShowPopupAlert(level, message);
+            if (!ShouldEmitLog(level, message))
+            {
+                _suppressedLogCount++;
+                return;
+            }
+
             _lastPanelMessage = message;
             _lastPanelMessageIsError =
                 string.Equals((level ?? "").Trim(), "ERROR", StringComparison.OrdinalIgnoreCase) ||
@@ -9302,11 +15120,6 @@ namespace cAlgo.Robots
                 : (message.IndexOf("TRADELOG|", StringComparison.OrdinalIgnoreCase) >= 0 && message.IndexOf("status=SUCCEEDED", StringComparison.OrdinalIgnoreCase) >= 0
                     ? Color.LimeGreen
                     : Color.White);
-            if (suppressBacktestInfo)
-                return;
-
-            TryShowPopupAlert(level, message);
-            if (!ShouldEmitLog(level, message)) return;
             BeginInvokeOnMainThread(() => Print(message));
         }
 
@@ -9409,6 +15222,10 @@ namespace cAlgo.Robots
                 PrintBypassLogFilter("[Bridge] Isolation build active: OnStart early return");
                 return;
             }
+            // Clean slate: sweep every object this bot can draw before (re)drawing. If the
+            // previous session ended uncleanly (force stop, cTrader restart), stale markers,
+            // zones and grids from an older build would otherwise linger on the chart.
+            try { RemoveChartVisualObjects(); } catch (Exception ex) { SafePrint("[Visuals] Startup object sweep failed: {0}", ex.Message); }
             LoadCustomUiSettings();
             if (!DisableOnStartExtrasForIsolation)
                 StartBacktestExportSession();
@@ -9428,7 +15245,7 @@ namespace cAlgo.Robots
             _pollStatus = "IDLE";
             _syncStatus = "IDLE";
             RefreshRiskAnchors();
-            _toggleKillerZones = DrawKillerZones;
+            _toggleKillerZones = DrawKillerZones != KillerZoneVisualMode.No;
             _toggleLiquidityLevels = DrawLiquidityLevels;
             _toggleSweepDetections = DrawSweepDetections;
             _toggleBosDetections = DrawBosDetections;
@@ -9438,25 +15255,59 @@ namespace cAlgo.Robots
             _togglePullbackDetections = DrawPullbackDetections;
             _toggleContinuationDetections = DrawContinuationDetections;
             _toggleImpulseDetections = DrawImpulseDetections;
-            _toggleEmaOverlay = DrawEmaOverlay;
-            _toggleVwapOverlay = DrawVwapOverlay;
-            _toggleBollingerOverlay = DrawBollingerOverlay;
-            _toggleEmaEvents = DrawEmaEvents;
-            _toggleVwapEvents = DrawVwapEvents;
-            _toggleBollingerEvents = DrawBollingerEvents;
-            _toggleRsiEvents = DrawRsiEvents;
-            _toggleStochasticEvents = DrawStochasticEvents;
-            _toggleMacdEvents = DrawMacdEvents;
+            _toggleTrendlines = DrawTrendlines;
+            _toggleDivergence = DrawDivergence;
+            _resolvedEmaOverlayConfig = ResolveEmaIndicatorConfig(DrawEmaOverlay, false);
+            _resolvedVwapOverlayConfig = ResolveVwapIndicatorConfig(DrawVwapOverlay);
+            _resolvedBollingerOverlayConfig = ResolveBollingerIndicatorConfig(DrawBollingerOverlay);
+            _resolvedIchimokuOverlayConfig = ResolveIchimokuIndicatorConfig(DrawIchimokuOverlay);
+            _resolvedEmaEventConfig = ResolveEmaIndicatorConfig(DrawEmaOverlay, true);
+            _resolvedVwapEventConfig = ResolveVwapIndicatorConfig(DrawVwapOverlay);
+            _resolvedBollingerEventConfig = ResolveBollingerIndicatorConfig(DrawBollingerOverlay);
+            _resolvedRsiEventConfig = ResolveRsiIndicatorConfig(DrawRsiMode);
+            _resolvedStochasticEventConfig = ResolveStochasticIndicatorConfig(DrawStochasticMode);
+            _resolvedMacdEventConfig = ResolveMacdIndicatorConfig(DrawMacdMode);
+            _toggleEmaOverlay = DrawEmaOverlay != EmaVisualMode.Off;
+            _toggleVwapOverlay = DrawVwapOverlay != VwapVisualMode.Off;
+            _toggleBollingerOverlay = DrawBollingerOverlay != BollingerVisualMode.Off;
+            _toggleIchimokuOverlay = DrawIchimokuOverlay != IchimokuVisualMode.Off;
+            _toggleEmaEvents = DrawEmaEvents == EventToggleMode.On && DrawEmaOverlay != EmaVisualMode.Off;
+            _toggleVwapEvents = DrawVwapEvents == EventToggleMode.On && DrawVwapOverlay != VwapVisualMode.Off;
+            _toggleBollingerEvents = DrawBollingerEvents == EventToggleMode.On && DrawBollingerOverlay != BollingerVisualMode.Off;
+            _toggleRsiEvents = DrawRsiEvents == EventToggleMode.On && DrawRsiMode != RsiVisualMode.Off;
+            _toggleStochasticEvents = DrawStochasticEvents == EventToggleMode.On && DrawStochasticMode != StochasticVisualMode.Off;
+            _toggleMacdEvents = DrawMacdEvents == EventToggleMode.On && DrawMacdMode != MacdVisualMode.Off;
+            _togglePinBarPatterns = DrawPinBarPatterns;
+            _toggleEngulfingPatterns = DrawEngulfingPatterns;
+            _toggleBigCandlePatterns = DrawBigCandlePatterns;
+            _toggleMorningStarPatterns = DrawMorningStarPatterns;
+            _toggleEveningStarPatterns = DrawEveningStarPatterns;
+            _toggleHammerPatterns = DrawHammerPatterns;
+            _toggleHangingManPatterns = DrawHangingManPatterns;
+            _toggleShootingStarPatterns = DrawShootingStarPatterns;
+            _toggleInvertedHammerPatterns = DrawInvertedHammerPatterns;
+            _togglePiercingLinePatterns = DrawPiercingLinePatterns;
+            _toggleDarkCloudCoverPatterns = DrawDarkCloudCoverPatterns;
+            _toggleThreeWhiteSoldiersPatterns = DrawThreeWhiteSoldiersPatterns;
+            _toggleThreeBlackCrowsPatterns = DrawThreeBlackCrowsPatterns;
+            _toggleHaramiPatterns = DrawHaramiPatterns;
+            try { SyncChartOscillatorIndicators(); } catch (Exception ex) { SafePrint("[Visuals] Oscillator panels sync failed: {0}", ex.Message); }
+            try { SyncChartTechnicalOverlays(); } catch (Exception ex) { SafePrint("[Visuals] Technical overlays sync failed: {0}", ex.Message); }
             _toggleFvgZones = DrawFvgZones;
             _toggleOrderBlocks = DrawOrderBlocks;
             _toggleHigherTimeframeZones = DrawHigherTimeframeZones;
-            _toggleHtf15 = true;
-            _toggleHtf4H = true;
-            _toggleHtf1D = true;
-            _toggleHtfMiniChart = DrawHtfMiniChart;
-            _toggleKeyLevels = true;
-            _toggleStrategyMarkers = DrawStrategyMarkers;
+            _toggleKeyLevels = DrawKeyLevels;
+            _toggleSupplyDemand = DrawSupplyDemand;
             ApplyCustomUiSettingsOverrides();
+            ApplyChartDisplayPreferences();
+            ApplyVisualGroupCombos();
+            SafePrint(
+                "[Mini] HTF mode={0} miniChart={1} background={2} auto1={3} auto2={4}",
+                DrawHtfMiniChartMode,
+                ShouldDrawHtfMiniChart(),
+                ShouldDrawHtfBackground(),
+                DrawAutoHtf1,
+                DrawAutoHtf2);
             var isBacktesting = IsBacktestingRuntime();
             var effectiveMaxRiskPercent = GetEffectiveMaxRiskPercent();
             var effectiveMaxDailyLossPercent = GetEffectiveMaxDailyLossPercent();
@@ -9744,6 +15595,8 @@ namespace cAlgo.Robots
         {
             if (!ShouldUseNativeTrailingAutoProtect())
                 return;
+            if (Positions == null || Positions.Count == 0)
+                return;
 
             foreach (var pos in Positions)
             {
@@ -9934,9 +15787,6 @@ namespace cAlgo.Robots
             if (sourceBars == null)
                 return -1;
 
-            if (ShouldRunStrategiesOnBarClosedEvent())
-                return sourceBars.Count - 1;
-
             return sourceBars.Count - 2;
         }
 
@@ -10093,6 +15943,51 @@ namespace cAlgo.Robots
             return Math.Sqrt(varianceSum / period);
         }
 
+        private double ComputeIchimokuConversionLine(Bars sourceBars, int endIndex, IchimokuIndicatorConfig config)
+        {
+            return ComputeIchimokuMidpoint(sourceBars, endIndex, config.ConversionPeriod);
+        }
+
+        private double ComputeIchimokuBaseLine(Bars sourceBars, int endIndex, IchimokuIndicatorConfig config)
+        {
+            return ComputeIchimokuMidpoint(sourceBars, endIndex, config.BasePeriod);
+        }
+
+        private double ComputeIchimokuSpanA(Bars sourceBars, int endIndex, IchimokuIndicatorConfig config)
+        {
+            var conversion = ComputeIchimokuConversionLine(sourceBars, endIndex, config);
+            var baseLine = ComputeIchimokuBaseLine(sourceBars, endIndex, config);
+            if (!IsFiniteNumber(conversion) || !IsFiniteNumber(baseLine))
+                return double.NaN;
+
+            return (conversion + baseLine) / 2.0;
+        }
+
+        private double ComputeIchimokuSpanB(Bars sourceBars, int endIndex, IchimokuIndicatorConfig config)
+        {
+            return ComputeIchimokuMidpoint(sourceBars, endIndex, config.SpanBPeriod);
+        }
+
+        private double ComputeIchimokuMidpoint(Bars sourceBars, int endIndex, int period)
+        {
+            if (sourceBars == null || period <= 0 || endIndex < period - 1)
+                return double.NaN;
+
+            var start = endIndex - period + 1;
+            var highestHigh = double.MinValue;
+            var lowestLow = double.MaxValue;
+            for (var i = start; i <= endIndex; i++)
+            {
+                highestHigh = Math.Max(highestHigh, sourceBars.HighPrices[i]);
+                lowestLow = Math.Min(lowestLow, sourceBars.LowPrices[i]);
+            }
+
+            if (!IsFiniteNumber(highestHigh) || !IsFiniteNumber(lowestLow))
+                return double.NaN;
+
+            return (highestHigh + lowestLow) / 2.0;
+        }
+
         private double ComputeRawStochasticK(Bars sourceBars, int endIndex, int period)
         {
             if (sourceBars == null || period <= 0 || endIndex < period - 1)
@@ -10182,14 +16077,7 @@ namespace cAlgo.Robots
             var close = sourceBars.ClosePrices[index];
             var high = sourceBars.HighPrices[index];
             var low = sourceBars.LowPrices[index];
-            var body = Math.Abs(close - open);
-            var range = high - low;
-            var lowerWick = Math.Min(open, close) - low;
-            var upperWick = high - Math.Max(open, close);
-            return range > 0 &&
-                   lowerWick >= body * 2.0 &&
-                   lowerWick > upperWick * 1.5 &&
-                   close >= low + (range * 0.55);
+            return IsStrictBullishPinBar(open, high, low, close);
         }
 
         private bool IsBearishPinBar(Bars sourceBars, int index)
@@ -10201,14 +16089,7 @@ namespace cAlgo.Robots
             var close = sourceBars.ClosePrices[index];
             var high = sourceBars.HighPrices[index];
             var low = sourceBars.LowPrices[index];
-            var body = Math.Abs(close - open);
-            var range = high - low;
-            var lowerWick = Math.Min(open, close) - low;
-            var upperWick = high - Math.Max(open, close);
-            return range > 0 &&
-                   upperWick >= body * 2.0 &&
-                   upperWick > lowerWick * 1.5 &&
-                   close <= low + (range * 0.45);
+            return IsStrictBearishPinBar(open, high, low, close);
         }
 
         private bool IsBullishEngulfing(Bars sourceBars, int previousIndex, int currentIndex)
@@ -10220,10 +16101,11 @@ namespace cAlgo.Robots
             var previousClose = sourceBars.ClosePrices[previousIndex];
             var currentOpen = sourceBars.OpenPrices[currentIndex];
             var currentClose = sourceBars.ClosePrices[currentIndex];
-            return previousClose < previousOpen &&
-                   currentClose > currentOpen &&
-                   currentOpen <= previousClose &&
-                   currentClose >= previousOpen;
+            var previousHigh = sourceBars.HighPrices[previousIndex];
+            var previousLow = sourceBars.LowPrices[previousIndex];
+            var currentHigh = sourceBars.HighPrices[currentIndex];
+            var currentLow = sourceBars.LowPrices[currentIndex];
+            return IsStrictBullishEngulfing(previousOpen, previousHigh, previousLow, previousClose, currentOpen, currentHigh, currentLow, currentClose);
         }
 
         private bool IsBearishEngulfing(Bars sourceBars, int previousIndex, int currentIndex)
@@ -10235,8 +16117,71 @@ namespace cAlgo.Robots
             var previousClose = sourceBars.ClosePrices[previousIndex];
             var currentOpen = sourceBars.OpenPrices[currentIndex];
             var currentClose = sourceBars.ClosePrices[currentIndex];
+            var previousHigh = sourceBars.HighPrices[previousIndex];
+            var previousLow = sourceBars.LowPrices[previousIndex];
+            var currentHigh = sourceBars.HighPrices[currentIndex];
+            var currentLow = sourceBars.LowPrices[currentIndex];
+            return IsStrictBearishEngulfing(previousOpen, previousHigh, previousLow, previousClose, currentOpen, currentHigh, currentLow, currentClose);
+        }
+
+        private bool IsStrictBullishPinBar(double open, double high, double low, double close)
+        {
+            var body = Math.Abs(close - open);
+            var range = high - low;
+            var lowerWick = Math.Min(open, close) - low;
+            var upperWick = high - Math.Max(open, close);
+            if (!(range > 0) || !(body > 0))
+                return false;
+
+            return body / range <= 0.3 &&
+                   lowerWick >= body * 2.5 &&
+                   lowerWick / range >= 0.55 &&
+                   upperWick / range <= 0.12 &&
+                   close >= low + (range * 0.62);
+        }
+
+        private bool IsStrictBearishPinBar(double open, double high, double low, double close)
+        {
+            var body = Math.Abs(close - open);
+            var range = high - low;
+            var lowerWick = Math.Min(open, close) - low;
+            var upperWick = high - Math.Max(open, close);
+            if (!(range > 0) || !(body > 0))
+                return false;
+
+            return body / range <= 0.3 &&
+                   upperWick >= body * 2.5 &&
+                   upperWick / range >= 0.55 &&
+                   lowerWick / range <= 0.12 &&
+                   close <= low + (range * 0.38);
+        }
+
+        private bool IsStrictBullishEngulfing(double previousOpen, double previousHigh, double previousLow, double previousClose, double currentOpen, double currentHigh, double currentLow, double currentClose)
+        {
+            var prevRange = Math.Max(previousHigh - previousLow, 0.0000001);
+            var currRange = Math.Max(currentHigh - currentLow, 0.0000001);
+            var prevBody = Math.Abs(previousClose - previousOpen);
+            var currBody = Math.Abs(currentClose - currentOpen);
+            return previousClose < previousOpen &&
+                   currentClose > currentOpen &&
+                   prevBody / prevRange >= 0.45 &&
+                   currBody / currRange >= 0.55 &&
+                   currBody >= prevBody * 1.05 &&
+                   currentOpen <= previousClose &&
+                   currentClose >= previousOpen;
+        }
+
+        private bool IsStrictBearishEngulfing(double previousOpen, double previousHigh, double previousLow, double previousClose, double currentOpen, double currentHigh, double currentLow, double currentClose)
+        {
+            var prevRange = Math.Max(previousHigh - previousLow, 0.0000001);
+            var currRange = Math.Max(currentHigh - currentLow, 0.0000001);
+            var prevBody = Math.Abs(previousClose - previousOpen);
+            var currBody = Math.Abs(currentClose - currentOpen);
             return previousClose > previousOpen &&
                    currentClose < currentOpen &&
+                   prevBody / prevRange >= 0.45 &&
+                   currBody / currRange >= 0.55 &&
+                   currBody >= prevBody * 1.05 &&
                    currentOpen >= previousClose &&
                    currentClose <= previousOpen;
         }
@@ -10447,7 +16392,9 @@ namespace cAlgo.Robots
             var normalizedLabel = string.IsNullOrWhiteSpace(label) ? "" : label.Trim();
             var normalizedComment = string.IsNullOrWhiteSpace(comment) ? "" : comment.Trim();
 
-            return normalizedLabel.StartsWith("BT_", StringComparison.OrdinalIgnoreCase) ||
+            return normalizedComment.StartsWith("bot_", StringComparison.OrdinalIgnoreCase) ||
+                   normalizedLabel.EndsWith("_bot", StringComparison.OrdinalIgnoreCase) ||
+                   normalizedLabel.StartsWith("BT_", StringComparison.OrdinalIgnoreCase) ||
                    normalizedComment.StartsWith("live_", StringComparison.OrdinalIgnoreCase) ||
                    normalizedComment.StartsWith("backtest_", StringComparison.OrdinalIgnoreCase);
         }
@@ -10681,9 +16628,6 @@ namespace cAlgo.Robots
             if (string.IsNullOrWhiteSpace(symbolName))
                 return false;
 
-            if (SelectedStrategyExposureMode == StrategyExposureMode.Off)
-                return false;
-
             var normalizedSymbol = symbolName.Trim();
             if (Positions.Any(p =>
                     p != null &&
@@ -10691,29 +16635,12 @@ namespace cAlgo.Robots
                     MatchesStrategyExposure(strategyId, p.Label, p.Comment)))
                 return true;
 
-            if (SelectedStrategyExposureMode == StrategyExposureMode.PositionAndOrder)
-            {
-                if (PendingOrders.Any(o =>
-                        o != null &&
-                        string.Equals(o.SymbolName, normalizedSymbol, StringComparison.OrdinalIgnoreCase) &&
-                        MatchesStrategyExposure(strategyId, o.Label, o.Comment)))
-                    return true;
-            }
-
             return false;
         }
 
         private string GetStrategyExposureBlockMessage()
         {
-            switch (SelectedStrategyExposureMode)
-            {
-                case StrategyExposureMode.PositionAndOrder:
-                    return "existing position or pending order";
-                case StrategyExposureMode.PositionOnly:
-                    return "existing position";
-                default:
-                    return "existing exposure";
-            }
+            return "existing position";
         }
 
         private IEnumerable<TimeFrame> GetBacktestStrategyHigherTimeFrames(TimeFrame baseTimeFrame)
@@ -10829,6 +16756,870 @@ namespace cAlgo.Robots
             return true;
         }
 
+        private bool TryGetLatestBacktestStrategyEventByTypes(string symbolName, IEnumerable<TimeFrame> timeFrames, out CanonicalMarketEvent selectedEvent, params CanonicalEventType[] eventTypes)
+        {
+            selectedEvent = default(CanonicalMarketEvent);
+            if (string.IsNullOrWhiteSpace(symbolName) || timeFrames == null || eventTypes == null || eventTypes.Length == 0)
+                return false;
+
+            var typeSet = new HashSet<CanonicalEventType>(eventTypes);
+            var candidates = new List<CanonicalMarketEvent>();
+            foreach (var timeFrame in timeFrames.Distinct())
+            {
+                candidates.AddRange(
+                    GetCanonicalEventsForSymbolTimeFrame(symbolName, timeFrame, 12)
+                        .Where(evt => typeSet.Contains(evt.EventType))
+                        .Where(evt => IsRecentBacktestStrategyEvent(symbolName, evt)));
+            }
+
+            var latest = candidates
+                .OrderByDescending(evt => evt.BarTime)
+                .ThenByDescending(evt => evt.Score)
+                .FirstOrDefault();
+            if (latest.BarTime == DateTime.MinValue)
+                return false;
+
+            selectedEvent = latest;
+            return true;
+        }
+
+        private bool TryGetLatestClosedCanonicalBarTime(string symbolName, TimeFrame timeFrame, out DateTime barTime)
+        {
+            barTime = DateTime.MinValue;
+            if (string.IsNullOrWhiteSpace(symbolName))
+                return false;
+
+            try
+            {
+                var bars = MarketData.GetBars(timeFrame, symbolName);
+                if (bars == null || bars.Count < 2)
+                    return false;
+
+                var latestClosedIndex = bars.Count - 2;
+                if (latestClosedIndex < 0 || latestClosedIndex >= bars.Count)
+                    return false;
+
+                barTime = bars.OpenTimes[latestClosedIndex];
+                return barTime != DateTime.MinValue;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private List<StrategyCustomEventOption> GetSelectedStrategyCustomEventOptions()
+        {
+            return new[]
+            {
+                StrategyCustomEvent1,
+                StrategyCustomEvent2,
+                StrategyCustomEvent3,
+                StrategyCustomEvent4,
+                StrategyCustomEvent5
+            }
+            .Where(option => option != StrategyCustomEventOption.Off)
+            .Distinct()
+            .ToList();
+        }
+
+        private bool TryMapStrategyCustomCanonicalEventOption(StrategyCustomEventOption option, out CanonicalEventType eventType, out string shortLabel)
+        {
+            eventType = CanonicalEventType.Rejection;
+            shortLabel = "";
+            switch (option)
+            {
+                case StrategyCustomEventOption.CHOCH_ChangeOfCharacter:
+                    eventType = CanonicalEventType.Choch;
+                    shortLabel = "CHOCH";
+                    return true;
+                case StrategyCustomEventOption.BOS_BreakOfStructure:
+                    eventType = CanonicalEventType.Bos;
+                    shortLabel = "BOS";
+                    return true;
+                case StrategyCustomEventOption.SR_SweepReclaim:
+                    eventType = CanonicalEventType.SweepReclaim;
+                    shortLabel = "SR";
+                    return true;
+                case StrategyCustomEventOption.RJ_Rejection_KeyLevel:
+                    eventType = CanonicalEventType.Rejection;
+                    shortLabel = "RJ";
+                    return true;
+                case StrategyCustomEventOption.BR_Breakout_Structure:
+                    eventType = CanonicalEventType.Breakout;
+                    shortLabel = "BR";
+                    return true;
+                case StrategyCustomEventOption.PB_Pullback_EmaReclaim:
+                    eventType = CanonicalEventType.Pullback;
+                    shortLabel = "PB";
+                    return true;
+                case StrategyCustomEventOption.CT_Continuation_VwapReclaim:
+                    eventType = CanonicalEventType.Continuation;
+                    shortLabel = "CT";
+                    return true;
+                case StrategyCustomEventOption.IM_Impulse_MomentumShift:
+                    eventType = CanonicalEventType.Impulse;
+                    shortLabel = "IM";
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private bool TryEvaluateStrategyCustomEventOption(
+            StrategyCustomEventOption option,
+            string symbolName,
+            Bars sourceBars,
+            TimeFrame strategyTimeFrame,
+            int latestClosedIndex,
+            SharedIndicatorSnapshot previousSnapshot,
+            SharedIndicatorSnapshot currentSnapshot,
+            HashSet<string> sharedPatterns,
+            List<CanonicalMarketEvent> eventsOnBar,
+            out bool matchesBullish,
+            out bool matchesBearish,
+            out bool matchesDirectionless,
+            out string shortLabel)
+        {
+            matchesBullish = false;
+            matchesBearish = false;
+            matchesDirectionless = false;
+            shortLabel = "";
+
+            CanonicalEventType canonicalType;
+            if (TryMapStrategyCustomCanonicalEventOption(option, out canonicalType, out shortLabel))
+            {
+                matchesBullish = (eventsOnBar ?? new List<CanonicalMarketEvent>()).Any(evt => evt.EventType == canonicalType && evt.IsBullish);
+                matchesBearish = (eventsOnBar ?? new List<CanonicalMarketEvent>()).Any(evt => evt.EventType == canonicalType && !evt.IsBullish);
+                return true;
+            }
+
+            // Any Structure Event = OR of all structure events (CHOCH/BOS/SR/RJ/BR/PB/CT/IM).
+            if (option == StrategyCustomEventOption.AnyStructureEvent)
+            {
+                shortLabel = "SME";
+                var barEvents = eventsOnBar ?? new List<CanonicalMarketEvent>();
+                matchesBullish = barEvents.Any(evt => IsStructureEventType(evt.EventType) && evt.IsBullish);
+                matchesBearish = barEvents.Any(evt => IsStructureEventType(evt.EventType) && !evt.IsBullish);
+                return true;
+            }
+
+            if (sourceBars == null || latestClosedIndex < 1 || latestClosedIndex >= sourceBars.Count)
+                return false;
+
+            var index = latestClosedIndex;
+            switch (option)
+            {
+                case StrategyCustomEventOption.PXE_EMA_PriceCross:
+                    shortLabel = "pxe";
+                    matchesBullish = MatchBullishPriceCrossesEmaSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
+                    matchesBearish = MatchBearishPriceCrossesEmaSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
+                    return true;
+                case StrategyCustomEventOption.EMX_EMA_FastMidCross:
+                    shortLabel = "emx";
+                    matchesBullish = MatchBullishEmaFastMidCrossSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
+                    matchesBearish = MatchBearishEmaFastMidCrossSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
+                    return true;
+                case StrategyCustomEventOption.EMT_EMA_MidSlowCross:
+                    shortLabel = "emt";
+                    matchesBullish = MatchBullishEmaMidSlowCrossSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
+                    matchesBearish = MatchBearishEmaMidSlowCrossSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
+                    return true;
+                case StrategyCustomEventOption.VWX_VWAP_PriceCross:
+                    shortLabel = "vwx";
+                    matchesBullish = MatchBullishPriceCrossesVwapSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
+                    matchesBearish = MatchBearishPriceCrossesVwapSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
+                    return true;
+                case StrategyCustomEventOption.VWR_VWAP_Rejection:
+                    shortLabel = "vwr";
+                    matchesBullish = MatchBullishVwapRejectionSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
+                    matchesBearish = MatchBearishVwapRejectionSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
+                    return true;
+                case StrategyCustomEventOption.BBX_Bollinger_MidCross:
+                    shortLabel = "bbx";
+                    matchesBullish = MatchBullishPriceCrossesBollingerMidSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
+                    matchesBearish = MatchBearishPriceCrossesBollingerMidSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
+                    return true;
+                case StrategyCustomEventOption.BBR_Bollinger_BandReject:
+                    shortLabel = "bbr";
+                    matchesBullish = MatchBullishBollingerRejectionSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
+                    matchesBearish = MatchBearishBollingerRejectionSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
+                    return true;
+                case StrategyCustomEventOption.R50_RSI_MidlineCross:
+                    shortLabel = "r50";
+                    matchesBullish = MatchBullishRsiCrossSnapshot(sourceBars, index, previousSnapshot, currentSnapshot, _resolvedRsiEventConfig.Midline);
+                    matchesBearish = MatchBearishRsiCrossSnapshot(sourceBars, index, previousSnapshot, currentSnapshot, _resolvedRsiEventConfig.Midline);
+                    return true;
+                case StrategyCustomEventOption.ROS_RSI_ExitOversold:
+                    shortLabel = "ros";
+                    matchesBullish = MatchBullishRsiOversoldSnapshot(sourceBars, index, previousSnapshot, currentSnapshot, _resolvedRsiEventConfig.Oversold);
+                    return true;
+                case StrategyCustomEventOption.ROB_RSI_ExitOverbought:
+                    shortLabel = "rob";
+                    matchesBearish = MatchBearishRsiOverboughtSnapshot(sourceBars, index, previousSnapshot, currentSnapshot, _resolvedRsiEventConfig.Overbought);
+                    return true;
+                case StrategyCustomEventOption.STX_Stoch_Cross:
+                    shortLabel = "stx";
+                    matchesBullish = MatchBullishStochasticCrossSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
+                    matchesBearish = MatchBearishStochasticCrossSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
+                    return true;
+                case StrategyCustomEventOption.STO_Stoch_ExitExtreme:
+                    shortLabel = "sto";
+                    matchesBullish = MatchBullishStochasticExitOversoldSnapshot(sourceBars, index, previousSnapshot, currentSnapshot, _resolvedStochasticEventConfig.OversoldLevel);
+                    matchesBearish = MatchBearishStochasticExitOverboughtSnapshot(sourceBars, index, previousSnapshot, currentSnapshot, _resolvedStochasticEventConfig.OverboughtLevel);
+                    return true;
+                case StrategyCustomEventOption.MDX_MACD_SignalCross:
+                    shortLabel = "mdx";
+                    matchesBullish = MatchBullishMacdCrossSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
+                    matchesBearish = MatchBearishMacdCrossSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
+                    return true;
+                case StrategyCustomEventOption.MD0_MACD_ZeroCross:
+                    shortLabel = "md0";
+                    matchesBullish = MatchBullishMacdZeroCrossSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
+                    matchesBearish = MatchBearishMacdZeroCrossSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
+                    return true;
+                case StrategyCustomEventOption.PIN_PinBar:
+                    shortLabel = "PIN";
+                    matchesBullish = MatchBullishPinBar(sourceBars, index);
+                    matchesBearish = MatchBearishPinBar(sourceBars, index);
+                    return true;
+                case StrategyCustomEventOption.ENG_Engulfing:
+                    shortLabel = "ENG";
+                    matchesBullish = MatchBullishEngulfingAtIndex(sourceBars, index);
+                    matchesBearish = MatchBearishEngulfingAtIndex(sourceBars, index);
+                    return true;
+                case StrategyCustomEventOption.BIG_BigCandle:
+                    shortLabel = "BIG";
+                    matchesBullish = MatchBullishBigCandle(sourceBars, index);
+                    matchesBearish = MatchBearishBigCandle(sourceBars, index);
+                    return true;
+                case StrategyCustomEventOption.MOR_MorningStar:
+                    shortLabel = "MOR";
+                    matchesBullish = sharedPatterns.Contains("bullish_morning_star");
+                    return true;
+                case StrategyCustomEventOption.EVE_EveningStar:
+                    shortLabel = "EVE";
+                    matchesBearish = sharedPatterns.Contains("bearish_evening_star");
+                    return true;
+                case StrategyCustomEventOption.HAM_Hammer:
+                    shortLabel = "HAM";
+                    matchesBullish = sharedPatterns.Contains("bullish_hammer");
+                    return true;
+                case StrategyCustomEventOption.HGM_HangingMan:
+                    shortLabel = "HGM";
+                    matchesBearish = sharedPatterns.Contains("hanging_man");
+                    return true;
+                case StrategyCustomEventOption.SST_ShootingStar:
+                    shortLabel = "SST";
+                    matchesBearish = sharedPatterns.Contains("shooting_star");
+                    return true;
+                case StrategyCustomEventOption.IHM_InvertedHammer:
+                    shortLabel = "IHM";
+                    matchesBullish = sharedPatterns.Contains("bullish_inverted_hammer");
+                    return true;
+                case StrategyCustomEventOption.PRC_PiercingLine:
+                    shortLabel = "PRC";
+                    matchesBullish = sharedPatterns.Contains("bullish_piercing_line");
+                    return true;
+                case StrategyCustomEventOption.DCC_DarkCloudCover:
+                    shortLabel = "DCC";
+                    matchesBearish = sharedPatterns.Contains("bearish_dark_cloud_cover");
+                    return true;
+                case StrategyCustomEventOption.TWS_ThreeWhiteSoldiers:
+                    shortLabel = "3WS";
+                    matchesBullish = sharedPatterns.Contains("bullish_three_white_soldiers");
+                    return true;
+                case StrategyCustomEventOption.TBC_ThreeBlackCrows:
+                    shortLabel = "3BC";
+                    matchesBearish = sharedPatterns.Contains("bearish_three_black_crows");
+                    return true;
+                case StrategyCustomEventOption.HAR_Harami:
+                    shortLabel = "HAR";
+                    matchesBullish = sharedPatterns.Contains("bullish_harami");
+                    matchesBearish = sharedPatterns.Contains("bearish_harami");
+                    return true;
+                case StrategyCustomEventOption.AnyCandlePattern:
+                    // Any Candle Pattern = OR of all candle patterns.
+                    shortLabel = "CND";
+                    matchesBullish =
+                        MatchBullishPinBar(sourceBars, index) ||
+                        MatchBullishEngulfingAtIndex(sourceBars, index) ||
+                        MatchBullishBigCandle(sourceBars, index) ||
+                        sharedPatterns.Contains("bullish_morning_star") ||
+                        sharedPatterns.Contains("bullish_hammer") ||
+                        sharedPatterns.Contains("bullish_inverted_hammer") ||
+                        sharedPatterns.Contains("bullish_piercing_line") ||
+                        sharedPatterns.Contains("bullish_three_white_soldiers") ||
+                        sharedPatterns.Contains("bullish_harami");
+                    matchesBearish =
+                        MatchBearishPinBar(sourceBars, index) ||
+                        MatchBearishEngulfingAtIndex(sourceBars, index) ||
+                        MatchBearishBigCandle(sourceBars, index) ||
+                        sharedPatterns.Contains("bearish_evening_star") ||
+                        sharedPatterns.Contains("hanging_man") ||
+                        sharedPatterns.Contains("shooting_star") ||
+                        sharedPatterns.Contains("bearish_dark_cloud_cover") ||
+                        sharedPatterns.Contains("bearish_three_black_crows") ||
+                        sharedPatterns.Contains("bearish_harami");
+                    return true;
+                case StrategyCustomEventOption.DIV_Divergence:
+                    shortLabel = "DIV";
+                    bool divBullish;
+                    bool divBearish;
+                    if (TryDetectLatestDivergence(sourceBars, out divBullish, out divBearish))
+                    {
+                        matchesBullish = divBullish;
+                        matchesBearish = divBearish;
+                        return true;
+                    }
+                    return false;
+                case StrategyCustomEventOption.LTF_Trend_Bias:
+                    shortLabel = "ltf";
+                    var ltfTrendBias = GetStrategyLtfTrendBiasScore(symbolName, strategyTimeFrame);
+                    matchesBullish = ltfTrendBias >= 2;
+                    matchesBearish = ltfTrendBias <= -2;
+                    return true;
+                case StrategyCustomEventOption.HTF_Trend_Bias:
+                    shortLabel = "htf";
+                    var htfTrendBias = GetStrategyHtfTrendBiasScore(symbolName, strategyTimeFrame);
+                    matchesBullish = htfTrendBias >= 2;
+                    matchesBearish = htfTrendBias <= -2;
+                    return true;
+                case StrategyCustomEventOption.LTF_Trend_Bias_Against:
+                    shortLabel = "ltfX";
+                    var ltfAgainstBias = GetStrategyLtfTrendBiasScore(symbolName, strategyTimeFrame);
+                    matchesBullish = ltfAgainstBias <= -2;
+                    matchesBearish = ltfAgainstBias >= 2;
+                    return true;
+                case StrategyCustomEventOption.HTF_Trend_Bias_Against:
+                    shortLabel = "htfX";
+                    var htfAgainstBias = GetStrategyHtfTrendBiasScore(symbolName, strategyTimeFrame);
+                    matchesBullish = htfAgainstBias <= -2;
+                    matchesBearish = htfAgainstBias >= 2;
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private bool IsStructureEventType(CanonicalEventType eventType)
+        {
+            switch (eventType)
+            {
+                case CanonicalEventType.Choch:
+                case CanonicalEventType.Bos:
+                case CanonicalEventType.SweepReclaim:
+                case CanonicalEventType.Rejection:
+                case CanonicalEventType.Breakout:
+                case CanonicalEventType.Pullback:
+                case CanonicalEventType.Continuation:
+                case CanonicalEventType.Impulse:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        // Divergence-as-event: same RSI swing logic as the chart divergence draw, evaluated on
+        // the strategy timeframe's latest closed bar. Bullish = lower low + higher RSI;
+        // bearish = higher high + lower RSI.
+        private bool TryDetectLatestDivergence(Bars sourceBars, out bool bullishDiv, out bool bearishDiv)
+        {
+            bullishDiv = false;
+            bearishDiv = false;
+            if (sourceBars == null || sourceBars.Count < 40)
+                return false;
+            try
+            {
+                var swings = CollectConfirmedSwings(sourceBars, 220);
+                if (swings == null || swings.Count < 6)
+                    return false;
+
+                var rsiConfig = ResolveRsiIndicatorConfig(DrawRsiMode == RsiVisualMode.Off ? RsiVisualMode.Auto : DrawRsiMode);
+                var latestClosed = sourceBars.Count - 2;
+                var recentLows = swings.Where(swing => !swing.IsHigh).TakeLast(8).ToList();
+                var recentHighs = swings.Where(swing => swing.IsHigh).TakeLast(8).ToList();
+
+                for (var i = recentLows.Count - 1; i >= 1; i--)
+                {
+                    var left = recentLows[i - 1];
+                    var right = recentLows[i];
+                    if (right.BarIndex < latestClosed - 3)
+                        continue;
+                    var leftRsi = ComputeRelativeStrengthIndex(sourceBars, left.BarIndex, rsiConfig.Period);
+                    var rightRsi = ComputeRelativeStrengthIndex(sourceBars, right.BarIndex, rsiConfig.Period);
+                    if (right.Price < left.Price && rightRsi > leftRsi && IsFiniteNumber(leftRsi) && IsFiniteNumber(rightRsi))
+                    {
+                        bullishDiv = true;
+                        break;
+                    }
+                }
+
+                for (var i = recentHighs.Count - 1; i >= 1; i--)
+                {
+                    var left = recentHighs[i - 1];
+                    var right = recentHighs[i];
+                    if (right.BarIndex < latestClosed - 3)
+                        continue;
+                    var leftRsi = ComputeRelativeStrengthIndex(sourceBars, left.BarIndex, rsiConfig.Period);
+                    var rightRsi = ComputeRelativeStrengthIndex(sourceBars, right.BarIndex, rsiConfig.Period);
+                    if (right.Price > left.Price && rightRsi < leftRsi && IsFiniteNumber(leftRsi) && IsFiniteNumber(rightRsi))
+                    {
+                        bearishDiv = true;
+                        break;
+                    }
+                }
+
+                return bullishDiv || bearishDiv;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private bool TryGetCanonicalEventsOnLatestClosedBar(string symbolName, TimeFrame timeFrame, out DateTime latestClosedBarTime, out List<CanonicalMarketEvent> eventsOnBar)
+        {
+            latestClosedBarTime = DateTime.MinValue;
+            eventsOnBar = new List<CanonicalMarketEvent>();
+            if (string.IsNullOrWhiteSpace(symbolName))
+                return false;
+
+            if (!TryGetLatestClosedCanonicalBarTime(symbolName, timeFrame, out latestClosedBarTime))
+                return false;
+
+            var closedBarTime = latestClosedBarTime;
+
+            eventsOnBar = GetCanonicalEventsForSymbolTimeFrame(symbolName, timeFrame, 24)
+                .Where(evt => evt.BarTime == closedBarTime)
+                .OrderByDescending(evt => evt.Score)
+                .ToList();
+            return true;
+        }
+
+        private bool TryResolveStrategyCustomEventBundle(
+            string symbolName,
+            TimeFrame strategyTimeFrame,
+            TradeType? preferredTradeType,
+            out TradeType resolvedTradeType,
+            out DateTime signalTime,
+            out string sourceLabel,
+            out string note,
+            out double eventSlDistance)
+        {
+            resolvedTradeType = TradeType.Buy;
+            signalTime = DateTime.MinValue;
+            sourceLabel = "";
+            note = "";
+            eventSlDistance = 0;
+
+            var selectedOptions = GetSelectedStrategyCustomEventOptions();
+            if (selectedOptions.Count == 0)
+                return preferredTradeType.HasValue;
+
+            Bars sourceBars = null;
+            try
+            {
+                sourceBars = MarketData.GetBars(strategyTimeFrame, symbolName);
+            }
+            catch
+            {
+                sourceBars = null;
+            }
+            if (sourceBars == null || sourceBars.Count < 3)
+                return false;
+
+            var latestClosedIndex = sourceBars.Count - 2;
+            if (latestClosedIndex < 1 || latestClosedIndex >= sourceBars.Count)
+                return false;
+
+            List<CanonicalMarketEvent> eventsOnBar;
+            if (!TryGetCanonicalEventsOnLatestClosedBar(symbolName, strategyTimeFrame, out signalTime, out eventsOnBar))
+                return false;
+
+            var previousSnapshot = BuildSharedIndicatorSnapshot(sourceBars, latestClosedIndex - 1);
+            var currentSnapshot = BuildSharedIndicatorSnapshot(sourceBars, latestClosedIndex);
+            var sharedPatterns = GetDetectedSharedRulePatternSet(sourceBars, strategyTimeFrame, latestClosedIndex);
+
+            var optionStates = new List<Tuple<StrategyCustomEventOption, string, bool, bool, bool>>();
+            foreach (var option in selectedOptions)
+            {
+                bool matchesBullish;
+                bool matchesBearish;
+                bool matchesDirectionless;
+                string shortLabel;
+                if (TryEvaluateStrategyCustomEventOption(
+                    option,
+                    symbolName,
+                    sourceBars,
+                    strategyTimeFrame,
+                    latestClosedIndex,
+                    previousSnapshot,
+                    currentSnapshot,
+                    sharedPatterns,
+                    eventsOnBar,
+                    out matchesBullish,
+                    out matchesBearish,
+                    out matchesDirectionless,
+                    out shortLabel))
+                {
+                    optionStates.Add(Tuple.Create(option, shortLabel, matchesBullish, matchesBearish, matchesDirectionless));
+                }
+            }
+
+            if (optionStates.Count == 0)
+                return false;
+
+            Func<bool, Tuple<bool, int, int, string>> evaluateDirection = bullish =>
+            {
+                var matchedLabels = new List<string>();
+                var matchedScore = 0;
+                var matchedCount = 0;
+
+                foreach (var selection in optionStates)
+                {
+                    var directionalMatch = bullish ? selection.Item3 : selection.Item4;
+                    var directionlessMatch = selection.Item5;
+                    if (directionalMatch || directionlessMatch)
+                    {
+                        matchedLabels.Add(selection.Item2);
+                        matchedScore += directionalMatch ? 1 : 0;
+                        matchedCount++;
+                    }
+                }
+
+                var passed = SelectedStrategyCustomEventsMode == StrategyCustomEventsMode.AND
+                    ? matchedCount == optionStates.Count
+                    : matchedCount > 0;
+                return Tuple.Create(passed, matchedScore, matchedCount, string.Join("+", matchedLabels));
+            };
+
+            if (preferredTradeType.HasValue)
+            {
+                var preferredBullish = preferredTradeType.Value == TradeType.Buy;
+                var preferredResult = evaluateDirection(preferredBullish);
+                if (!preferredResult.Item1)
+                    return false;
+
+                resolvedTradeType = preferredTradeType.Value;
+                sourceLabel = preferredResult.Item4;
+                note = string.Format(
+                    CultureInfo.InvariantCulture,
+                    "[custom_events={0}:{1}]",
+                    SelectedStrategyCustomEventsMode,
+                    sourceLabel);
+                eventSlDistance = ResolveCustomEventBundleStopDistance(optionStates, sourceBars, latestClosedIndex, eventsOnBar, preferredBullish);
+                return true;
+            }
+
+            var bullishResult = evaluateDirection(true);
+            var bearishResult = evaluateDirection(false);
+            if (!bullishResult.Item1 && !bearishResult.Item1)
+                return false;
+
+            if (bullishResult.Item1 && bearishResult.Item1)
+                return false;
+            else if (bullishResult.Item1)
+            {
+                resolvedTradeType = TradeType.Buy;
+                sourceLabel = bullishResult.Item4;
+            }
+            else
+            {
+                resolvedTradeType = TradeType.Sell;
+                sourceLabel = bearishResult.Item4;
+            }
+
+            note = string.Format(
+                CultureInfo.InvariantCulture,
+                "[custom_events={0}:{1}]",
+                SelectedStrategyCustomEventsMode,
+                sourceLabel);
+            eventSlDistance = ResolveCustomEventBundleStopDistance(optionStates, sourceBars, latestClosedIndex, eventsOnBar, resolvedTradeType == TradeType.Buy);
+            return true;
+        }
+
+        // Default SL distance for a custom-trade signal = height of the related event.
+        private double ResolveCustomEventBundleStopDistance(
+            List<Tuple<StrategyCustomEventOption, string, bool, bool, bool>> optionStates,
+            Bars sourceBars,
+            int latestClosedIndex,
+            List<CanonicalMarketEvent> eventsOnBar,
+            bool bullishDirection)
+        {
+            var best = 0.0;
+            foreach (var selection in optionStates)
+            {
+                var directionalMatch = bullishDirection ? selection.Item3 : selection.Item4;
+                var directionlessMatch = selection.Item5;
+                if (!directionalMatch && !directionlessMatch)
+                    continue;
+
+                var distance = ResolveCustomEventStopDistance(selection.Item1, sourceBars, latestClosedIndex, eventsOnBar, bullishDirection);
+                if (distance > best)
+                    best = distance;
+            }
+            return best;
+        }
+
+        private double ResolveCustomEventStopDistance(
+            StrategyCustomEventOption option,
+            Bars sourceBars,
+            int latestClosedIndex,
+            List<CanonicalMarketEvent> eventsOnBar,
+            bool bullishDirection)
+        {
+            if (sourceBars == null || latestClosedIndex < 0 || latestClosedIndex >= sourceBars.Count)
+                return 0;
+
+            // Candle pattern: SL = height of the pattern candle(s).
+            var patternSpan = GetCustomEventPatternBarSpan(option);
+            if (patternSpan > 0)
+            {
+                var start = Math.Max(0, latestClosedIndex - patternSpan + 1);
+                var maxRange = 0.0;
+                for (var i = start; i <= latestClosedIndex; i++)
+                {
+                    var range = sourceBars.HighPrices[i] - sourceBars.LowPrices[i];
+                    if (range > maxRange)
+                        maxRange = range;
+                }
+                return maxRange;
+            }
+
+            // Any Structure Event: SL = zone height of the best matching structure event on bar.
+            if (option == StrategyCustomEventOption.AnyStructureEvent)
+            {
+                var matched = (eventsOnBar ?? Enumerable.Empty<CanonicalMarketEvent>())
+                    .Where(evt => IsStructureEventType(evt.EventType) && evt.IsBullish == bullishDirection)
+                    .OrderByDescending(evt => evt.Score)
+                    .FirstOrDefault();
+                if (matched.EventKey == null)
+                    return 0;
+                if (matched.ZoneHigh > matched.ZoneLow && matched.ZoneLow > 0)
+                    return matched.ZoneHigh - matched.ZoneLow;
+                return Math.Max(sourceBars.HighPrices[latestClosedIndex] - sourceBars.LowPrices[latestClosedIndex], 0);
+            }
+
+            // Canonical events (RJ OB/FVG, SR, BR, ...): SL = zone height when known, else event bar range.
+            CanonicalEventType canonicalType;
+            string canonicalLabel;
+            if (TryMapStrategyCustomCanonicalEventOption(option, out canonicalType, out canonicalLabel))
+            {
+                var matched = (eventsOnBar ?? Enumerable.Empty<CanonicalMarketEvent>())
+                    .Where(evt => evt.EventType == canonicalType && evt.IsBullish == bullishDirection)
+                    .OrderByDescending(evt => evt.Score)
+                    .FirstOrDefault();
+                if (matched.EventKey == null)
+                    return 0;
+
+                if (matched.ZoneHigh > matched.ZoneLow && matched.ZoneLow > 0)
+                    return matched.ZoneHigh - matched.ZoneLow;
+
+                for (var i = 0; i < sourceBars.Count; i++)
+                {
+                    if (sourceBars.OpenTimes[i] == matched.BarTime)
+                        return Math.Max(sourceBars.HighPrices[i] - sourceBars.LowPrices[i], 0);
+                }
+                return Math.Max(sourceBars.HighPrices[latestClosedIndex] - sourceBars.LowPrices[latestClosedIndex], 0);
+            }
+
+            // Indicator crosses: the related candle is the signal candle.
+            if (IsIndicatorCustomEventOption(option))
+                return Math.Max(sourceBars.HighPrices[latestClosedIndex] - sourceBars.LowPrices[latestClosedIndex], 0);
+
+            // Trend-bias filters carry no geometry -> structural SL (unchanged behavior).
+            return 0;
+        }
+
+        private int GetCustomEventPatternBarSpan(StrategyCustomEventOption option)
+        {
+            switch (option)
+            {
+                case StrategyCustomEventOption.PIN_PinBar:
+                case StrategyCustomEventOption.HAM_Hammer:
+                case StrategyCustomEventOption.HGM_HangingMan:
+                case StrategyCustomEventOption.SST_ShootingStar:
+                case StrategyCustomEventOption.IHM_InvertedHammer:
+                case StrategyCustomEventOption.BIG_BigCandle:
+                    return 1;
+                case StrategyCustomEventOption.ENG_Engulfing:
+                case StrategyCustomEventOption.PRC_PiercingLine:
+                case StrategyCustomEventOption.DCC_DarkCloudCover:
+                    return 2;
+                case StrategyCustomEventOption.MOR_MorningStar:
+                case StrategyCustomEventOption.EVE_EveningStar:
+                case StrategyCustomEventOption.TWS_ThreeWhiteSoldiers:
+                case StrategyCustomEventOption.TBC_ThreeBlackCrows:
+                case StrategyCustomEventOption.HAR_Harami:
+                case StrategyCustomEventOption.AnyCandlePattern:
+                    return 3;
+                default:
+                    return 0;
+            }
+        }
+
+        private bool IsIndicatorCustomEventOption(StrategyCustomEventOption option)
+        {
+            switch (option)
+            {
+                case StrategyCustomEventOption.PXE_EMA_PriceCross:
+                case StrategyCustomEventOption.EMX_EMA_FastMidCross:
+                case StrategyCustomEventOption.EMT_EMA_MidSlowCross:
+                case StrategyCustomEventOption.VWX_VWAP_PriceCross:
+                case StrategyCustomEventOption.VWR_VWAP_Rejection:
+                case StrategyCustomEventOption.BBX_Bollinger_MidCross:
+                case StrategyCustomEventOption.BBR_Bollinger_BandReject:
+                case StrategyCustomEventOption.R50_RSI_MidlineCross:
+                case StrategyCustomEventOption.ROS_RSI_ExitOversold:
+                case StrategyCustomEventOption.ROB_RSI_ExitOverbought:
+                case StrategyCustomEventOption.STX_Stoch_Cross:
+                case StrategyCustomEventOption.STO_Stoch_ExitExtreme:
+                case StrategyCustomEventOption.MDX_MACD_SignalCross:
+                case StrategyCustomEventOption.MD0_MACD_ZeroCross:
+                case StrategyCustomEventOption.DIV_Divergence:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private bool TryApplyStrategyCustomEventGate(string symbolName, TimeFrame strategyTimeFrame, ref BacktestStrategySignal signal)
+        {
+            var selectedOptions = GetSelectedStrategyCustomEventOptions();
+            if (selectedOptions.Count == 0)
+                return signal.IsValid;
+
+            TradeType resolvedTradeType;
+            DateTime signalTime;
+            string customLabel;
+            string customNote;
+            double customSlDistance;
+            if (!TryResolveStrategyCustomEventBundle(symbolName, strategyTimeFrame, signal.TradeType, out resolvedTradeType, out signalTime, out customLabel, out customNote, out customSlDistance))
+                return false;
+
+            signal.SignalTime = signalTime;
+            if (string.IsNullOrWhiteSpace(signal.SourceLabel))
+                signal.SourceLabel = customLabel;
+            else if (!string.IsNullOrWhiteSpace(customLabel))
+                signal.SourceLabel = string.Format(CultureInfo.InvariantCulture, "{0}+{1}", signal.SourceLabel, customLabel);
+
+            if (string.IsNullOrWhiteSpace(signal.Note))
+                signal.Note = customNote;
+            else if (!string.IsNullOrWhiteSpace(customNote))
+                signal.Note = string.Format(CultureInfo.InvariantCulture, "{0} {1}", signal.Note, customNote);
+
+            return signal.IsValid;
+        }
+
+        private bool TryPassStrategyCustomEventGate(string symbolName, TimeFrame strategyTimeFrame, TradeType tradeType)
+        {
+            var selectedOptions = GetSelectedStrategyCustomEventOptions();
+            if (selectedOptions.Count == 0)
+                return true;
+
+            TradeType resolvedTradeType;
+            DateTime signalTime;
+            string sourceLabel;
+            string note;
+            double gateSlDistance;
+            return TryResolveStrategyCustomEventBundle(symbolName, strategyTimeFrame, tradeType, out resolvedTradeType, out signalTime, out sourceLabel, out note, out gateSlDistance);
+        }
+
+        private bool TryBuildCustomTradeSignal(string symbolName, TimeFrame strategyTimeFrame, out BacktestStrategySignal signal)
+        {
+            signal = default(BacktestStrategySignal);
+            TradeType tradeType;
+            DateTime signalTime;
+            string sourceLabel;
+            string note;
+            double eventSlDistance;
+            if (!TryResolveStrategyCustomEventBundle(symbolName, strategyTimeFrame, null, out tradeType, out signalTime, out sourceLabel, out note, out eventSlDistance))
+                return false;
+
+            signal = new BacktestStrategySignal
+            {
+                IsValid = true,
+                StrategyId = "custom_trade",
+                StrategyMode = BacktestStrategyMode.CustomTrade,
+                SymbolName = symbolName,
+                SourceLabel = sourceLabel,
+                TradeType = tradeType,
+                SourceTimeFrame = strategyTimeFrame,
+                SignalTime = signalTime,
+                UseLimitOrder = false,
+                EntryPrice = 0,
+                StopLoss = 0,
+                TakeProfit = 0,
+                Note = note,
+                EventSlDistance = eventSlDistance
+            };
+            return true;
+        }
+
+        private bool TryBuildEventDrivenStrategySignal(string symbolName, TimeFrame strategyTimeFrame, BacktestStrategyMode mode, out BacktestStrategySignal signal)
+        {
+            signal = default(BacktestStrategySignal);
+            if (string.IsNullOrWhiteSpace(symbolName))
+                return false;
+
+            CanonicalMarketEvent triggerEvent;
+            string strategyId;
+            string sourceLabel;
+            CanonicalEventType[] acceptedTypes;
+            switch (mode)
+            {
+                case BacktestStrategyMode.Trend:
+                    strategyId = "follow_trend";
+                    sourceLabel = "CT";
+                    acceptedTypes = new[] { CanonicalEventType.Continuation };
+                    break;
+                case BacktestStrategyMode.Impulse:
+                    strategyId = "follow_trend_big_candle";
+                    sourceLabel = "IM";
+                    acceptedTypes = new[] { CanonicalEventType.Impulse };
+                    break;
+                default:
+                    return false;
+            }
+
+            DateTime latestClosedBarTime;
+            List<CanonicalMarketEvent> eventsOnBar;
+            if (!TryGetCanonicalEventsOnLatestClosedBar(symbolName, strategyTimeFrame, out latestClosedBarTime, out eventsOnBar))
+                return false;
+
+            var exactBarCandidates = eventsOnBar
+                .Where(evt => acceptedTypes.Contains(evt.EventType))
+                .OrderByDescending(evt => evt.Score)
+                .ToList();
+            if (exactBarCandidates.Count == 0)
+                return false;
+            triggerEvent = exactBarCandidates[0];
+
+            signal = new BacktestStrategySignal
+            {
+                IsValid = true,
+                StrategyId = strategyId,
+                StrategyMode = mode,
+                SymbolName = symbolName,
+                SourceLabel = sourceLabel,
+                TradeType = triggerEvent.IsBullish ? TradeType.Buy : TradeType.Sell,
+                SourceTimeFrame = triggerEvent.SourceTimeFrame,
+                SignalTime = triggerEvent.BarTime,
+                UseLimitOrder = false,
+                EntryPrice = 0,
+                StopLoss = 0,
+                TakeProfit = 0,
+                Note = string.Format(
+                    CultureInfo.InvariantCulture,
+                    "[event={0} reason={1} score={2}]",
+                    triggerEvent.EventType,
+                    FormatCanonicalEventReasonShort(triggerEvent.Reason),
+                    triggerEvent.Score)
+            };
+            return true;
+        }
+
         private bool TryGetBacktestBiasConfluence(string symbolName, bool wantBullish, out string reason)
         {
             reason = "";
@@ -10862,6 +17653,12 @@ namespace cAlgo.Robots
             if (!ShouldAllowStrategySignalTime(strategyEvent.BarTime))
             {
                 LogStrategySkip(strategyId, symbolName, GetStrategyTradingTimeBlockReason(strategyEvent.BarTime));
+                return;
+            }
+
+            if (!HasStrategyBarVolumeSurge(symbolName, strategyEvent.SourceTimeFrame, strategyEvent.BarTime))
+            {
+                LogStrategySkip(strategyId, symbolName, "vol_surge_miss");
                 return;
             }
 
@@ -10934,7 +17731,21 @@ namespace cAlgo.Robots
             }
 
             var finalRiskMoney = ResolveChartFinalRiskMoney(profileRaw);
-            var volumeUnits = ResolveChartTradeVolumeForRisk(symbol, tradeType, executionPrice, sl, finalRiskMoney, symbolName);
+            // n.Trades: 2..5 splits the entry into a market first leg plus
+            // limit legs between the market price and SL. Total risk stays capped at
+            // finalRiskMoney (split across the legs by weight). Auto/1 keep one order.
+            var orderCountOverride = ResolveStrategyOrderCount();
+            var pendingEntries = new List<double>();
+            if (orderCountOverride > 1)
+            {
+                pendingEntries = BuildChartSplitLimitEntries(symbol, symbolName, tradeType, executionPrice, executionPrice, sl, orderCountOverride)
+                    .Where(v => Math.Abs(v - executionPrice) >= Math.Max(symbol.PipSize * 2.0, 0.0000001))
+                    .Take(orderCountOverride - 1)
+                    .ToList();
+            }
+            var splitWeights = BuildChartSplitRiskWeights(1 + pendingEntries.Count, true);
+            var marketRiskMoney = Math.Max(0, finalRiskMoney * splitWeights[0]);
+            var volumeUnits = ResolveChartTradeVolumeForRisk(symbol, tradeType, executionPrice, sl, marketRiskMoney, symbolName);
             if (volumeUnits < symbol.VolumeInUnitsMin)
             {
                 LogStrategySkip(strategyId, symbolName, "volume below minimum for risk cap");
@@ -10949,22 +17760,23 @@ namespace cAlgo.Robots
             double marginEstimate;
             double marginBudget;
             string gateRejectReason;
-            if (!TryPassSharedCreationGate(
-                symbol,
-                action,
-                "market",
-                0,
-                executionPrice,
-                sl,
-                tp,
-                volumeUnits,
-                finalRiskMoney,
-                finalRiskMoney,
-                out approvedSl,
-                out approvedTp,
-                out approvedVolumeUnits,
-                out approvedRiskMoney,
-                out marginEstimate,
+                if (!TryPassSharedCreationGate(
+                    symbol,
+                    action,
+                    "market",
+                    0,
+                    executionPrice,
+                    sl,
+                    tp,
+                    volumeUnits,
+                    marketRiskMoney,
+                    marketRiskMoney,
+                    false,
+                    out approvedSl,
+                    out approvedTp,
+                    out approvedVolumeUnits,
+                    out approvedRiskMoney,
+                    out marginEstimate,
                 out marginBudget,
                 out gateRejectReason))
             {
@@ -11003,12 +17815,7 @@ namespace cAlgo.Robots
                 return;
             }
 
-            var label = string.Format(
-                CultureInfo.InvariantCulture,
-                "BT_{0}_{1}_{2}",
-                strategyId,
-                GetMiniChartLabel(strategyEvent.SourceTimeFrame),
-                strategyEvent.EventType.ToString().ToUpperInvariant());
+            var label = strategyId;
             var requestedLots = symbol.VolumeInUnitsToQuantity(approvedVolumeUnits);
             LogStructuredTradeEvent(
                 "backtest",
@@ -11022,7 +17829,7 @@ namespace cAlgo.Robots
                 approvedTp,
                 "",
                 strategyId + ":" + strategyEvent.EventType);
-            var result = ExecuteMarketOrder(tradeType, symbol.Name, approvedVolumeUnits, label, slPips, tpPips, (IsBacktestingRuntime() ? "backtest_" : "live_") + strategyId.ToLowerInvariant());
+            var result = ExecuteMarketOrder(tradeType, symbol.Name, approvedVolumeUnits, label, slPips, tpPips, BuildStrategyOrderComment(symbolName, strategyEvent.SourceTimeFrame, strategyEvent.EventType.ToString(), executionPrice, approvedTp, approvedSl));
             if (result != null && result.IsSuccessful)
             {
                 var finalApprovedSl = approvedSl;
@@ -11100,6 +17907,79 @@ namespace cAlgo.Robots
                     approvedVolumeUnits,
                     approvedRiskMoney);
                 _backtestStrategyHandledEventKeys.Add(eventKey);
+
+                var pendingWeights = splitWeights.Skip(1).Take(pendingEntries.Count).ToArray();
+                var affordablePending = new List<double>();
+                var affordablePendingWeights = new List<double>();
+                TryResolveAffordableSplitLegs(symbol, tradeType, pendingEntries, pendingWeights, sl, finalRiskMoney, affordablePending, affordablePendingWeights);
+
+                var placedPendingCount = 0;
+                for (var i = 0; i < affordablePending.Count && i < affordablePendingWeights.Count; i++)
+                {
+                    var entry = affordablePending[i];
+                    var sliceRiskMoney = finalRiskMoney > 0 ? Math.Max(0, finalRiskMoney * affordablePendingWeights[i]) : 0;
+                    var pendingVolumeUnits = ResolveChartTradeVolumeForRisk(symbol, tradeType, entry, sl, sliceRiskMoney, symbolName);
+                    if (pendingVolumeUnits < symbol.VolumeInUnitsMin)
+                        continue;
+
+                    double approvedPendingSl;
+                    double approvedPendingTp;
+                    double approvedPendingVolumeUnits;
+                    double approvedPendingRiskMoney;
+                    double approvedPendingMarginEstimate;
+                    double approvedPendingMarginBudget;
+                    string pendingGateRejectReason;
+                    if (!TryPassSharedCreationGate(
+                        symbol,
+                        action,
+                        "limit",
+                        entry,
+                        executionPrice,
+                        sl,
+                        tp,
+                        pendingVolumeUnits,
+                        sliceRiskMoney,
+                        sliceRiskMoney,
+                        false,
+                        out approvedPendingSl,
+                        out approvedPendingTp,
+                        out approvedPendingVolumeUnits,
+                        out approvedPendingRiskMoney,
+                        out approvedPendingMarginEstimate,
+                        out approvedPendingMarginBudget,
+                        out pendingGateRejectReason))
+                        continue;
+
+                    if (approvedPendingVolumeUnits < symbol.VolumeInUnitsMin)
+                        continue;
+
+                    var limitSlPips = symbol.PipSize > 0 ? (double?)Math.Round(Math.Abs(entry - approvedPendingSl) / symbol.PipSize, 2) : null;
+                    var limitTpPips = symbol.PipSize > 0 ? (double?)Math.Round(Math.Abs(approvedPendingTp - entry) / symbol.PipSize, 2) : null;
+                    var pendingResult = PlaceLimitOrder(
+                        tradeType,
+                        symbol.Name,
+                        approvedPendingVolumeUnits,
+                        entry,
+                        strategyId + ":L" + (i + 1).ToString(CultureInfo.InvariantCulture),
+                        limitSlPips,
+                        limitTpPips,
+                        (ProtectionType?)null,
+                        null,
+                        BuildStrategyOrderComment(symbolName, strategyEvent.SourceTimeFrame, strategyEvent.EventType.ToString(), entry, approvedPendingTp, approvedPendingSl) + ":l" + (i + 1).ToString(CultureInfo.InvariantCulture));
+                    if (pendingResult == null || !pendingResult.IsSuccessful)
+                        continue;
+
+                    if (pendingResult.PendingOrder != null)
+                    {
+                        string modifyError;
+                        if (!TryApplyPendingOrderProtection(pendingResult.PendingOrder, symbol, action, approvedPendingSl, approvedPendingTp, out modifyError))
+                            continue;
+                    }
+                    placedPendingCount++;
+                }
+
+                if (placedPendingCount > 0)
+                    SafePrint("[Strategy] Entry {0} {1} {2} placed {3} split limit leg(s) (n.Trades={4})", strategyId, action, symbolName, placedPendingCount, 1 + placedPendingCount);
             }
             else
             {
@@ -11181,6 +18061,39 @@ namespace cAlgo.Robots
             }
         }
 
+        // Strategy order comment: bot_ prefix (marks strategy-managed orders) + TF | event | LTF
+        // bias | HTF bias | entry | TP | SL. Strategy attribution stays on the order label (strategy
+        // name) so exposure tracking still works.
+        private string BuildStrategyOrderComment(string symbolName, TimeFrame sourceTimeFrame, string eventName, double entryPrice = 0, double takeProfit = 0, double stopLoss = 0)
+        {
+            if (sourceTimeFrame == null)
+                return "bot_";
+
+            var sb = new StringBuilder();
+            sb.Append("bot_").Append(GetMiniChartLabel(sourceTimeFrame));
+
+            var eventLabel = string.IsNullOrWhiteSpace(eventName) ? "" : eventName.Trim();
+            if (eventLabel.Length > 0)
+                sb.Append('|').Append(eventLabel);
+
+            sb.Append("|ltf:").Append(FormatSignedBias(GetStrategyLtfTrendBiasScore(symbolName, sourceTimeFrame)));
+            sb.Append("|htf:").Append(FormatSignedBias(GetStrategyHtfTrendBiasScore(symbolName, sourceTimeFrame)));
+            if (entryPrice > 0)
+                sb.Append("|in:").Append(entryPrice.ToString("F5", CultureInfo.InvariantCulture));
+            if (takeProfit > 0)
+                sb.Append("|tp:").Append(takeProfit.ToString("F5", CultureInfo.InvariantCulture));
+            if (stopLoss > 0)
+                sb.Append("|sl:").Append(stopLoss.ToString("F5", CultureInfo.InvariantCulture));
+            return sb.ToString();
+        }
+
+        private string FormatSignedBias(int bias)
+        {
+            return bias > 0
+                ? "+" + bias.ToString(CultureInfo.InvariantCulture)
+                : bias.ToString(CultureInfo.InvariantCulture);
+        }
+
         private void ExecuteBacktestStrategySignal(string symbolName, BacktestStrategySignal signal, bool requireHtfBiasConfluence)
         {
             if (!string.IsNullOrWhiteSpace(signal.SymbolName))
@@ -11192,6 +18105,12 @@ namespace cAlgo.Robots
             if (!ShouldAllowStrategySignalTime(signal.SignalTime))
             {
                 LogStrategySkip(signal.StrategyId, symbolName, GetStrategyTradingTimeBlockReason(signal.SignalTime));
+                return;
+            }
+
+            if (!HasStrategyBarVolumeSurge(symbolName, signal.SourceTimeFrame, signal.SignalTime))
+            {
+                LogStrategySkip(signal.StrategyId, symbolName, "vol_surge_miss");
                 return;
             }
 
@@ -11277,16 +18196,31 @@ namespace cAlgo.Robots
             var tp = signal.TakeProfit;
             if (!(sl > 0) || !(tp > 0))
             {
-                var fallbackProtection = BuildSharedChartProtectionPrices(symbol, symbolName, signal.TradeType, referencePrice, Math.Max(MinStopPips, 100.0), profileRaw);
-                if (fallbackProtection == null)
+                if (signal.EventSlDistance > 0)
                 {
-                    LogStrategySkip(signal.StrategyId, symbolName, "no valid SL/TP from structure");
-                    _backtestStrategyHandledEventKeys.Add(eventKey);
-                    return;
+                    // Default SL = height of the related event (candle / OB / FVG zone), floored at the min stop distance.
+                    var slDistance = Math.Max(signal.EventSlDistance, Math.Max(ResolveMinStopPips(symbol) * symbol.PipSize, symbol.PipSize * 2.0));
+                    sl = signal.TradeType == TradeType.Buy
+                        ? NormalizePriceToSymbol(symbol, referencePrice - slDistance)
+                        : NormalizePriceToSymbol(symbol, referencePrice + slDistance);
+                    var rewardRisk = Math.Max(0.1, StrategyRewardRisk);
+                    tp = signal.TradeType == TradeType.Buy
+                        ? NormalizePriceToSymbol(symbol, referencePrice + (slDistance * rewardRisk))
+                        : NormalizePriceToSymbol(symbol, referencePrice - (slDistance * rewardRisk));
                 }
+                else
+                {
+                    var fallbackProtection = BuildSharedChartProtectionPrices(symbol, symbolName, signal.TradeType, referencePrice, Math.Max(MinStopPips, 100.0), profileRaw);
+                    if (fallbackProtection == null)
+                    {
+                        LogStrategySkip(signal.StrategyId, symbolName, "no valid SL/TP from structure");
+                        _backtestStrategyHandledEventKeys.Add(eventKey);
+                        return;
+                    }
 
-                sl = fallbackProtection.Item1;
-                tp = fallbackProtection.Item2;
+                    sl = fallbackProtection.Item1;
+                    tp = fallbackProtection.Item2;
+                }
             }
 
             string protectionReason;
@@ -11326,7 +18260,31 @@ namespace cAlgo.Robots
             }
 
             var finalRiskMoney = ResolveStrategyRiskMoney(signal.StrategyMode, profileRaw);
-            var volumeUnits = ResolveChartTradeVolumeForRisk(symbol, signal.TradeType, effectiveEntryPrice, sl, finalRiskMoney, symbolName);
+            // n.Trades: 2..5 splits the entry. For limit signals all legs are
+            // limits (first at the signal entry, rest split towards the SL); for market signals
+            // the first order is market and the rest are limits. Total risk stays capped at
+            // finalRiskMoney (split across the legs by weight). Auto/1 keep one order.
+            var orderCountOverride = ResolveStrategyOrderCount();
+            var splitEntries = new List<double>();
+            var splitWeights = new double[] { 1.0 };
+            if (orderCountOverride > 1)
+            {
+                if (effectiveUseLimitOrder)
+                {
+                    splitEntries = BuildChartSplitLimitEntries(symbol, symbolName, signal.TradeType, executionPrice, effectiveEntryPrice, sl, orderCountOverride);
+                    splitWeights = BuildChartSplitRiskWeights(Math.Max(1, splitEntries.Count), false);
+                }
+                else
+                {
+                    splitEntries = BuildChartSplitLimitEntries(symbol, symbolName, signal.TradeType, executionPrice, executionPrice, sl, orderCountOverride)
+                        .Where(v => Math.Abs(v - executionPrice) >= Math.Max(symbol.PipSize * 2.0, 0.0000001))
+                        .Take(orderCountOverride - 1)
+                        .ToList();
+                    splitWeights = BuildChartSplitRiskWeights(1 + splitEntries.Count, true);
+                }
+            }
+            var firstLegRiskMoney = Math.Max(0, finalRiskMoney * splitWeights[0]);
+            var volumeUnits = ResolveChartTradeVolumeForRisk(symbol, signal.TradeType, effectiveEntryPrice, sl, firstLegRiskMoney, symbolName);
             if (volumeUnits < symbol.VolumeInUnitsMin)
             {
                 LogStrategySkip(signal.StrategyId, symbolName, "volume below minimum for risk cap");
@@ -11350,8 +18308,9 @@ namespace cAlgo.Robots
                 sl,
                 tp,
                 volumeUnits,
-                finalRiskMoney,
-                finalRiskMoney,
+                firstLegRiskMoney,
+                firstLegRiskMoney,
+                false,
                 out approvedSl,
                 out approvedTp,
                 out approvedVolumeUnits,
@@ -11410,12 +18369,12 @@ namespace cAlgo.Robots
                     symbol.Name,
                     approvedVolumeUnits,
                     effectiveEntryPrice,
-                    string.Format(CultureInfo.InvariantCulture, "BT_{0}_LMT", signal.StrategyId),
+                    signal.StrategyId ?? "strategy",
                     (double?)slPips,
                     (double?)tpPips,
                     (ProtectionType?)null,
                     null,
-                    (IsBacktestingRuntime() ? "backtest_" : "live_") + (signal.StrategyId ?? "strategy").ToLowerInvariant());
+                    BuildStrategyOrderComment(symbolName, signal.SourceTimeFrame, signal.SourceLabel, effectiveEntryPrice, approvedTp, approvedSl));
 
                 if (result != null && result.IsSuccessful && result.PendingOrder != null)
                 {
@@ -11448,10 +18407,10 @@ namespace cAlgo.Robots
                     signal.TradeType,
                     symbol.Name,
                     approvedVolumeUnits,
-                    string.Format(CultureInfo.InvariantCulture, "BT_{0}_MKT", signal.StrategyId),
+                    signal.StrategyId ?? "strategy",
                     (double?)slPips,
                     (double?)tpPips,
-                    (IsBacktestingRuntime() ? "backtest_" : "live_") + (signal.StrategyId ?? "strategy").ToLowerInvariant());
+                    BuildStrategyOrderComment(symbolName, signal.SourceTimeFrame, signal.SourceLabel, effectiveEntryPrice, approvedTp, approvedSl));
             }
 
             if (result != null && result.IsSuccessful)
@@ -11511,6 +18470,84 @@ namespace cAlgo.Robots
                     approvedRiskMoney,
                     string.IsNullOrWhiteSpace(signal.Note) ? "" : " " + signal.Note);
                 _backtestStrategyHandledEventKeys.Add(eventKey);
+
+                // Extra split legs: for limit signals the first order is splitEntries[0]
+                // (the signal entry), for market signals the first order is the market;
+                // the remaining entries become limit orders with their own risk slices.
+                var extraStartIndex = effectiveUseLimitOrder ? 1 : 0;
+                var extraEntries = splitEntries.Skip(extraStartIndex).ToList();
+                var extraWeights = splitWeights.Skip(1).Take(extraEntries.Count).ToArray();
+                var affordableExtra = new List<double>();
+                var affordableExtraWeights = new List<double>();
+                TryResolveAffordableSplitLegs(symbol, signal.TradeType, extraEntries, extraWeights, sl, finalRiskMoney, affordableExtra, affordableExtraWeights);
+
+                var extraPlacedCount = 0;
+                for (var i = 0; i < affordableExtra.Count && i < affordableExtraWeights.Count; i++)
+                {
+                    var extraEntry = affordableExtra[i];
+                    var sliceRiskMoney = finalRiskMoney > 0 ? Math.Max(0, finalRiskMoney * affordableExtraWeights[i]) : 0;
+                    var pendingVolumeUnits = ResolveChartTradeVolumeForRisk(symbol, signal.TradeType, extraEntry, sl, sliceRiskMoney, symbolName);
+                    if (pendingVolumeUnits < symbol.VolumeInUnitsMin)
+                        continue;
+
+                    double approvedExtraSl;
+                    double approvedExtraTp;
+                    double approvedExtraVolumeUnits;
+                    double approvedExtraRiskMoney;
+                    double approvedExtraMarginEstimate;
+                    double approvedExtraMarginBudget;
+                    string extraGateRejectReason;
+                    if (!TryPassSharedCreationGate(
+                        symbol,
+                        action,
+                        "limit",
+                        extraEntry,
+                        executionPrice,
+                        sl,
+                        tp,
+                        pendingVolumeUnits,
+                        sliceRiskMoney,
+                        sliceRiskMoney,
+                        false,
+                        out approvedExtraSl,
+                        out approvedExtraTp,
+                        out approvedExtraVolumeUnits,
+                        out approvedExtraRiskMoney,
+                        out approvedExtraMarginEstimate,
+                        out approvedExtraMarginBudget,
+                        out extraGateRejectReason))
+                        continue;
+
+                    if (approvedExtraVolumeUnits < symbol.VolumeInUnitsMin)
+                        continue;
+
+                    var extraSlPips = symbol.PipSize > 0 ? (double?)Math.Round(Math.Abs(extraEntry - approvedExtraSl) / symbol.PipSize, 2) : null;
+                    var extraTpPips = symbol.PipSize > 0 ? (double?)Math.Round(Math.Abs(approvedExtraTp - extraEntry) / symbol.PipSize, 2) : null;
+                    var extraResult = PlaceLimitOrder(
+                        signal.TradeType,
+                        symbol.Name,
+                        approvedExtraVolumeUnits,
+                        extraEntry,
+                        (signal.StrategyId ?? "strategy") + ":L" + (i + 1).ToString(CultureInfo.InvariantCulture),
+                        extraSlPips,
+                        extraTpPips,
+                        (ProtectionType?)null,
+                        null,
+                        BuildStrategyOrderComment(symbolName, signal.SourceTimeFrame, signal.SourceLabel, extraEntry, approvedExtraTp, approvedExtraSl) + ":l" + (i + 1).ToString(CultureInfo.InvariantCulture));
+                    if (extraResult == null || !extraResult.IsSuccessful)
+                        continue;
+
+                    if (extraResult.PendingOrder != null)
+                    {
+                        string modifyError;
+                        if (!TryApplyPendingOrderProtection(extraResult.PendingOrder, symbol, action, approvedExtraSl, approvedExtraTp, out modifyError))
+                            continue;
+                    }
+                    extraPlacedCount++;
+                }
+
+                if (extraPlacedCount > 0)
+                    SafePrint("[Strategy] Entry {0} {1} {2} placed {3} split limit leg(s) (n.Trades={4})", signal.StrategyId, action, symbolName, extraPlacedCount, 1 + extraPlacedCount);
             }
             else
             {
@@ -12192,10 +19229,28 @@ namespace cAlgo.Robots
 
                 foreach (var target in strategyTargets)
                 {
+                    PreloadCanonicalEventsForStrategyTarget(target, configuredStrategies);
+
                     foreach (var strategyMode in configuredStrategies)
                     {
                         switch (strategyMode)
                         {
+                            case BacktestStrategyMode.CustomTrade:
+                            {
+                                if (!ShouldRunLiveStrategyForNewClosedBar(strategyMode, target.SymbolName, target.TimeFrame))
+                                    break;
+
+                                BacktestStrategySignal customSignal;
+                                if (TryBuildCustomTradeSignal(target.SymbolName, target.TimeFrame, out customSignal))
+                                {
+                                    ExecuteBacktestStrategySignal(target.SymbolName, customSignal, false);
+                                }
+                                else
+                                {
+                                    LogStrategyInfoOnce("custom_trade", target.SymbolName, "no custom event trigger on " + NormalizeTradeTfLabel(GetMiniChartLabel(target.TimeFrame)));
+                                }
+                                break;
+                            }
                             case BacktestStrategyMode.HtfEventMarket:
                                 ExecuteBacktestHtfEventMarketStrategy(target.SymbolName, target.TimeFrame);
                                 break;
@@ -12212,8 +19267,6 @@ namespace cAlgo.Robots
                             case BacktestStrategyMode.MacdSignalV1:
                             case BacktestStrategyMode.RocMomentumV1:
                             case BacktestStrategyMode.DonchianBreakoutV1:
-                            case BacktestStrategyMode.Trend:
-                            case BacktestStrategyMode.Impulse:
                             {
                                 if (!ShouldRunLiveStrategyForNewClosedBar(strategyMode, target.SymbolName, target.TimeFrame))
                                     break;
@@ -12221,7 +19274,10 @@ namespace cAlgo.Robots
                                 BacktestStrategySignal indicatorSignal;
                                 if (TryBuildIndicatorStrategySignal(target.SymbolName, target.TimeFrame, strategyMode, out indicatorSignal))
                                 {
-                                    ExecuteBacktestStrategySignal(target.SymbolName, indicatorSignal, false);
+                                    if (TryApplyStrategyCustomEventGate(target.SymbolName, target.TimeFrame, ref indicatorSignal))
+                                        ExecuteBacktestStrategySignal(target.SymbolName, indicatorSignal, false);
+                                    else
+                                        LogStrategyInfoOnce(indicatorSignal.StrategyId, target.SymbolName, "custom event gate miss on " + NormalizeTradeTfLabel(GetMiniChartLabel(target.TimeFrame)));
                                 }
                                 else if (strategyMode == BacktestStrategyMode.Trend)
                                 {
@@ -12235,11 +19291,42 @@ namespace cAlgo.Robots
                                 }
                                 break;
                             }
+                            case BacktestStrategyMode.Trend:
+                            case BacktestStrategyMode.Impulse:
+                            {
+                                if (!ShouldRunLiveStrategyForNewClosedBar(strategyMode, target.SymbolName, target.TimeFrame))
+                                    break;
+
+                                BacktestStrategySignal eventSignal;
+                                if (TryBuildEventDrivenStrategySignal(target.SymbolName, target.TimeFrame, strategyMode, out eventSignal))
+                                {
+                                    if (TryApplyStrategyCustomEventGate(target.SymbolName, target.TimeFrame, ref eventSignal))
+                                        ExecuteBacktestStrategySignal(target.SymbolName, eventSignal, false);
+                                    else
+                                        LogStrategyInfoOnce(eventSignal.StrategyId, target.SymbolName, "custom event gate miss on " + NormalizeTradeTfLabel(GetMiniChartLabel(target.TimeFrame)));
+                                }
+                                else if (strategyMode == BacktestStrategyMode.Trend)
+                                {
+                                    var trendTf = NormalizeTradeTfLabel(GetMiniChartLabel(target.TimeFrame));
+                                    LogStrategyInfoOnce("follow_trend", target.SymbolName, string.Format(CultureInfo.InvariantCulture, "no CT trigger on {0}", trendTf));
+                                }
+                                else
+                                {
+                                    var impulseTf = NormalizeTradeTfLabel(GetMiniChartLabel(target.TimeFrame));
+                                    LogStrategyInfoOnce("follow_trend_big_candle", target.SymbolName, string.Format(CultureInfo.InvariantCulture, "no IM trigger on {0}", impulseTf));
+                                }
+                                break;
+                            }
                             case BacktestStrategyMode.PriceActionV1:
                             {
                                 BacktestStrategySignal signal;
                                 if (TryBuildPriceActionTriggerSignal(target.SymbolName, target.TimeFrame, "price_action_v1", false, 1, 1, false, out signal))
-                                    ExecuteBacktestStrategySignal(target.SymbolName, signal, false);
+                                {
+                                    if (TryApplyStrategyCustomEventGate(target.SymbolName, target.TimeFrame, ref signal))
+                                        ExecuteBacktestStrategySignal(target.SymbolName, signal, false);
+                                    else
+                                        LogStrategyInfoOnce(signal.StrategyId, target.SymbolName, "custom event gate miss on " + NormalizeTradeTfLabel(GetMiniChartLabel(target.TimeFrame)));
+                                }
                                 break;
                             }
                             case BacktestStrategyMode.PriceActionEventDetectorV1:
@@ -12249,28 +19336,48 @@ namespace cAlgo.Robots
                             {
                                 BacktestStrategySignal signal;
                                 if (TryBuildPriceActionFvgContextSignal(target.SymbolName, target.TimeFrame, out signal))
-                                    ExecuteBacktestStrategySignal(target.SymbolName, signal, false);
+                                {
+                                    if (TryApplyStrategyCustomEventGate(target.SymbolName, target.TimeFrame, ref signal))
+                                        ExecuteBacktestStrategySignal(target.SymbolName, signal, false);
+                                    else
+                                        LogStrategyInfoOnce(signal.StrategyId, target.SymbolName, "custom event gate miss on " + NormalizeTradeTfLabel(GetMiniChartLabel(target.TimeFrame)));
+                                }
                                 break;
                             }
                             case BacktestStrategyMode.ArtifactSuggestedLevelsV1:
                             {
                                 BacktestStrategySignal signal;
                                 if (TryBuildPriceActionTriggerSignal(target.SymbolName, target.TimeFrame, "artifact_suggested_levels_v1", true, 1, 1, false, out signal))
-                                    ExecuteBacktestStrategySignal(target.SymbolName, signal, false);
+                                {
+                                    if (TryApplyStrategyCustomEventGate(target.SymbolName, target.TimeFrame, ref signal))
+                                        ExecuteBacktestStrategySignal(target.SymbolName, signal, false);
+                                    else
+                                        LogStrategyInfoOnce(signal.StrategyId, target.SymbolName, "custom event gate miss on " + NormalizeTradeTfLabel(GetMiniChartLabel(target.TimeFrame)));
+                                }
                                 break;
                             }
                             case BacktestStrategyMode.ArtifactSuggestedLevelsV2:
                             {
                                 BacktestStrategySignal signal;
                                 if (TryBuildPriceActionTriggerSignal(target.SymbolName, target.TimeFrame, "artifact_suggested_levels_v2", true, 2, 2, false, out signal))
-                                    ExecuteBacktestStrategySignal(target.SymbolName, signal, false);
+                                {
+                                    if (TryApplyStrategyCustomEventGate(target.SymbolName, target.TimeFrame, ref signal))
+                                        ExecuteBacktestStrategySignal(target.SymbolName, signal, false);
+                                    else
+                                        LogStrategyInfoOnce(signal.StrategyId, target.SymbolName, "custom event gate miss on " + NormalizeTradeTfLabel(GetMiniChartLabel(target.TimeFrame)));
+                                }
                                 break;
                             }
                             case BacktestStrategyMode.ArtifactSuggestedLevelsV2LimitBodyMid:
                             {
                                 BacktestStrategySignal signal;
                                 if (TryBuildPriceActionTriggerSignal(target.SymbolName, target.TimeFrame, "artifact_suggested_levels_v2_limit_body_mid", true, 2, 2, true, out signal))
-                                    ExecuteBacktestStrategySignal(target.SymbolName, signal, false);
+                                {
+                                    if (TryApplyStrategyCustomEventGate(target.SymbolName, target.TimeFrame, ref signal))
+                                        ExecuteBacktestStrategySignal(target.SymbolName, signal, false);
+                                    else
+                                        LogStrategyInfoOnce(signal.StrategyId, target.SymbolName, "custom event gate miss on " + NormalizeTradeTfLabel(GetMiniChartLabel(target.TimeFrame)));
+                                }
                                 break;
                             }
                             case BacktestStrategyMode.AiSnapshotContextV1:
@@ -12302,6 +19409,12 @@ namespace cAlgo.Robots
                 return;
             }
 
+            if (!TryPassStrategyCustomEventGate(symbolName, strategyTimeFrame, strategyEvent.IsBullish ? TradeType.Buy : TradeType.Sell))
+            {
+                LogStrategyInfoOnce("HTF_EVENT", symbolName, "custom event gate miss on " + NormalizeTradeTfLabel(GetMiniChartLabel(strategyTimeFrame)));
+                return;
+            }
+
             ExecuteBacktestStrategyMarketEntry(symbolName, strategyEvent, "HTF_EVENT", true);
         }
 
@@ -12318,6 +19431,12 @@ namespace cAlgo.Robots
                 return;
             }
 
+            if (!TryPassStrategyCustomEventGate(symbolName, strategyTimeFrame, strategyEvent.IsBullish ? TradeType.Buy : TradeType.Sell))
+            {
+                LogStrategyInfoOnce("LTF_EVENT", symbolName, "custom event gate miss on " + NormalizeTradeTfLabel(GetMiniChartLabel(strategyTimeFrame)));
+                return;
+            }
+
             ExecuteBacktestStrategyMarketEntry(symbolName, strategyEvent, "LTF_EVENT", false);
         }
 
@@ -12328,18 +19447,18 @@ namespace cAlgo.Robots
 
             var isBacktesting = IsBacktestingRuntime();
             TrackStartupWarmup();
+            if (!isBacktesting)
+                CheckCanonicalCacheDayFlush();
             if (!DisableCustomChartUiForIsolation && !DisableChartPanelBootstrapForIsolation && !isBacktesting && !_chartUiBootstrapped && _masterTickCount >= 5)
             {
                 try
                 {
-                    if (!DisableChartVisualTogglePanelForIsolation)
-                        BuildChartVisualTogglePanel();
                     BuildChartButtonPanel();
                     _chartUiBootstrapped = true;
                 }
                 catch (Exception ex)
                 {
-                    SafePrint("[Bridge] Chart UI bootstrap failed: {0}", ex.Message);
+                    SafeLog("ERROR", "[Bridge] Chart UI bootstrap failed: {0}", ex.Message);
                 }
             }
             if (EnableLiveStrategyTrading && !isBacktesting && _masterTickCount <= 2)
@@ -12547,7 +19666,11 @@ namespace cAlgo.Robots
                                     syms.Add(Symbol.Name);
                             }
                             if (syms.Count > 0)
-                                _ = PushBarsAsync(accId, syms);
+                                _ = Task.Run(async () =>
+                                {
+                                    try { await PushBarsAsync(accId, syms); }
+                                    catch (Exception ex) { SafePrint("[Bars] Push failed: {0}", ex.Message); }
+                                });
                             else
                             {
                                 _barStatus = "IDLE";
@@ -12747,7 +19870,7 @@ namespace cAlgo.Robots
                         _pollStatus = _lastPollTime == DateTime.MinValue ? "POLLING" : _pollStatus;
                         _syncStatus = _lastSyncTime == DateTime.MinValue ? "SYNCING" : _syncStatus;
                     }
-                    RefreshDebugPanelNow();
+                    RefreshDebugPanelNow(false);
 
                     var bal = balance; var eq = equity; var mar = margin; var brk = brokerName;
                     var pl = posList; var ol = ordersList; var cl = closedList; var ml = metricsList;
@@ -12784,7 +19907,7 @@ namespace cAlgo.Robots
                         }
                         finally
                         {
-                            RefreshDebugPanel();
+                            RefreshDebugPanelLite();
                         }
                     });
                 }
@@ -12802,7 +19925,7 @@ namespace cAlgo.Robots
                 _syncStatus = "ERROR";
                 _lastPollErr = FormatServerErrorForPanel(ex.Message);
                 _lastSyncErr = FormatServerErrorForPanel(ex.Message);
-                RefreshDebugPanelNow();
+                RefreshDebugPanelNow(false);
             }
         }
 
@@ -12830,15 +19953,118 @@ namespace cAlgo.Robots
                 try { _watchdogCts?.Cancel(); } catch { }
                 try { _watchdogCts?.Dispose(); } catch { }
                 try { Chart.RemoveObject("Bridge_Isolation_Status"); } catch { }
+                try { RemoveManagedOscillatorIndicators(); } catch { }
                 return;
             }
             try { FinalizeBacktestExportSession(); } catch { }
+            try { FlushPersistedCanonicalEventCachesToDisk(); } catch { }
             try { _watchdogCts?.Cancel(); } catch { }
             try { _watchdogCts?.Dispose(); } catch { }
             try { Chart.RemoveObject("Bridge_Isolation_Status"); } catch { }
+            // Remove all bot-drawn chart objects so stopping leaves a clean chart instead of
+            // stale markers/zones/grids from the last session.
+            try { RemoveChartVisualObjects(); } catch { }
             try { if (_chartButtonPanel != null) Chart.RemoveControl(_chartButtonPanel); } catch { }
             try { if (_chartSummaryPanel != null) Chart.RemoveControl(_chartSummaryPanel); } catch { }
-            try { if (_chartVisualTogglePanel != null) Chart.RemoveControl(_chartVisualTogglePanel); } catch { }
+            try { RemoveManagedOscillatorIndicators(); } catch { }
+        }
+
+        private int FindBarIndexAtOrAfter(DateTime time)
+        {
+            if (Bars == null || Bars.Count == 0 || time == DateTime.MinValue)
+                return -1;
+
+            for (var i = 0; i < Bars.Count; i++)
+            {
+                if (Bars.OpenTimes[i] >= time)
+                    return i;
+            }
+
+            return -1;
+        }
+
+        // Apply the dynamic zoom window: the right edge is anchored at today + tomorrow
+        // (the HTF mini chart area) and extra days extend into the past, so the viewport
+        // always fills with real bars instead of empty future space.
+        private void ApplyZoomWindow(double days)
+        {
+            var anchorTime = GetCurrentChartEndTime();
+            var todayStart = GetCurrentDayStartTime(anchorTime);
+            DateTime startTime;
+            DateTime endTime;
+            if (days <= 1)
+            {
+                startTime = todayStart;
+                endTime = todayStart.AddDays(1);
+            }
+            else
+            {
+                // Right edge = the HTF mini chart's right edge so the strip is always fully
+                // framed (no cut, no dead space). Extra days extend the window to the left,
+                // clamped so today's bars stay visible at the left edge.
+                var chartTfMinutes = Math.Max(1, TimeFrameToMinutes(Chart != null ? Chart.TimeFrame : TimeFrame.Minute));
+                endTime = anchorTime.AddMinutes(GetMiniChartTotalFutureBars(chartTfMinutes) * chartTfMinutes);
+                startTime = endTime.AddDays(-days);
+                if (startTime > todayStart)
+                    startTime = todayStart;
+            }
+
+            ZoomChartToWindow(startTime, endTime - startTime);
+        }
+
+        // Zoom the platform chart so the viewport spans the given time window from the
+        // window's first bar (left edge), including the future HTF mini-chart area:
+        //   "-" → today + HTF mini chart (fills viewport width)
+        //   "+" → this week + tomorrow (8 days).
+        // The target zoom is computed ABSOLUTELY from a fixed calibration (captured when the
+        // chart naturally fills the viewport), never relatively from the current zoom state -
+        // otherwise clicking "+" then "-" leaves the old zoomed-out scale and shows empty days.
+        private void ZoomChartToWindow(DateTime startTime, TimeSpan duration)
+        {
+            if (Chart == null || Bars == null || Bars.Count == 0)
+                return;
+
+            try
+            {
+                var chartTfMinutes = Math.Max(1, TimeFrameToMinutes(Chart != null ? Chart.TimeFrame : TimeFrame.Minute));
+                var endTime = startTime + duration;
+                var startIndex = FindBarIndexAtOrAfter(startTime);
+                if (startIndex < 0)
+                    startIndex = 0;
+
+                // Target the number of chart-TF bar slots inside the requested window so the
+                // viewport shows the full time span (including the future mini-chart area).
+                var windowMinutes = Math.Max(1.0, (endTime - startTime).TotalMinutes);
+                var targetBars = Math.Max(10, (int)Math.Round(windowMinutes / chartTfMinutes));
+
+                var currentLevel = Math.Max(
+                    ChartZoomPresetMinLevel,
+                    Math.Min(ChartZoomPresetMaxLevel, Chart.ZoomLevel));
+
+                // Lazy calibration on first use: the natural chart view fills the viewport
+                // with bars, so MaxVisibleBars equals the true slot count at that level.
+                if (_zoomCalibrationLevel <= 0)
+                {
+                    _zoomCalibrationLevel = currentLevel;
+                    _zoomCalibrationVisibleBars = Math.Max(1, Chart.MaxVisibleBars);
+                }
+
+                // Absolute target: level × slots is constant, so the target depends only on
+                // the fixed calibration and the requested window - NOT on the current zoom.
+                var targetLevel = (int)Math.Round(_zoomCalibrationLevel * (_zoomCalibrationVisibleBars / targetBars));
+                // ZoomLevel only accepts multiples of 5 within [5, 500].
+                targetLevel = Math.Max(
+                    ChartZoomPresetMinLevel,
+                    Math.Min(ChartZoomPresetMaxLevel, ((targetLevel + 2) / 5) * 5));
+                if (targetLevel != currentLevel)
+                    Chart.ZoomLevel = targetLevel;
+
+                Chart.ScrollXTo(startIndex);
+            }
+            catch (Exception ex)
+            {
+                SafePrint("[Chart] Zoom preset failed: {0}", ex.Message);
+            }
         }
 
         private void BuildChartButtonPanel()
@@ -12863,11 +20089,11 @@ namespace cAlgo.Robots
 
                 TryAddChartSymbolCombo(_chartButtonPanel);
                 TryAddChartDirectionCombo(_chartButtonPanel);
-                TryAddChartTradeTypeCombo(_chartButtonPanel);
+                TryAddChartOrderCountCombo(_chartButtonPanel);
 
-                var preferredToolbarSymbol = !string.IsNullOrWhiteSpace(_chartSelectedSymbol)
-                    ? _chartSelectedSymbol
-                    : (Chart != null ? Chart.SymbolName : "");
+                var preferredToolbarSymbol = Chart != null && !string.IsNullOrWhiteSpace(Chart.SymbolName)
+                    ? Chart.SymbolName
+                    : _chartSelectedSymbol;
                 var selectedToolbarSymbol = EnsureChartSelectedSymbol(preferredToolbarSymbol);
                 var entryToolbarSymbol = GetEffectiveChartEntrySymbolSelection();
                 var selectedDirection = ReadChartDirectionComboSelection();
@@ -12889,24 +20115,24 @@ namespace cAlgo.Robots
                     sellButton.Click += _ => ExecuteChartQuickMarketOrder(TradeType.Sell);
                     _chartButtonPanel.AddChild(sellButton);
 
-                    var buyLimitButton = BuildChartTintedOutlineButton("B.lmt", Color.ForestGreen, 42);
-                    ApplyButtonTooltip(buyLimitButton, "Place buy limit order from structure/key-level logic");
-                    buyLimitButton.Click += _ => ExecuteChartQuickPendingOrder(TradeType.Buy, false);
+                    var buyLimitButton = BuildChartTintedFilledButton("B.l", Color.ForestGreen, 34);
+                    ApplyButtonTooltip(buyLimitButton, "Place buy split limit ladder from structure/key-level logic");
+                    buyLimitButton.Click += _ => ExecuteChartQuickPendingOrder(TradeType.Buy, false, true);
                     _chartButtonPanel.AddChild(buyLimitButton);
 
-                    var sellLimitButton = BuildChartTintedOutlineButton("S.lmt", Color.Firebrick, 42);
-                    ApplyButtonTooltip(sellLimitButton, "Place sell limit order from structure/key-level logic");
-                    sellLimitButton.Click += _ => ExecuteChartQuickPendingOrder(TradeType.Sell, false);
+                    var sellLimitButton = BuildChartTintedFilledButton("S.l", Color.Firebrick, 34);
+                    ApplyButtonTooltip(sellLimitButton, "Place sell split limit ladder from structure/key-level logic");
+                    sellLimitButton.Click += _ => ExecuteChartQuickPendingOrder(TradeType.Sell, false, true);
                     _chartButtonPanel.AddChild(sellLimitButton);
 
-                    var buyStopButton = BuildChartTintedOutlineButton("B.stp", Color.ForestGreen, 42);
+                    var buyStopButton = BuildChartTintedFilledButton("B.s", Color.ForestGreen, 34);
                     ApplyButtonTooltip(buyStopButton, "Place buy stop order from structure/key-level logic");
-                    buyStopButton.Click += _ => ExecuteChartQuickPendingOrder(TradeType.Buy, true);
+                    buyStopButton.Click += _ => ExecuteChartQuickPendingOrder(TradeType.Buy, true, false);
                     _chartButtonPanel.AddChild(buyStopButton);
 
-                    var sellStopButton = BuildChartTintedOutlineButton("S.stp", Color.Firebrick, 42);
+                    var sellStopButton = BuildChartTintedFilledButton("S.s", Color.Firebrick, 34);
                     ApplyButtonTooltip(sellStopButton, "Place sell stop order from structure/key-level logic");
-                    sellStopButton.Click += _ => ExecuteChartQuickPendingOrder(TradeType.Sell, true);
+                    sellStopButton.Click += _ => ExecuteChartQuickPendingOrder(TradeType.Sell, true, false);
                     _chartButtonPanel.AddChild(sellStopButton);
                 }
 
@@ -12942,7 +20168,12 @@ namespace cAlgo.Robots
 
                     if (hasSelectedOpenPositions)
                     {
-                        var closeHalfButton = BuildChartOutlineButton("C.50", Color.Goldenrod, 40);
+                        var closeThirtyButton = BuildChartOutlineButton("C.30%", Color.DarkKhaki, 44);
+                        ApplyButtonTooltip(closeThirtyButton, "Close 30% of selected open positions");
+                        closeThirtyButton.Click += _ => CloseChartSymbolPositions(30);
+                        _chartButtonPanel.AddChild(closeThirtyButton);
+
+                        var closeHalfButton = BuildChartOutlineButton("C.50%", Color.Goldenrod, 44);
                         ApplyButtonTooltip(closeHalfButton, "Close 50% of selected open positions");
                         closeHalfButton.Click += _ => CloseChartSymbolPositions(50);
                         _chartButtonPanel.AddChild(closeHalfButton);
@@ -12962,134 +20193,39 @@ namespace cAlgo.Robots
                     }
                 }
 
+                var zoomInButton = BuildChartOutlineButton("-", Color.SteelBlue, 26);
+                ApplyButtonTooltip(zoomInButton, "Zoom in: one day less per chart width");
+                zoomInButton.Click += _ =>
+                {
+                    _zoomWindowDays = Math.Max(1, _zoomWindowDays - 1);
+                    ApplyZoomWindow(_zoomWindowDays);
+                };
+                _chartButtonPanel.AddChild(zoomInButton);
+
+                var zoomOutButton = BuildChartOutlineButton("+", Color.SteelBlue, 26);
+                ApplyButtonTooltip(zoomOutButton, "Zoom out: one day more per chart width");
+                zoomOutButton.Click += _ =>
+                {
+                    _zoomWindowDays = Math.Min(8, _zoomWindowDays + 1);
+                    ApplyZoomWindow(_zoomWindowDays);
+                };
+                _chartButtonPanel.AddChild(zoomOutButton);
+
+                var refreshButton = BuildChartOutlineButton("R", Color.SteelBlue, 26);
+                ApplyButtonTooltip(refreshButton, "Recalculate and redraw all zones, artifacts, technicals, events, candles in the current view");
+                refreshButton.Click += _ => ForceRefreshChartVisuals();
+                _chartButtonPanel.AddChild(refreshButton);
+
                 Chart.AddControl(_chartButtonPanel);
             }
             catch (Exception ex)
             {
-                SafePrint("[Panel] Button panel failed: {0}", ex.Message);
+                SafeLog("ERROR", "[Panel] Button panel failed: {0}", ex.Message);
             }
             finally
             {
                 _isRebuildingChartPanel = false;
             }
-        }
-
-        private void BuildChartVisualTogglePanel()
-        {
-            if (DisableChartVisualTogglePanelForIsolation)
-                return;
-
-            try
-            {
-                if (_chartVisualTogglePanel != null)
-                {
-                    try { Chart.RemoveControl(_chartVisualTogglePanel); } catch { }
-                }
-                if (_chartVisualQuickPanel != null)
-                {
-                    try { Chart.RemoveControl(_chartVisualQuickPanel); } catch { }
-                }
-
-                _chartVisualQuickPanel = new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    HorizontalAlignment = HorizontalAlignment.Left,
-                    VerticalAlignment = VerticalAlignment.Top,
-                    Margin = "6 6 0 0",
-                    Opacity = 0.92
-                };
-
-                _chartVisualTogglePanel = new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    HorizontalAlignment = HorizontalAlignment.Right,
-                    VerticalAlignment = VerticalAlignment.Top,
-                    Margin = 6,
-                    Opacity = 0.92
-                };
-
-                var autoChartTimeFrame = Chart != null ? Chart.TimeFrame : TimeFrame.Minute;
-                AddVisualToggleButton(_chartVisualQuickPanel, GetAutoHigherTimeframeButtonLabel(autoChartTimeFrame, 0), () => _toggleHtf15, value => _toggleHtf15 = value, Color.DeepSkyBlue);
-                AddVisualToggleButton(_chartVisualQuickPanel, GetAutoHigherTimeframeButtonLabel(autoChartTimeFrame, 1), () => _toggleHtf4H, value => _toggleHtf4H = value, Color.FromArgb(255, 0x80, 0x00, 0x80));
-                AddVisualToggleButton(_chartVisualQuickPanel, "KZ", () => _toggleKillerZones, value => _toggleKillerZones = value, Color.Goldenrod);
-                AddVisualToggleButton(_chartVisualQuickPanel, "M", () => _toggleHtfMiniChart, value => _toggleHtfMiniChart = value, Color.Orange);
-                AddVisualToggleButton(_chartVisualQuickPanel, "KEY", () => _toggleKeyLevels, value => _toggleKeyLevels = value, Color.PaleGreen);
-                AddVisualToggleButton(_chartVisualQuickPanel, "FVG", () => _toggleFvgZones, value => _toggleFvgZones = value, Color.DeepSkyBlue);
-                AddVisualToggleButton(_chartVisualQuickPanel, "OB", () => _toggleOrderBlocks, value => _toggleOrderBlocks = value, Color.MediumPurple);
-                AddVisualToggleButton(_chartVisualQuickPanel, "LIQ", () => _toggleLiquidityLevels, value => _toggleLiquidityLevels = value, Color.LightGray);
-                AddVisualToggleButton(_chartVisualQuickPanel, "EMA", () => _toggleEmaOverlay, value => _toggleEmaOverlay = value, Color.FromArgb(255, 56, 189, 248));
-                AddVisualToggleButton(_chartVisualQuickPanel, "VW", () => _toggleVwapOverlay, value => _toggleVwapOverlay = value, Color.FromArgb(255, 14, 165, 233));
-                AddVisualToggleButton(_chartVisualQuickPanel, "BB", () => _toggleBollingerOverlay, value => _toggleBollingerOverlay = value, Color.FromArgb(255, 244, 114, 182));
-
-                AddVisualToggleButton(_chartVisualTogglePanel, "SW", () => _toggleSweepDetections, value => _toggleSweepDetections = value, Color.FromArgb(255, 0xFF, 0x66, 0x66));
-                AddVisualToggleButton(_chartVisualTogglePanel, "BOS", () => _toggleBosDetections, value => _toggleBosDetections = value, Color.LimeGreen);
-                AddVisualToggleButton(_chartVisualTogglePanel, "CH", () => _toggleChochDetections, value => _toggleChochDetections = value, Color.Gold);
-                AddVisualToggleButton(_chartVisualTogglePanel, "RJ", () => _toggleRejectionDetections, value => _toggleRejectionDetections = value, Color.LightGreen);
-                AddVisualToggleButton(_chartVisualTogglePanel, "BR", () => _toggleBreakoutDetections, value => _toggleBreakoutDetections = value, Color.DeepSkyBlue);
-                AddVisualToggleButton(_chartVisualTogglePanel, "PB", () => _togglePullbackDetections, value => _togglePullbackDetections = value, Color.Khaki);
-                AddVisualToggleButton(_chartVisualTogglePanel, "CT", () => _toggleContinuationDetections, value => _toggleContinuationDetections = value, Color.MediumSpringGreen);
-                AddVisualToggleButton(_chartVisualTogglePanel, "IM", () => _toggleImpulseDetections, value => _toggleImpulseDetections = value, Color.Aqua);
-                AddVisualToggleButton(_chartVisualTogglePanel, "PIN", () => _togglePinBarPatterns, value => _togglePinBarPatterns = value, Color.FromArgb(255, 0xFF, 0xB3, 0x47));
-                AddVisualToggleButton(_chartVisualTogglePanel, "ENG", () => _toggleEngulfingPatterns, value => _toggleEngulfingPatterns = value, Color.FromArgb(255, 0xFF, 0x7F, 0x50));
-                AddVisualToggleButton(_chartVisualTogglePanel, "BIG", () => _toggleBigCandlePatterns, value => _toggleBigCandlePatterns = value, Color.FromArgb(255, 0xFF, 0x45, 0x00));
-                AddVisualToggleButton(_chartVisualTogglePanel, "MOR", () => _toggleMorningStarPatterns, value => _toggleMorningStarPatterns = value, Color.FromArgb(255, 0x9A, 0xCD, 0x32));
-                AddVisualToggleButton(_chartVisualTogglePanel, "EVE", () => _toggleEveningStarPatterns, value => _toggleEveningStarPatterns = value, Color.FromArgb(255, 0xCD, 0x5C, 0x5C));
-                AddVisualToggleButton(_chartVisualTogglePanel, "HAM", () => _toggleHammerPatterns, value => _toggleHammerPatterns = value, Color.FromArgb(255, 0x7C, 0xFC, 0x00));
-                AddVisualToggleButton(_chartVisualTogglePanel, "HGM", () => _toggleHangingManPatterns, value => _toggleHangingManPatterns = value, Color.FromArgb(255, 0xFA, 0x80, 0x72));
-                AddVisualToggleButton(_chartVisualTogglePanel, "SST", () => _toggleShootingStarPatterns, value => _toggleShootingStarPatterns = value, Color.FromArgb(255, 0xFF, 0x69, 0xB4));
-                AddVisualToggleButton(_chartVisualTogglePanel, "IHM", () => _toggleInvertedHammerPatterns, value => _toggleInvertedHammerPatterns = value, Color.FromArgb(255, 0x66, 0xCD, 0xAA));
-                AddVisualToggleButton(_chartVisualTogglePanel, "PRC", () => _togglePiercingLinePatterns, value => _togglePiercingLinePatterns = value, Color.FromArgb(255, 0x00, 0xCE, 0xD1));
-                AddVisualToggleButton(_chartVisualTogglePanel, "DCC", () => _toggleDarkCloudCoverPatterns, value => _toggleDarkCloudCoverPatterns = value, Color.FromArgb(255, 0xFF, 0x63, 0x47));
-                AddVisualToggleButton(_chartVisualTogglePanel, "3WS", () => _toggleThreeWhiteSoldiersPatterns, value => _toggleThreeWhiteSoldiersPatterns = value, Color.FromArgb(255, 0xAD, 0xFF, 0x2F));
-                AddVisualToggleButton(_chartVisualTogglePanel, "3BC", () => _toggleThreeBlackCrowsPatterns, value => _toggleThreeBlackCrowsPatterns = value, Color.FromArgb(255, 0xB2, 0x22, 0x22));
-                AddVisualToggleButton(_chartVisualTogglePanel, "HAR", () => _toggleHaramiPatterns, value => _toggleHaramiPatterns = value, Color.FromArgb(255, 0xBA, 0x55, 0xD3));
-                AddVisualToggleButton(_chartVisualTogglePanel, "EMX", () => _toggleEmaEvents, value => _toggleEmaEvents = value, Color.FromArgb(255, 56, 189, 248));
-                AddVisualToggleButton(_chartVisualTogglePanel, "VWX", () => _toggleVwapEvents, value => _toggleVwapEvents = value, Color.FromArgb(255, 14, 165, 233));
-                AddVisualToggleButton(_chartVisualTogglePanel, "BBX", () => _toggleBollingerEvents, value => _toggleBollingerEvents = value, Color.FromArgb(255, 244, 114, 182));
-                AddVisualToggleButton(_chartVisualTogglePanel, "RSI", () => _toggleRsiEvents, value => _toggleRsiEvents = value, Color.FromArgb(255, 168, 85, 247));
-                AddVisualToggleButton(_chartVisualTogglePanel, "STO", () => _toggleStochasticEvents, value => _toggleStochasticEvents = value, Color.FromArgb(255, 59, 130, 246));
-                AddVisualToggleButton(_chartVisualTogglePanel, "MAC", () => _toggleMacdEvents, value => _toggleMacdEvents = value, Color.FromArgb(255, 34, 197, 94));
-                AddVisualToggleButton(_chartVisualTogglePanel, "ST", () => _toggleStrategyMarkers, value => _toggleStrategyMarkers = value, Color.FromArgb(255, 0x7C, 0xFC, 0x00));
-
-                Chart.AddControl(_chartVisualQuickPanel);
-                Chart.AddControl(_chartVisualTogglePanel);
-            }
-            catch (Exception ex)
-            {
-                SafePrint("[Panel] Visual toggle panel failed: {0}", ex.Message);
-            }
-        }
-
-        private void AddVisualToggleButton(StackPanel panel, string text, Func<bool> getter, Action<bool> setter, Color accent)
-        {
-            if (panel == null)
-                return;
-            var isOn = getter();
-            var button = BuildChartActionButton(text, isOn ? accent : Color.Gray, Color.FromArgb(185, 28, 28, 28), text.Length >= 3 ? 30 : 24);
-            ApplyVisualToggleButtonState(button, text, isOn, accent);
-            button.Click += _ =>
-            {
-                var nextValue = !getter();
-                setter(nextValue);
-                ApplyVisualToggleButtonState(button, text, nextValue, accent);
-                PersistCustomUiSettingsSnapshot();
-                RefreshDebugPanel();
-            };
-            panel.AddChild(button);
-        }
-
-        private void ApplyVisualToggleButtonState(Button button, string text, bool isOn, Color accent)
-        {
-            if (button == null)
-                return;
-
-            TrySetPropertyValue(button, "TextColor", isOn ? accent : Color.Gray);
-            TrySetPropertyValue(button, "ForegroundColor", isOn ? accent : Color.Gray);
-            TrySetPropertyValue(button, "BorderColor", isOn ? accent : Color.DimGray);
-            TrySetPropertyValue(button, "BorderThickness", 1);
-            TrySetPropertyValue(button, "FontSize", 7);
-            TrySetPropertyValue(button, "Margin", 1);
-            ApplyButtonTooltip(button, BuildVisualToggleTooltip(text, isOn));
         }
 
         private void RebuildChartButtonPanel()
@@ -13100,7 +20236,7 @@ namespace cAlgo.Robots
             }
             catch (Exception ex)
             {
-                SafePrint("[Panel] Rebuild failed: {0}", ex.Message);
+                SafeLog("ERROR", "[Panel] Rebuild failed: {0}", ex.Message);
             }
         }
 
@@ -13119,7 +20255,7 @@ namespace cAlgo.Robots
             }
             catch (Exception ex)
             {
-                SafePrint("[Panel] Chart refresh failed: {0}", ex.Message);
+                SafeLog("ERROR", "[Panel] Chart refresh failed: {0}", ex.Message);
             }
         }
 
@@ -13215,6 +20351,15 @@ namespace cAlgo.Robots
             return button;
         }
 
+        private Button BuildChartTintedFilledButton(string text, Color accent, int width)
+        {
+            var button = BuildChartActionButton(text, Color.White, Color.FromArgb(135, accent.R, accent.G, accent.B), width);
+            TrySetPropertyValue(button, "BorderColor", accent);
+            TrySetPropertyValue(button, "BorderThickness", 1);
+            TrySetPropertyValue(button, "Opacity", 1.0);
+            return button;
+        }
+
         private Button BuildChartSummaryLabel(string text, Color foreground, int width)
         {
             var label = new Button { Text = text ?? "", Margin = 0 };
@@ -13233,6 +20378,26 @@ namespace cAlgo.Robots
             TrySetPropertyValue(label, "AcceptsFocus", false);
             TrySetPropertyValue(label, "Margin", 0);
             return label;
+        }
+
+        private StackPanel BuildChartSummaryBiasCell(string baseText, Color baseColor, string warningText, Color warningColor, int width)
+        {
+            var panel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Margin = 0
+            };
+            TrySetPropertyValue(panel, "Width", width);
+            TrySetPropertyValue(panel, "MinWidth", width);
+            TrySetPropertyValue(panel, "MaxWidth", width);
+
+            var warningWidth = string.IsNullOrWhiteSpace(warningText) ? 0 : 14;
+            var baseWidth = Math.Max(10, width - warningWidth);
+            panel.AddChild(BuildChartSummaryLabel(baseText, baseColor, baseWidth));
+            if (!string.IsNullOrWhiteSpace(warningText))
+                panel.AddChild(BuildChartSummaryLabel(warningText, warningColor, warningWidth));
+
+            return panel;
         }
 
         private static Color GetSummaryMetricColor(double value, bool inverse = false)
@@ -13516,7 +20681,19 @@ namespace cAlgo.Robots
                 if (string.IsNullOrWhiteSpace(symbolName) || IsChartAllSymbolsSelection(symbolName))
                     return Tuple.Create(0, 0, 0);
 
+                var normalizedSymbol = symbolName.Trim().ToUpperInvariant();
                 var baseTimeFrame = Chart != null ? Chart.TimeFrame : TimeFrame.Minute;
+                var cacheKey = BuildChartCacheKey(normalizedSymbol, GetMiniChartLabel(baseTimeFrame), "trend-bias");
+                TimedCacheEntry<Tuple<int, int, int>> cached;
+                if (_symbolTrendBiasCache.TryGetValue(cacheKey, out cached) &&
+                    cached != null &&
+                    cached.Value != null &&
+                    (DateTime.UtcNow - cached.CreatedAtUtc) <= TimeSpan.FromSeconds(3))
+                {
+                    return cached.Value;
+                }
+
+                var started = Stopwatch.StartNew();
                 var frames = new List<TimeFrame> { baseTimeFrame };
                 frames.AddRange(GetAutoHigherTimeframes(baseTimeFrame));
                 var uniqueFrames = frames
@@ -13538,7 +20715,14 @@ namespace cAlgo.Robots
                 while (scores.Count < 3)
                     scores.Add(0);
 
-                return Tuple.Create(scores[0], scores[1], scores[2]);
+                var result = Tuple.Create(scores[0], scores[1], scores[2]);
+                _symbolTrendBiasCache[cacheKey] = new TimedCacheEntry<Tuple<int, int, int>>
+                {
+                    CreatedAtUtc = DateTime.UtcNow,
+                    Value = result
+                };
+                LogSlowChartStep("GetSymbolTrendBias", started, string.Format(CultureInfo.InvariantCulture, "{0} {1} -> {2}/{3}/{4}", normalizedSymbol, GetMiniChartLabel(baseTimeFrame), result.Item1, result.Item2, result.Item3));
+                return result;
             }
             catch
             {
@@ -13553,15 +20737,94 @@ namespace cAlgo.Robots
                 if (string.IsNullOrWhiteSpace(symbolName) || IsChartAllSymbolsSelection(symbolName))
                     return 0;
 
-                var bars = MarketData.GetBars(timeFrame, symbolName);
-                return bars != null && bars.Count >= 10
+                var normalizedSymbol = symbolName.Trim().ToUpperInvariant();
+                var cacheKey = BuildChartCacheKey(normalizedSymbol, GetMiniChartLabel(timeFrame), "trend-bias-tf");
+                TimedCacheEntry<int> cached;
+                if (_symbolTrendBiasTimeFrameCache.TryGetValue(cacheKey, out cached) &&
+                    cached != null &&
+                    (DateTime.UtcNow - cached.CreatedAtUtc) <= TimeSpan.FromSeconds(3))
+                {
+                    return cached.Value;
+                }
+
+                var started = Stopwatch.StartNew();
+                var bars = MarketData.GetBars(timeFrame, normalizedSymbol);
+                var score = bars != null && bars.Count >= 10
                     ? DetectArtifactFirstBiasScore(bars, timeFrame, 180)
                     : 0;
+                _symbolTrendBiasTimeFrameCache[cacheKey] = new TimedCacheEntry<int>
+                {
+                    CreatedAtUtc = DateTime.UtcNow,
+                    Value = score
+                };
+                LogSlowChartStep("GetSymbolTrendBiasForTimeFrame", started, string.Format(CultureInfo.InvariantCulture, "{0} {1} -> {2}", normalizedSymbol, GetMiniChartLabel(timeFrame), score));
+                return score;
             }
             catch
             {
                 return 0;
             }
+        }
+
+        private int GetStrategyLtfTrendBiasScore(string symbolName, TimeFrame strategyTimeFrame)
+        {
+            if (string.IsNullOrWhiteSpace(symbolName))
+                return 0;
+
+            var frames = GetBacktestStrategyLowerTimeFrames(strategyTimeFrame).ToList();
+            return AggregateStrategyTrendBiasScore(symbolName, frames);
+        }
+
+        private int GetStrategyHtfTrendBiasScore(string symbolName, TimeFrame strategyTimeFrame)
+        {
+            if (string.IsNullOrWhiteSpace(symbolName))
+                return 0;
+
+            var frames = GetBacktestStrategyHigherTimeFrames(strategyTimeFrame).ToList();
+            return AggregateStrategyTrendBiasScore(symbolName, frames);
+        }
+
+        private int AggregateStrategyTrendBiasScore(string symbolName, IEnumerable<TimeFrame> frames)
+        {
+            var scores = new List<int>();
+            foreach (var timeFrame in frames)
+            {
+                if (timeFrame == null)
+                    continue;
+                scores.Add(GetSymbolTrendBiasForTimeFrame(symbolName, timeFrame));
+            }
+
+            if (scores.Count == 0)
+                return 0;
+
+            // Majority of frames must agree with a meaningful bias (|score| >= 2).
+            // Scores follow the existing convention: +/-3/4 BOS/CHOCH, +/-2 swing bias.
+            var bullishCount = scores.Count(score => score >= 2);
+            var bearishCount = scores.Count(score => score <= -2);
+            var majorityThreshold = Math.Max(1, (int)Math.Ceiling(scores.Count / 2.0));
+
+            if (bullishCount >= majorityThreshold && bullishCount > bearishCount)
+                return 3;
+            if (bearishCount >= majorityThreshold && bearishCount > bullishCount)
+                return -3;
+
+            var sum = scores.Sum();
+            if (sum >= 2)
+                return 2;
+            if (sum <= -2)
+                return -2;
+            return 0;
+        }
+
+        private void LogPerfStep(string stepName, long elapsedMilliseconds, string detail = null, long minMilliseconds = 15)
+        {
+            if (elapsedMilliseconds < minMilliseconds)
+                return;
+
+            if (string.IsNullOrWhiteSpace(detail))
+                SafePrint("[Perf] {0}: {1}ms", stepName, elapsedMilliseconds);
+            else
+                SafePrint("[Perf] {0}: {1}ms ({2})", stepName, elapsedMilliseconds, detail);
         }
 
         private void RefreshChartSummaryPanel(RiskGateState riskState)
@@ -13571,7 +20834,6 @@ namespace cAlgo.Robots
 
             try
             {
-                _dashboardEventCache.Clear();
                 if (_chartSummaryPanel != null)
                 {
                     try { Chart.RemoveControl(_chartSummaryPanel); } catch { }
@@ -13579,6 +20841,9 @@ namespace cAlgo.Robots
                 }
                 var positionGroups = Positions
                     .GroupBy(p => string.IsNullOrWhiteSpace(p.SymbolName) ? "" : p.SymbolName.Trim().ToUpperInvariant())
+                    .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+                var pendingOrderGroups = PendingOrders
+                    .GroupBy(o => string.IsNullOrWhiteSpace(o.SymbolName) ? "" : o.SymbolName.Trim().ToUpperInvariant())
                     .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
                 var dashboardSymbols = GetChartToolbarSymbols()
                     .Where(symbol => !IsChartAllSymbolsSelection(symbol))
@@ -13590,9 +20855,9 @@ namespace cAlgo.Robots
                 _chartSummaryPanel = new StackPanel
                 {
                     Orientation = Orientation.Vertical,
-                    HorizontalAlignment = HorizontalAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Right,
                     VerticalAlignment = VerticalAlignment.Top,
-                    Margin = "0 22 0 0",
+                    Margin = "0 0 6 0",
                     Opacity = 0.84
                 };
 
@@ -13607,22 +20872,13 @@ namespace cAlgo.Robots
                     {
                         Label = GetMiniChartLabel(tf),
                         Tf = tf,
-                        Color = TimeFrameToMinutes(tf) >= 1440
-                            ? Color.Gold
-                            : TimeFrameToMinutes(tf) >= 240
-                                ? Color.MediumPurple
-                                : TimeFrameToMinutes(tf) >= 60
-                                    ? Color.CornflowerBlue
-                                    : TimeFrameToMinutes(tf) >= 15
-                                        ? Color.DeepSkyBlue
-                                        : TimeFrameToMinutes(tf) >= 5
-                                            ? Color.LimeGreen
-                                            : Color.WhiteSmoke
+                        Color = GetTimeFrameStructureColor(tf)
                     })
                     .ToList();
                 const int symbolWidth = 64;
-                const int tfWidth = 24;
+                const int tfWidth = 40;
                 const int pnlWidth = 58;
+                const int ordersWidth = 66;
 
                 var headerRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = "0 0 0 1" };
                 headerRow.AddChild(BuildChartSummaryLabel("", Color.White, symbolWidth));
@@ -13630,6 +20886,7 @@ namespace cAlgo.Robots
                     headerRow.AddChild(BuildChartSummaryLabel(frame.Label, frame.Color, tfWidth));
                 headerRow.AddChild(BuildChartSummaryLabel("W", Color.Aqua, pnlWidth));
                 headerRow.AddChild(BuildChartSummaryLabel("L", Color.Aqua, pnlWidth));
+                headerRow.AddChild(BuildChartSummaryLabel("O", Color.Aqua, ordersWidth));
                 _chartSummaryPanel.AddChild(headerRow);
 
                 foreach (var symbolName in dashboardSymbols)
@@ -13637,10 +20894,15 @@ namespace cAlgo.Robots
                     List<Position> symbolPositions;
                     if (!positionGroups.TryGetValue(symbolName, out symbolPositions))
                         symbolPositions = new List<Position>();
+                    List<PendingOrder> symbolOrders;
+                    if (!pendingOrderGroups.TryGetValue(symbolName, out symbolOrders))
+                        symbolOrders = new List<PendingOrder>();
                     var symbolCurrentWin = symbolPositions.Sum(p => Math.Max(0, double.IsNaN(p.NetProfit) ? 0 : p.NetProfit));
                     var symbolCurrentLose = symbolPositions.Sum(p => Math.Max(0, -(double.IsNaN(p.NetProfit) ? 0 : p.NetProfit)));
                     var symbolPossibleWin = symbolPositions.Sum(EstimateOpenPositionTpAmount);
                     var symbolPossibleLose = Math.Abs(symbolPositions.Sum(EstimateOpenPositionSlOutcomeAmount));
+                    var symbolOrdersPossibleWin = symbolOrders.Sum(EstimatePendingOrderTpAmount);
+                    var symbolOrdersPossibleLose = Math.Abs(symbolOrders.Sum(EstimatePendingOrderRiskAmount));
 
                     var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = "0 0 0 1" };
                     row.AddChild(BuildChartSummaryLabel(symbolName, Color.White, symbolWidth));
@@ -13650,13 +20912,13 @@ namespace cAlgo.Robots
                         string counterMarker;
                         Color counterColor;
                         var hasCounter = TryGetCounterTrendWarning(symbolName, frame.Tf, biasScore, out counterMarker, out counterColor);
-                        var cellText = FormatStructureBiasShort(biasScore);
-                        if (hasCounter && !string.IsNullOrWhiteSpace(counterMarker))
-                            cellText = string.Concat(cellText, counterMarker);
-                        row.AddChild(BuildChartSummaryLabel(cellText, hasCounter ? counterColor : GetStructureBiasColor(biasScore), tfWidth));
+                        var baseText = FormatStructureBiasShort(biasScore);
+                        var baseColor = GetStructureBiasColor(biasScore);
+                        row.AddChild(BuildChartSummaryBiasCell(baseText, baseColor, hasCounter ? counterMarker : "", counterColor, tfWidth));
                     }
                     row.AddChild(BuildChartSummaryLabel(string.Format(CultureInfo.InvariantCulture, "{0} / {1}", FormatDashboardNumber(symbolCurrentWin), FormatDashboardNumber(symbolPossibleWin)), Color.LimeGreen, pnlWidth));
                     row.AddChild(BuildChartSummaryLabel(string.Format(CultureInfo.InvariantCulture, "{0} / {1}", FormatDashboardNumber(symbolCurrentLose), FormatDashboardNumber(symbolPossibleLose)), Color.Red, pnlWidth));
+                    row.AddChild(BuildChartSummaryLabel(string.Format(CultureInfo.InvariantCulture, "{0} / {1}", FormatDashboardNumber(symbolOrdersPossibleWin), FormatDashboardNumber(symbolOrdersPossibleLose)), Color.DeepSkyBlue, ordersWidth));
                     _chartSummaryPanel.AddChild(row);
                 }
 
@@ -13666,19 +20928,22 @@ namespace cAlgo.Robots
                     allRow.AddChild(BuildChartSummaryLabel("-", Color.LightGray, tfWidth));
                 allRow.AddChild(BuildChartSummaryLabel(string.Format(CultureInfo.InvariantCulture, "{0} / {1}", FormatDashboardNumber(riskState.CurrentWinAmount), FormatDashboardNumber(riskState.PossibleWinAmount)), Color.LimeGreen, pnlWidth));
                 allRow.AddChild(BuildChartSummaryLabel(string.Format(CultureInfo.InvariantCulture, "{0} / {1}", FormatDashboardNumber(riskState.CurrentLoseAmount), FormatDashboardNumber(Math.Abs(riskState.PossibleSlOutcomeAmount))), Color.Red, pnlWidth));
+                allRow.AddChild(BuildChartSummaryLabel(string.Format(CultureInfo.InvariantCulture, "{0} / {1}", FormatDashboardNumber(PendingOrders != null ? PendingOrders.Sum(EstimatePendingOrderTpAmount) : 0), FormatDashboardNumber(PendingOrders != null ? Math.Abs(PendingOrders.Sum(EstimatePendingOrderRiskAmount)) : 0)), Color.DeepSkyBlue, ordersWidth));
                 _chartSummaryPanel.AddChild(allRow);
 
                 Chart.AddControl(_chartSummaryPanel);
             }
             catch (Exception ex)
             {
-                SafePrint("[Panel] Summary panel failed: {0}", ex.Message);
+                SafeLog("ERROR", "[Panel] Summary panel failed: {0}", ex.Message);
             }
         }
 
         private List<string> GetChartToolbarSymbols()
         {
             var symbols = new List<string>();
+
+            symbols.AddRange(GetConfiguredStrategySymbolInputs());
 
             if (Positions != null)
             {
@@ -13815,12 +21080,18 @@ namespace cAlgo.Robots
 
         private string GetEffectiveChartEntrySymbolSelection()
         {
+            var chartSymbol = GetChartSymbolFallback();
+            if (!string.IsNullOrWhiteSpace(chartSymbol) && !IsChartAllSymbolsSelection(chartSymbol))
+            {
+                _chartSelectedSymbol = EnsureChartSelectedSymbol(chartSymbol);
+                return _chartSelectedSymbol;
+            }
+
             var symbolName = ReadChartSymbolComboSelection();
             if (!string.IsNullOrWhiteSpace(symbolName) && !IsChartAllSymbolsSelection(symbolName))
                 return symbolName;
 
-            var fallback = GetChartSymbolFallback();
-            return string.IsNullOrWhiteSpace(fallback) ? symbolName : fallback;
+            return string.IsNullOrWhiteSpace(chartSymbol) ? symbolName : chartSymbol;
         }
 
         private string EnsureChartSelectedSymbol(string preferred = null)
@@ -13876,7 +21147,10 @@ namespace cAlgo.Robots
         {
             try
             {
-                var selected = ReadChartSymbolComboSelection();
+                var chartSymbolName = GetChartSymbolFallback();
+                var selected = !string.IsNullOrWhiteSpace(chartSymbolName)
+                    ? chartSymbolName
+                    : ReadChartSymbolComboSelection();
                 var symbols = GetChartToolbarSymbols();
                 var signature = string.Join("|", symbols);
                 var normalizedSelected = EnsureChartSelectedSymbol(selected);
@@ -13902,7 +21176,7 @@ namespace cAlgo.Robots
             }
             catch (Exception ex)
             {
-                SafePrint("[Panel] Symbol selector refresh failed: {0}", ex.Message);
+                SafeLog("ERROR", "[Panel] Symbol selector refresh failed: {0}", ex.Message);
             }
         }
 
@@ -13967,48 +21241,54 @@ namespace cAlgo.Robots
             }
             catch (Exception ex)
             {
-                SafePrint("[Panel] Direction combo unavailable: {0}", ex.Message);
+                SafeLog("ERROR", "[Panel] Direction combo unavailable: {0}", ex.Message);
                 return false;
             }
         }
 
-        private bool TryAddChartTradeTypeCombo(StackPanel panel)
+        private bool TryAddChartOrderCountCombo(StackPanel panel)
         {
             try
             {
-                _chartTradeTypeCombo = null;
+                _chartOrderCountCombo = null;
                 var assembly = typeof(StackPanel).Assembly;
                 var comboType = assembly.GetType("cAlgo.API.ComboBox") ?? assembly.GetType("cAlgo.API.Controls.ComboBox");
                 if (comboType == null) return false;
 
                 var combo = Activator.CreateInstance(comboType);
                 TrySetPropertyValue(combo, "Margin", 3);
-                TrySetPropertyValue(combo, "Width", 52);
-                TrySetPropertyValue(combo, "MinWidth", 52);
-                TrySetPropertyValue(combo, "MaxWidth", 64);
+                TrySetPropertyValue(combo, "Width", 84);
+                TrySetPropertyValue(combo, "MinWidth", 84);
+                TrySetPropertyValue(combo, "MaxWidth", 96);
                 TrySetPropertyValue(combo, "FontSize", 8);
 
                 var items = TryGetPropertyValue(combo, "Items");
-                foreach (var item in new[] { "Scalp", "Swing", "Daily" })
+                foreach (var item in new[] { "Auto", "1", "2", "3", "4", "5" })
                 {
                     if (!(items != null && TryAddToCollection(items, item)))
                         TryInvokeVoidMethod(combo, "AddItem", item);
                 }
 
-                var normalizedType = NormalizeChartTradeProfileSelection();
-                TrySetPropertyValue(combo, "SelectedItem", normalizedType);
-                TrySetPropertyValue(combo, "SelectedValue", normalizedType);
-                TrySetPropertyValue(combo, "SelectedIndex", normalizedType == "Swing" ? 1 : normalizedType == "Daily" ? 2 : 0);
+                var normalizedCount = NormalizeChartOrderCountSelection();
+                TrySetPropertyValue(combo, "SelectedItem", normalizedCount);
+                TrySetPropertyValue(combo, "SelectedValue", normalizedCount);
+                var selectedIndex = normalizedCount == "Auto" ? 0
+                    : (normalizedCount == "1" ? 1 : normalizedCount == "2" ? 2 : normalizedCount == "3" ? 3 : normalizedCount == "4" ? 4 : 5);
+                TrySetPropertyValue(combo, "SelectedIndex", selectedIndex);
+                TrySetPropertyValue(combo, "IsReadOnly", true);
+                // Some cTrader ComboBox builds render the caption from the Text property
+                // rather than SelectedItem; set both so the selection is always visible.
+                TrySetPropertyValue(combo, "Text", normalizedCount);
 
                 var changedEvent = comboType.GetEvent("SelectionChanged") ?? comboType.GetEvent("SelectedItemChanged");
                 if (changedEvent != null)
                 {
                     Action<object> handler = _ =>
                     {
-                        var previousType = _chartSelectedTradeProfile;
-                        var selected = ReadChartTradeTypeComboSelection();
-                        _chartSelectedTradeProfile = NormalizeChartTradeProfileSelection(selected);
-                        if (!_isRebuildingChartPanel && !string.Equals(previousType, _chartSelectedTradeProfile, StringComparison.OrdinalIgnoreCase))
+                        var previousCount = _chartSelectedOrderCount;
+                        var selected = ReadChartOrderCountSelection();
+                        _chartSelectedOrderCount = NormalizeChartOrderCountSelection(selected);
+                        if (!_isRebuildingChartPanel && !string.Equals(previousCount, _chartSelectedOrderCount, StringComparison.OrdinalIgnoreCase))
                         {
                             PersistCustomUiSettingsSnapshot();
                             RebuildChartButtonPanel();
@@ -14028,12 +21308,12 @@ namespace cAlgo.Robots
                 if (!TryInvokeVoidMethod(panel, "AddChild", combo))
                     return false;
 
-                _chartTradeTypeCombo = combo;
+                _chartOrderCountCombo = combo;
                 return true;
             }
             catch (Exception ex)
             {
-                SafePrint("[Panel] Trade type combo unavailable: {0}", ex.Message);
+                SafeLog("ERROR", "[Panel] Order count combo unavailable: {0}", ex.Message);
                 return false;
             }
         }
@@ -14096,7 +21376,7 @@ namespace cAlgo.Robots
             }
             catch (Exception ex)
             {
-                SafePrint("[Panel] Symbol combo unavailable: {0}", ex.Message);
+                SafeLog("ERROR", "[Panel] Symbol combo unavailable: {0}", ex.Message);
                 return false;
             }
         }
@@ -14169,13 +21449,13 @@ namespace cAlgo.Robots
                 }
             }
 
-            var rawProfile = TryReadChartComboRawSelection(_chartTradeTypeCombo);
-            if (!string.IsNullOrWhiteSpace(rawProfile))
+            var rawOrderCount = TryReadChartComboRawSelection(_chartOrderCountCombo);
+            if (!string.IsNullOrWhiteSpace(rawOrderCount))
             {
-                var normalizedProfile = NormalizeChartTradeProfileSelection(rawProfile);
-                if (!string.Equals(normalizedProfile, _chartSelectedTradeProfile, StringComparison.OrdinalIgnoreCase))
+                var normalizedOrderCount = NormalizeChartOrderCountSelection(rawOrderCount);
+                if (!string.Equals(normalizedOrderCount, _chartSelectedOrderCount, StringComparison.OrdinalIgnoreCase))
                 {
-                    _chartSelectedTradeProfile = normalizedProfile;
+                    _chartSelectedOrderCount = normalizedOrderCount;
                     needsRebuild = true;
                 }
             }
@@ -14211,28 +21491,75 @@ namespace cAlgo.Robots
             return _chartSelectedDirection;
         }
 
+        // Profile is now always "Scalp" (auto scalp): the Scalp/Swing/Daily combo was
+        // replaced by the orders-per-click combo, so this no longer reads any control.
         private string ReadChartTradeTypeComboSelection()
+        {
+            _chartSelectedTradeProfile = NormalizeChartTradeProfileSelection();
+            return _chartSelectedTradeProfile;
+        }
+
+        private string NormalizeChartOrderCountSelection(string raw = null)
+        {
+            var value = string.IsNullOrWhiteSpace(raw) ? _chartSelectedOrderCount : raw.Trim();
+            if (value.Equals("1", StringComparison.OrdinalIgnoreCase)) return "1";
+            if (value.Equals("2", StringComparison.OrdinalIgnoreCase)) return "2";
+            if (value.Equals("3", StringComparison.OrdinalIgnoreCase)) return "3";
+            if (value.Equals("4", StringComparison.OrdinalIgnoreCase)) return "4";
+            if (value.Equals("5", StringComparison.OrdinalIgnoreCase)) return "5";
+            return "Auto";
+        }
+
+        private string ReadChartOrderCountSelection()
         {
             try
             {
-                if (_chartTradeTypeCombo == null) return NormalizeChartTradeProfileSelection();
+                if (_chartOrderCountCombo == null) return NormalizeChartOrderCountSelection();
 
                 var raw =
-                    TryGetPropertyValue(_chartTradeTypeCombo, "SelectedItem") ??
-                    TryGetPropertyValue(_chartTradeTypeCombo, "SelectedValue") ??
-                    TryGetPropertyValue(_chartTradeTypeCombo, "Text");
+                    TryGetPropertyValue(_chartOrderCountCombo, "SelectedItem") ??
+                    TryGetPropertyValue(_chartOrderCountCombo, "SelectedValue") ??
+                    TryGetPropertyValue(_chartOrderCountCombo, "Text");
                 var text = raw != null ? Convert.ToString(raw, CultureInfo.InvariantCulture) : "";
                 if (!string.IsNullOrWhiteSpace(text))
                 {
-                    _chartSelectedTradeProfile = NormalizeChartTradeProfileSelection(text);
-                    return _chartSelectedTradeProfile;
+                    _chartSelectedOrderCount = NormalizeChartOrderCountSelection(text);
+                    return _chartSelectedOrderCount;
                 }
             }
             catch
             {
             }
-            _chartSelectedTradeProfile = NormalizeChartTradeProfileSelection();
-            return _chartSelectedTradeProfile;
+            _chartSelectedOrderCount = NormalizeChartOrderCountSelection();
+            return _chartSelectedOrderCount;
+        }
+
+        // Resolve the orders-per-click selection into a leg count: 0 = Auto (dynamic),
+        // 1..5 = fixed number of orders per click.
+        private int ResolveChartOrderCount()
+        {
+            var value = string.IsNullOrWhiteSpace(_chartSelectedOrderCount) ? "Auto" : _chartSelectedOrderCount.Trim();
+            if (string.Equals(value, "Auto", StringComparison.OrdinalIgnoreCase))
+                return 0;
+            int count;
+            return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out count)
+                ? Math.Max(1, Math.Min(5, count))
+                : 0;
+        }
+
+        // Resolve the strategy n.Trades parameter into a leg count: 0 = Auto
+        // (keeps the current single-order behavior), 1..5 = fixed number of orders.
+        private int ResolveStrategyOrderCount()
+        {
+            switch (StrategyOrderCount)
+            {
+                case StrategyOrderCountMode._1: return 1;
+                case StrategyOrderCountMode._2: return 2;
+                case StrategyOrderCountMode._3: return 3;
+                case StrategyOrderCountMode._4: return 4;
+                case StrategyOrderCountMode._5: return 5;
+                default: return 0;
+            }
         }
 
         private double ResolveChartTradeVolume(Symbol symbol, string symbolName)
@@ -14468,6 +21795,8 @@ namespace cAlgo.Robots
 
                 if (rightLow > leftHigh)
                 {
+                    if (!IsQualifiedDisplacementFvg(sourceBars, i, true))
+                        continue;
                     if (IsZoneTouched(sourceBars, i + 1, leftHigh, rightLow))
                         continue;
                     AddDistinctChartLevel(candidates, leftHigh, tolerance);
@@ -14476,6 +21805,8 @@ namespace cAlgo.Robots
                 }
                 else if (rightHigh < leftLow)
                 {
+                    if (!IsQualifiedDisplacementFvg(sourceBars, i, false))
+                        continue;
                     if (IsZoneTouched(sourceBars, i + 1, rightHigh, leftLow))
                         continue;
                     AddDistinctChartLevel(candidates, rightHigh, tolerance);
@@ -14483,6 +21814,48 @@ namespace cAlgo.Robots
                     maxZones--;
                 }
             }
+        }
+
+        private bool IsQualifiedDisplacementFvg(Bars sourceBars, int rightIndex, bool bullish, double displacementRatio = 1.15, double bodyRatio = 0.55, double gapPercent = 0.18)
+        {
+            if (sourceBars == null || rightIndex < 2 || rightIndex >= sourceBars.Count)
+                return false;
+
+            var leftIndex = rightIndex - 2;
+            var middleIndex = rightIndex - 1;
+
+            var leftRange = Math.Max(sourceBars.HighPrices[leftIndex] - sourceBars.LowPrices[leftIndex], 0.0000001);
+            var middleRange = Math.Max(sourceBars.HighPrices[middleIndex] - sourceBars.LowPrices[middleIndex], 0.0000001);
+            var rightRange = Math.Max(sourceBars.HighPrices[rightIndex] - sourceBars.LowPrices[rightIndex], 0.0000001);
+
+            var leftBody = Math.Abs(sourceBars.ClosePrices[leftIndex] - sourceBars.OpenPrices[leftIndex]);
+            var middleBody = Math.Abs(sourceBars.ClosePrices[middleIndex] - sourceBars.OpenPrices[middleIndex]);
+            var rightBody = Math.Abs(sourceBars.ClosePrices[rightIndex] - sourceBars.OpenPrices[rightIndex]);
+
+            var middleBodyRatio = middleBody / middleRange;
+            // A ratio of 0 disables that requirement (e.g. FVG Displacement = 0 keeps only the
+            // gap + direction; FVG Body Ratio = 0 skips the body-shape check).
+            var middleDominant =
+                (displacementRatio <= 0 ||
+                 (middleRange >= leftRange * displacementRatio &&
+                  middleRange >= rightRange * displacementRatio &&
+                  middleBody >= leftBody * displacementRatio &&
+                  middleBody >= rightBody * displacementRatio)) &&
+                (bodyRatio <= 0 || middleBodyRatio >= bodyRatio);
+
+            if (!middleDominant)
+                return false;
+
+            if (bullish)
+            {
+                var gapHeight = sourceBars.LowPrices[rightIndex] - sourceBars.HighPrices[leftIndex];
+                var middleBullish = sourceBars.ClosePrices[middleIndex] > sourceBars.OpenPrices[middleIndex];
+                return middleBullish && (gapPercent <= 0 || gapHeight >= middleRange * gapPercent);
+            }
+
+            var bearishGapHeight = sourceBars.LowPrices[leftIndex] - sourceBars.HighPrices[rightIndex];
+            var middleBearish = sourceBars.ClosePrices[middleIndex] < sourceBars.OpenPrices[middleIndex];
+            return middleBearish && (gapPercent <= 0 || bearishGapHeight >= middleRange * gapPercent);
         }
 
         private void AddOrderBlockLevelCandidates(List<double> candidates, Bars sourceBars, double tolerance)
@@ -14505,8 +21878,8 @@ namespace cAlgo.Robots
                     {
                         if (sourceBars.ClosePrices[j] < sourceBars.OpenPrices[j] && !IsOrderBlockTouched(sourceBars, j + 1, j))
                         {
-                            var obHigh = OrderBlockUseFullWick ? sourceBars.HighPrices[j] : Math.Max(sourceBars.OpenPrices[j], sourceBars.ClosePrices[j]);
-                            var obLow = OrderBlockUseFullWick ? sourceBars.LowPrices[j] : Math.Min(sourceBars.OpenPrices[j], sourceBars.ClosePrices[j]);
+                            var obHigh = sourceBars.HighPrices[j];
+                            var obLow = sourceBars.LowPrices[j];
                             AddDistinctChartLevel(candidates, obHigh, tolerance);
                             AddDistinctChartLevel(candidates, obLow, tolerance);
                             maxBlocks--;
@@ -14520,10 +21893,94 @@ namespace cAlgo.Robots
                     {
                         if (sourceBars.ClosePrices[j] > sourceBars.OpenPrices[j] && !IsOrderBlockTouched(sourceBars, j + 1, j))
                         {
-                            var obHigh = OrderBlockUseFullWick ? sourceBars.HighPrices[j] : Math.Max(sourceBars.OpenPrices[j], sourceBars.ClosePrices[j]);
-                            var obLow = OrderBlockUseFullWick ? sourceBars.LowPrices[j] : Math.Min(sourceBars.OpenPrices[j], sourceBars.ClosePrices[j]);
+                            var obHigh = sourceBars.HighPrices[j];
+                            var obLow = sourceBars.LowPrices[j];
                             AddDistinctChartLevel(candidates, obHigh, tolerance);
                             AddDistinctChartLevel(candidates, obLow, tolerance);
+                            maxBlocks--;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        private void AddFvgZoneCandidates(List<ChartLevelCandidate> candidates, Bars sourceBars, double tolerance, int weight = 1)
+        {
+            if (candidates == null || sourceBars == null || sourceBars.Count < 3)
+                return;
+
+            var maxZones = 8;
+            var startIndex = Math.Max(2, sourceBars.Count - 80);
+            for (var i = sourceBars.Count - 1; i >= startIndex && maxZones > 0; i--)
+            {
+                var leftHigh = sourceBars.HighPrices[i - 2];
+                var leftLow = sourceBars.LowPrices[i - 2];
+                var rightHigh = sourceBars.HighPrices[i];
+                var rightLow = sourceBars.LowPrices[i];
+
+                if (rightLow > leftHigh)
+                {
+                    if (!IsQualifiedDisplacementFvg(sourceBars, i, true))
+                        continue;
+                    if (IsZoneTouched(sourceBars, i + 1, leftHigh, rightLow))
+                        continue;
+                    candidates.Add(new ChartLevelCandidate { Price = leftHigh, Weight = weight, ZoneLow = leftHigh, ZoneHigh = rightLow });
+                    candidates.Add(new ChartLevelCandidate { Price = rightLow, Weight = weight, ZoneLow = leftHigh, ZoneHigh = rightLow });
+                    maxZones--;
+                }
+                else if (rightHigh < leftLow)
+                {
+                    if (!IsQualifiedDisplacementFvg(sourceBars, i, false))
+                        continue;
+                    if (IsZoneTouched(sourceBars, i + 1, rightHigh, leftLow))
+                        continue;
+                    candidates.Add(new ChartLevelCandidate { Price = rightHigh, Weight = weight, ZoneLow = rightHigh, ZoneHigh = leftLow });
+                    candidates.Add(new ChartLevelCandidate { Price = leftLow, Weight = weight, ZoneLow = rightHigh, ZoneHigh = leftLow });
+                    maxZones--;
+                }
+            }
+        }
+
+        private void AddOrderBlockZoneCandidates(List<ChartLevelCandidate> candidates, Bars sourceBars, double tolerance, int weight = 1)
+        {
+            if (candidates == null || sourceBars == null || sourceBars.Count < 4)
+                return;
+
+            var maxBlocks = 6;
+            var startIndex = Math.Max(3, sourceBars.Count - 80);
+            for (var i = sourceBars.Count - 1; i >= startIndex && maxBlocks > 0; i--)
+            {
+                var leftHigh = sourceBars.HighPrices[i - 2];
+                var leftLow = sourceBars.LowPrices[i - 2];
+                var rightHigh = sourceBars.HighPrices[i];
+                var rightLow = sourceBars.LowPrices[i];
+
+                if (rightLow > leftHigh)
+                {
+                    for (var j = i - 1; j >= Math.Max(1, i - 5); j--)
+                    {
+                        if (sourceBars.ClosePrices[j] < sourceBars.OpenPrices[j] && !IsOrderBlockTouched(sourceBars, j + 1, j))
+                        {
+                            var obHigh = sourceBars.HighPrices[j];
+                            var obLow = sourceBars.LowPrices[j];
+                            candidates.Add(new ChartLevelCandidate { Price = obHigh, Weight = weight, ZoneLow = obLow, ZoneHigh = obHigh });
+                            candidates.Add(new ChartLevelCandidate { Price = obLow, Weight = weight, ZoneLow = obLow, ZoneHigh = obHigh });
+                            maxBlocks--;
+                            break;
+                        }
+                    }
+                }
+                else if (rightHigh < leftLow)
+                {
+                    for (var j = i - 1; j >= Math.Max(1, i - 5); j--)
+                    {
+                        if (sourceBars.ClosePrices[j] > sourceBars.OpenPrices[j] && !IsOrderBlockTouched(sourceBars, j + 1, j))
+                        {
+                            var obHigh = sourceBars.HighPrices[j];
+                            var obLow = sourceBars.LowPrices[j];
+                            candidates.Add(new ChartLevelCandidate { Price = obHigh, Weight = weight, ZoneLow = obLow, ZoneHigh = obHigh });
+                            candidates.Add(new ChartLevelCandidate { Price = obLow, Weight = weight, ZoneLow = obLow, ZoneHigh = obHigh });
                             maxBlocks--;
                             break;
                         }
@@ -14688,8 +22145,8 @@ namespace cAlgo.Robots
                     {
                         if (sourceBars.ClosePrices[j] < sourceBars.OpenPrices[j] && !IsOrderBlockTouched(sourceBars, j + 1, j))
                         {
-                            var high = OrderBlockUseFullWick ? sourceBars.HighPrices[j] : Math.Max(sourceBars.OpenPrices[j], sourceBars.ClosePrices[j]);
-                            var low = OrderBlockUseFullWick ? sourceBars.LowPrices[j] : Math.Min(sourceBars.OpenPrices[j], sourceBars.ClosePrices[j]);
+                            var high = sourceBars.HighPrices[j];
+                            var low = sourceBars.LowPrices[j];
                             candidates.Add(new ChartEntryCandidate
                             {
                                 Label = "OB",
@@ -14709,8 +22166,8 @@ namespace cAlgo.Robots
                     {
                         if (sourceBars.ClosePrices[j] > sourceBars.OpenPrices[j] && !IsOrderBlockTouched(sourceBars, j + 1, j))
                         {
-                            var high = OrderBlockUseFullWick ? sourceBars.HighPrices[j] : Math.Max(sourceBars.OpenPrices[j], sourceBars.ClosePrices[j]);
-                            var low = OrderBlockUseFullWick ? sourceBars.LowPrices[j] : Math.Min(sourceBars.OpenPrices[j], sourceBars.ClosePrices[j]);
+                            var high = sourceBars.HighPrices[j];
+                            var low = sourceBars.LowPrices[j];
                             candidates.Add(new ChartEntryCandidate
                             {
                                 Label = "BB",
@@ -14757,25 +22214,24 @@ namespace cAlgo.Robots
             var tolerance = Math.Max(symbol.PipSize * 2.0, 0.0000001);
             try
             {
-                var sourceTimeFrame = GetChartTradeStructureTimeFrame(profileRaw);
-                var sourceBars = MarketData.GetBars(sourceTimeFrame, symbolName);
-                if (sourceBars == null || sourceBars.Count < 5)
-                    return candidates;
+                foreach (var sourceTimeFrame in GetChartProtectionSourceTimeFrames(profileRaw))
+                {
+                    var sourceBars = MarketData.GetBars(sourceTimeFrame, symbolName);
+                    if (sourceBars == null || sourceBars.Count < 5)
+                        continue;
 
-                AddPreviousPeriodLevelCandidates(candidates, symbolName, sourceTimeFrame, tolerance);
-                AddPreviousPeriodLevelCandidates(candidates, symbolName, TimeFrame.Hour4, tolerance);
-                AddPreviousPeriodLevelCandidates(candidates, symbolName, TimeFrame.Daily, tolerance);
-                try { AddPreviousPeriodLevelCandidates(candidates, symbolName, TimeFrame.Weekly, tolerance); } catch { }
+                    AddPreviousPeriodLevelCandidates(candidates, symbolName, sourceTimeFrame, tolerance);
+
+                    foreach (var swing in CollectConfirmedSwings(sourceBars, 120).TakeLast(12))
+                        AddDistinctChartLevel(candidates, swing.Price, tolerance);
+
+                    AddEqualHighLowCandidates(candidates, sourceBars, tolerance);
+                    AddClusteredSwingLiquidityCandidates(candidates, sourceBars, tolerance);
+                }
 
                 AddSessionLiquidityLevelCandidates(candidates, "London", tolerance);
                 AddSessionLiquidityLevelCandidates(candidates, "NewYork", tolerance);
                 AddSessionLiquidityLevelCandidates(candidates, "Asia", tolerance);
-
-                foreach (var swing in CollectConfirmedSwings(sourceBars, 120).TakeLast(12))
-                    AddDistinctChartLevel(candidates, swing.Price, tolerance);
-
-                AddEqualHighLowCandidates(candidates, sourceBars, tolerance);
-                AddClusteredSwingLiquidityCandidates(candidates, sourceBars, tolerance);
             }
             catch (Exception ex)
             {
@@ -14818,27 +22274,24 @@ namespace cAlgo.Robots
             var tolerance = Math.Max(symbol.PipSize * 2.0, 0.0000001);
             try
             {
-                var sourceTimeFrame = Chart != null ? Chart.TimeFrame : GetChartTradeStructureTimeFrame(profileRaw);
-                var sourceBars = MarketData.GetBars(sourceTimeFrame, symbolName);
-                if (sourceBars == null || sourceBars.Count < 5)
+                foreach (var sourceTimeFrame in GetChartProtectionSourceTimeFrames(profileRaw))
                 {
-                    sourceTimeFrame = GetChartTradeStructureTimeFrame(profileRaw);
-                    sourceBars = MarketData.GetBars(sourceTimeFrame, symbolName);
+                    var sourceBars = MarketData.GetBars(sourceTimeFrame, symbolName);
                     if (sourceBars == null || sourceBars.Count < 5)
-                        return candidates;
-                }
+                        continue;
 
-                foreach (var swing in CollectConfirmedSwings(sourceBars, 160).TakeLast(16))
-                {
-                    if (tradeType == TradeType.Buy)
+                    foreach (var swing in CollectConfirmedSwings(sourceBars, 160).TakeLast(16))
                     {
-                        if (!swing.IsHigh)
-                            AddDistinctChartLevel(candidates, swing.Price, tolerance);
-                    }
-                    else
-                    {
-                        if (swing.IsHigh)
-                            AddDistinctChartLevel(candidates, swing.Price, tolerance);
+                        if (tradeType == TradeType.Buy)
+                        {
+                            if (!swing.IsHigh)
+                                AddDistinctChartLevel(candidates, swing.Price, tolerance);
+                        }
+                        else
+                        {
+                            if (swing.IsHigh)
+                                AddDistinctChartLevel(candidates, swing.Price, tolerance);
+                        }
                     }
                 }
             }
@@ -14880,7 +22333,7 @@ namespace cAlgo.Robots
             var tolerance = Math.Max(symbol.PipSize * 2.0, 0.0000001);
             try
             {
-                var sourceTimeFrame = GetChartTradeStructureTimeFrame(profileRaw);
+                var sourceTimeFrame = GetChartEntrySourceTimeFrame(profileRaw);
                 var sourceBars = MarketData.GetBars(sourceTimeFrame, symbolName);
                 if (sourceBars == null || sourceBars.Count < 5)
                     return candidates;
@@ -14922,7 +22375,6 @@ namespace cAlgo.Robots
             var lowerRange = liquidities.Where(v => v < currentPrice).DefaultIfEmpty(0).Max();
             var upperRange = liquidities.Where(v => v > currentPrice).DefaultIfEmpty(0).Min();
             var rrFloor = 1.5;
-            var rrCap = MaxRewardRiskRatio > 0 ? MaxRewardRiskRatio : 20.0;
             var bestScore = double.MinValue;
 
             foreach (var candidate in entries)
@@ -14955,7 +22407,8 @@ namespace cAlgo.Robots
                 if (stop <= 0 || targetCandidates.Count == 0)
                     continue;
 
-                var stopBufferPips = Math.Max(GetChartProtectionBiasPips(), Math.Max(1.0, MinStopPips) * 0.5);
+                var minStopPips = ResolveMinStopPips(symbol);
+                var stopBufferPips = Math.Max(GetChartProtectionBiasPips(symbol), Math.Max(1.0, minStopPips) * 0.5);
                 var adjustedStop = tradeType == TradeType.Buy
                     ? NormalizePriceToSymbol(symbol, stop - (stopBufferPips * symbol.PipSize))
                     : NormalizePriceToSymbol(symbol, stop + (stopBufferPips * symbol.PipSize));
@@ -14965,8 +22418,8 @@ namespace cAlgo.Robots
                 foreach (var rawTarget in targetCandidates)
                 {
                     var adjustedTarget = tradeType == TradeType.Buy
-                        ? NormalizePriceToSymbol(symbol, rawTarget - (GetChartProtectionBiasPips() * symbol.PipSize))
-                        : NormalizePriceToSymbol(symbol, rawTarget + (GetChartProtectionBiasPips() * symbol.PipSize));
+                        ? NormalizePriceToSymbol(symbol, rawTarget - (GetChartProtectionBiasPips(symbol) * symbol.PipSize))
+                        : NormalizePriceToSymbol(symbol, rawTarget + (GetChartProtectionBiasPips(symbol) * symbol.PipSize));
                     if (!IsChartProtectionDistanceUsable(symbol, entry, adjustedTarget))
                         continue;
 
@@ -14976,7 +22429,7 @@ namespace cAlgo.Robots
                         continue;
 
                     var rr = reward / risk;
-                    if (rr < rrFloor || rr > rrCap)
+                    if (rr < rrFloor)
                         continue;
 
                     string reason;
@@ -15031,7 +22484,7 @@ namespace cAlgo.Robots
                 return plan;
 
             var normalizedEntry = NormalizePriceToSymbol(symbol, entry.Value);
-            var protection = BuildSharedChartProtectionPrices(symbol, symbolName, tradeType, normalizedEntry, Math.Max(1.0, MinStopPips), profileRaw);
+            var protection = BuildSharedChartProtectionPrices(symbol, symbolName, tradeType, normalizedEntry, Math.Max(1.0, ResolveMinStopPips(symbol)), profileRaw);
             if (protection == null)
                 return plan;
 
@@ -15118,6 +22571,14 @@ namespace cAlgo.Robots
                     var obLevels = new List<double>();
                     AddOrderBlockLevelCandidates(obLevels, sourceBars, tolerance);
                     AddChartLevelCandidatesFromRaw(candidates, obLevels, tolerance, 1);
+
+                    foreach (var zone in DetectScoredPriceZones(sourceBars, symbol, 80))
+                    {
+                        var zoneWeight = Math.Max(1, Math.Min(4, zone.Score / 4));
+                        AddChartLevelCandidate(candidates, (zone.Low + zone.High) * 0.5, tolerance, zoneWeight);
+                        AddChartLevelCandidate(candidates, zone.Low, tolerance, 1);
+                        AddChartLevelCandidate(candidates, zone.High, tolerance, 1);
+                    }
                 }
             }
             catch (Exception ex)
@@ -15163,7 +22624,7 @@ namespace cAlgo.Robots
         {
             if (symbol == null || currentPrice <= 0 || symbol.PipSize <= 0) return null;
 
-            var distancePips = Math.Max(1.0, MinStopPips);
+            var distancePips = Math.Max(1.0, ResolveMinStopPips(symbol));
             var distance = distancePips * symbol.PipSize;
             double entryPrice;
 
@@ -15202,7 +22663,7 @@ namespace cAlgo.Robots
         {
             if (symbol == null || executionPrice <= 0 || symbol.PipSize <= 0) return null;
 
-            var distancePips = Math.Max(1.0, overrideDistancePips ?? MinStopPips);
+            var distancePips = Math.Max(1.0, overrideDistancePips ?? ResolveMinStopPips(symbol));
             var distance = distancePips * symbol.PipSize;
             var sl = tradeType == TradeType.Buy
                 ? executionPrice - distance
@@ -15221,25 +22682,13 @@ namespace cAlgo.Robots
             if (symbol == null || referencePrice <= 0 || levelPrice <= 0 || symbol.PipSize <= 0) return false;
             var distancePips = Math.Abs(referencePrice - levelPrice) / symbol.PipSize;
             if (double.IsNaN(distancePips) || double.IsInfinity(distancePips)) return false;
-            if (distancePips < Math.Max(1.0, MinStopPips)) return false;
+            if (distancePips < Math.Max(1.0, ResolveMinStopPips(symbol))) return false;
             return true;
         }
 
-        private double GetEffectiveMaxProtectionPips(Symbol symbol, double referencePrice)
+        private double GetChartProtectionBiasPips(Symbol symbol = null)
         {
-            var configured = Math.Max(0.0, MaxProtectionPips);
-            if (symbol == null || symbol.PipSize <= 0 || referencePrice <= 0)
-                return configured;
-
-            // FX-friendly configured pip caps are far too small for high-priced instruments like BTC.
-            // Allow at least 0.5% of price expressed in pips so structural levels remain usable.
-            var priceRelativeFloorPips = (referencePrice * 0.005) / symbol.PipSize;
-            return Math.Max(configured, priceRelativeFloorPips);
-        }
-
-        private double GetChartProtectionBiasPips()
-        {
-            return Math.Max(1.0, Math.Min(10.0, Math.Max(1.0, MinStopPips) * 0.25));
+            return Math.Max(1.0, Math.Min(10.0, Math.Max(1.0, ResolveMinStopPips(symbol ?? Symbol)) * 0.25));
         }
 
         private Tuple<double, double> ApplyChartProtectionBiasAndRisk(
@@ -15343,12 +22792,14 @@ namespace cAlgo.Robots
             var started = Stopwatch.StartNew();
             try
             {
+                // Bypasses the log filter so button interactivity is always verifiable.
+                PrintBypassLogFilter("[Click] {0} MARKET pressed", tradeType == TradeType.Buy ? "B" : "S");
                 var symbolName = GetEffectiveChartEntrySymbolSelection();
                 var selectedTradeProfile = GetChartTradeProfileRaw(ReadChartTradeTypeComboSelection());
                 var structureTfLabel = GetChartTradeStructureTfLabel(selectedTradeProfile);
                 if (string.IsNullOrWhiteSpace(symbolName))
                 {
-                    SafeLog("ERROR", "[ChartTrade] {0} MARKET rejected: no_symbol_selected", tradeType == TradeType.Buy ? "BUY" : "SELL");
+                    SafeLog("ERROR", "[ChartTrade] {0} MARKET rejected: no_symbol_selected (chart_symbol={1}; profile={2}; tf={3})", tradeType == TradeType.Buy ? "BUY" : "SELL", Chart != null ? Chart.SymbolName : "", selectedTradeProfile, structureTfLabel);
                     RefreshDebugPanelLite();
                     return;
                 }
@@ -15356,7 +22807,7 @@ namespace cAlgo.Robots
                 var symbol = ResolveLoadedSymbol(symbolName);
                 if (symbol == null)
                 {
-                    SafeLog("ERROR", "[ChartTrade] {0} MARKET {1} rejected: symbol_not_loaded", tradeType == TradeType.Buy ? "BUY" : "SELL", symbolName);
+                    SafeLog("ERROR", "[ChartTrade] {0} MARKET {1} rejected: symbol_not_loaded (profile={2}; tf={3}); fix=ensure_symbol_has_live_quotes", tradeType == TradeType.Buy ? "BUY" : "SELL", symbolName, selectedTradeProfile, structureTfLabel);
                     RefreshDebugPanelLite();
                     return;
                 }
@@ -15375,21 +22826,22 @@ namespace cAlgo.Robots
 
                 if (executionPrice <= 0)
                 {
-                    SafeLog("ERROR", "[ChartTrade] {0} MARKET {1} rejected: invalid_execution_price", action, symbolName);
+                    SafeLog("ERROR", "[ChartTrade] {0} MARKET {1} rejected: invalid_execution_price (bid={2:F5}; ask={3:F5})", action, symbolName, symbol.Bid, symbol.Ask);
                     RefreshDebugPanelLite();
                     return;
                 }
 
-                var marketProtection = BuildSharedChartProtectionPrices(symbol, symbolName, tradeType, executionPrice, Math.Max(MinStopPips, 100.0), selectedTradeProfile);
+            var marketProtection = BuildSharedChartProtectionPrices(symbol, symbolName, tradeType, executionPrice, Math.Max(ResolveMinStopPips(symbol), 100.0), selectedTradeProfile);
                 if (marketProtection != null)
                 {
                     sl = marketProtection.Item1;
                     tp = marketProtection.Item2;
                 }
+                LogPerfStep("MarketOrder.ProtectionReady", started.ElapsedMilliseconds, string.Format(CultureInfo.InvariantCulture, "{0} {1}", symbolName, action), 25);
 
                 if (!sl.HasValue || !tp.HasValue)
                 {
-                    SafeLog("ERROR", "[ChartTrade] {0} MARKET {1} rejected: no_sl_tp_levels", action, symbolName);
+                    SafeLog("ERROR", "[ChartTrade] {0} MARKET {1} rejected: no_sl_tp_levels (market={2:F5}; profile={3}; tf={4}); fix=check_structure_levels_for_this_symbol", action, symbolName, executionPrice, selectedTradeProfile, structureTfLabel);
                     RefreshDebugPanelLite();
                     return;
                 }
@@ -15403,11 +22855,31 @@ namespace cAlgo.Robots
                 }
 
                 var finalRiskMoney = ResolveChartFinalRiskMoney(selectedTradeProfile);
-                var volumeUnits = ResolveChartTradeVolumeForRisk(symbol, tradeType, executionPrice, sl.Value, finalRiskMoney, symbolName);
+                var plan = BuildChartLimitPlanV2(symbol, symbolName, tradeType, selectedTradeProfile);
+                if (!plan.IsValid)
+                    plan = BuildChartLimitPlanFromLegacy(symbol, symbolName, tradeType, selectedTradeProfile);
+
+                var pendingEntries = new List<double>();
+                if (plan.IsValid)
+                {
+                    var orderCountOverride = ResolveChartOrderCount();
+                    var ladderEntries = BuildChartSplitLimitEntries(symbol, symbolName, tradeType, executionPrice, NormalizePriceToSymbol(symbol, plan.Entry), NormalizePriceToSymbol(symbol, sl.Value), orderCountOverride);
+                    pendingEntries = ladderEntries
+                        .Where(v => Math.Abs(v - executionPrice) >= Math.Max(symbol.PipSize * 2.0, 0.0000001))
+                        .ToList();
+                    // Fixed count: the market order is the first leg, so at most N-1 limits.
+                    if (orderCountOverride > 0)
+                        pendingEntries = pendingEntries.Take(Math.Max(0, orderCountOverride - 1)).ToList();
+                }
+
+                var weights = BuildChartSplitRiskWeights(1 + pendingEntries.Count, true);
+                var marketRiskMoney = Math.Max(0, finalRiskMoney * weights[0]);
+                var volumeUnits = ResolveChartTradeVolumeForRisk(symbol, tradeType, executionPrice, sl.Value, marketRiskMoney, symbolName);
+                LogPerfStep("MarketOrder.VolumeReady", started.ElapsedMilliseconds, string.Format(CultureInfo.InvariantCulture, "{0} {1} risk={2:F2}", symbolName, action, marketRiskMoney), 25);
                 if (volumeUnits < symbol.VolumeInUnitsMin)
                 {
                     var minRisk = EstimateRiskAmount(symbol, tradeType, executionPrice, sl.Value, symbol.VolumeInUnitsMin);
-                    SafeLog("ERROR", "[ChartTrade] {0} MARKET {1} rejected: volume_too_small {2:F2}; min_vol={3:F2}; min_vol_risk={4:F2}; allowed={5:F2}", action, symbolName, volumeUnits, symbol.VolumeInUnitsMin, minRisk, finalRiskMoney);
+                    SafeLog("ERROR", "[ChartTrade] {0} MARKET {1} rejected: volume_too_small {2:F2}; min_vol={3:F2}; min_vol_risk={4:F2}; allowed={5:F2}", action, symbolName, volumeUnits, symbol.VolumeInUnitsMin, minRisk, marketRiskMoney);
                     RefreshDebugPanelLite();
                     return;
                 }
@@ -15428,8 +22900,9 @@ namespace cAlgo.Robots
                     sl.Value,
                     tp.Value,
                     volumeUnits,
-                    finalRiskMoney,
-                    finalRiskMoney,
+                    marketRiskMoney,
+                    marketRiskMoney,
+                    true,
                     out approvedSl,
                     out approvedTp,
                     out approvedVolumeUnits,
@@ -15438,38 +22911,31 @@ namespace cAlgo.Robots
                     out approvedMarginBudget,
                     out gateRejectReason))
                 {
-                    SafeLog("ERROR", "[ChartTrade] {0} MARKET {1} rejected: {2}", action, symbolName, gateRejectReason);
+                    SafeLog("ERROR", "[ChartTrade] {0} MARKET {1} rejected: {2} | ctx={3}", action, symbolName, gateRejectReason, BuildSubmitContext(symbol, action, "market", 0, executionPrice, sl.Value, tp.Value, volumeUnits, marketRiskMoney, marketRiskMoney));
                     RefreshDebugPanelLite();
                     return;
                 }
                 if (approvedVolumeUnits < volumeUnits)
-                {
-                    SafePrint(
-                        "[ChartTrade] {0} {1} volume reduced by shared gate: {2:F2} -> {3:F2} units (risk {4:F2}/{5:F2})",
-                        action,
-                        symbolName,
-                        volumeUnits,
-                        approvedVolumeUnits,
-                        approvedRiskMoney,
-                        finalRiskMoney
-                    );
                     volumeUnits = approvedVolumeUnits;
-                }
+                LogPerfStep("MarketOrder.GatePassed", started.ElapsedMilliseconds, string.Format(CultureInfo.InvariantCulture, "{0} {1} vol={2:F2}", symbolName, action, volumeUnits), 25);
 
                 sl = approvedSl;
                 tp = approvedTp;
+                var sharedSl = NormalizePriceToSymbol(symbol, sl.Value);
+                var sharedTp = NormalizePriceToSymbol(symbol, tp.Value);
 
-                var slPips = Math.Round(Math.Abs(executionPrice - sl.Value) / symbol.PipSize, 2);
-                var tpPips = Math.Round(Math.Abs(tp.Value - executionPrice) / symbol.PipSize, 2);
+                var slPips = Math.Round(Math.Abs(executionPrice - sharedSl) / symbol.PipSize, 2);
+                var tpPips = Math.Round(Math.Abs(sharedTp - executionPrice) / symbol.PipSize, 2);
                 var label = BuildChartTradeLabel(action, "Market", symbolName);
                 var comment = label;
                 var requestedLots = symbol.VolumeInUnitsToQuantity(volumeUnits);
-                LogStructuredTradeEvent("chart", "SUBMIT", symbolName, action, "MARKET", requestedLots, executionPrice, sl.Value, tp.Value, "", structureTfLabel);
+                LogStructuredTradeEvent("chart", "SUBMIT", symbolName, action, "MARKET", requestedLots, executionPrice, sharedSl, sharedTp, "", structureTfLabel);
                 var result = ExecuteMarketOrder(tradeType, symbol.Name, volumeUnits, label, slPips, tpPips, comment);
+                LogPerfStep("MarketOrder.Submitted", started.ElapsedMilliseconds, string.Format(CultureInfo.InvariantCulture, "{0} {1}", symbolName, action), 25);
 
                 if (!result.IsSuccessful)
                 {
-                    LogStructuredTradeEvent("chart", "FAILED", symbolName, action, "MARKET", requestedLots, executionPrice, sl.Value, tp.Value, "", Convert.ToString(result.Error, CultureInfo.InvariantCulture));
+                    LogStructuredTradeEvent("chart", "FAILED", symbolName, action, "MARKET", requestedLots, executionPrice, sharedSl, sharedTp, "", Convert.ToString(result.Error, CultureInfo.InvariantCulture));
                     SafeLog("ERROR", "[ChartTrade] {0} MARKET {1} failed: {2}", action, symbolName, result.Error);
                     RefreshDebugPanelLite();
                     return;
@@ -15477,15 +22943,94 @@ namespace cAlgo.Robots
 
                 if (result.Position != null)
                 {
-                    var normalizedSl = NormalizePriceToSymbol(symbol, sl.Value);
-                    var normalizedTp = NormalizePriceToSymbol(symbol, tp.Value);
-                    var modify = ModifyPositionCompat(result.Position, normalizedSl, normalizedTp);
+                    var modify = ModifyPositionCompat(result.Position, sharedSl, sharedTp);
                     if (!modify.IsSuccessful)
                         SafeLog("ERROR", "[ChartTrade] {0} MARKET {1} ({2}) filled but exact SL/TP refine failed: {3}", action, symbolName, structureTfLabel, modify.Error);
+                    TryEnableTrailingStopForPosition(result.Position);
                 }
 
-                LogStructuredTradeEvent("chart", "SUCCEEDED", symbolName, action, "MARKET", requestedLots, result.Position != null ? result.Position.EntryPrice : executionPrice, sl.Value, tp.Value, result.Position != null ? result.Position.Id.ToString(CultureInfo.InvariantCulture) : "", structureTfLabel);
-                SafeLog("INFO", "[ChartTrade] {0} MARKET {1} [{2}] sent with SL={3:F5} TP={4:F5}", action, symbolName, structureTfLabel, sl.Value, tp.Value);
+                LogStructuredTradeEvent("chart", "SUCCEEDED", symbolName, action, "MARKET", requestedLots, result.Position != null ? result.Position.EntryPrice : executionPrice, sharedSl, sharedTp, result.Position != null ? result.Position.Id.ToString(CultureInfo.InvariantCulture) : "", structureTfLabel);
+
+                // Same budget-aware leg selection as the limit ladder: drop pending legs whose
+                // risk slice cannot cover min-volume risk and re-normalize the kept slices.
+                var pendingWeights = weights.Skip(1).Take(pendingEntries.Count).ToArray();
+                var affordablePending = new List<double>();
+                var affordablePendingWeights = new List<double>();
+                TryResolveAffordableSplitLegs(symbol, tradeType, pendingEntries, pendingWeights, sharedSl, finalRiskMoney, affordablePending, affordablePendingWeights);
+
+                var placedPendingCount = 0;
+                for (var i = 0; i < affordablePending.Count && i < affordablePendingWeights.Count; i++)
+                {
+                    var entry = affordablePending[i];
+                    var sliceRiskMoney = finalRiskMoney > 0 ? Math.Max(0, finalRiskMoney * affordablePendingWeights[i]) : 0;
+                    var pendingVolumeUnits = ResolveChartTradeVolumeForRisk(symbol, tradeType, entry, sharedSl, sliceRiskMoney, symbolName);
+                    if (pendingVolumeUnits < symbol.VolumeInUnitsMin)
+                        continue;
+
+                    double approvedPendingVolumeUnits;
+                    double approvedPendingRiskMoney;
+                    double approvedPendingMarginEstimate;
+                    double approvedPendingMarginBudget;
+                    double approvedPendingSl;
+                    double approvedPendingTp;
+                    string pendingGateRejectReason;
+                    if (!TryPassSharedCreationGate(
+                        symbol,
+                        action,
+                        "limit",
+                        entry,
+                        executionPrice,
+                        sharedSl,
+                        sharedTp,
+                        pendingVolumeUnits,
+                        sliceRiskMoney,
+                        sliceRiskMoney,
+                        true,
+                        out approvedPendingSl,
+                        out approvedPendingTp,
+                        out approvedPendingVolumeUnits,
+                        out approvedPendingRiskMoney,
+                        out approvedPendingMarginEstimate,
+                        out approvedPendingMarginBudget,
+                        out pendingGateRejectReason))
+                        continue;
+
+                    if (approvedPendingVolumeUnits < symbol.VolumeInUnitsMin)
+                        continue;
+
+                    var limitSlPips = Math.Round(Math.Abs(entry - sharedSl) / symbol.PipSize, 2);
+                    var limitTpPips = Math.Round(Math.Abs(sharedTp - entry) / symbol.PipSize, 2);
+                    var limitLabel = BuildChartTradeLabel(action, "LIMIT", symbolName);
+                    var limitComment = BuildChartPendingComment(tradeType, false, symbolName) + ":m" + (i + 2).ToString(CultureInfo.InvariantCulture);
+                    var limitLots = symbol.VolumeInUnitsToQuantity(approvedPendingVolumeUnits);
+                    LogStructuredTradeEvent("chart", "SUBMIT", symbolName, action, "LIMIT", limitLots, entry, sharedSl, sharedTp, "", structureTfLabel + ":m" + (i + 2).ToString(CultureInfo.InvariantCulture));
+                    var pendingResult = PlaceLimitOrder(
+                        tradeType,
+                        symbol.Name,
+                        approvedPendingVolumeUnits,
+                        entry,
+                        limitLabel,
+                        (double?)limitSlPips,
+                        (double?)limitTpPips,
+                        (ProtectionType?)null,
+                        null,
+                        limitComment
+                    );
+
+                    if (pendingResult == null || !pendingResult.IsSuccessful)
+                        continue;
+
+                    if (pendingResult.PendingOrder != null)
+                    {
+                        string modifyError;
+                        if (!TryApplyPendingOrderProtection(pendingResult.PendingOrder, symbol, action, sharedSl, sharedTp, out modifyError))
+                            continue;
+                    }
+
+                    placedPendingCount++;
+                }
+
+                SafeLog("INFO", "[ChartTrade] {0} MARKET {1} [{2}] sent with SL={3:F5} TP={4:F5}; pending_legs={5}", action, symbolName, structureTfLabel, sharedSl, sharedTp, placedPendingCount);
                 RebuildChartButtonPanel();
                 RefreshDebugPanelLite();
             }
@@ -15500,8 +23045,16 @@ namespace cAlgo.Robots
             }
         }
 
-        private void ExecuteChartQuickPendingOrder(TradeType tradeType, bool isStopOrder)
+        private void ExecuteChartQuickPendingOrder(TradeType tradeType, bool isStopOrder, bool splitLimitOrder)
         {
+            // Bypasses the log filter so button interactivity is always verifiable.
+            PrintBypassLogFilter("[Click] {0} {1} pressed", tradeType == TradeType.Buy ? "B" : "S", isStopOrder ? "s" : (splitLimitOrder ? "l" : "limit"));
+            if (!isStopOrder && splitLimitOrder)
+            {
+                ExecuteChartQuickSplitLimitOrder(tradeType);
+                return;
+            }
+
             if (!isStopOrder)
             {
                 ExecuteChartQuickPendingOrderV2(tradeType);
@@ -15516,7 +23069,7 @@ namespace cAlgo.Robots
                 var structureTfLabel = GetChartTradeStructureTfLabel(selectedTradeProfile);
                 if (string.IsNullOrWhiteSpace(symbolName))
                 {
-                    SafeLog("ERROR", "[ChartTrade] {0} rejected: no_symbol_selected", tradeType == TradeType.Buy ? (isStopOrder ? "BUY STOP" : "BUY LIMIT") : (isStopOrder ? "SELL STOP" : "SELL LIMIT"));
+                    SafeLog("ERROR", "[ChartTrade] {0} rejected: no_symbol_selected (chart_symbol={1}; profile={2}; tf={3})", tradeType == TradeType.Buy ? (isStopOrder ? "BUY STOP" : "BUY LIMIT") : (isStopOrder ? "SELL STOP" : "SELL LIMIT"), Chart != null ? Chart.SymbolName : "", selectedTradeProfile, structureTfLabel);
                     RefreshDebugPanelLite();
                     return;
                 }
@@ -15524,7 +23077,7 @@ namespace cAlgo.Robots
                 var symbol = ResolveLoadedSymbol(symbolName);
                 if (symbol == null)
                 {
-                    SafeLog("ERROR", "[ChartTrade] {0} {1} rejected: symbol_not_loaded", tradeType == TradeType.Buy ? (isStopOrder ? "BUY STOP" : "BUY LIMIT") : (isStopOrder ? "SELL STOP" : "SELL LIMIT"), symbolName);
+                    SafeLog("ERROR", "[ChartTrade] {0} {1} rejected: symbol_not_loaded (profile={2}); fix=ensure_symbol_has_live_quotes", tradeType == TradeType.Buy ? (isStopOrder ? "BUY STOP" : "BUY LIMIT") : (isStopOrder ? "SELL STOP" : "SELL LIMIT"), symbolName, selectedTradeProfile);
                     RefreshDebugPanelLite();
                     return;
                 }
@@ -15541,7 +23094,7 @@ namespace cAlgo.Robots
                 var currentPrice = tradeType == TradeType.Buy ? symbol.Ask : symbol.Bid;
                 if (currentPrice <= 0)
                 {
-                    SafeLog("ERROR", "[ChartTrade] {0} {1} {2} rejected: invalid_reference_price", action, orderTypeLabel, symbolName);
+                    SafeLog("ERROR", "[ChartTrade] {0} {1} {2} rejected: invalid_reference_price (bid={3:F5}; ask={4:F5})", action, orderTypeLabel, symbolName, symbol.Bid, symbol.Ask);
                     RefreshDebugPanelLite();
                     return;
                 }
@@ -15577,6 +23130,7 @@ namespace cAlgo.Robots
                     sl = pendingProtection.Item1;
                     tp = pendingProtection.Item2;
                 }
+                LogPerfStep("PendingOrder.ProtectionReady", started.ElapsedMilliseconds, string.Format(CultureInfo.InvariantCulture, "{0} {1} {2}", symbolName, action, orderTypeLabel), 25);
 
                 if (!sl.HasValue || !tp.HasValue)
                 {
@@ -15587,6 +23141,7 @@ namespace cAlgo.Robots
 
                 var finalRiskMoney = ResolveChartFinalRiskMoney(selectedTradeProfile);
                 var volumeUnits = ResolveChartTradeVolumeForRisk(symbol, tradeType, normalizedEntry, sl.Value, finalRiskMoney, symbolName);
+                LogPerfStep("PendingOrder.VolumeReady", started.ElapsedMilliseconds, string.Format(CultureInfo.InvariantCulture, "{0} {1} {2} risk={3:F2}", symbolName, action, orderTypeLabel, finalRiskMoney), 25);
                 if (volumeUnits < symbol.VolumeInUnitsMin)
                 {
                     SafeLog("ERROR", "[ChartTrade] {0} {1} {2} rejected: volume_too_small {3}", action, orderTypeLabel, symbolName, volumeUnits);
@@ -15612,6 +23167,7 @@ namespace cAlgo.Robots
                     volumeUnits,
                     finalRiskMoney,
                     finalRiskMoney,
+                    true,
                     out approvedSl,
                     out approvedTp,
                     out approvedVolumeUnits,
@@ -15639,6 +23195,7 @@ namespace cAlgo.Robots
                     );
                     volumeUnits = approvedVolumeUnits;
                 }
+                LogPerfStep("PendingOrder.GatePassed", started.ElapsedMilliseconds, string.Format(CultureInfo.InvariantCulture, "{0} {1} {2} vol={3:F2}", symbolName, action, orderTypeLabel, volumeUnits), 25);
 
                 sl = approvedSl;
                 tp = approvedTp;
@@ -15680,6 +23237,7 @@ namespace cAlgo.Robots
                         comment
                     );
                 }
+                LogPerfStep("PendingOrder.Submitted", started.ElapsedMilliseconds, string.Format(CultureInfo.InvariantCulture, "{0} {1} {2}", symbolName, action, orderTypeLabel), 25);
 
                 if (result == null || !result.IsSuccessful)
                 {
@@ -15714,6 +23272,483 @@ namespace cAlgo.Robots
             finally
             {
                 LogSlowChartStep("ExecuteChartQuickPendingOrder", started, string.Format(CultureInfo.InvariantCulture, "{0} stop={1}", tradeType, isStopOrder));
+            }
+        }
+
+        private List<double> CollectChartSplitEntryLevels(Symbol symbol, string symbolName, TradeType tradeType, double baseEntry, double stopLoss)
+        {
+            var candidates = new List<double>();
+            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || baseEntry <= 0 || stopLoss <= 0)
+                return candidates;
+
+            var tolerance = Math.Max(symbol.PipSize * 2.0, 0.0000001);
+            try
+            {
+                var sourceTimeFrame = Chart != null ? Chart.TimeFrame : TimeFrame.Minute;
+                var sourceBars = MarketData.GetBars(sourceTimeFrame, symbolName);
+                if (sourceBars == null || sourceBars.Count < 5)
+                    return candidates;
+
+                foreach (var swing in CollectConfirmedSwings(sourceBars, 120).TakeLast(16))
+                    AddDistinctChartLevel(candidates, swing.Price, tolerance);
+
+                AddPreviousPeriodLevelCandidates(candidates, symbolName, sourceTimeFrame, tolerance);
+                AddEqualHighLowCandidates(candidates, sourceBars, tolerance);
+                AddClusteredSwingLiquidityCandidates(candidates, sourceBars, tolerance);
+
+                var fvgLevels = new List<double>();
+                AddFvgLevelCandidates(fvgLevels, sourceBars, tolerance);
+                foreach (var level in fvgLevels)
+                    AddDistinctChartLevel(candidates, level, tolerance);
+
+                var obLevels = new List<double>();
+                AddOrderBlockLevelCandidates(obLevels, sourceBars, tolerance);
+                foreach (var level in obLevels)
+                    AddDistinctChartLevel(candidates, level, tolerance);
+            }
+            catch
+            {
+            }
+
+            return tradeType == TradeType.Buy
+                ? candidates.Where(v => v < baseEntry && v > stopLoss).OrderByDescending(v => v).ToList()
+                : candidates.Where(v => v > baseEntry && v < stopLoss).OrderBy(v => v).ToList();
+        }
+
+        private List<double> BuildChartSplitLimitEntries(Symbol symbol, string symbolName, TradeType tradeType, double currentPrice, double baseEntry, double stopLoss, int orderCountOverride = 0)
+        {
+            var entries = new List<double>();
+            if (symbol == null || symbol.PipSize <= 0 || currentPrice <= 0 || baseEntry <= 0 || stopLoss <= 0)
+                return entries;
+
+            var minOffset = Math.Max(MinStopPips, 1.0) * symbol.PipSize;
+            var safeNearStop = tradeType == TradeType.Buy
+                ? stopLoss + minOffset
+                : stopLoss - minOffset;
+            if ((tradeType == TradeType.Buy && safeNearStop >= baseEntry) ||
+                (tradeType == TradeType.Sell && safeNearStop <= baseEntry))
+            {
+                entries.Add(baseEntry);
+                return entries;
+            }
+
+            const int minLegCount = 2;
+            const int maxLegCount = 5;
+            var tolerance = Math.Max(symbol.PipSize * 0.5, 0.0000001);
+            var usableRange = Math.Abs(baseEntry - safeNearStop);
+            var spacingFloor = Math.Max(
+                Math.Max(symbol.PipSize * Math.Max(8.0, MinStopPips * 2.0), usableRange / 4.0),
+                tolerance);
+            var structuralLevels = CollectChartSplitEntryLevels(symbol, symbolName, tradeType, baseEntry, stopLoss);
+            var uniqueStructuralLevels = new List<double>();
+            foreach (var level in structuralLevels)
+            {
+                if (level <= 0)
+                    continue;
+
+                var normalized = NormalizePriceToSymbol(symbol, level);
+                if (tradeType == TradeType.Buy)
+                {
+                    if (normalized <= stopLoss || normalized >= baseEntry)
+                        continue;
+                }
+                else
+                {
+                    if (normalized >= stopLoss || normalized <= baseEntry)
+                        continue;
+                }
+
+                if (uniqueStructuralLevels.Any(v => Math.Abs(v - normalized) < spacingFloor))
+                    continue;
+
+                if (!uniqueStructuralLevels.Any(v => Math.Abs(v - normalized) < tolerance))
+                    uniqueStructuralLevels.Add(normalized);
+            }
+
+            var maxLegsByRange = Math.Max(minLegCount, Math.Min(maxLegCount, (int)Math.Floor(usableRange / spacingFloor) + 1));
+            // orderCountOverride: 0 = Auto (dynamic count, current logic); 1..5 = fixed
+            // number of legs per click (still capped by what the range can physically fit).
+            var desiredLegCount = orderCountOverride > 0
+                ? Math.Max(1, Math.Min(orderCountOverride, maxLegsByRange))
+                : Math.Max(minLegCount, Math.Min(maxLegsByRange, uniqueStructuralLevels.Count + 2));
+            if (!entries.Any(v => Math.Abs(v - baseEntry) < tolerance))
+                entries.Add(baseEntry);
+
+            var midpointBetweenCurrentAndBase = NormalizePriceToSymbol(symbol, (currentPrice + baseEntry) / 2.0);
+            var midpointValid = tradeType == TradeType.Buy
+                ? midpointBetweenCurrentAndBase > baseEntry && midpointBetweenCurrentAndBase < currentPrice
+                : midpointBetweenCurrentAndBase < baseEntry && midpointBetweenCurrentAndBase > currentPrice;
+            if (midpointValid && Math.Abs(midpointBetweenCurrentAndBase - baseEntry) >= spacingFloor)
+                entries.Add(midpointBetweenCurrentAndBase);
+
+            foreach (var level in uniqueStructuralLevels)
+            {
+                if (entries.Count >= desiredLegCount)
+                    break;
+                if (!entries.Any(v => Math.Abs(v - level) < tolerance))
+                    entries.Add(level);
+            }
+
+            if (entries.Count < desiredLegCount)
+            {
+                var anchors = new List<double> { baseEntry };
+                anchors.AddRange(entries);
+                anchors.Add(safeNearStop);
+
+                var orderedAnchors = tradeType == TradeType.Buy
+                    ? anchors.Distinct().OrderByDescending(v => v).ToList()
+                    : anchors.Distinct().OrderBy(v => v).ToList();
+
+                while (entries.Count < desiredLegCount)
+                {
+                    double bestCandidate = 0;
+                    double widestGap = double.MinValue;
+
+                    for (var i = 0; i < orderedAnchors.Count - 1; i++)
+                    {
+                        var outer = orderedAnchors[i];
+                        var inner = orderedAnchors[i + 1];
+                        var gap = Math.Abs(outer - inner);
+                        if (gap < (spacingFloor * 1.5) || gap <= widestGap)
+                            continue;
+
+                        var midpoint = NormalizePriceToSymbol(symbol, (outer + inner) / 2.0);
+                        if (tradeType == TradeType.Buy)
+                        {
+                            if (midpoint <= stopLoss || midpoint >= baseEntry)
+                                continue;
+                        }
+                        else
+                        {
+                            if (midpoint >= stopLoss || midpoint <= baseEntry)
+                                continue;
+                        }
+
+                        if (orderedAnchors.Any(v => Math.Abs(v - midpoint) < spacingFloor))
+                            continue;
+                        if (entries.Any(v => Math.Abs(v - midpoint) < tolerance))
+                            continue;
+
+                        widestGap = gap;
+                        bestCandidate = midpoint;
+                    }
+
+                    if (bestCandidate <= 0)
+                        break;
+
+                    entries.Add(bestCandidate);
+                    orderedAnchors.Add(bestCandidate);
+                    orderedAnchors = tradeType == TradeType.Buy
+                        ? orderedAnchors.OrderByDescending(v => v).ToList()
+                        : orderedAnchors.OrderBy(v => v).ToList();
+                }
+            }
+
+            var orderedEntries = tradeType == TradeType.Buy
+                ? entries.ToList()
+                : entries.ToList();
+
+            var distinctEntries = new List<double>();
+            foreach (var entry in orderedEntries)
+            {
+                if (!distinctEntries.Any(v => Math.Abs(v - entry) < tolerance))
+                    distinctEntries.Add(entry);
+            }
+
+            return distinctEntries.Take(desiredLegCount).ToList();
+        }
+
+        private double[] BuildChartSplitRiskWeights(int legCount, bool marketFirst)
+        {
+            if (legCount <= 0)
+                return new double[0];
+
+            var scores = new List<double>();
+            if (marketFirst)
+            {
+                for (var i = 0; i < legCount; i++)
+                    scores.Add(i + 2.0);
+            }
+            else
+            {
+                for (var i = 0; i < legCount; i++)
+                {
+                    if (i == 0) scores.Add(2.0);
+                    else if (i == 1) scores.Add(1.0);
+                    else scores.Add(i + 2.0);
+                }
+            }
+
+            var total = scores.Sum();
+            return scores.Select(x => x / total).ToArray();
+        }
+
+        // Filters a split ladder down to legs whose risk slice can cover the risk of the minimum
+        // tradable volume at that leg's stop distance (thin slices on wide-stop symbols such as
+        // XAUUSD otherwise make every leg fail with volume_too_small). Kept weights are re-scaled
+        // to the original total weight so the risk budget is preserved. Returns false when no leg
+        // is affordable (callers fall back to a single full-budget leg).
+        private bool TryResolveAffordableSplitLegs(
+            Symbol symbol,
+            TradeType tradeType,
+            IList<double> entries,
+            IList<double> weights,
+            double stopLoss,
+            double finalRiskMoney,
+            List<double> affordableEntries,
+            List<double> affordableWeights)
+        {
+            affordableEntries.Clear();
+            affordableWeights.Clear();
+            if (symbol == null || entries == null || weights == null || stopLoss <= 0)
+                return false;
+
+            var totalInputWeight = 0.0;
+            var alignedCount = Math.Min(entries.Count, weights.Count);
+            for (var i = 0; i < alignedCount; i++)
+                totalInputWeight += weights[i];
+
+            for (var i = 0; i < alignedCount; i++)
+            {
+                var sliceRiskMoney = finalRiskMoney > 0 ? Math.Max(0, finalRiskMoney * weights[i]) : 0;
+                if (!(sliceRiskMoney > 0))
+                    continue;
+                var minRiskForLeg = EstimateRiskAmount(symbol, tradeType, entries[i], stopLoss, symbol.VolumeInUnitsMin);
+                if (minRiskForLeg > 0 && sliceRiskMoney < minRiskForLeg)
+                    continue;
+                affordableEntries.Add(entries[i]);
+                affordableWeights.Add(weights[i]);
+            }
+
+            if (affordableEntries.Count == 0)
+                return false;
+
+            var keptWeightSum = affordableWeights.Sum();
+            if (keptWeightSum > 0 && totalInputWeight > 0)
+            {
+                var scale = totalInputWeight / keptWeightSum;
+                for (var i = 0; i < affordableWeights.Count; i++)
+                    affordableWeights[i] = affordableWeights[i] * scale;
+            }
+            return true;
+        }
+
+        private void ExecuteChartQuickSplitLimitOrder(TradeType tradeType)
+        {
+            var started = Stopwatch.StartNew();
+            try
+            {
+                var symbolName = GetEffectiveChartEntrySymbolSelection();
+                var selectedTradeProfile = GetChartTradeProfileRaw(ReadChartTradeTypeComboSelection());
+                if (string.IsNullOrWhiteSpace(symbolName))
+                {
+                    SafeLog("ERROR", "[ChartTrade] {0} X rejected: no_symbol_selected (chart_symbol={1}; profile={2})", tradeType == TradeType.Buy ? "BUY" : "SELL", Chart != null ? Chart.SymbolName : "", selectedTradeProfile);
+                    RefreshDebugPanelLite();
+                    return;
+                }
+
+                var symbol = ResolveLoadedSymbol(symbolName);
+                if (symbol == null)
+                {
+                    SafeLog("ERROR", "[ChartTrade] {0} X {1} rejected: symbol_not_loaded (profile={2}); fix=ensure_symbol_has_live_quotes", tradeType == TradeType.Buy ? "BUY" : "SELL", symbolName, selectedTradeProfile);
+                    RefreshDebugPanelLite();
+                    return;
+                }
+
+                var action = tradeType == TradeType.Buy ? "BUY" : "SELL";
+                var tradableRejectReason = DetectSymbolTradeAvailabilityReason(symbol);
+                if (!string.IsNullOrWhiteSpace(tradableRejectReason))
+                {
+                    SafeLog("ERROR", "[ChartTrade] {0} X {1} rejected: {2}", action, symbolName, DescribeTradeAvailabilityReason(tradableRejectReason, symbolName));
+                    RefreshDebugPanelLite();
+                    return;
+                }
+
+                var plan = BuildChartLimitPlanV2(symbol, symbolName, tradeType, selectedTradeProfile);
+                if (!plan.IsValid)
+                    plan = BuildChartLimitPlanFromLegacy(symbol, symbolName, tradeType, selectedTradeProfile);
+                if (!plan.IsValid)
+                {
+                    SafeLog("ERROR", "[ChartTrade] {0} X {1} rejected: no_valid_entry_plan (profile={2}; tf={3}; market={4:F5})", action, symbolName, selectedTradeProfile, GetChartTradeStructureTfLabel(selectedTradeProfile), tradeType == TradeType.Buy ? symbol.Ask : symbol.Bid);
+                    RefreshDebugPanelLite();
+                    return;
+                }
+                LogPerfStep("SplitLimit.PlanReady", started.ElapsedMilliseconds, string.Format(CultureInfo.InvariantCulture, "{0} {1}", symbolName, action), 25);
+
+                var currentPrice = tradeType == TradeType.Buy ? symbol.Ask : symbol.Bid;
+                var baseEntry = NormalizePriceToSymbol(symbol, plan.Entry);
+                var sl = NormalizePriceToSymbol(symbol, plan.StopLoss);
+                var tp = NormalizePriceToSymbol(symbol, plan.TakeProfit);
+                var sharedSl = NormalizePriceToSymbol(symbol, sl);
+                var sharedTp = NormalizePriceToSymbol(symbol, tp);
+                var entries = BuildChartSplitLimitEntries(symbol, symbolName, tradeType, currentPrice, baseEntry, sharedSl, ResolveChartOrderCount());
+                if (entries.Count == 0)
+                {
+                    SafeLog("ERROR", "[ChartTrade] {0} X {1} rejected: no_valid_split_entries (base_entry={2:F5}; sl={3:F5}; market={4:F5})", action, symbolName, baseEntry, sharedSl, currentPrice);
+                    RefreshDebugPanelLite();
+                    return;
+                }
+                LogPerfStep("SplitLimit.EntriesReady", started.ElapsedMilliseconds, string.Format(CultureInfo.InvariantCulture, "{0} {1} legs={2}", symbolName, action, entries.Count), 25);
+
+                var finalRiskMoney = ResolveChartFinalRiskMoney(selectedTradeProfile);
+                var weights = BuildChartSplitRiskWeights(entries.Count, false);
+
+                // Budget-aware leg selection: a leg is only tradable when its risk slice can cover
+                // the risk of the minimum tradable volume at that leg's stop distance. Drop
+                // unaffordable legs and re-normalize the kept slices so the risk budget is never
+                // wasted (e.g. XAUUSD with a wide stop makes thin slices fall below min-volume
+                // risk, which previously rejected the whole ladder). Fall back to a single
+                // full-budget leg when nothing is affordable.
+                var finalEntries = new List<double>();
+                var finalWeights = new List<double>();
+                if (!TryResolveAffordableSplitLegs(symbol, tradeType, entries, weights, sharedSl, finalRiskMoney, finalEntries, finalWeights))
+                {
+                    SafeLog("INFO", "[ChartTrade] {0} X {1} budget too small for ladder (risk={2:F2}); falling back to single leg", action, symbolName, finalRiskMoney);
+                    finalEntries = new List<double> { entries[0] };
+                    finalWeights = new List<double> { 1.0 };
+                }
+
+                SafeLog(
+                    "INFO",
+                    "[ChartTrade] {0} X {1} ladder entries: {2}",
+                    action,
+                    symbolName,
+                    string.Join(", ", finalEntries.Select(v => v.ToString("F5", CultureInfo.InvariantCulture)).ToArray()));
+
+                var placedCount = 0;
+                var totalPlacedRisk = 0.0;
+                var legFailReasons = new List<string>();
+                var directionMinOffset = Math.Max(symbol.PipSize * 2.0, 0.0000001);
+                for (var i = 0; i < finalEntries.Count && i < finalWeights.Count; i++)
+                {
+                    var entry = finalEntries[i];
+                    var sliceRiskMoney = finalRiskMoney > 0 ? Math.Max(0, finalRiskMoney * finalWeights[i]) : 0;
+
+                    // A limit order must rest on the correct side of the market: buy limits below
+                    // the ask, sell limits above the bid. Wrong-side entries are rejected by the
+                    // broker with a terse "invalid price" error, so catch them here with a clear
+                    // reason instead.
+                    if ((tradeType == TradeType.Buy && entry >= currentPrice - directionMinOffset) ||
+                        (tradeType == TradeType.Sell && entry <= currentPrice + directionMinOffset))
+                    {
+                        var directionReason = tradeType == TradeType.Buy ? "buy_limit_above_market" : "sell_limit_below_market";
+                        legFailReasons.Add("leg" + (i + 1).ToString(CultureInfo.InvariantCulture) + ":" + directionReason);
+                        SafeLog("INFO", "[ChartTrade] {0} X {1} leg {2} skipped: {3} entry={4:F5} market={5:F5}", action, symbolName, i + 1, directionReason, entry, currentPrice);
+                        continue;
+                    }
+
+                    var volumeUnits = ResolveChartTradeVolumeForRisk(symbol, tradeType, entry, sharedSl, sliceRiskMoney, symbolName);
+                    if (volumeUnits < symbol.VolumeInUnitsMin)
+                    {
+                        legFailReasons.Add("leg" + (i + 1).ToString(CultureInfo.InvariantCulture) + ":volume_too_small");
+                        SafeLog("INFO", "[ChartTrade] {0} X {1} leg {2} skipped: volume_too_small {3:F2}", action, symbolName, i + 1, volumeUnits);
+                        continue;
+                    }
+
+                    double approvedVolumeUnits;
+                    double approvedRiskMoney;
+                    double approvedMarginEstimate;
+                    double approvedMarginBudget;
+                    double approvedSl;
+                    double approvedTp;
+                    string gateRejectReason;
+                    if (!TryPassSharedCreationGate(
+                        symbol,
+                        action,
+                        "limit",
+                        entry,
+                        entry,
+                        sharedSl,
+                        sharedTp,
+                        volumeUnits,
+                        sliceRiskMoney,
+                        sliceRiskMoney,
+                        true,
+                        out approvedSl,
+                        out approvedTp,
+                        out approvedVolumeUnits,
+                        out approvedRiskMoney,
+                        out approvedMarginEstimate,
+                        out approvedMarginBudget,
+                        out gateRejectReason))
+                    {
+                        legFailReasons.Add("leg" + (i + 1).ToString(CultureInfo.InvariantCulture) + ":" + gateRejectReason);
+                        SafeLog("INFO", "[ChartTrade] {0} X {1} leg {2} skipped: {3}", action, symbolName, i + 1, gateRejectReason);
+                        continue;
+                    }
+
+                    if (approvedVolumeUnits < symbol.VolumeInUnitsMin)
+                    {
+                        legFailReasons.Add("leg" + (i + 1).ToString(CultureInfo.InvariantCulture) + ":volume_below_min_after_gate");
+                        continue;
+                    }
+
+                    var approvedEntry = NormalizePriceToSymbol(symbol, entry);
+                    var slPips = Math.Round(Math.Abs(approvedEntry - sharedSl) / symbol.PipSize, 2);
+                    var tpPips = Math.Round(Math.Abs(sharedTp - approvedEntry) / symbol.PipSize, 2);
+                    var label = BuildChartTradeLabel(action, "LIMIT", symbolName);
+                    var comment = BuildChartPendingComment(tradeType, false, symbolName) + ":l" + (i + 1).ToString(CultureInfo.InvariantCulture);
+                    var requestedLots = symbol.VolumeInUnitsToQuantity(approvedVolumeUnits);
+                    LogStructuredTradeEvent("chart", "SUBMIT", symbolName, action, "LIMIT", requestedLots, approvedEntry, sharedSl, sharedTp, "", plan.StructureTfLabel + ":" + plan.EntryLabel + ":l" + (i + 1).ToString(CultureInfo.InvariantCulture));
+
+                    var result = PlaceLimitOrder(
+                        tradeType,
+                        symbol.Name,
+                        approvedVolumeUnits,
+                        approvedEntry,
+                        label,
+                        (double?)slPips,
+                        (double?)tpPips,
+                        (ProtectionType?)null,
+                        null,
+                        comment
+                    );
+
+                    if (result == null || !result.IsSuccessful)
+                    {
+                        var errorText = result != null ? Convert.ToString(result.Error, CultureInfo.InvariantCulture) : "unknown_error";
+                        legFailReasons.Add("leg" + (i + 1).ToString(CultureInfo.InvariantCulture) + ":broker_reject " + errorText);
+                        SafeLog("INFO", "[ChartTrade] {0} X {1} leg {2} failed: {3}", action, symbolName, i + 1, errorText);
+                        continue;
+                    }
+
+                    if (result.PendingOrder != null)
+                    {
+                        string modifyError;
+                        if (!TryApplyPendingOrderProtection(result.PendingOrder, symbol, action, sharedSl, sharedTp, out modifyError))
+                        {
+                            legFailReasons.Add("leg" + (i + 1).ToString(CultureInfo.InvariantCulture) + ":protection_apply_failed " + modifyError);
+                            SafeLog("INFO", "[ChartTrade] {0} L {1} leg {2} placed but SL/TP apply failed: {3}", action, symbolName, i + 1, modifyError);
+                            continue;
+                        }
+                    }
+
+                    placedCount++;
+                    totalPlacedRisk += Math.Abs(approvedRiskMoney);
+                    LogStructuredTradeEvent("chart", "SUCCEEDED", symbolName, action, "LIMIT", requestedLots, approvedEntry, sharedSl, sharedTp, result.PendingOrder != null ? result.PendingOrder.Id.ToString(CultureInfo.InvariantCulture) : "", plan.StructureTfLabel + ":" + plan.EntryLabel + ":l" + (i + 1).ToString(CultureInfo.InvariantCulture));
+                }
+
+                if (placedCount == 0)
+                {
+                    var failSummary = legFailReasons.Count > 0 ? string.Join("; ", legFailReasons) : "unknown";
+                    var ladderContext = BuildSubmitContext(symbol, action, "limit", finalEntries.Count > 0 ? finalEntries[0] : entries[0], currentPrice, sharedSl, sharedTp, 0, finalRiskMoney, finalRiskMoney);
+                    SafeLog("ERROR", "[ChartTrade] {0} L {1} rejected: no_split_orders_placed ({2}) | ctx={3}", action, symbolName, failSummary, ladderContext);
+                    RefreshDebugPanelLite();
+                    return;
+                }
+
+                SafeLog("INFO", "[ChartTrade] {0} L {1} placed {2} split limit orders using shared SL/TP. total_risk={3:F2}", action, symbolName, placedCount, totalPlacedRisk);
+                RebuildChartButtonPanel();
+                RefreshDebugPanelLite();
+            }
+            catch (Exception ex)
+            {
+                SafeLog("ERROR", "[ChartTrade] X LIMIT failed: {0}", ex.Message);
+                RefreshDebugPanelLite();
+            }
+            finally
+            {
+                LogSlowChartStep("ExecuteChartQuickSplitLimitOrder", started, tradeType.ToString());
             }
         }
 
@@ -15753,19 +23788,21 @@ namespace cAlgo.Robots
                     plan = BuildChartLimitPlanFromLegacy(symbol, symbolName, tradeType, selectedTradeProfile);
                     if (!plan.IsValid)
                     {
-                        SafeLog("ERROR", "[ChartTrade] {0} LIMIT {1} rejected: no_valid_entry_plan from {2}, and legacy fallback also failed", action, symbolName, GetChartTradeStructureTfLabel(selectedTradeProfile));
+                        SafeLog("ERROR", "[ChartTrade] {0} LIMIT {1} rejected: no_valid_entry_plan from {2}, and legacy fallback also failed (profile={3}; market={4:F5}); fix=check_structure_levels_for_this_symbol", action, symbolName, GetChartTradeStructureTfLabel(selectedTradeProfile), selectedTradeProfile, tradeType == TradeType.Buy ? symbol.Ask : symbol.Bid);
                         RefreshDebugPanelLite();
                         return;
                     }
 
                     SafeLog("INFO", "[ChartTrade] {0} LIMIT {1} fallback: new model had no valid plan, using legacy entry/protection", action, symbolName);
                 }
+                LogPerfStep("LimitOrder.PlanReady", started.ElapsedMilliseconds, string.Format(CultureInfo.InvariantCulture, "{0} {1}", symbolName, action), 25);
 
                 var entry = NormalizePriceToSymbol(symbol, plan.Entry);
                 var sl = NormalizePriceToSymbol(symbol, plan.StopLoss);
                 var tp = NormalizePriceToSymbol(symbol, plan.TakeProfit);
                 var finalRiskMoney = ResolveChartFinalRiskMoney(selectedTradeProfile);
                 var volumeUnits = ResolveChartTradeVolumeForRisk(symbol, tradeType, entry, sl, finalRiskMoney, symbolName);
+                LogPerfStep("LimitOrder.VolumeReady", started.ElapsedMilliseconds, string.Format(CultureInfo.InvariantCulture, "{0} {1} risk={2:F2}", symbolName, action, finalRiskMoney), 25);
                 if (volumeUnits < symbol.VolumeInUnitsMin)
                 {
                     SafeLog("ERROR", "[ChartTrade] {0} LIMIT {1} rejected: volume_too_small {2}", action, symbolName, volumeUnits);
@@ -15791,6 +23828,7 @@ namespace cAlgo.Robots
                     volumeUnits,
                     finalRiskMoney,
                     finalRiskMoney,
+                    true,
                     out approvedSl,
                     out approvedTp,
                     out approvedVolumeUnits,
@@ -15799,7 +23837,7 @@ namespace cAlgo.Robots
                     out approvedMarginBudget,
                     out gateRejectReason))
                 {
-                    SafeLog("ERROR", "[ChartTrade] {0} LIMIT {1} rejected: {2}", action, symbolName, gateRejectReason);
+                    SafeLog("ERROR", "[ChartTrade] {0} LIMIT {1} rejected: {2} | ctx={3}", action, symbolName, gateRejectReason, BuildSubmitContext(symbol, action, "limit", entry, entry, sl, tp, volumeUnits, finalRiskMoney, finalRiskMoney));
                     RefreshDebugPanelLite();
                     return;
                 }
@@ -15817,6 +23855,7 @@ namespace cAlgo.Robots
                     );
                     volumeUnits = approvedVolumeUnits;
                 }
+                LogPerfStep("LimitOrder.GatePassed", started.ElapsedMilliseconds, string.Format(CultureInfo.InvariantCulture, "{0} {1} vol={2:F2}", symbolName, action, volumeUnits), 25);
 
                 sl = approvedSl;
                 tp = approvedTp;
@@ -15839,6 +23878,7 @@ namespace cAlgo.Robots
                     null,
                     comment
                 );
+                LogPerfStep("LimitOrder.Submitted", started.ElapsedMilliseconds, string.Format(CultureInfo.InvariantCulture, "{0} {1}", symbolName, action), 25);
 
                 if (result == null || !result.IsSuccessful)
                 {
@@ -15891,7 +23931,11 @@ namespace cAlgo.Robots
         {
             var pipDistance = symbol != null && symbol.PipSize > 0 ? symbol.PipSize : 0;
             var tickDistance = symbol != null && symbol.TickSize > 0 ? symbol.TickSize : 0;
-            var step = Math.Max(pipDistance, tickDistance);
+            var pipBlock = pipDistance > 0
+                ? pipDistance * Math.Max(5.0, Math.Min(25.0, Math.Max(1.0, MinStopPips) * 0.5))
+                : 0;
+            var tickBlock = tickDistance > 0 ? tickDistance * 5.0 : 0;
+            var step = Math.Max(Math.Max(pipDistance, tickDistance), Math.Max(pipBlock, tickBlock));
             if (step <= 0) step = 0.0001;
             return step;
         }
@@ -16003,17 +24047,37 @@ namespace cAlgo.Robots
         private int ApplySharedProtectionTarget(string symbolName, TradeType tradeType, bool isStopLoss, double targetPrice)
         {
             var modifiedCount = 0;
-            var targets = Positions
+            var symbol = ResolveLoadedSymbol(symbolName);
+            var pipSize = symbol != null && symbol.PipSize > 0 ? symbol.PipSize : 0.0000001;
+            var positionTargets = Positions
                 .Where(p => p != null && string.Equals(p.SymbolName, symbolName, StringComparison.OrdinalIgnoreCase) && p.TradeType == tradeType)
                 .ToList();
 
-            foreach (var position in targets)
+            foreach (var position in positionTargets)
             {
                 var nextSl = isStopLoss ? (double?)targetPrice : position.StopLoss;
                 var nextTp = isStopLoss ? position.TakeProfit : (double?)targetPrice;
                 var result = ModifyPositionCompat(position, nextSl, nextTp);
                 if (result.IsSuccessful) modifiedCount++;
                 else SafePrint("[ChartTrade] Modify failed for {0} #{1}: {2}", symbolName, position.Id, result.Error);
+            }
+
+            var pendingTargets = PendingOrders
+                .Where(o => o != null && string.Equals(o.SymbolName, symbolName, StringComparison.OrdinalIgnoreCase) && o.TradeType == tradeType)
+                .ToList();
+
+            foreach (var order in pendingTargets)
+            {
+                var slPips = isStopLoss
+                    ? (double?)Math.Round(Math.Abs(order.TargetPrice - targetPrice) / pipSize, 2)
+                    : order.StopLossPips;
+                var tpPips = isStopLoss
+                    ? order.TakeProfitPips
+                    : (double?)Math.Round(Math.Abs(order.TargetPrice - targetPrice) / pipSize, 2);
+
+                var result = ModifyPendingOrderCompat(order, order.TargetPrice, slPips, tpPips, order.ExpirationTime);
+                if (result != null && result.IsSuccessful) modifiedCount++;
+                else SafePrint("[ChartTrade] Pending modify failed for {0} #{1}: {2}", symbolName, order.Id, result != null ? Convert.ToString(result.Error, CultureInfo.InvariantCulture) : "unknown_error");
             }
 
             return modifiedCount;
@@ -16202,9 +24266,10 @@ namespace cAlgo.Robots
                 }
 
                 var positions = GetChartSelectedPositions(symbolName, selectedDirection);
-                if (positions.Count == 0)
+                var orders = GetChartSelectedPendingOrders(symbolName, selectedDirection);
+                if (positions.Count == 0 && orders.Count == 0)
                 {
-                    SafePrint("[ChartTrade] No open positions for {0} {1}", symbolName, selectedDirection);
+                    SafePrint("[ChartTrade] No positions or pending orders for {0} {1}", symbolName, selectedDirection);
                     return;
                 }
 
@@ -16212,26 +24277,41 @@ namespace cAlgo.Robots
                 foreach (var tradeType in new[] { TradeType.Buy, TradeType.Sell })
                 {
                     var sidePositions = positions.Where(p => p.TradeType == tradeType).ToList();
-                    if (sidePositions.Count == 0) continue;
+                    var sideOrders = orders.Where(o => o.TradeType == tradeType).ToList();
+                    if (sidePositions.Count == 0 && sideOrders.Count == 0) continue;
 
-                    var referencePrice = tradeType == TradeType.Buy ? symbol.Bid : symbol.Ask;
+                    var referencePrice = sidePositions.Count > 0
+                        ? (tradeType == TradeType.Buy ? symbol.Bid : symbol.Ask)
+                        : sideOrders[0].TargetPrice;
                     var existingLevels = sidePositions
                         .Select(p => isStopLoss ? p.StopLoss : p.TakeProfit)
                         .Where(v => v.HasValue && v.Value > 0)
                         .Select(v => v.Value)
+                        .Concat(sideOrders
+                            .Select(o => isStopLoss ? o.StopLoss : o.TakeProfit)
+                            .Where(v => v.HasValue && v.Value > 0)
+                            .Select(v => v.Value))
                         .ToList();
                     var oppositeLevels = sidePositions
                         .Select(p => isStopLoss ? p.TakeProfit : p.StopLoss)
                         .Where(v => v.HasValue && v.Value > 0)
                         .Select(v => v.Value)
+                        .Concat(sideOrders
+                            .Select(o => isStopLoss ? o.TakeProfit : o.StopLoss)
+                            .Where(v => v.HasValue && v.Value > 0)
+                            .Select(v => v.Value))
                         .ToList();
 
                     var targetPrice = BuildSharedProtectionTarget(symbol, tradeType, isStopLoss, moveCloser, referencePrice, existingLevels);
                     string reason;
                     var action = tradeType == TradeType.Buy ? "BUY" : "SELL";
-                    var validationReference = tradeType == TradeType.Buy ? symbol.Bid : symbol.Ask;
-                    var existingSl = sidePositions.FirstOrDefault(p => p.StopLoss.HasValue && p.StopLoss.Value > 0)?.StopLoss ?? 0;
-                    var existingTp = sidePositions.FirstOrDefault(p => p.TakeProfit.HasValue && p.TakeProfit.Value > 0)?.TakeProfit ?? 0;
+                    var validationReference = referencePrice;
+                    var existingSl = sidePositions.FirstOrDefault(p => p.StopLoss.HasValue && p.StopLoss.Value > 0)?.StopLoss
+                        ?? sideOrders.FirstOrDefault(o => o.StopLoss.HasValue && o.StopLoss.Value > 0)?.StopLoss
+                        ?? 0;
+                    var existingTp = sidePositions.FirstOrDefault(p => p.TakeProfit.HasValue && p.TakeProfit.Value > 0)?.TakeProfit
+                        ?? sideOrders.FirstOrDefault(o => o.TakeProfit.HasValue && o.TakeProfit.Value > 0)?.TakeProfit
+                        ?? 0;
                     if (isStopLoss && existingTp <= 0)
                         existingTp = BuildSharedProtectionTarget(symbol, tradeType, false, false, referencePrice, oppositeLevels);
                     if (!isStopLoss && existingSl <= 0)
@@ -16248,7 +24328,8 @@ namespace cAlgo.Robots
                     totalModified += ApplySharedProtectionTarget(symbolName, tradeType, isStopLoss, targetPrice);
                 }
 
-                SafePrint("[ChartTrade] {0} {1} updated {2} position(s) for {3} {4}", isStopLoss ? "SL" : "TP", moveCloser ? "closer" : "farther", totalModified, symbolName, selectedDirection);
+                SafePrint("[ChartTrade] {0} {1} updated {2} trade item(s) for {3} {4}", isStopLoss ? "SL" : "TP", moveCloser ? "closer" : "farther", totalModified, symbolName, selectedDirection);
+                RebuildChartButtonPanel();
                 RefreshDebugPanel();
             }
             catch (Exception ex)
@@ -16697,6 +24778,7 @@ namespace cAlgo.Robots
                                 pos.VolumeInUnits,
                                 modifyFinalRiskMoney,
                                 modifyFinalRiskMoney,
+                                false,
                                 out modifyRiskRejectReason))
                             {
                                 var rejectMsg = "modify_risk_gate_rejected: " + modifyRiskRejectReason;
@@ -16948,7 +25030,7 @@ namespace cAlgo.Robots
                 }
                 else
                 {
-                    requestedRiskMoney = Account.Balance * (MaxRiskPercent / 100.0);
+                    requestedRiskMoney = Account.Balance * (GetEffectiveMaxRiskPercent() / 100.0);
                 }
 
                 var effectiveMaxRiskPercent = GetEffectiveMaxRiskPercent();
@@ -18507,21 +26589,16 @@ namespace cAlgo.Robots
                     {
                         var backtestMessagePanel = Chart.DrawStaticText("Panel_DBG", _lastPanelMessage, VerticalAlignment.Top, HorizontalAlignment.Left, _lastPanelMessageColor);
                         TryStyleChartText(backtestMessagePanel, 10, "Courier New", false);
+                        TrySetPropertyValue(backtestMessagePanel, "Margin", "0 -8 0 0");
                     }
 
                     var backtestGateLines = BuildRiskDashboardLines(riskState);
                     var backtestMetricText = string.Join(Environment.NewLine, backtestGateLines);
-                    var backtestMetricHeader = GetFirstLine(backtestMetricText);
-                    var backtestMetricBody = GetRemainingLines(backtestMetricText);
-                    if (!string.IsNullOrWhiteSpace(backtestMetricHeader))
+                    if (!string.IsNullOrWhiteSpace(backtestMetricText))
                     {
-                        var backtestMetricHeaderPanel = Chart.DrawStaticText("Panel_GATE_HDR", backtestMetricHeader, VerticalAlignment.Top, HorizontalAlignment.Right, Color.Cyan);
-                        TryStyleChartText(backtestMetricHeaderPanel, 9, "Courier New", true);
-                    }
-                    if (!string.IsNullOrWhiteSpace(backtestMetricBody))
-                    {
-                        var backtestMetricBodyPanel = Chart.DrawStaticText("Panel_GATE_BODY", Environment.NewLine + backtestMetricBody, VerticalAlignment.Top, HorizontalAlignment.Right, Color.White);
-                        TryStyleChartText(backtestMetricBodyPanel, 9, "Courier New", false);
+                        var backtestMetricPanel = Chart.DrawStaticText("Panel_GATE", backtestMetricText, VerticalAlignment.Top, HorizontalAlignment.Center, Color.White);
+                        TryStyleChartText(backtestMetricPanel, 9, "Courier New", false);
+                        TrySetPropertyValue(backtestMetricPanel, "Margin", "0 -8 0 0");
                     }
                     if (includeVisualOverlays)
                         RefreshChartSummaryPanel(riskState);
@@ -18545,7 +26622,6 @@ namespace cAlgo.Robots
                     "v{0} {1}",
                     BuildVersion,
                     DateTime.Now.ToString("HH:mm:ss"));
-                var panelBody = new StringBuilder();
                 var serverLine = "";
                 if (_showProcessDebugPanel)
                 {
@@ -18558,28 +26634,25 @@ namespace cAlgo.Robots
                         compactStatus(_syncStatus));
                 }
 
-                if (_consecutiveErrors > 0 || _lastPollErr != "None" || _lastSyncErr != "None")
-                {
-                    var err = _lastSyncErr != "None" ? _lastSyncErr : _lastPollErr;
-                    if (string.IsNullOrWhiteSpace(err) || err == "None")
-                        panelBody.AppendLine(string.Format("E {0}", _consecutiveErrors));
-                    else
-                        AppendWrappedPanelLine(panelBody, "E ", err, 72, 1);
-                }
-
-                if (!string.IsNullOrWhiteSpace(_lastPanelMessage) && !string.Equals(_lastPanelMessage, "Ready", StringComparison.OrdinalIgnoreCase))
-                    AppendWrappedPanelLine(panelBody, _lastPanelMessageIsError ? "! " : "M ", _lastPanelMessage, 72, 1);
-
-                var procBodyText = panelBody.ToString().TrimEnd('\r', '\n');
+                // Dashboard moved to the bottom-right. The debug E/M/D rows are dropped, and the
+                // Strategies row is extended with the current session + next news (previously the
+                // separate bottom-right panel).
                 var leftPanel = new StringBuilder();
                 leftPanel.AppendLine(panelHeader);
                 if (!string.IsNullOrWhiteSpace(serverLine))
                     leftPanel.AppendLine(serverLine);
                 var strategyRuntime = GetConfiguredStrategyRuntimeList();
-                if (!string.IsNullOrWhiteSpace(strategyRuntime))
-                    leftPanel.AppendLine("Strategies: " + strategyRuntime);
-                if (!string.IsNullOrWhiteSpace(procBodyText))
-                    leftPanel.AppendLine(procBodyText);
+                var strategyRow = new StringBuilder("Strategies: ");
+                strategyRow.Append(string.IsNullOrWhiteSpace(strategyRuntime) ? "-" : strategyRuntime);
+                var sessionContext = GetBottomRightSessionContextText();
+                if (!string.IsNullOrWhiteSpace(sessionContext))
+                    strategyRow.Append(" | ").Append(sessionContext);
+                var newsContext = GetBottomRightNewsContextText(DateTime.Now);
+                if (!string.IsNullOrWhiteSpace(newsContext))
+                    strategyRow.Append(" | ").Append(newsContext);
+                leftPanel.AppendLine(strategyRow.ToString());
+                if (_suppressedLogCount > 0)
+                    leftPanel.AppendLine(string.Format(CultureInfo.InvariantCulture, "LogFilter: suppressed {0} line(s)", _suppressedLogCount));
                 var debugPanelColor =
                     (_serverStatus == "OFFLINE" ||
                      _serverStatus == "CLIENT_ERR" ||
@@ -18591,38 +26664,23 @@ namespace cAlgo.Robots
                      _syncStatus == "ERROR")
                         ? Color.Red
                         : _lastPanelMessageColor;
-                var debugPanel = Chart.DrawStaticText("Panel_DBG", leftPanel.ToString(), VerticalAlignment.Top, HorizontalAlignment.Left, debugPanelColor);
+                var debugPanel = Chart.DrawStaticText("Panel_DBG", leftPanel.ToString(), VerticalAlignment.Bottom, HorizontalAlignment.Right, debugPanelColor);
                 TryStyleChartText(debugPanel, 10, "Courier New", false);
-                TrySetPropertyValue(debugPanel, "Margin", "6 30 0 0");
 
                 var metricText = string.Join(Environment.NewLine, BuildRiskDashboardLines(riskState));
-                var metricHeader = GetFirstLine(metricText);
-                var metricBody = GetRemainingLines(metricText);
-                if (!string.IsNullOrWhiteSpace(metricHeader))
+                if (!string.IsNullOrWhiteSpace(metricText))
                 {
-                    var metricHeaderPanel = Chart.DrawStaticText("Panel_GATE_HDR", metricHeader, VerticalAlignment.Top, HorizontalAlignment.Right, Color.Cyan);
-                    TryStyleChartText(metricHeaderPanel, 9, "Courier New", true);
+                    var metricPanel = Chart.DrawStaticText("Panel_GATE", metricText, VerticalAlignment.Top, HorizontalAlignment.Center, Color.White);
+                    TryStyleChartText(metricPanel, 9, "Courier New", false);
+                    TrySetPropertyValue(metricPanel, "Margin", "0 -8 0 0");
                 }
-                if (!string.IsNullOrWhiteSpace(metricBody))
-                {
-                    var metricBodyPanel = Chart.DrawStaticText("Panel_GATE_BODY", Environment.NewLine + metricBody, VerticalAlignment.Top, HorizontalAlignment.Right, Color.White);
-                    TryStyleChartText(metricBodyPanel, 9, "Courier New", false);
-                }
-
-                var bottomRightLines = new List<string>();
-                if (ShouldShowLowerTimeframeSessionContext())
-                    bottomRightLines.Add(GetBottomRightSessionContextText());
-                bottomRightLines.Add(GetBottomRightNewsContextText(DateTime.Now));
-                var bottomRightPanel = string.Join(Environment.NewLine, bottomRightLines.Where(line => !string.IsNullOrWhiteSpace(line)).ToArray());
-                var bottomRight = Chart.DrawStaticText("Panel_BR", bottomRightPanel, VerticalAlignment.Bottom, HorizontalAlignment.Right, Color.LightGray);
-                TryStyleChartText(bottomRight, 9, "Courier New", false);
 
                 if (includeVisualOverlays)
                     RefreshChartSummaryPanel(riskState);
             }
             catch (Exception ex)
             {
-                SafePrint("[Panel] Draw failed: {0}", ex.Message);
+                SafeLog("ERROR", "[Panel] Draw failed: {0}", ex.Message);
             }
         }
 
@@ -19192,6 +27250,196 @@ namespace cAlgo.Robots
             }
         }
 
+        private double GetVolumeSurgeMultiplier(VolumeSurgeMode mode)
+        {
+            switch (mode)
+            {
+                case VolumeSurgeMode._5pct:
+                    return 1.05;
+                case VolumeSurgeMode._10pct:
+                    return 1.10;
+                case VolumeSurgeMode._15pct:
+                    return 1.15;
+                case VolumeSurgeMode._20pct:
+                    return 1.20;
+                default:
+                    return 1.0;
+            }
+        }
+
+        private double ResolveZoneFvgDisplacementRatio(ZoneFvgDisplacementPreset preset)
+        {
+            switch (preset)
+            {
+                case ZoneFvgDisplacementPreset.Loose:
+                    return 1.05;
+                case ZoneFvgDisplacementPreset.Normal:
+                    return 1.15;
+                case ZoneFvgDisplacementPreset.Tight:
+                    return 1.30;
+                case ZoneFvgDisplacementPreset.Strict:
+                    return 1.50;
+                default:
+                    return 0.0; // No = requirement disabled
+            }
+        }
+
+        private double ResolveZoneFvgBodyRatio(ZoneFvgBodyRatioPreset preset)
+        {
+            switch (preset)
+            {
+                case ZoneFvgBodyRatioPreset.Low:
+                    return 0.40;
+                case ZoneFvgBodyRatioPreset.Medium:
+                    return 0.55;
+                case ZoneFvgBodyRatioPreset.High:
+                    return 0.70;
+                case ZoneFvgBodyRatioPreset.Full:
+                    return 0.85;
+                default:
+                    return 0.0; // No = requirement disabled
+            }
+        }
+
+        private double ResolveZoneFvgGapPercent(ZoneFvgGapPreset preset)
+        {
+            switch (preset)
+            {
+                case ZoneFvgGapPreset.Tiny:
+                    return 0.05;
+                case ZoneFvgGapPreset.Small:
+                    return 0.10;
+                case ZoneFvgGapPreset.Normal:
+                    return 0.18;
+                case ZoneFvgGapPreset.Large:
+                    return 0.30;
+                default:
+                    return 0.0; // No = requirement disabled
+            }
+        }
+
+        private int ResolveZoneLookbackBars(ZoneLookbackPreset preset)
+        {
+            switch (preset)
+            {
+                case ZoneLookbackPreset.Bars50:
+                    return 50;
+                case ZoneLookbackPreset.Bars80:
+                    return 80;
+                case ZoneLookbackPreset.Bars120:
+                    return 120;
+                case ZoneLookbackPreset.Bars200:
+                    return 200;
+                default:
+                    return 0; // No Limit = scan all available bars
+            }
+        }
+
+        private int ResolveZoneMaxCount(ZoneMaxCountPreset preset)
+        {
+            switch (preset)
+            {
+                case ZoneMaxCountPreset.Few:
+                    return 4;
+                case ZoneMaxCountPreset.Normal:
+                    return 8;
+                case ZoneMaxCountPreset.Many:
+                    return 12;
+                case ZoneMaxCountPreset.Max:
+                    return 16;
+                default:
+                    return int.MaxValue; // No Limit
+            }
+        }
+
+        // Event is only valid when its volume is higher than the previous comparable window by
+        // the configured percentage (Vol Surge). For multi-candle events (patternSpan > 1) the
+        // AVERAGE volume of the pattern candles is compared against the AVERAGE of the same
+        // number of candles BEFORE the pattern — never candle-to-candle inside the group.
+        // Fails closed when volume data is unavailable.
+        private bool HasEventVolumeSurge(Bars sourceBars, int index, int patternSpan = 1)
+        {
+            return HasVolumeSurgeForMode(sourceBars, index, patternSpan, VolumeSurgePreset);
+        }
+
+        // OB/FVG visual zones use their own configurable surge (Zones Vol Surge, default No).
+        private bool HasZoneVolumeSurge(Bars sourceBars, int index, int patternSpan = 1)
+        {
+            return HasVolumeSurgeForMode(sourceBars, index, patternSpan, ZoneVolumeSurgePreset);
+        }
+
+        private bool HasVolumeSurgeForMode(Bars sourceBars, int index, int patternSpan, VolumeSurgeMode mode)
+        {
+            if (mode == VolumeSurgeMode.No)
+                return true;
+            if (sourceBars == null || index <= 0 || index >= sourceBars.Count)
+                return false;
+
+            var span = Math.Max(1, patternSpan);
+            var currentStart = index - span + 1;
+            var previousStart = currentStart - span;
+            if (currentStart < 0 || previousStart < 0)
+                return false;
+
+            var currentTotal = 0.0;
+            var previousTotal = 0.0;
+            var currentCount = 0;
+            var previousCount = 0;
+            for (var i = currentStart; i <= index; i++)
+            {
+                var currentVolume = GetSharedRuleBarVolume(sourceBars, i);
+                if (currentVolume > 0)
+                {
+                    currentTotal += currentVolume;
+                    currentCount++;
+                }
+            }
+            for (var i = previousStart; i < currentStart; i++)
+            {
+                var previousVolume = GetSharedRuleBarVolume(sourceBars, i);
+                if (previousVolume > 0)
+                {
+                    previousTotal += previousVolume;
+                    previousCount++;
+                }
+            }
+            if (currentCount == 0 || previousCount == 0)
+                return false;
+
+            var currentAvg = currentTotal / currentCount;
+            var previousAvg = previousTotal / previousCount;
+            if (!(previousAvg > 0))
+                return false;
+            return currentAvg > previousAvg * GetVolumeSurgeMultiplier(mode);
+        }
+
+        // Strategy-level volume surge: the signal bar must surge vs the previous bar per the
+        // Strategies-group Vol Surge setting. No = always pass.
+        private bool HasStrategyBarVolumeSurge(string symbolName, TimeFrame timeFrame, DateTime signalTime)
+        {
+            if (StrategyVolumeSurgePreset == VolumeSurgeMode.No)
+                return true;
+            if (string.IsNullOrWhiteSpace(symbolName) || timeFrame == null || signalTime == DateTime.MinValue)
+                return false;
+
+            try
+            {
+                var bars = MarketData.GetBars(timeFrame, symbolName);
+                if (bars == null || bars.Count < 2)
+                    return false;
+                for (var i = 0; i < bars.Count; i++)
+                {
+                    if (bars.OpenTimes[i] == signalTime)
+                        return HasVolumeSurgeForMode(bars, i, 1, StrategyVolumeSurgePreset);
+                }
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private long ToUnixSecondsSafe(DateTime value)
         {
             try
@@ -19508,13 +27756,8 @@ namespace cAlgo.Robots
             var high = ToSharedRuleNumber(SharedRuleValueAtPath(bar, "high"));
             var low = ToSharedRuleNumber(SharedRuleValueAtPath(bar, "low"));
             var close = ToSharedRuleNumber(SharedRuleValueAtPath(bar, "close"));
-            var body = Math.Abs(close - open);
-            var range = Math.Max(0.0000001, high - low);
-            var upperWick = high - Math.Max(open, close);
-            var lowerWick = Math.Min(open, close) - low;
-
-            var bullish = body / range <= 0.35 && lowerWick / range >= 0.45 && upperWick / range <= 0.2;
-            var bearish = body / range <= 0.35 && upperWick / range >= 0.45 && lowerWick / range <= 0.2;
+            var bullish = IsStrictBullishPinBar(open, high, low, close);
+            var bearish = IsStrictBearishPinBar(open, high, low, close);
 
             if (biasFilter == "bullish") bearish = false;
             if (biasFilter == "bearish") bullish = false;
@@ -19543,16 +27786,15 @@ namespace cAlgo.Robots
 
             var prevOpen = ToSharedRuleNumber(SharedRuleValueAtPath(prev, "open"));
             var prevClose = ToSharedRuleNumber(SharedRuleValueAtPath(prev, "close"));
+            var prevHigh = ToSharedRuleNumber(SharedRuleValueAtPath(prev, "high"));
+            var prevLow = ToSharedRuleNumber(SharedRuleValueAtPath(prev, "low"));
             var open = ToSharedRuleNumber(SharedRuleValueAtPath(bar, "open"));
             var close = ToSharedRuleNumber(SharedRuleValueAtPath(bar, "close"));
+            var high = ToSharedRuleNumber(SharedRuleValueAtPath(bar, "high"));
+            var low = ToSharedRuleNumber(SharedRuleValueAtPath(bar, "low"));
 
-            var prevBodyHigh = Math.Max(prevOpen, prevClose);
-            var prevBodyLow = Math.Min(prevOpen, prevClose);
-            var bodyHigh = Math.Max(open, close);
-            var bodyLow = Math.Min(open, close);
-
-            var bullish = prevClose < prevOpen && close > open && bodyHigh >= prevBodyHigh && bodyLow <= prevBodyLow;
-            var bearish = prevClose > prevOpen && close < open && bodyHigh >= prevBodyHigh && bodyLow <= prevBodyLow;
+            var bullish = IsStrictBullishEngulfing(prevOpen, prevHigh, prevLow, prevClose, open, high, low, close);
+            var bearish = IsStrictBearishEngulfing(prevOpen, prevHigh, prevLow, prevClose, open, high, low, close);
 
             if (biasFilter == "bullish") bearish = false;
             if (biasFilter == "bearish") bullish = false;
@@ -19650,24 +27892,26 @@ namespace cAlgo.Robots
             var preStarPressure = InferSharedRulePriorPressure(bars, index - 2, 4);
             var preSequencePressure = InferSharedRulePriorPressure(bars, index - 3, 5);
             var lowerShadowReversalShape =
-                barStats.BodyRatio <= 0.35 &&
-                barStats.LowerWick / barStats.Range >= 0.5 &&
-                barStats.UpperWick / barStats.Range <= 0.15 &&
-                barStats.BodyLow >= barStats.Low + barStats.Range * 0.55;
+                barStats.BodyRatio <= 0.3 &&
+                barStats.LowerWick >= barStats.Body * 2.5 &&
+                barStats.LowerWick / barStats.Range >= 0.55 &&
+                barStats.UpperWick / barStats.Range <= 0.12 &&
+                barStats.BodyLow >= barStats.Low + barStats.Range * 0.62;
             var upperShadowReversalShape =
-                barStats.BodyRatio <= 0.35 &&
-                barStats.UpperWick / barStats.Range >= 0.5 &&
-                barStats.LowerWick / barStats.Range <= 0.15 &&
-                barStats.BodyHigh <= barStats.Low + barStats.Range * 0.45;
+                barStats.BodyRatio <= 0.3 &&
+                barStats.UpperWick >= barStats.Body * 2.5 &&
+                barStats.UpperWick / barStats.Range >= 0.55 &&
+                barStats.LowerWick / barStats.Range <= 0.12 &&
+                barStats.BodyHigh <= barStats.Low + barStats.Range * 0.38;
 
-            if (prevStats.Bearish && barStats.Bullish && barStats.BodyHigh >= prevStats.BodyHigh && barStats.BodyLow <= prevStats.BodyLow)
+            if (IsStrictBullishEngulfing(prevStats.Open, prevStats.High, prevStats.Low, prevStats.Close, barStats.Open, barStats.High, barStats.Low, barStats.Close))
                 outPatterns.Add("bullish_engulfing");
-            if (prevStats.Bullish && barStats.Bearish && barStats.BodyHigh >= prevStats.BodyHigh && barStats.BodyLow <= prevStats.BodyLow)
+            if (IsStrictBearishEngulfing(prevStats.Open, prevStats.High, prevStats.Low, prevStats.Close, barStats.Open, barStats.High, barStats.Low, barStats.Close))
                 outPatterns.Add("bearish_engulfing");
 
-            if (barStats.BodyRatio <= 0.35 && barStats.LowerWick / barStats.Range >= 0.45 && barStats.UpperWick / barStats.Range <= 0.2)
+            if (IsStrictBullishPinBar(barStats.Open, barStats.High, barStats.Low, barStats.Close))
                 outPatterns.Add("bullish_pin_bar");
-            if (barStats.BodyRatio <= 0.35 && barStats.UpperWick / barStats.Range >= 0.45 && barStats.LowerWick / barStats.Range <= 0.2)
+            if (IsStrictBearishPinBar(barStats.Open, barStats.High, barStats.Low, barStats.Close))
                 outPatterns.Add("bearish_pin_bar");
 
             if (lowerShadowReversalShape && preCurrentPressure == "down")
@@ -19679,19 +27923,19 @@ namespace cAlgo.Robots
             if (upperShadowReversalShape && preCurrentPressure == "down")
                 outPatterns.Add("bullish_inverted_hammer");
 
-            if (prevStats.Bearish && barStats.Bullish && barStats.Open < prevStats.Close && barStats.Close > (prevStats.Open + prevStats.Close) * 0.5 && barStats.Close < prevStats.Open && preCurrentPressure == "down")
+            if (prevStats.Bearish && prevStats.BodyRatio >= 0.5 && barStats.Bullish && barStats.BodyRatio >= 0.5 && barStats.Open <= prevStats.Close && barStats.Close > (prevStats.Open + prevStats.Close) * 0.5 && barStats.Close < prevStats.Open && preCurrentPressure == "down")
                 outPatterns.Add("bullish_piercing_line");
-            if (prevStats.Bullish && barStats.Bearish && barStats.Open > prevStats.Close && barStats.Close < (prevStats.Open + prevStats.Close) * 0.5 && barStats.Close > prevStats.Open && preCurrentPressure == "up")
+            if (prevStats.Bullish && prevStats.BodyRatio >= 0.5 && barStats.Bearish && barStats.BodyRatio >= 0.5 && barStats.Open >= prevStats.Close && barStats.Close < (prevStats.Open + prevStats.Close) * 0.5 && barStats.Close > prevStats.Open && preCurrentPressure == "up")
                 outPatterns.Add("bearish_dark_cloud_cover");
 
-            if (prevStats.Bearish && prevStats.BodyRatio >= 0.5 && barStats.Bullish && barStats.BodyHigh <= prevStats.BodyHigh && barStats.BodyLow >= prevStats.BodyLow && barStats.Body <= prevStats.Body * 0.75 && preCurrentPressure == "down")
+            if (prevStats.Bearish && prevStats.BodyRatio >= 0.55 && barStats.Bullish && barStats.BodyRatio <= 0.4 && barStats.BodyHigh <= prevStats.BodyHigh && barStats.BodyLow >= prevStats.BodyLow && barStats.Body <= prevStats.Body * 0.6 && preCurrentPressure == "down")
                 outPatterns.Add("bullish_harami");
-            if (prevStats.Bullish && prevStats.BodyRatio >= 0.5 && barStats.Bearish && barStats.BodyHigh <= prevStats.BodyHigh && barStats.BodyLow >= prevStats.BodyLow && barStats.Body <= prevStats.Body * 0.75 && preCurrentPressure == "up")
+            if (prevStats.Bullish && prevStats.BodyRatio >= 0.55 && barStats.Bearish && barStats.BodyRatio <= 0.4 && barStats.BodyHigh <= prevStats.BodyHigh && barStats.BodyLow >= prevStats.BodyLow && barStats.Body <= prevStats.Body * 0.6 && preCurrentPressure == "up")
                 outPatterns.Add("bearish_harami");
 
-            if (prev2Stats != null && prev2Stats.Bearish && prev2Stats.BodyRatio >= 0.45 && prevStats.Body <= prev2Stats.Body * 0.6 && prevStats.BodyRatio <= 0.35 && barStats.Bullish && barStats.BodyRatio >= 0.45 && barStats.Close >= prev2Stats.BodyLow + prev2Stats.Body * 0.5 && preStarPressure == "down")
+            if (prev2Stats != null && prev2Stats.Bearish && prev2Stats.BodyRatio >= 0.55 && prevStats.Body <= prev2Stats.Body * 0.45 && prevStats.BodyRatio <= 0.25 && barStats.Bullish && barStats.BodyRatio >= 0.55 && barStats.Close >= prev2Stats.BodyLow + prev2Stats.Body * 0.6 && preStarPressure == "down")
                 outPatterns.Add("bullish_morning_star");
-            if (prev2Stats != null && prev2Stats.Bullish && prev2Stats.BodyRatio >= 0.45 && prevStats.Body <= prev2Stats.Body * 0.6 && prevStats.BodyRatio <= 0.35 && barStats.Bearish && barStats.BodyRatio >= 0.45 && barStats.Close <= prev2Stats.BodyLow + prev2Stats.Body * 0.5 && preStarPressure == "up")
+            if (prev2Stats != null && prev2Stats.Bullish && prev2Stats.BodyRatio >= 0.55 && prevStats.Body <= prev2Stats.Body * 0.45 && prevStats.BodyRatio <= 0.25 && barStats.Bearish && barStats.BodyRatio >= 0.55 && barStats.Close <= prev2Stats.BodyLow + prev2Stats.Body * 0.4 && preStarPressure == "up")
                 outPatterns.Add("bearish_evening_star");
 
             if (index >= 2)
@@ -19704,10 +27948,11 @@ namespace cAlgo.Robots
                     var ascendingCloses = a.Bullish && b.Bullish && c.Bullish && b.Close > a.Close && c.Close > b.Close;
                     var descendingCloses = a.Bearish && b.Bearish && c.Bearish && b.Close < a.Close && c.Close < b.Close;
                     var opensWithinBodies = b.Open >= a.BodyLow && b.Open <= a.BodyHigh && c.Open >= b.BodyLow && c.Open <= b.BodyHigh;
-                    var smallUpperWicks = a.UpperWick / a.Range <= 0.2 && b.UpperWick / b.Range <= 0.2 && c.UpperWick / c.Range <= 0.2;
-                    var smallLowerWicks = a.LowerWick / a.Range <= 0.2 && b.LowerWick / b.Range <= 0.2 && c.LowerWick / c.Range <= 0.2;
-                    if (ascendingCloses && opensWithinBodies && smallUpperWicks && preSequencePressure == "down") outPatterns.Add("bullish_three_white_soldiers");
-                    if (descendingCloses && opensWithinBodies && smallLowerWicks && preSequencePressure == "up") outPatterns.Add("bearish_three_black_crows");
+                    var strongBodies = a.BodyRatio >= 0.55 && b.BodyRatio >= 0.55 && c.BodyRatio >= 0.55;
+                    var smallUpperWicks = a.UpperWick / a.Range <= 0.15 && b.UpperWick / b.Range <= 0.15 && c.UpperWick / c.Range <= 0.15;
+                    var smallLowerWicks = a.LowerWick / a.Range <= 0.15 && b.LowerWick / b.Range <= 0.15 && c.LowerWick / c.Range <= 0.15;
+                    if (ascendingCloses && opensWithinBodies && strongBodies && smallUpperWicks && preSequencePressure == "down") outPatterns.Add("bullish_three_white_soldiers");
+                    if (descendingCloses && opensWithinBodies && strongBodies && smallLowerWicks && preSequencePressure == "up") outPatterns.Add("bearish_three_black_crows");
                 }
             }
 

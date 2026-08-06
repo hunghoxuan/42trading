@@ -1519,6 +1519,7 @@ function createSqliteRepository(options = {}) {
             row,
             Number(options.maxLeaseRetries || 3),
             now,
+            Number(options.maxAgeHours || 0),
           ) &&
           !hasBroker
         ) {
@@ -2726,6 +2727,7 @@ function createPostgresRepository(options = {}) {
             row,
             Number(options.maxLeaseRetries || 3),
             now,
+            Number(options.maxAgeHours || 0),
           ) &&
           !hasBroker
         ) {

@@ -4,7 +4,7 @@
 #include <Trade/Trade.mqh>
 
 // Bump this on every code update so running build is obvious on chart/logs.
-string EA_BUILD_VERSION = "v2026.05.24 20:32 - c61346bd";
+string EA_BUILD_VERSION = "v2026.07.22 13:40 - ack-persist";
 
 //--- 1. CONNECTION & IDENTITY
 input string InpServerBaseUrl = "http://127.0.0.1:3001"; // Local API server base URL
@@ -81,6 +81,7 @@ input int    InpMgtTrail_Step_Pips  = 5;  // Trail Step (Pips)
 
 //--- 7. SYSTEM & SIMULATION
 sinput string InpMappingFile         = "TVBridge_Mappings.csv"; // Internal ticket mapping file
+sinput string InpAckStateFile        = "TVBridge_AckState.csv"; // Persistent ack queue + v2 context
 input bool    InpBacktestMode        = false; // Replay signals from CSV
 input string  InpBacktestFileCommon  = "tvbridge_signals.csv";
 input bool    InpBacktestHasHeader   = true;
@@ -1225,6 +1226,136 @@ void LoadMappings()
    Print("Loaded mappings: Positions=", ArraySize(g_posMapTicket), " Orders=", ArraySize(g_ordMapTicket));
 }
 
+void SetLeaseTokenContext(const string signalId, const string leaseToken)
+{
+   if(StringLen(signalId) == 0 || StringLen(leaseToken) == 0)
+      return;
+
+   for(int i = 0; i < ArraySize(g_leaseTokenMapSignalId); ++i)
+   {
+      if(g_leaseTokenMapSignalId[i] == signalId)
+      {
+         g_leaseTokenMapValue[i] = leaseToken;
+         return;
+      }
+   }
+
+   int n = ArraySize(g_leaseTokenMapSignalId);
+   ArrayResize(g_leaseTokenMapSignalId, n + 1);
+   ArrayResize(g_leaseTokenMapValue, n + 1);
+   g_leaseTokenMapSignalId[n] = signalId;
+   g_leaseTokenMapValue[n] = leaseToken;
+}
+
+void SetTradeIdContext(const string signalId, const string tradeId)
+{
+   if(StringLen(signalId) == 0 || StringLen(tradeId) == 0)
+      return;
+
+   for(int i = 0; i < ArraySize(g_tradeIdMapSignalId); ++i)
+   {
+      if(g_tradeIdMapSignalId[i] == signalId)
+      {
+         g_tradeIdMapValue[i] = tradeId;
+         return;
+      }
+   }
+
+   int n = ArraySize(g_tradeIdMapSignalId);
+   ArrayResize(g_tradeIdMapSignalId, n + 1);
+   ArrayResize(g_tradeIdMapValue, n + 1);
+   g_tradeIdMapSignalId[n] = signalId;
+   g_tradeIdMapValue[n] = tradeId;
+}
+
+void SaveAckState()
+{
+   int h = FileOpen(InpAckStateFile, FILE_WRITE|FILE_CSV|FILE_ANSI);
+   if(h == INVALID_HANDLE) return;
+
+   FileWrite(h, "TYPE", "KEY", "VALUE1", "VALUE2", "VALUE3");
+
+   for(int i = 0; i < ArraySize(g_leaseTokenMapSignalId); ++i)
+      FileWrite(h, "LEASE", g_leaseTokenMapSignalId[i], g_leaseTokenMapValue[i], "", "");
+
+   for(int i = 0; i < ArraySize(g_tradeIdMapSignalId); ++i)
+      FileWrite(h, "TRADE", g_tradeIdMapSignalId[i], g_tradeIdMapValue[i], "", "");
+
+   for(int i = 0; i < ArraySize(g_ackQSignalId); ++i)
+      FileWrite(h, "ACK",
+                g_ackQSignalId[i],
+                g_ackQStatus[i],
+                g_ackQTicket[i],
+                IntegerToString(g_ackQRetryCount[i]) + "\t" + g_ackQError[i] + "\t" + g_ackQBody[i]);
+
+   FileClose(h);
+}
+
+void LoadAckState()
+{
+   int h = FileOpen(InpAckStateFile, FILE_READ|FILE_CSV|FILE_ANSI);
+   if(h == INVALID_HANDLE) return;
+
+   if(!FileIsEnding(h)) FileReadString(h);
+   if(!FileIsEnding(h)) FileReadString(h);
+   if(!FileIsEnding(h)) FileReadString(h);
+   if(!FileIsEnding(h)) FileReadString(h);
+   if(!FileIsEnding(h)) FileReadString(h);
+
+   ArrayResize(g_leaseTokenMapSignalId, 0);
+   ArrayResize(g_leaseTokenMapValue, 0);
+   ArrayResize(g_tradeIdMapSignalId, 0);
+   ArrayResize(g_tradeIdMapValue, 0);
+   ArrayResize(g_ackQSignalId, 0);
+   ArrayResize(g_ackQStatus, 0);
+   ArrayResize(g_ackQTicket, 0);
+   ArrayResize(g_ackQError, 0);
+   ArrayResize(g_ackQBody, 0);
+   ArrayResize(g_ackQRetryCount, 0);
+
+   while(!FileIsEnding(h))
+   {
+      string type = FileReadString(h);
+      if(StringLen(type) == 0) break;
+      string key = FileReadString(h);
+      string value1 = FileReadString(h);
+      string value2 = FileReadString(h);
+      string value3 = FileReadString(h);
+
+      if(type == "LEASE")
+      {
+         SetLeaseTokenContext(key, value1);
+      }
+      else if(type == "TRADE")
+      {
+         SetTradeIdContext(key, value1);
+      }
+      else if(type == "ACK")
+      {
+         string parts[];
+         int partCount = StringSplit(value3, '\t', parts);
+         int n = ArraySize(g_ackQSignalId);
+         ArrayResize(g_ackQSignalId, n + 1);
+         ArrayResize(g_ackQStatus, n + 1);
+         ArrayResize(g_ackQTicket, n + 1);
+         ArrayResize(g_ackQError, n + 1);
+         ArrayResize(g_ackQBody, n + 1);
+         ArrayResize(g_ackQRetryCount, n + 1);
+         g_ackQSignalId[n] = key;
+         g_ackQStatus[n] = value1;
+         g_ackQTicket[n] = value2;
+         g_ackQRetryCount[n] = partCount > 0 ? (int)StringToInteger(parts[0]) : 0;
+         g_ackQError[n] = partCount > 1 ? parts[1] : "";
+         g_ackQBody[n] = partCount > 2 ? parts[2] : "";
+      }
+   }
+
+   FileClose(h);
+   Print("Loaded ack state: lease=", ArraySize(g_leaseTokenMapSignalId),
+         " trade=", ArraySize(g_tradeIdMapSignalId),
+         " ack=", ArraySize(g_ackQSignalId));
+}
+
 bool GetSignalIdByPositionTicket(const ulong ticket, string &signalIdOut, int &idxOut)
 {
    signalIdOut = "";
@@ -2090,6 +2221,7 @@ void Ack(const string signalId, const string status, const string ticket, const 
    g_ackQError[n] = err;
    g_ackQBody[n] = body;
    g_ackQRetryCount[n] = 0;
+   SaveAckState();
 
    LocalLog("Queued Ack status=" + status + " id=" + signalId + " ticket=" + ticket);
 }
@@ -2167,6 +2299,7 @@ void ProcessAckQueue()
    ArrayResize(g_ackQError, w);
    ArrayResize(g_ackQBody, w);
    ArrayResize(g_ackQRetryCount, w);
+   SaveAckState();
 }
 
 void CloseBySymbol(const string symbol)
@@ -3118,13 +3251,12 @@ void OnTimer()
     if(signalId == "") signalId = JsonGetString(resp, "task_id");
 
     // Track V2 context
-    if(signalId != "" && leaseToken != "") {
-       int nL = ArraySize(g_leaseTokenMapSignalId);
-       ArrayResize(g_leaseTokenMapSignalId, nL+1);
-       ArrayResize(g_leaseTokenMapValue, nL+1);
-       g_leaseTokenMapSignalId[nL] = signalId;
-       g_leaseTokenMapValue[nL] = leaseToken;
-    }
+    if(signalId != "" && leaseToken != "")
+       SetLeaseTokenContext(signalId, leaseToken);
+    if(signalId != "" && tradeId != "")
+       SetTradeIdContext(signalId, tradeId);
+    if(signalId != "" && (leaseToken != "" || tradeId != ""))
+       SaveAckState();
 
     string action   = JsonGetString(resp, "action");
     string symbolIn = JsonGetString(resp, "symbol");
@@ -3974,6 +4106,7 @@ void SyncWithVps()
 int OnInit()
 {
    LoadMappings();
+   LoadAckState();
    if(InpBacktestMode)
    {
       g_btLoaded = LoadBacktestSignals();
@@ -4004,6 +4137,7 @@ int OnInit()
 void OnDeinit(const int reason)
 {
    EventKillTimer();
+   SaveAckState();
    if(InpShowDebugPanel)
       Comment("");
 }

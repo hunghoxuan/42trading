@@ -253,16 +253,14 @@ export default function TradeLogsTab({
         title="Activity"
         subtitle="Click a log row to inspect the full payload"
         toolbar={toolbar}
-        headerActions={
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={handleDeleteAll}
-            disabled={!tradeSid || deleting || loading || files.length <= 0}
-            title={files.length > 0 ? "Delete all log files" : "No log files to delete"}
-          >
-            {deleting ? "Deleting..." : "Delete All"}
-          </button>
+        onDeleteAll={handleDeleteAll}
+        deleteAllDisabled={!tradeSid || deleting || loading || files.length <= 0}
+        deleteAllLabel={
+          deleting
+            ? "Deleting log files..."
+            : files.length > 0
+              ? "Delete all log files"
+              : "No log files to delete"
         }
         onRefresh={() => loadLogs({ background: true })}
         refreshDisabled={!tradeSid}

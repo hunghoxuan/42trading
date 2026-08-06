@@ -1,16 +1,28 @@
 import { useEffect, useMemo, useState } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
 import BacktestSummaryMetaRow from "./BacktestSummaryMetaRow";
 import InputComboSelect from "../../../shared/components/InputComboSelect";
+import Accordion from "../../../shared/components/Accordion.jsx";
 import RuleBuilder, {
+  ACTION_TYPE_OPTIONS,
+  COMPARATOR_OPTIONS as RULE_COMPARATOR_OPTIONS,
+  CONDITION_MODE_OPTIONS as RULE_CONDITION_MODE_OPTIONS,
   createEmptyRuleDraft,
+  FUNCTION_OPTIONS,
+  LOGIC_OPTIONS as RULE_LOGIC_OPTIONS,
   normalizeRuleAction,
   normalizeRuleDraft,
+  RULE_BIAS_OPTIONS,
+  RULE_PRIORITY_OPTIONS,
+  TRADE_DIRECTION_OPTIONS,
+  TRADE_TYPE_OPTIONS,
 } from "./RuleBuilder.jsx";
 import ResponsivePanel from "../../../shared/components/ResponsivePanel";
 import TabBar from "../../../shared/components/TabBar";
 import ToggleButton from "../../../shared/components/ToggleButton";
 import TimeframeSelector from "../../system/components/TimeframeSelector.jsx";
 import strategyFunctions from "../../../../config/strategyFunctions.json";
+import { formatDisplayValue } from "../../../shared/utils/objectDisplay.js";
 import { buildRuleVariableValues } from "../../../shared/utils/ruleVariableOptions";
 import {
   appendGroupChild,
@@ -405,16 +417,18 @@ function conditionFieldValue(draft, key) {
 function parsePlanFieldInput(value) {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     if (typeof value.fn === "string") {
-      return formatPlanFunctionExpression(value);
+      return value;
     }
     if (
       Object.keys(value).length === 1 &&
       Object.prototype.hasOwnProperty.call(value, "var")
     ) {
       const variablePath = String(value.var || "").trim();
-      return variablePath || null;
+      return variablePath ? { var: variablePath } : null;
     }
+    return value;
   }
+  if (Array.isArray(value)) return value;
   const raw = String(value ?? "").trim();
   if (!raw) return null;
   return raw;
@@ -434,7 +448,9 @@ function formatPlanFieldInput(value) {
   if (value && typeof value === "object" && !Array.isArray(value) && typeof value.fn === "string") {
     return formatPlanFunctionExpression(value);
   }
-  return typeof value === "object" ? prettyJson(value) : String(value);
+  const expressionText = formatPlanMathExpression(value);
+  if (expressionText) return expressionText;
+  return typeof value === "object" ? formatDisplayValue(value) : String(value);
 }
 
 function formatPlanFunctionArgument(value) {
@@ -459,6 +475,35 @@ function formatPlanFunctionExpression(node = {}) {
   return `${fnName}(${args.map((arg) => formatPlanFunctionArgument(arg)).join(", ")})`;
 }
 
+function formatPlanMathExpression(value, nested = false) {
+  if (value === null) return "null";
+  if (value === undefined) return "";
+  if (typeof value === "number" || typeof value === "bigint") return String(value);
+  if (typeof value === "string") return value.trim();
+  if (Array.isArray(value)) {
+    return value.map((item) => formatPlanMathExpression(item, true)).filter(Boolean).join(", ");
+  }
+  if (!value || typeof value !== "object") return "";
+  if (typeof value.fn === "string") return formatPlanFunctionExpression(value);
+  if (
+    Object.keys(value).length === 1 &&
+    Object.prototype.hasOwnProperty.call(value, "var")
+  ) {
+    return String(value.var || "").trim();
+  }
+
+  const entries = Object.entries(value);
+  if (entries.length !== 1) return "";
+  const [operator, rawArgs] = entries[0];
+  if (!["+", "-", "*", "/"].includes(operator) || !Array.isArray(rawArgs) || !rawArgs.length) {
+    return "";
+  }
+  const renderedArgs = rawArgs.map((item) => formatPlanMathExpression(item, true)).filter(Boolean);
+  if (!renderedArgs.length) return "";
+  const joined = renderedArgs.join(` ${operator} `);
+  return nested && renderedArgs.length > 1 ? `(${joined})` : joined;
+}
+
 function isPlanFieldParamType(value) {
   const raw = formatPlanFieldInput(value).trim();
   if (!raw) return false;
@@ -470,7 +515,7 @@ function isPlanFieldParamType(value) {
 function formatLiteralInput(value) {
   if (value === null) return "null";
   if (value === undefined) return "";
-  return String(value);
+  return formatDisplayValue(value);
 }
 
 function parseIndicatorSettingInput(text = "", type = "value") {
@@ -1066,42 +1111,6 @@ function updateTreeNode(node, targetId, updater) {
   };
 }
 
-function SimpleFieldGrid({ items = [] }) {
-  const visibleItems = items.filter((item) => item && item.value !== undefined && item.value !== null && item.value !== "");
-  if (!visibleItems.length) return null;
-  return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-        gap: 10,
-      }}
-    >
-      {visibleItems.map((item) => (
-        <div key={item.key} className="stack-layout" style={{ gap: 6 }}>
-          <span className="minor-text" style={{ fontSize: 11 }}>
-            {item.label}
-          </span>
-          <div
-            style={{
-              minHeight: 36,
-              borderRadius: 8,
-              border: "1px solid var(--border)",
-              background: "rgba(255,255,255,0.03)",
-              color: "var(--text)",
-              padding: "8px 10px",
-              display: "flex",
-              alignItems: "center",
-            }}
-          >
-            {String(item.value)}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function removeTreeNode(node, targetId) {
   if (!node || node.id === targetId) return null;
   if (node.type !== "group" || !Array.isArray(node.children)) return node;
@@ -1215,6 +1224,279 @@ function HintText({ children, title }) {
     <div className="minor-text" title={title} style={{ fontSize: 11 }}>
       {children}
     </div>
+  );
+}
+
+const RULE_HELP_TEXT = {
+  compare: "Compare two values or variables with operators like >, <, ==, crosses_above, or touches.",
+  if_true: "Run a named rule function such as BOS, Pin Bar, Bias, or Phase and pass only when it returns true.",
+  if_not: "Invert a named rule function. Useful when you want the opposite of a pattern or context check.",
+  predefined_rule: "Reuse a saved rule template when one is available in the template library.",
+  is_true: "Wrap a nested rule tree and treat it as one boolean condition.",
+  get_artifacts: "Collect matching artifacts from the nested rule tree so downstream actions can use them.",
+  draw: "Evaluate a nested rule tree and create chart marker context from the result.",
+  and: "All child conditions must pass.",
+  or: "Any child condition can pass.",
+  then: "Use ordered logic where an earlier condition unlocks the next one.",
+  neutral: "Auto. Let the rule derive direction from the matched artifact or context.",
+  bullish: "Force this rule to describe a bullish / buy-side setup.",
+  bearish: "Force this rule to describe a bearish / sell-side setup.",
+  strong: "Highest conviction. Use for your clearest setups.",
+  medium: "Default conviction for normal setups.",
+  weak: "Lowest conviction. Use for softer confirmations or experiments.",
+  trade: "Create a trade plan from the rule hit.",
+  draw_marker: "Draw a chart marker only, without opening a trade.",
+  notify_notification: "Send a system notification entry.",
+  notify_toast: "Show an in-app toast notification.",
+  buy: "Long / bullish direction.",
+  sell: "Short / bearish direction.",
+  market: "Enter immediately at the market price.",
+  limit: "Place a resting limit order at a better price.",
+  stop: "Place a stop order that triggers after price breaks through a level.",
+};
+
+function humanizeRuleHelpKey(value = "") {
+  return String(value || "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function ruleHelpDescriptionForFunction(item = {}) {
+  const key = String(item?.value || "").trim().toLowerCase();
+  const family = String(item?.family || "").trim().toLowerCase();
+  if (key === "bias") return "Derives the current bullish or bearish context from structure and recent price slope.";
+  if (key === "trend") return "Checks trend direction from the active timeframe context.";
+  if (key === "phase") return "Checks the current market phase such as impulse, pullback, continuation, or reversal.";
+  if (key === "bos" || key === "has_bos") return "Break of structure on the current bar artifact stream.";
+  if (key === "choch" || key === "has_choch") return "Change of character on the current bar artifact stream.";
+  if (key === "pin_bar") return "Current-bar pin bar pattern, optionally filtered by bias and timeframe.";
+  if (key === "engulfing") return "Current-bar engulfing candle pattern, optionally filtered by bias and timeframe.";
+  if (key === "inside_bar") return "Current-bar inside bar pattern.";
+  if (key === "outside_bar") return "Current-bar outside bar pattern.";
+  if (key === "sweep" || key === "has_sweep") return "Liquidity sweep artifact on the current bar.";
+  if (key === "touches") return "Checks whether the current bar touched a level.";
+  if (key === "retest") return "Checks whether price retested a level and held the same side.";
+  if (key === "rejected") return "Checks whether the current bar wicked through a level and closed back away from it.";
+  if (key === "holds_above") return "Checks whether price stayed above a level across bars.";
+  if (key === "holds_below") return "Checks whether price stayed below a level across bars.";
+  if (key === "breakout") return "Checks for a breakout through a level or, without a level, a structural breakout artifact.";
+  if (key === "reversal") return "Checks for reversal structure or a level reclaim / reject pattern.";
+  if (key === "get_artifacts") return RULE_HELP_TEXT.get_artifacts;
+  if (key === "draw") return RULE_HELP_TEXT.draw;
+  if (key === "is_true") return RULE_HELP_TEXT.is_true;
+  if (family === "patterns") return "Pattern detector for the active bar, with optional bias and timeframe filters.";
+  if (family === "structure") return "Structure-based detector sourced from derived chart artifacts.";
+  if (family === "price_action") return "Price-action helper that works with levels or current-bar behavior.";
+  if (family === "context") return "Context helper derived from multi-bar analysis.";
+  return "Rule function available in the combo editor.";
+}
+
+function RuleHelpModal({
+  open,
+  onOpenChange,
+  variableOptions = [],
+}) {
+  const variableExamples = (Array.isArray(variableOptions) ? variableOptions : []).slice(0, 40);
+  const sections = [
+    {
+      title: "Condition Modes",
+      items: RULE_CONDITION_MODE_OPTIONS.map((item) => ({
+        label: item.label,
+        value: item.value,
+        detail: RULE_HELP_TEXT[item.value] || "Rule condition mode.",
+      })),
+    },
+    {
+      title: "Logic Groups",
+      items: RULE_LOGIC_OPTIONS.map((item) => ({
+        label: item.label,
+        value: item.value,
+        detail: RULE_HELP_TEXT[item.value] || "Logical group operator.",
+      })),
+    },
+    {
+      title: "Comparators",
+      items: RULE_COMPARATOR_OPTIONS.map((item) => ({
+        label: item.label,
+        value: item.value,
+        detail:
+          item.value === "crosses_above"
+            ? "Left side crosses from below to above the right side."
+            : item.value === "crosses_below"
+              ? "Left side crosses from above to below the right side."
+              : item.value === "touches"
+                ? "Bar range touches the selected level."
+                : item.value === "retest"
+                  ? "Bar retests a level and stays on the same side."
+                  : item.value === "rejected"
+                    ? "Bar pierces a level and closes back away from it."
+                    : item.value === "holds_above"
+                      ? "Previous and current values both stay above the level."
+                      : item.value === "holds_below"
+                        ? "Previous and current values both stay below the level."
+                        : item.value === "sweeps_above"
+                          ? "Bar sweeps above a level and closes back below."
+                          : item.value === "sweeps_below"
+                            ? "Bar sweeps below a level and closes back above."
+                            : "Standard comparator.",
+      })),
+    },
+    {
+      title: "Rule Functions",
+      items: FUNCTION_OPTIONS.map((item) => ({
+        label: item.label,
+        value: item.value,
+        detail: `${ruleHelpDescriptionForFunction(item)}${item.args?.length ? ` Args: ${item.args.map((arg) => arg.label || arg.key).join(", ")}.` : ""}`,
+      })),
+    },
+    {
+      title: "Bias",
+      items: RULE_BIAS_OPTIONS.map((item) => ({
+        label: item.label,
+        value: item.value,
+        detail: RULE_HELP_TEXT[item.value] || "Rule bias.",
+      })),
+    },
+    {
+      title: "Priority",
+      items: RULE_PRIORITY_OPTIONS.map((item) => ({
+        label: item.label,
+        value: item.value,
+        detail: RULE_HELP_TEXT[item.value] || "Rule priority.",
+      })),
+    },
+    {
+      title: "Action Types",
+      items: ACTION_TYPE_OPTIONS.map((item) => ({
+        label: item.label,
+        value: item.value,
+        detail:
+          item.value === "draw"
+            ? RULE_HELP_TEXT.draw_marker
+            : RULE_HELP_TEXT[item.value] || "Action type.",
+      })),
+    },
+    {
+      title: "Trade Direction",
+      items: TRADE_DIRECTION_OPTIONS.map((item) => ({
+        label: item.label,
+        value: item.value,
+        detail: RULE_HELP_TEXT[item.value] || "Trade direction.",
+      })),
+    },
+    {
+      title: "Order Type",
+      items: TRADE_TYPE_OPTIONS.map((item) => ({
+        label: item.label,
+        value: item.value,
+        detail: RULE_HELP_TEXT[item.value] || "Order type.",
+      })),
+    },
+    {
+      title: "Variable Suggestions",
+      items: variableExamples.map((value) => ({
+        label: value,
+        value,
+        detail:
+          value.startsWith("bar.")
+            ? "Current bar field."
+            : value.startsWith("prev.")
+              ? "Previous bar field."
+              : value.startsWith("indicators.")
+                ? "Computed indicator output."
+                : value.startsWith("prev_indicators.")
+                  ? "Previous indicator output."
+                  : value.startsWith("params.")
+                    ? "Strategy parameter reference."
+                    : value.startsWith("levels.")
+                      ? "Derived chart level or artifact reference."
+                      : "Available variable in the rule editor.",
+      })),
+      emptyText: "Variable suggestions appear here once the strategy has parameters, indicators, levels, or rule context values.",
+    },
+  ];
+
+  const accordionItems = sections.map((section, index) => ({
+    id: section.title.toLowerCase().replace(/[^a-z0-9]+/g, "_"),
+    title: section.title,
+    subtitle: section.items.length
+      ? `${section.items.length} item${section.items.length === 1 ? "" : "s"}`
+      : section.emptyText || "No items available.",
+    defaultOpen: index === 0,
+    content: section.items.length ? (
+      <div className="stack-layout" style={{ gap: 6 }}>
+        {section.items.map((item) => (
+          <div
+            key={`${section.title}:${item.value}`}
+            style={{
+              display: "flex",
+              gap: 8,
+              alignItems: "flex-start",
+              justifyContent: "space-between",
+              padding: "7px 0",
+              borderTop: "1px solid rgba(148,163,184,0.12)",
+            }}
+          >
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+                <span style={{ fontSize: 12, fontWeight: 700 }}>
+                  {item.label || humanizeRuleHelpKey(item.value)}
+                </span>
+                <span className="minor-text" style={{ fontSize: 10 }}>
+                  {item.value}
+                </span>
+              </div>
+              <div className="minor-text" style={{ fontSize: 11, lineHeight: 1.4, marginTop: 2 }}>
+                {item.detail}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    ) : (
+      <div className="minor-text" style={{ fontSize: 11 }}>
+        {section.emptyText || "No items available."}
+      </div>
+    ),
+  }));
+
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="dialog-overlay" />
+        <Dialog.Content
+          className="panel dialog-content"
+          style={{
+            width: "min(1080px, calc(100vw - 32px))",
+            maxHeight: "calc(100vh - 48px)",
+            padding: 18,
+            overflow: "hidden",
+          }}
+        >
+          <Dialog.Title className="dialog-title">Rule Editor Help</Dialog.Title>
+          <Dialog.Description className="minor-text dialog-description">
+            Reference for the combo boxes in the Rules editor. Use this to decode modes, functions, action types, and live variable suggestions.
+          </Dialog.Description>
+          <div
+            style={{
+              marginTop: 14,
+              maxHeight: "calc(100vh - 180px)",
+              overflow: "auto",
+              paddingRight: 4,
+            }}
+          >
+            <Accordion items={accordionItems} />
+          </div>
+          <div className="dialog-actions" style={{ marginTop: 14 }}>
+            <Dialog.Close asChild>
+              <button type="button" className="secondary-button">
+                Close
+              </button>
+            </Dialog.Close>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
@@ -2191,6 +2473,7 @@ export default function StrategyEditorPanel({
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState("info");
   const [descriptionVisible, setDescriptionVisible] = useState(false);
+  const [ruleHelpOpen, setRuleHelpOpen] = useState(false);
   const [batchSymbolsInput, setBatchSymbolsInput] = useState("");
   const [batchTimeframes, setBatchTimeframes] = useState(DEFAULT_BATCH_TIMEFRAMES);
   const [batchRunning, setBatchRunning] = useState(false);
@@ -2288,17 +2571,6 @@ export default function StrategyEditorPanel({
     strategy?.backtest_summary && typeof strategy.backtest_summary === "object"
       ? strategy.backtest_summary
       : null;
-  const presetMetaItems = PRESET_META_FIELDS.map((field) => ({
-    key: field.key,
-    label: field.label,
-    value: draft?.[field.key],
-  }));
-  const presetParamItems = Object.entries(draft?.params || {}).map(([key, value]) => ({
-    key,
-    label: key,
-    value,
-  }));
-
   function applyDraft(nextDraft) {
     const normalizedDraft = {
       ...normalizeEditorStrategy(nextDraft),
@@ -2479,7 +2751,7 @@ export default function StrategyEditorPanel({
                   labelInActive="Disabled"
                   colorActive="#22c55e"
                   colorInActive="#94a3b8"
-                  disabled={isPreset || busy || batchRunning}
+                  disabled={busy || batchRunning}
                   onClick={() =>
                     updateDraft((base) => ({
                       ...base,
@@ -2750,7 +3022,6 @@ export default function StrategyEditorPanel({
           <textarea
             value={jsonText}
             onChange={(event) => setJsonText(event.target.value)}
-            readOnly={isPreset}
             spellCheck={false}
             style={{
               width: "100%",
@@ -2771,43 +3042,7 @@ export default function StrategyEditorPanel({
 
       {activeTab === "edit" ? (
         <div className="stack-layout" style={{ gap: 16 }}>
-          {isPreset ? (
-            <>
-              <ResponsivePanel showToggle={false} border="always" bodyClassName="stack-layout">
-                <SimpleFieldGrid
-                  items={[
-                    { key: "name", label: "Name", value: draft?.name },
-                    ...presetMetaItems,
-                  ]}
-                />
-                {draft?.description ? (
-                  <div className="stack-layout" style={{ gap: 6 }}>
-                    <span className="minor-text" style={{ fontSize: 11 }}>
-                      Description
-                    </span>
-                    <div
-                      style={{
-                        borderRadius: 10,
-                        border: "1px solid var(--border)",
-                        background: "rgba(255,255,255,0.03)",
-                        color: "var(--text)",
-                        padding: 12,
-                        lineHeight: 1.5,
-                      }}
-                    >
-                      {draft.description}
-                    </div>
-                  </div>
-                ) : null}
-              </ResponsivePanel>
-
-              <ResponsivePanel showToggle={false} border="always" bodyClassName="stack-layout">
-                <div className="panel-label">Parameters</div>
-                <SimpleFieldGrid items={presetParamItems} />
-              </ResponsivePanel>
-            </>
-          ) : (
-            <>
+          <>
               <ResponsivePanel showToggle={false} border="always" bodyClassName="stack-layout">
                 <div
                   style={{
@@ -2820,8 +3055,7 @@ export default function StrategyEditorPanel({
                     <span className="minor-text">ID</span>
                     <input
                       className="input"
-                      value={draft?.id || ""}
-                      readOnly={isPreset}
+                      value={draft?.id || draft?.key || ""}
                       onChange={(event) =>
                         updateDraft((base) => ({
                           ...base,
@@ -2835,7 +3069,6 @@ export default function StrategyEditorPanel({
                     <input
                       className="input"
                       value={draft?.name || ""}
-                      readOnly={isPreset}
                       onChange={(event) =>
                         updateDraft((base) => ({
                           ...base,
@@ -2849,7 +3082,6 @@ export default function StrategyEditorPanel({
                     <input
                       className="input"
                       value={draft?.market?.symbol || ""}
-                      readOnly={isPreset}
                       onChange={(event) =>
                         updateDraft((base) => ({
                           ...base,
@@ -2866,7 +3098,6 @@ export default function StrategyEditorPanel({
                     <InputComboSelect
                       value={resolveSelectValue(draft?.market?.tf, timeframeOptions)}
                       searchable
-                      readOnly={isPreset}
                       onChange={(event) =>
                         updateDraft((base) => ({
                           ...base,
@@ -2933,7 +3164,6 @@ export default function StrategyEditorPanel({
                     <textarea
                       className="input"
                       value={draft?.description || ""}
-                      readOnly={isPreset}
                       rows={3}
                       style={{ width: "100%", minWidth: 0, resize: "vertical" }}
                       onChange={(event) =>
@@ -3268,23 +3498,41 @@ export default function StrategyEditorPanel({
                 border="always"
                 bodyClassName="stack-layout"
                 headerActions={(
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    onClick={() =>
-                      updateDraft((base) => ({
-                        ...base,
-                        rules: [
-                          ...(Array.isArray(base.rules) ? base.rules : []),
-                          createEmptyRuleDraft({
-                            name: `Rule ${(Array.isArray(base.rules) ? base.rules.length : 0) + 1}`,
-                          }),
-                        ],
-                      }))
-                    }
-                  >
-                    Add Rule
-                  </button>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() =>
+                        updateDraft((base) => ({
+                          ...base,
+                          rules: [
+                            ...(Array.isArray(base.rules) ? base.rules : []),
+                            createEmptyRuleDraft({
+                              name: `Rule ${(Array.isArray(base.rules) ? base.rules.length : 0) + 1}`,
+                            }),
+                          ],
+                        }))
+                      }
+                    >
+                      Add Rule
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => setRuleHelpOpen(true)}
+                      title="Rule editor help"
+                      aria-label="Open rule editor help"
+                      style={{
+                        width: 38,
+                        minWidth: 38,
+                        paddingInline: 0,
+                        fontSize: 16,
+                        fontWeight: 800,
+                      }}
+                    >
+                      ?
+                    </button>
+                  </div>
                 )}
               >
                 <datalist id="strategy-variable-suggestions">
@@ -3325,8 +3573,7 @@ export default function StrategyEditorPanel({
                   ) : null}
                 </div>
               </ResponsivePanel>
-            </>
-          )}
+          </>
         </div>
       ) : null}
       <ResponsivePanel showToggle={false} border="always" bodyClassName="stack-layout">
@@ -3378,17 +3625,24 @@ export default function StrategyEditorPanel({
             >
               Save As
             </button>
-            <button
-              type="button"
-              className="primary-button"
-              onClick={activeTab === "json" ? handleSaveFromJson : handleSaveVisual}
-              disabled={busy}
-            >
-              {busy ? "Saving..." : "Save"}
-            </button>
+            {isPreset ? null : (
+              <button
+                type="button"
+                className="primary-button"
+                onClick={activeTab === "json" ? handleSaveFromJson : handleSaveVisual}
+                disabled={busy}
+              >
+                {busy ? "Saving..." : "Save"}
+              </button>
+            )}
           </div>
         </div>
       </ResponsivePanel>
+      <RuleHelpModal
+        open={ruleHelpOpen}
+        onOpenChange={setRuleHelpOpen}
+        variableOptions={variableOptions}
+      />
     </div>
   );
 }

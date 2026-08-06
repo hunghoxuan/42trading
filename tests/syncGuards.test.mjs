@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import guards from "../src/api/utils/syncGuards.js";
+import guards from "../src/api/shared/utils/syncGuards.js";
 
 test("brokerTaskTypeForTrade returns OPEN for normal pending create tasks", () => {
   assert.equal(
@@ -55,8 +55,9 @@ test("shouldAutoRejectLeasedTrade rejects expired leases after retry budget", ()
       },
       3,
       now,
+      24,
     ),
-    true,
+    false,
   );
 });
 
@@ -76,6 +77,28 @@ test("shouldAutoRejectLeasedTrade preserves expired leased modify tasks", () => 
       now,
     ),
     false,
+  );
+});
+
+test("shouldAutoRejectLeasedTrade rejects stale leased open tasks after retry budget", () => {
+  const now = new Date("2026-05-28T10:00:00.000Z");
+  assert.equal(
+    guards.shouldAutoRejectLeasedTrade(
+      {
+        dispatch_status: "LEASED",
+        execution_status: "PENDING",
+        created_at: "2026-05-27T09:00:00.000Z",
+        lease_expires_at: "2026-05-28T09:59:00.000Z",
+        metadata: {
+          lease_retry_count: 2,
+          leased_dispatch_status: "OPEN",
+        },
+      },
+      3,
+      now,
+      24,
+    ),
+    true,
   );
 });
 

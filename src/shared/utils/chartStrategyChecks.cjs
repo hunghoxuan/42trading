@@ -402,27 +402,117 @@ function inferPatternAt(bars = [], index = 0) {
   if (index <= 0 || index >= bars.length) return [];
   const bar = bars[index];
   const prev = bars[index - 1];
+  const prev2 = index > 1 ? bars[index - 2] : null;
   if (!bar || !prev) return [];
-  const body = Math.abs(bar.close - bar.open);
-  const range = Math.max(1e-7, bar.high - bar.low);
-  const upperWick = bar.high - Math.max(bar.open, bar.close);
-  const lowerWick = Math.min(bar.open, bar.close) - bar.low;
-  const prevBodyHigh = Math.max(prev.open, prev.close);
-  const prevBodyLow = Math.min(prev.open, prev.close);
-  const bodyHigh = Math.max(bar.open, bar.close);
-  const bodyLow = Math.min(bar.open, bar.close);
+  const candleStats = (candle) => {
+    if (!candle) return null;
+    const open = Number(candle.open);
+    const high = Number(candle.high);
+    const low = Number(candle.low);
+    const close = Number(candle.close);
+    const range = Math.max(1e-7, high - low);
+    const body = Math.abs(close - open);
+    return {
+      open,
+      high,
+      low,
+      close,
+      range,
+      body,
+      bodyHigh: Math.max(open, close),
+      bodyLow: Math.min(open, close),
+      upperWick: high - Math.max(open, close),
+      lowerWick: Math.min(open, close) - low,
+      bullish: close > open,
+      bearish: close < open,
+      bodyRatio: body / range
+    };
+  };
+  const barStats = candleStats(bar);
+  const prevStats = candleStats(prev);
+  const prev2Stats = candleStats(prev2);
+  if (!barStats || !prevStats) return [];
   const out = [];
-  if (prev.close < prev.open && bar.close > bar.open && bodyHigh >= prevBodyHigh && bodyLow <= prevBodyLow) {
+  const inferPriorPressure = (endIndex, lookback = 4) => {
+    const lastIndex = Number(endIndex);
+    if (!Number.isInteger(lastIndex) || lastIndex < 1) return "neutral";
+    const startIndex = Math.max(0, lastIndex - Math.max(2, lookback) + 1);
+    const window = [];
+    for (let i = startIndex; i <= lastIndex; i += 1) {
+      const stats = candleStats(bars[i]);
+      if (stats) window.push(stats);
+    }
+    if (window.length < 2) return "neutral";
+    const firstClose = window[0].close;
+    const lastClose = window[window.length - 1].close;
+    let bullishCount = 0;
+    let bearishCount = 0;
+    window.forEach((stats) => {
+      if (stats.bullish) bullishCount += 1;
+      else if (stats.bearish) bearishCount += 1;
+    });
+    if (lastClose < firstClose && bearishCount >= bullishCount + 1) return "down";
+    if (lastClose > firstClose && bullishCount >= bearishCount + 1) return "up";
+    return "neutral";
+  };
+  const preCurrentPressure = inferPriorPressure(index - 1, 4);
+  const preStarPressure = inferPriorPressure(index - 2, 4);
+  const preSequencePressure = inferPriorPressure(index - 3, 5);
+  const lowerShadowReversalShape = barStats.bodyRatio <= 0.35 && barStats.lowerWick / barStats.range >= 0.5 && barStats.upperWick / barStats.range <= 0.15 && barStats.bodyLow >= barStats.low + barStats.range * 0.55;
+  const upperShadowReversalShape = barStats.bodyRatio <= 0.35 && barStats.upperWick / barStats.range >= 0.5 && barStats.lowerWick / barStats.range <= 0.15 && barStats.bodyHigh <= barStats.low + barStats.range * 0.45;
+  if (prevStats.bearish && barStats.bullish && barStats.bodyHigh >= prevStats.bodyHigh && barStats.bodyLow <= prevStats.bodyLow) {
     out.push("bullish_engulfing");
   }
-  if (prev.close > prev.open && bar.close < bar.open && bodyHigh >= prevBodyHigh && bodyLow <= prevBodyLow) {
+  if (prevStats.bullish && barStats.bearish && barStats.bodyHigh >= prevStats.bodyHigh && barStats.bodyLow <= prevStats.bodyLow) {
     out.push("bearish_engulfing");
   }
-  if (body / range <= 0.35 && lowerWick / range >= 0.45 && upperWick / range <= 0.2) {
+  if (barStats.bodyRatio <= 0.35 && barStats.lowerWick / barStats.range >= 0.45 && barStats.upperWick / barStats.range <= 0.2) {
     out.push("bullish_pin_bar");
   }
-  if (body / range <= 0.35 && upperWick / range >= 0.45 && lowerWick / range <= 0.2) {
+  if (barStats.bodyRatio <= 0.35 && barStats.upperWick / barStats.range >= 0.45 && barStats.lowerWick / barStats.range <= 0.2) {
     out.push("bearish_pin_bar");
+  }
+  if (lowerShadowReversalShape && preCurrentPressure === "down") {
+    out.push("bullish_hammer");
+  }
+  if (lowerShadowReversalShape && preCurrentPressure === "up") {
+    out.push("hanging_man");
+  }
+  if (upperShadowReversalShape && preCurrentPressure === "up") {
+    out.push("shooting_star");
+  }
+  if (upperShadowReversalShape && preCurrentPressure === "down") {
+    out.push("bullish_inverted_hammer");
+  }
+  if (prevStats.bearish && barStats.bullish && barStats.open < prevStats.close && barStats.close > (prevStats.open + prevStats.close) * 0.5 && barStats.close < prevStats.open && preCurrentPressure === "down") {
+    out.push("bullish_piercing_line");
+  }
+  if (prevStats.bullish && barStats.bearish && barStats.open > prevStats.close && barStats.close < (prevStats.open + prevStats.close) * 0.5 && barStats.close > prevStats.open && preCurrentPressure === "up") {
+    out.push("bearish_dark_cloud_cover");
+  }
+  if (prevStats.bearish && prevStats.bodyRatio >= 0.5 && barStats.bullish && barStats.bodyHigh <= prevStats.bodyHigh && barStats.bodyLow >= prevStats.bodyLow && barStats.body <= prevStats.body * 0.75 && preCurrentPressure === "down") {
+    out.push("bullish_harami");
+  }
+  if (prevStats.bullish && prevStats.bodyRatio >= 0.5 && barStats.bearish && barStats.bodyHigh <= prevStats.bodyHigh && barStats.bodyLow >= prevStats.bodyLow && barStats.body <= prevStats.body * 0.75 && preCurrentPressure === "up") {
+    out.push("bearish_harami");
+  }
+  if (prev2Stats && prev2Stats.bearish && prev2Stats.bodyRatio >= 0.45 && prevStats.body <= prev2Stats.body * 0.6 && prevStats.bodyRatio <= 0.35 && barStats.bullish && barStats.bodyRatio >= 0.45 && barStats.close >= prev2Stats.bodyLow + prev2Stats.body * 0.5 && preStarPressure === "down") {
+    out.push("bullish_morning_star");
+  }
+  if (prev2Stats && prev2Stats.bullish && prev2Stats.bodyRatio >= 0.45 && prevStats.body <= prev2Stats.body * 0.6 && prevStats.bodyRatio <= 0.35 && barStats.bearish && barStats.bodyRatio >= 0.45 && barStats.close <= prev2Stats.bodyLow + prev2Stats.body * 0.5 && preStarPressure === "up") {
+    out.push("bearish_evening_star");
+  }
+  if (index >= 2 && bars[index - 2] && bars[index - 1] && bars[index]) {
+    const a = candleStats(bars[index - 2]);
+    const b = candleStats(bars[index - 1]);
+    const c = candleStats(bars[index]);
+    const ascendingCloses = a && b && c && a.bullish && b.bullish && c.bullish && b.close > a.close && c.close > b.close;
+    const descendingCloses = a && b && c && a.bearish && b.bearish && c.bearish && b.close < a.close && c.close < b.close;
+    const opensWithinBodies = a && b && c && b.open >= a.bodyLow && b.open <= a.bodyHigh && c.open >= b.bodyLow && c.open <= b.bodyHigh;
+    const smallUpperWicks = a && b && c && a.upperWick / a.range <= 0.2 && b.upperWick / b.range <= 0.2 && c.upperWick / c.range <= 0.2;
+    const smallLowerWicks = a && b && c && a.lowerWick / a.range <= 0.2 && b.lowerWick / b.range <= 0.2 && c.lowerWick / c.range <= 0.2;
+    if (ascendingCloses && opensWithinBodies && smallUpperWicks && preSequencePressure === "down") out.push("bullish_three_white_soldiers");
+    if (descendingCloses && opensWithinBodies && smallLowerWicks && preSequencePressure === "up") out.push("bearish_three_black_crows");
   }
   if (bar.high <= prev.high && bar.low >= prev.low) {
     out.push("inside_bar");
@@ -1542,6 +1632,7 @@ function shouldLimitArtifactType(type = "", family = "") {
   if (normalizedFamily === "trendline") return false;
   if (normalizedFamily === "divergence") return false;
   if (normalizedFamily === "structure") return false;
+  if (normalizedType === "ob" || normalizedType === "fvg" || normalizedType === "ifvg") return false;
   if (normalizedType === "swing_high" || normalizedType === "swing_low") return false;
   if (normalizedType === "bos" || normalizedType === "choch") return false;
   if (normalizedType === "sweep_high" || normalizedType === "sweep_low") return false;
@@ -2339,6 +2430,9 @@ function computePhase({ bars = [], artifacts = [], bias = "neutral", trend = "ra
 function summarizeArtifacts(artifacts = [], lastClose = null) {
   const summaries = (Array.isArray(artifacts) ? artifacts : []).map((item) => toItemSummary(item, lastClose));
   const byType = {};
+  const hasLastClose = Number.isFinite(Number(lastClose));
+  const isBelowLastClose = (item) => !hasLastClose || Number.isFinite(Number(item?.price)) && Number(item.price) < Number(lastClose);
+  const isAboveLastClose = (item) => !hasLastClose || Number.isFinite(Number(item?.price)) && Number(item.price) > Number(lastClose);
   summaries.forEach((item) => {
     const type = String(item?.type || "").trim().toLowerCase();
     if (!type) return;
@@ -2352,12 +2446,12 @@ function summarizeArtifacts(artifacts = [], lastClose = null) {
     supports: sortSummariesByDistance([
       ...byType.support || [],
       ...byType.swing_low || []
-    ]).slice(0, 4),
+    ].filter(isBelowLastClose)).slice(0, 4),
     resistances: sortSummariesByDistance([
       ...byType.swing_high || [],
       ...byType.pdh || [],
       ...byType.liquidity_high || []
-    ]).slice(0, 4),
+    ].filter(isAboveLastClose)).slice(0, 4),
     demands: sortSummariesByDistance(byType.demand || []).slice(0, 4),
     supplies: sortSummariesByDistance(
       summaries.filter(
@@ -3126,6 +3220,133 @@ function resolvePriceActionEntry(ctx = {}) {
   const bar = resolveCurrentBar(ctx);
   return toFiniteNumber(bar?.close) ?? toFiniteNumber(bar?.open);
 }
+function resolveThreeCandlesBarsContext(requestedTf = "", ctx = {}) {
+  return resolveTfContext(requestedTf, ctx);
+}
+function resolveThreeCandlesSettings(candlesCountValue = 3, slCandleNumValue = 1, rewardRiskValue = 1, directionModeValue = "continue") {
+  const candlesCount = Math.max(2, Math.trunc(Number(candlesCountValue) || 3));
+  let slCandleNum = Math.max(1, Math.trunc(Number(slCandleNumValue) || 1));
+  if (slCandleNum >= candlesCount) slCandleNum = candlesCount - 1;
+  const rewardRisk = Math.max(0.1, Number(rewardRiskValue) || 1);
+  const directionMode = String(directionModeValue || "continue").trim().toLowerCase() === "reverse" ? "reverse" : "continue";
+  return { candlesCount, slCandleNum, rewardRisk, directionMode };
+}
+function detectThreeCandlesSequence(candlesCountValue = 3, requestedTf = "", ctx = {}) {
+  const { candlesCount } = resolveThreeCandlesSettings(candlesCountValue);
+  const tfContext = resolveThreeCandlesBarsContext(requestedTf, ctx);
+  const bars = Array.isArray(tfContext?.bars) ? tfContext.bars : [];
+  const currentIndex = Number(tfContext?.currentIndex);
+  if (!bars.length || !Number.isInteger(currentIndex) || currentIndex < candlesCount - 1) {
+    return {
+      matched: false,
+      timeframe: String(tfContext?.timeframe || currentTimeframe(ctx)).trim(),
+      currentBar: tfContext?.currentBar || null,
+      currentIndex,
+      startIndex: -1,
+      sequenceBias: "",
+      bars
+    };
+  }
+  const startIndex = currentIndex - candlesCount + 1;
+  let bullishSequence = true;
+  let bearishSequence = true;
+  for (let index = startIndex; index <= currentIndex; index += 1) {
+    const bar = bars[index] || {};
+    const open = Number(bar?.open);
+    const close = Number(bar?.close);
+    if (!(close > open)) bullishSequence = false;
+    if (!(close < open)) bearishSequence = false;
+  }
+  const sequenceBias = bullishSequence ? "bullish" : bearishSequence ? "bearish" : "";
+  return {
+    matched: Boolean(sequenceBias),
+    timeframe: String(tfContext?.timeframe || currentTimeframe(ctx)).trim(),
+    currentBar: tfContext?.currentBar || null,
+    currentIndex,
+    startIndex,
+    sequenceBias,
+    bars
+  };
+}
+function resolveThreeCandlesTradeBias(directionValue = "buy", directionModeValue = "continue") {
+  const direction = normalizePlanDirection(directionValue, "buy");
+  const { directionMode } = resolveThreeCandlesSettings(3, 1, 1, directionModeValue);
+  if (direction === "buy") return directionMode === "reverse" ? "bearish" : "bullish";
+  return directionMode === "reverse" ? "bullish" : "bearish";
+}
+function resolveThreeCandlesStop(directionValue = "buy", candlesCountValue = 3, slCandleNumValue = 1, requestedTf = "", ctx = {}) {
+  const direction = normalizePlanDirection(directionValue, "buy");
+  const { candlesCount, slCandleNum } = resolveThreeCandlesSettings(
+    candlesCountValue,
+    slCandleNumValue
+  );
+  const sequence = detectThreeCandlesSequence(candlesCount, requestedTf, ctx);
+  if (!sequence.matched) return null;
+  const entryPrice = toFiniteNumber(sequence?.currentBar?.close);
+  if (!Number.isFinite(entryPrice)) return null;
+  const stopIndex = sequence.currentIndex - slCandleNum;
+  const stopBar = sequence?.bars?.[stopIndex] || null;
+  if (!stopBar) return null;
+  let rawStop = direction === "buy" ? Math.min(Number(stopBar?.low), Math.min(Number(stopBar?.open), Number(stopBar?.close))) : Math.max(Number(stopBar?.high), Math.max(Number(stopBar?.open), Number(stopBar?.close)));
+  if (!Number.isFinite(rawStop)) return null;
+  if (direction === "buy" && rawStop >= entryPrice) {
+    for (let index = sequence.startIndex; index <= sequence.currentIndex; index += 1) {
+      rawStop = Math.min(rawStop, Number(sequence?.bars?.[index]?.low));
+    }
+  } else if (direction === "sell" && rawStop <= entryPrice) {
+    for (let index = sequence.startIndex; index <= sequence.currentIndex; index += 1) {
+      rawStop = Math.max(rawStop, Number(sequence?.bars?.[index]?.high));
+    }
+  }
+  return Number.isFinite(rawStop) ? rawStop : null;
+}
+function evaluateThreeCandlesSignal(directionValue = "buy", candlesCountValue = 3, directionModeValue = "continue", requestedTf = "", ctx = {}) {
+  const sequence = detectThreeCandlesSequence(candlesCountValue, requestedTf, ctx);
+  if (!sequence.matched) return false;
+  const expectedBias = resolveThreeCandlesTradeBias(directionValue, directionModeValue);
+  if (sequence.sequenceBias !== expectedBias) return false;
+  const match = buildSyntheticMatch({
+    functionName: "three_candles_signal",
+    timeframe: sequence.timeframe,
+    bar: sequence.currentBar,
+    price: sequence?.currentBar?.close,
+    bias: expectedBias,
+    payload: {
+      direction: normalizePlanDirection(directionValue, "buy"),
+      direction_mode: String(directionModeValue || "continue").trim().toLowerCase() === "reverse" ? "reverse" : "continue",
+      candles_count: Math.max(2, Math.trunc(Number(candlesCountValue) || 3)),
+      sequence_bias: sequence.sequenceBias
+    }
+  });
+  return match ? buildArtifactResult("three_candles_signal", [match], {
+    timeframe: sequence.timeframe
+  }) : false;
+}
+function resolveThreeCandlesTarget(directionValue = "buy", candlesCountValue = 3, slCandleNumValue = 1, rewardRiskValue = 1, requestedTf = "", ctx = {}) {
+  const direction = normalizePlanDirection(directionValue, "buy");
+  const { rewardRisk } = resolveThreeCandlesSettings(
+    candlesCountValue,
+    slCandleNumValue,
+    rewardRiskValue
+  );
+  const sequence = detectThreeCandlesSequence(candlesCountValue, requestedTf, ctx);
+  if (!sequence.matched) return null;
+  const entryPrice = toFiniteNumber(sequence?.currentBar?.close);
+  const stopLoss = resolveThreeCandlesStop(
+    direction,
+    candlesCountValue,
+    slCandleNumValue,
+    requestedTf,
+    ctx
+  );
+  if (!Number.isFinite(entryPrice) || !Number.isFinite(stopLoss)) return null;
+  if (direction === "buy") {
+    const riskDistance2 = entryPrice - stopLoss;
+    return riskDistance2 > 0 ? entryPrice + riskDistance2 * rewardRisk : null;
+  }
+  const riskDistance = stopLoss - entryPrice;
+  return riskDistance > 0 ? entryPrice - riskDistance * rewardRisk : null;
+}
 function inferPipSize(entry = null, explicitPipSize = null) {
   const pipSize = toFiniteNumber(explicitPipSize);
   if (Number.isFinite(pipSize) && pipSize > 0) return pipSize;
@@ -3594,6 +3815,37 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
       ctx
     );
   }
+  if (lowerName === "three_candles_signal") {
+    const evaluatedArgs2 = (Array.isArray(rawArgs) ? rawArgs : []).map((arg) => resolve(arg));
+    return evaluateThreeCandlesSignal(
+      evaluatedArgs2[0],
+      evaluatedArgs2[1],
+      evaluatedArgs2[2],
+      evaluatedArgs2[3],
+      ctx
+    );
+  }
+  if (lowerName === "three_candles_sl") {
+    const evaluatedArgs2 = (Array.isArray(rawArgs) ? rawArgs : []).map((arg) => resolve(arg));
+    return resolveThreeCandlesStop(
+      evaluatedArgs2[0],
+      evaluatedArgs2[1],
+      evaluatedArgs2[2],
+      evaluatedArgs2[3],
+      ctx
+    );
+  }
+  if (lowerName === "three_candles_tp") {
+    const evaluatedArgs2 = (Array.isArray(rawArgs) ? rawArgs : []).map((arg) => resolve(arg));
+    return resolveThreeCandlesTarget(
+      evaluatedArgs2[0],
+      evaluatedArgs2[1],
+      evaluatedArgs2[2],
+      evaluatedArgs2[3],
+      evaluatedArgs2[4],
+      ctx
+    );
+  }
   if (lowerName === "suggested_trade_sl") {
     const evaluatedArgs2 = (Array.isArray(rawArgs) ? rawArgs : []).map((arg) => resolve(arg));
     return resolveSuggestedTradeLevelsForContext(
@@ -3728,6 +3980,78 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
           resultMatches(
             currentBarArtifactByType({
               types: ["bullish_engulfing", "bearish_engulfing"],
+              bias: biasArg,
+              ctx: nextCtx
+            })
+          ),
+          { timeframe, bias: biasArg }
+        );
+      case "morning_star":
+        return buildArtifactResult(
+          lowerName,
+          resultMatches(currentBarArtifactByType({ types: ["bullish_morning_star"], ctx: nextCtx })),
+          { timeframe, bias: "bullish" }
+        );
+      case "evening_star":
+        return buildArtifactResult(
+          lowerName,
+          resultMatches(currentBarArtifactByType({ types: ["bearish_evening_star"], ctx: nextCtx })),
+          { timeframe, bias: "bearish" }
+        );
+      case "hammer":
+        return buildArtifactResult(
+          lowerName,
+          resultMatches(currentBarArtifactByType({ types: ["bullish_hammer"], ctx: nextCtx })),
+          { timeframe, bias: "bullish" }
+        );
+      case "hanging_man":
+        return buildArtifactResult(
+          lowerName,
+          resultMatches(currentBarArtifactByType({ types: ["hanging_man"], ctx: nextCtx })),
+          { timeframe, bias: "bearish" }
+        );
+      case "shooting_star":
+        return buildArtifactResult(
+          lowerName,
+          resultMatches(currentBarArtifactByType({ types: ["shooting_star"], ctx: nextCtx })),
+          { timeframe, bias: "bearish" }
+        );
+      case "inverted_hammer":
+        return buildArtifactResult(
+          lowerName,
+          resultMatches(currentBarArtifactByType({ types: ["bullish_inverted_hammer"], ctx: nextCtx })),
+          { timeframe, bias: "bullish" }
+        );
+      case "piercing_line":
+        return buildArtifactResult(
+          lowerName,
+          resultMatches(currentBarArtifactByType({ types: ["bullish_piercing_line"], ctx: nextCtx })),
+          { timeframe, bias: "bullish" }
+        );
+      case "dark_cloud_cover":
+        return buildArtifactResult(
+          lowerName,
+          resultMatches(currentBarArtifactByType({ types: ["bearish_dark_cloud_cover"], ctx: nextCtx })),
+          { timeframe, bias: "bearish" }
+        );
+      case "three_white_soldiers":
+        return buildArtifactResult(
+          lowerName,
+          resultMatches(currentBarArtifactByType({ types: ["bullish_three_white_soldiers"], ctx: nextCtx })),
+          { timeframe, bias: "bullish" }
+        );
+      case "three_black_crows":
+        return buildArtifactResult(
+          lowerName,
+          resultMatches(currentBarArtifactByType({ types: ["bearish_three_black_crows"], ctx: nextCtx })),
+          { timeframe, bias: "bearish" }
+        );
+      case "harami":
+        return buildArtifactResult(
+          lowerName,
+          resultMatches(
+            currentBarArtifactByType({
+              types: ["bullish_harami", "bearish_harami"],
               bias: biasArg,
               ctx: nextCtx
             })
@@ -4279,6 +4603,17 @@ var RULE_FUNCTION_NAMES = [
   "breakout",
   "pin_bar",
   "engulfing",
+  "morning_star",
+  "evening_star",
+  "hammer",
+  "hanging_man",
+  "shooting_star",
+  "inverted_hammer",
+  "piercing_line",
+  "dark_cloud_cover",
+  "three_white_soldiers",
+  "three_black_crows",
+  "harami",
   "inside_bar",
   "outside_bar",
   "reversal",
@@ -5513,7 +5848,7 @@ function evaluateChartStrategies({
         const barTimeUnix = Number(normalizedBars[index]?.time || 0);
         const currentSession = inferSessionName(barTimeUnix);
         const runtimeState = {
-          ...(runtimeStateInput && typeof runtimeStateInput === "object" ? runtimeStateInput : {}),
+          ...runtimeStateInput && typeof runtimeStateInput === "object" ? runtimeStateInput : {},
           atr: atrValues[index],
           session: currentSession,
           signalsInSession: sessionSignalCounts.get(currentSession) || 0,
