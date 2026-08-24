@@ -18480,10 +18480,11 @@ namespace cAlgo.Robots
 
         private bool HasRequiredProtection(Position position, bool needsSl, bool needsTp)
         {
-            if (position == null) return false;
-            if (needsSl && !position.StopLoss.HasValue) return false;
-            if (needsTp && !position.TakeProfit.HasValue) return false;
-            return true;
+            return position != null && CTraderExecutionEngine.HasRequiredProtection(
+                position.StopLoss.HasValue,
+                position.TakeProfit.HasValue,
+                needsSl,
+                needsTp);
         }
 
         private double EstimateOpenPositionRiskAmount(Position position)
@@ -19641,6 +19642,7 @@ namespace cAlgo.Robots
         {
             ValidateStructureEngineV2Contracts();
             ValidateStrategyEngineContracts();
+            ValidateExecutionEngineContracts();
             _startedAtUtc = DateTime.UtcNow;
             _startupWarmupUntilUtc = _startedAtUtc.AddSeconds(12);
             _startupWarmupAnnounced = false;
@@ -20032,21 +20034,17 @@ namespace cAlgo.Robots
 
         private bool ShouldUseNativeTrailingAutoProtect()
         {
-            return SelectedStrategyExitMode == StrategyExitMode.Trailing_Stop ||
-                SelectedStrategyExitMode == StrategyExitMode.Trailing_Stop_Reversed_when_SL;
+            return CTraderExecutionEngine.UsesNativeTrailing(SelectedStrategyExitMode);
         }
 
         private bool ShouldUseNativeBreakEvenAutoProtect()
         {
-            return SelectedStrategyExitMode == StrategyExitMode.Break_Even ||
-                SelectedStrategyExitMode == StrategyExitMode.Break_Even_Reversed_when_SL;
+            return CTraderExecutionEngine.UsesNativeBreakEven(SelectedStrategyExitMode);
         }
 
         private bool ShouldReverseStoppedStrategyPosition()
         {
-            return SelectedStrategyExitMode == StrategyExitMode.Reversed_when_SL ||
-                SelectedStrategyExitMode == StrategyExitMode.Trailing_Stop_Reversed_when_SL ||
-                SelectedStrategyExitMode == StrategyExitMode.Break_Even_Reversed_when_SL;
+            return CTraderExecutionEngine.ReversesStoppedPosition(SelectedStrategyExitMode);
         }
 
         private void EnsureAutoProtectedPositions()
@@ -20088,8 +20086,8 @@ namespace cAlgo.Robots
                         bool hit = (pos.TradeType == TradeType.Buy) ? (currentPrice >= p.Price) : (currentPrice <= p.Price);
                         if (!hit) continue;  // price not reached yet, retry next tick
 
-                        double volToClose = pos.VolumeInUnits * (p.SizePct / 100.0);
-                        volToClose = symbol.NormalizeVolumeInUnits(volToClose, RoundingMode.Down);
+                        double volToClose = CTraderExecutionEngine.ResolveNormalizedPartialCloseVolume(
+                            symbol, pos.VolumeInUnits, p.SizePct);
 
                         // Only close if we can meet minimum volume; skip permanently if too small
                         if (volToClose >= symbol.VolumeInUnitsMin)
@@ -20172,7 +20170,8 @@ namespace cAlgo.Robots
             if (symbol == null || symbol.PipSize <= 0)
                 return;
 
-            var triggerPips = Math.Max(10.1, Math.Abs(position.EntryPrice - position.StopLoss.Value) / symbol.PipSize);
+            var triggerPips = CTraderExecutionEngine.ResolveBreakEvenTriggerPips(
+                position.EntryPrice, position.StopLoss.Value, symbol.PipSize);
             try
             {
                 TradeResult result;
@@ -20270,27 +20269,27 @@ namespace cAlgo.Robots
                 return;
             }
 
-            var riskDistance = Math.Abs(closedPosition.EntryPrice - closedPosition.StopLoss.Value);
-            if (!IsFiniteNumber(riskDistance) || riskDistance <= 0)
+            CTraderExecutionReversePlan reversePlan;
+            if (!CTraderExecutionEngine.TryBuildReversePlan(
+                    symbol,
+                    closedPosition.TradeType,
+                    closedPosition.EntryPrice,
+                    closedPosition.StopLoss.Value,
+                    symbol.Bid,
+                    symbol.Ask,
+                    StrategyRewardRisk,
+                    out reversePlan))
             {
-                SafePrint("[ExitMode] Reverse skipped for #{0}: invalid original risk distance", closedPosition.Id);
+                if (string.Equals(reversePlan.Error, "invalid_original_risk_distance", StringComparison.Ordinal))
+                    SafePrint("[ExitMode] Reverse skipped for #{0}: invalid original risk distance", closedPosition.Id);
                 return;
             }
 
-            var reverseTradeType = closedPosition.TradeType == TradeType.Buy ? TradeType.Sell : TradeType.Buy;
-            var action = reverseTradeType == TradeType.Buy ? "BUY" : "SELL";
-            var executionPrice = reverseTradeType == TradeType.Buy ? symbol.Ask : symbol.Bid;
-            if (!IsFiniteNumber(executionPrice) || executionPrice <= 0)
-                return;
-
-            var requestedSl = reverseTradeType == TradeType.Buy
-                ? executionPrice - riskDistance
-                : executionPrice + riskDistance;
-            var requestedTp = reverseTradeType == TradeType.Buy
-                ? executionPrice + riskDistance * Math.Max(0.1, StrategyRewardRisk)
-                : executionPrice - riskDistance * Math.Max(0.1, StrategyRewardRisk);
-            requestedSl = NormalizePriceToSymbol(symbol, requestedSl);
-            requestedTp = NormalizePriceToSymbol(symbol, requestedTp);
+            var reverseTradeType = reversePlan.TradeType;
+            var action = reversePlan.Action;
+            var executionPrice = reversePlan.EntryPrice;
+            var requestedSl = reversePlan.StopLoss;
+            var requestedTp = reversePlan.TakeProfit;
 
             var requestedRiskMoney = EstimateRiskAmount(
                 symbol,
@@ -20334,8 +20333,8 @@ namespace cAlgo.Robots
                 return;
             }
 
-            var slPips = Math.Round(Math.Abs(executionPrice - approvedSl) / symbol.PipSize, 2);
-            var tpPips = Math.Round(Math.Abs(approvedTp - executionPrice) / symbol.PipSize, 2);
+            var slPips = CTraderExecutionEngine.ResolveDistancePips(symbol, executionPrice, approvedSl).GetValueOrDefault();
+            var tpPips = CTraderExecutionEngine.ResolveDistancePips(symbol, executionPrice, approvedTp).GetValueOrDefault();
             var reverseLabel = string.IsNullOrWhiteSpace(closedLabel) ? "strategy:REV" : closedLabel + ":REV";
             var reverseComment = closedComment + "|rev:1";
             var result = ExecuteMarketOrder(
@@ -25755,8 +25754,10 @@ namespace cAlgo.Robots
                 return;
             }
 
-            double? slPips = symbol.PipSize > 0 ? (double?)Math.Round(Math.Abs(executionPrice - approvedSl) / symbol.PipSize, 2) : null;
-            double? tpPips = symbol.PipSize > 0 ? (double?)Math.Round(Math.Abs(approvedTp - executionPrice) / symbol.PipSize, 2) : null;
+            double? slPips = CTraderExecutionEngine.ResolveDistancePips(symbol, executionPrice, approvedSl);
+            double? tpPips = symbol.PipSize > 0
+                ? (double?)Math.Round(Math.Abs(approvedTp - executionPrice) / symbol.PipSize, 2)
+                : null;
             if (!slPips.HasValue || slPips.Value <= 0)
             {
                 _backtestStrategyHandledEventKeys.Add(eventKey);
@@ -27775,8 +27776,8 @@ namespace cAlgo.Robots
             TradeResult result = null;
             if (effectiveUseLimitOrder)
             {
-                var slPips = Math.Round(Math.Abs(effectiveEntryPrice - approvedSl) / symbol.PipSize, 2);
-                double? tpPips = approvedTp > 0 ? (double?)Math.Round(Math.Abs(approvedTp - effectiveEntryPrice) / symbol.PipSize, 2) : null;
+                var slPips = CTraderExecutionEngine.ResolveDistancePips(symbol, effectiveEntryPrice, approvedSl).GetValueOrDefault();
+                double? tpPips = CTraderExecutionEngine.ResolveDistancePips(symbol, effectiveEntryPrice, approvedTp);
                 var requestedLots = symbol.VolumeInUnitsToQuantity(approvedVolumeUnits);
                 LogStructuredTradeEvent(
                     IsBacktestingRuntime() ? "backtest" : "live",
@@ -27825,8 +27826,8 @@ namespace cAlgo.Robots
             }
             else
             {
-                var slPips = Math.Round(Math.Abs(effectiveEntryPrice - approvedSl) / symbol.PipSize, 2);
-                double? tpPips = approvedTp > 0 ? (double?)Math.Round(Math.Abs(approvedTp - effectiveEntryPrice) / symbol.PipSize, 2) : null;
+                var slPips = CTraderExecutionEngine.ResolveDistancePips(symbol, effectiveEntryPrice, approvedSl).GetValueOrDefault();
+                double? tpPips = CTraderExecutionEngine.ResolveDistancePips(symbol, effectiveEntryPrice, approvedTp);
                 var requestedLots = symbol.VolumeInUnitsToQuantity(approvedVolumeUnits);
                 LogStructuredTradeEvent(
                     IsBacktestingRuntime() ? "backtest" : "live",
@@ -28171,8 +28172,10 @@ namespace cAlgo.Robots
 
             var currentSl = position.StopLoss;
             var currentTp = position.TakeProfit;
-            var slCloseEnough = !needsSl || (currentSl.HasValue && Math.Abs(currentSl.Value - normalizedSl) <= symbol.PipSize * 0.5);
-            var tpCloseEnough = !needsTp || (currentTp.HasValue && Math.Abs(currentTp.Value - normalizedTp) <= symbol.PipSize * 0.5);
+            var slCloseEnough = CTraderExecutionEngine.IsProtectionCloseEnough(
+                currentSl, normalizedSl, needsSl, symbol.PipSize * 0.5);
+            var tpCloseEnough = CTraderExecutionEngine.IsProtectionCloseEnough(
+                currentTp, normalizedTp, needsTp, symbol.PipSize * 0.5);
             if (HasRequiredProtection(position, needsSl, needsTp) && slCloseEnough && tpCloseEnough)
                 return true;
 
@@ -28187,8 +28190,10 @@ namespace cAlgo.Robots
 
             currentSl = position.StopLoss;
             currentTp = position.TakeProfit;
-            slCloseEnough = !needsSl || (currentSl.HasValue && Math.Abs(currentSl.Value - normalizedSl) <= symbol.PipSize * 0.5);
-            tpCloseEnough = !needsTp || (currentTp.HasValue && Math.Abs(currentTp.Value - normalizedTp) <= symbol.PipSize * 0.5);
+            slCloseEnough = CTraderExecutionEngine.IsProtectionCloseEnough(
+                currentSl, normalizedSl, needsSl, symbol.PipSize * 0.5);
+            tpCloseEnough = CTraderExecutionEngine.IsProtectionCloseEnough(
+                currentTp, normalizedTp, needsTp, symbol.PipSize * 0.5);
             if (HasRequiredProtection(position, needsSl, needsTp) && slCloseEnough && tpCloseEnough)
                 return true;
 
@@ -28201,17 +28206,18 @@ namespace cAlgo.Robots
             {
                 var slOnlyResult = ModifyPositionCompat(position, normalizedSl, position.TakeProfit);
                 currentSl = position.StopLoss;
-                slCloseEnough = currentSl.HasValue && Math.Abs(currentSl.Value - normalizedSl) <= symbol.PipSize * 0.5;
+                slCloseEnough = CTraderExecutionEngine.IsProtectionCloseEnough(
+                    currentSl, normalizedSl, true, symbol.PipSize * 0.5);
                 if (!(slOnlyResult != null && slOnlyResult.IsSuccessful) && !slCloseEnough)
                 {
                     if (String.Equals(OnSlTpError, "Adjust", StringComparison.OrdinalIgnoreCase))
                     {
-                        var adjustedSl = action == "SELL"
-                            ? NormalizePriceToSymbol(symbol, position.EntryPrice + (Math.Max(1.0, MinStopPips) * symbol.PipSize))
-                            : NormalizePriceToSymbol(symbol, position.EntryPrice - (Math.Max(1.0, MinStopPips) * symbol.PipSize));
+                        var adjustedSl = CTraderExecutionEngine.ResolveAdjustedProtectionPrice(
+                            symbol, action, position.EntryPrice, true, MinStopPips);
                         var adjustedSlResult = ModifyPositionCompat(position, adjustedSl, position.TakeProfit);
                         currentSl = position.StopLoss;
-                        slCloseEnough = currentSl.HasValue && Math.Abs(currentSl.Value - adjustedSl) <= symbol.PipSize * 0.5;
+                        slCloseEnough = CTraderExecutionEngine.IsProtectionCloseEnough(
+                            currentSl, adjustedSl, true, symbol.PipSize * 0.5);
                         if (adjustedSlResult != null && adjustedSlResult.IsSuccessful || slCloseEnough)
                         {
                             normalizedSl = adjustedSl;
@@ -28233,17 +28239,18 @@ namespace cAlgo.Robots
                 var currentTpForModify = position.TakeProfit;
                 var tpOnlyResult = ModifyPositionCompat(position, position.StopLoss, normalizedTp);
                 currentTp = position.TakeProfit;
-                tpCloseEnough = currentTp.HasValue && Math.Abs(currentTp.Value - normalizedTp) <= symbol.PipSize * 0.5;
+                tpCloseEnough = CTraderExecutionEngine.IsProtectionCloseEnough(
+                    currentTp, normalizedTp, true, symbol.PipSize * 0.5);
                 if (!(tpOnlyResult != null && tpOnlyResult.IsSuccessful) && !tpCloseEnough)
                 {
                     if (String.Equals(OnSlTpError, "Adjust", StringComparison.OrdinalIgnoreCase))
                     {
-                        var adjustedTp = action == "SELL"
-                            ? NormalizePriceToSymbol(symbol, position.EntryPrice - (Math.Max(1.0, MinStopPips) * symbol.PipSize))
-                            : NormalizePriceToSymbol(symbol, position.EntryPrice + (Math.Max(1.0, MinStopPips) * symbol.PipSize));
+                        var adjustedTp = CTraderExecutionEngine.ResolveAdjustedProtectionPrice(
+                            symbol, action, position.EntryPrice, false, MinStopPips);
                         var adjustedTpResult = ModifyPositionCompat(position, position.StopLoss, adjustedTp);
                         currentTp = position.TakeProfit;
-                        tpCloseEnough = currentTp.HasValue && Math.Abs(currentTp.Value - adjustedTp) <= symbol.PipSize * 0.5;
+                        tpCloseEnough = CTraderExecutionEngine.IsProtectionCloseEnough(
+                            currentTp, adjustedTp, true, symbol.PipSize * 0.5);
                         if (adjustedTpResult != null && adjustedTpResult.IsSuccessful || tpCloseEnough)
                         {
                             normalizedTp = adjustedTp;
@@ -28283,9 +28290,7 @@ namespace cAlgo.Robots
 
         private HashSet<long> CaptureOpenPositionIds()
         {
-            return new HashSet<long>((Positions ?? Enumerable.Empty<Position>())
-                .Where(position => position != null)
-                .Select(position => (long)position.Id));
+            return CTraderExecutionEngine.CapturePositionIds(Positions);
         }
 
         private Position FindPositionCreatedAfterSubmit(
@@ -28294,17 +28299,8 @@ namespace cAlgo.Robots
             string label,
             TradeType tradeType)
         {
-            if (Positions == null)
-                return null;
-
-            return Positions
-                .Where(position => position != null)
-                .Where(position => previousPositionIds == null || !previousPositionIds.Contains((long)position.Id))
-                .Where(position => string.Equals(position.SymbolName, symbolName, StringComparison.OrdinalIgnoreCase))
-                .Where(position => position.TradeType == tradeType)
-                .Where(position => string.Equals(position.Label, label, StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(position => position.Id)
-                .FirstOrDefault();
+            return CTraderExecutionEngine.FindPositionCreatedAfterSubmit(
+                Positions, previousPositionIds, symbolName, label, tradeType);
         }
 
         private bool TryRecoverPositionAfterFailedSubmit(
@@ -28349,30 +28345,8 @@ namespace cAlgo.Robots
 
         private void ReanchorProtectionToFilledEntry(Symbol symbol, string action, double plannedEntry, double filledEntry, ref double sl, ref double tp)
         {
-            if (symbol == null || plannedEntry <= 0 || filledEntry <= 0)
-                return;
-
-            string protectionReason;
-            if (TryValidateProtectionPrices(symbol, action, filledEntry, sl, tp, out protectionReason))
-                return;
-
-            var originalSlDistance = sl > 0 ? Math.Abs(sl - plannedEntry) : 0;
-            var originalTpDistance = tp > 0 ? Math.Abs(tp - plannedEntry) : 0;
-            var isSell = string.Equals(action, "SELL", StringComparison.OrdinalIgnoreCase);
-
-            if (originalSlDistance > 0)
-            {
-                sl = NormalizePriceToSymbol(
-                    symbol,
-                    isSell ? filledEntry + originalSlDistance : filledEntry - originalSlDistance);
-            }
-
-            if (originalTpDistance > 0)
-            {
-                tp = NormalizePriceToSymbol(
-                    symbol,
-                    isSell ? filledEntry - originalTpDistance : filledEntry + originalTpDistance);
-            }
+            CTraderExecutionEngine.ReanchorProtectionToFilledEntry(
+                symbol, action, plannedEntry, filledEntry, ref sl, ref tp);
         }
 
         private bool TryBuildIndicatorStrategySignal(string symbolName, TimeFrame strategyTimeFrame, BacktestStrategyMode mode, out BacktestStrategySignal signal)
@@ -32817,6 +32791,47 @@ namespace cAlgo.Robots
             }
         }
 
+        private static void ValidateExecutionEngineContracts()
+        {
+            if (!CTraderExecutionEngine.UsesNativeTrailing(StrategyExitMode.Trailing_Stop) ||
+                CTraderExecutionEngine.UsesNativeTrailing(StrategyExitMode.Break_Even) ||
+                !CTraderExecutionEngine.UsesNativeBreakEven(StrategyExitMode.Break_Even_Reversed_when_SL) ||
+                !CTraderExecutionEngine.ReversesStoppedPosition(StrategyExitMode.Reversed_when_SL) ||
+                CTraderExecutionEngine.ReversesStoppedPosition(StrategyExitMode.Off))
+            {
+                throw new InvalidOperationException("Execution exit-mode contract failed.");
+            }
+            if (Math.Abs(CTraderExecutionEngine.ResolveBreakEvenTriggerPips(100.0, 90.0, 0.5) - 20.0) > 0.0000001 ||
+                Math.Abs(CTraderExecutionEngine.ResolveBreakEvenTriggerPips(100.0, 99.0, 1.0) - 10.1) > 0.0000001)
+            {
+                throw new InvalidOperationException("Execution break-even contract failed.");
+            }
+            if (!CTraderExecutionEngine.HasRequiredProtection(true, false, true, false) ||
+                CTraderExecutionEngine.HasRequiredProtection(false, true, true, true) ||
+                !CTraderExecutionEngine.IsProtectionCloseEnough(10.04, 10.0, true, 0.05) ||
+                CTraderExecutionEngine.IsProtectionCloseEnough(10.06, 10.0, true, 0.05))
+            {
+                throw new InvalidOperationException("Execution protection-state contract failed.");
+            }
+
+            CTraderExecutionReversePlan reversePlan;
+            if (CTraderExecutionEngine.TryBuildReversePlan(
+                    null, TradeType.Buy, 100.0, 90.0, 99.0, 101.0, 2.0, out reversePlan) ||
+                reversePlan.Error != "symbol_or_original_sl_unavailable")
+            {
+                throw new InvalidOperationException("Execution reverse-plan validation contract failed.");
+            }
+            var affordableEntries = new List<double> { 1.0 };
+            var affordableWeights = new List<double> { 1.0 };
+            if (CTraderExecutionEngine.TryResolveAffordableSplitLegs(
+                    null, new[] { 1.0 }, new[] { 1.0 }, 0.9, 100.0,
+                    affordableEntries, affordableWeights) ||
+                affordableEntries.Count != 0 || affordableWeights.Count != 0)
+            {
+                throw new InvalidOperationException("Execution split-validation contract failed.");
+            }
+        }
+
         private StructureSnapshotV2 BuildStructureSnapshotV2(Bars sourceBars, int lookbackBars, int endIndex = -1)
         {
             var lastClosedBarIndex = ResolveStructureLastClosedBarIndex(sourceBars, endIndex);
@@ -34032,8 +34047,8 @@ namespace cAlgo.Robots
                 var sharedSl = NormalizePriceToSymbol(symbol, sl.Value);
                 var sharedTp = NormalizePriceToSymbol(symbol, tp.Value);
 
-                var slPips = Math.Round(Math.Abs(executionPrice - sharedSl) / symbol.PipSize, 2);
-                var tpPips = Math.Round(Math.Abs(sharedTp - executionPrice) / symbol.PipSize, 2);
+                var slPips = CTraderExecutionEngine.ResolveDistancePips(symbol, executionPrice, sharedSl).GetValueOrDefault();
+                var tpPips = CTraderExecutionEngine.ResolveDistancePips(symbol, executionPrice, sharedTp).GetValueOrDefault();
                 var label = BuildChartTradeLabel(action, "Market", symbolName);
                 var comment = label;
                 var requestedLots = symbol.VolumeInUnitsToQuantity(volumeUnits);
@@ -34122,8 +34137,8 @@ namespace cAlgo.Robots
                     if (approvedPendingVolumeUnits < symbol.VolumeInUnitsMin)
                         continue;
 
-                    var limitSlPips = Math.Round(Math.Abs(entry - sharedSl) / symbol.PipSize, 2);
-                    var limitTpPips = Math.Round(Math.Abs(sharedTp - entry) / symbol.PipSize, 2);
+                    var limitSlPips = CTraderExecutionEngine.ResolveDistancePips(symbol, entry, sharedSl).GetValueOrDefault();
+                    var limitTpPips = CTraderExecutionEngine.ResolveDistancePips(symbol, entry, sharedTp).GetValueOrDefault();
                     var limitLabel = BuildChartTradeLabel(action, "LIMIT", symbolName);
                     var limitComment = BuildChartPendingComment(tradeType, false, symbolName) + ":m" + (i + 2).ToString(CultureInfo.InvariantCulture);
                     var limitLots = symbol.VolumeInUnitsToQuantity(approvedPendingVolumeUnits);
@@ -34323,8 +34338,8 @@ namespace cAlgo.Robots
                 sl = approvedSl;
                 tp = approvedTp;
 
-                var slPips = Math.Round(Math.Abs(normalizedEntry - sl.Value) / symbol.PipSize, 2);
-                var tpPips = Math.Round(Math.Abs(tp.Value - normalizedEntry) / symbol.PipSize, 2);
+                var slPips = CTraderExecutionEngine.ResolveDistancePips(symbol, normalizedEntry, sl.Value).GetValueOrDefault();
+                var tpPips = CTraderExecutionEngine.ResolveDistancePips(symbol, normalizedEntry, tp.Value).GetValueOrDefault();
                 var label = BuildChartTradeLabel(action, orderTypeLabel, symbolName);
                 var comment = BuildChartPendingComment(tradeType, isStopOrder, symbolName);
                 var requestedLots = symbol.VolumeInUnitsToQuantity(volumeUnits);
@@ -34609,39 +34624,14 @@ namespace cAlgo.Robots
             List<double> affordableEntries,
             List<double> affordableWeights)
         {
-            affordableEntries.Clear();
-            affordableWeights.Clear();
-            if (symbol == null || entries == null || weights == null || stopLoss <= 0)
-                return false;
-
-            var totalInputWeight = 0.0;
-            var alignedCount = Math.Min(entries.Count, weights.Count);
-            for (var i = 0; i < alignedCount; i++)
-                totalInputWeight += weights[i];
-
-            for (var i = 0; i < alignedCount; i++)
-            {
-                var sliceRiskMoney = finalRiskMoney > 0 ? Math.Max(0, finalRiskMoney * weights[i]) : 0;
-                if (!(sliceRiskMoney > 0))
-                    continue;
-                var minRiskForLeg = EstimateRiskAmount(symbol, tradeType, entries[i], stopLoss, symbol.VolumeInUnitsMin);
-                if (minRiskForLeg > 0 && sliceRiskMoney < minRiskForLeg)
-                    continue;
-                affordableEntries.Add(entries[i]);
-                affordableWeights.Add(weights[i]);
-            }
-
-            if (affordableEntries.Count == 0)
-                return false;
-
-            var keptWeightSum = affordableWeights.Sum();
-            if (keptWeightSum > 0 && totalInputWeight > 0)
-            {
-                var scale = totalInputWeight / keptWeightSum;
-                for (var i = 0; i < affordableWeights.Count; i++)
-                    affordableWeights[i] = affordableWeights[i] * scale;
-            }
-            return true;
+            return CTraderExecutionEngine.TryResolveAffordableSplitLegs(
+                symbol,
+                entries,
+                weights,
+                stopLoss,
+                finalRiskMoney,
+                affordableEntries,
+                affordableWeights);
         }
 
         private void ExecuteChartQuickSplitLimitOrder(TradeType tradeType)
@@ -34796,8 +34786,8 @@ namespace cAlgo.Robots
                     }
 
                     var approvedEntry = NormalizePriceToSymbol(symbol, entry);
-                    var slPips = Math.Round(Math.Abs(approvedEntry - sharedSl) / symbol.PipSize, 2);
-                    var tpPips = Math.Round(Math.Abs(sharedTp - approvedEntry) / symbol.PipSize, 2);
+                    var slPips = CTraderExecutionEngine.ResolveDistancePips(symbol, approvedEntry, sharedSl).GetValueOrDefault();
+                    var tpPips = CTraderExecutionEngine.ResolveDistancePips(symbol, approvedEntry, sharedTp).GetValueOrDefault();
                     var legSuffix = finalEntries.Count > 1 ? "#" + (i + 1).ToString(CultureInfo.InvariantCulture) : "";
                     var label = BuildChartTradeLabel(action, "LIMIT", symbolName) + legSuffix;
                     var comment = BuildChartPendingComment(tradeType, false, symbolName) + (string.IsNullOrEmpty(legSuffix) ? "" : "|" + legSuffix);
@@ -34974,8 +34964,8 @@ namespace cAlgo.Robots
                 sl = approvedSl;
                 tp = approvedTp;
 
-                var slPips = Math.Round(Math.Abs(entry - sl) / symbol.PipSize, 2);
-                var tpPips = Math.Round(Math.Abs(tp - entry) / symbol.PipSize, 2);
+                var slPips = CTraderExecutionEngine.ResolveDistancePips(symbol, entry, sl).GetValueOrDefault();
+                var tpPips = CTraderExecutionEngine.ResolveDistancePips(symbol, entry, tp).GetValueOrDefault();
                 var label = BuildChartTradeLabel(action, "LIMIT", symbolName);
                 var comment = BuildChartPendingComment(tradeType, false, symbolName);
                 var requestedLots = symbol.VolumeInUnitsToQuantity(volumeUnits);
@@ -35043,15 +35033,7 @@ namespace cAlgo.Robots
 
         private double GetChartProtectionStepPrice(Symbol symbol)
         {
-            var pipDistance = symbol != null && symbol.PipSize > 0 ? symbol.PipSize : 0;
-            var tickDistance = symbol != null && symbol.TickSize > 0 ? symbol.TickSize : 0;
-            var pipBlock = pipDistance > 0
-                ? pipDistance * Math.Max(5.0, Math.Min(25.0, Math.Max(1.0, MinStopPips) * 0.5))
-                : 0;
-            var tickBlock = tickDistance > 0 ? tickDistance * 5.0 : 0;
-            var step = Math.Max(Math.Max(pipDistance, tickDistance), Math.Max(pipBlock, tickBlock));
-            if (step <= 0) step = 0.0001;
-            return step;
+            return CTraderExecutionEngine.ResolveProtectionStepPrice(symbol, MinStopPips);
         }
 
         private bool TryApplyPendingOrderProtection(PendingOrder pendingOrder, Symbol symbol, string action, double slPrice, double tpPrice, out string errorText)
@@ -35062,52 +35044,21 @@ namespace cAlgo.Robots
                 errorText = "pending_order_missing";
                 return false;
             }
-            if (symbol == null || symbol.PipSize <= 0)
+            var protectionPlan = CTraderExecutionEngine.BuildPendingProtectionPlan(
+                symbol, action, pendingOrder.TargetPrice, slPrice, tpPrice);
+            if (!protectionPlan.IsValid)
             {
-                errorText = "symbol_missing";
+                errorText = protectionPlan.Error;
                 CancelPendingOrderAfterProtectionFailure(pendingOrder, ref errorText);
                 return false;
             }
 
-            var normalizedTarget = NormalizePriceToSymbol(symbol, pendingOrder.TargetPrice);
-            var normalizedSl = slPrice > 0 ? NormalizePriceToSymbol(symbol, slPrice) : 0;
-            var normalizedTp = tpPrice > 0 ? NormalizePriceToSymbol(symbol, tpPrice) : 0;
-            if (!(normalizedSl > 0))
-            {
-                errorText = "pending_stop_loss_missing";
-                CancelPendingOrderAfterProtectionFailure(pendingOrder, ref errorText);
-                return false;
-            }
-            string validationReason;
-            if (!TryValidateProtectionPrices(symbol, action, normalizedTarget, normalizedSl, normalizedTp, out validationReason))
-            {
-                errorText = "pending_protection_rejected: " + validationReason;
-                CancelPendingOrderAfterProtectionFailure(pendingOrder, ref errorText);
-                return false;
-            }
-
-            double? slPips = null;
-            double? tpPips = null;
-            if (normalizedSl > 0)
-                slPips = Math.Round((action == "BUY" ? (normalizedTarget - normalizedSl) : (normalizedSl - normalizedTarget)) / symbol.PipSize, 2);
-            if (normalizedTp > 0)
-                tpPips = Math.Round((action == "BUY" ? (normalizedTp - normalizedTarget) : (normalizedTarget - normalizedTp)) / symbol.PipSize, 2);
-
-            if (slPips.HasValue && slPips.Value <= 0)
-            {
-                errorText = "pending_sl_pips_invalid";
-                CancelPendingOrderAfterProtectionFailure(pendingOrder, ref errorText);
-                return false;
-            }
-
-            if (tpPips.HasValue && tpPips.Value <= 0)
-            {
-                errorText = "pending_tp_pips_invalid";
-                CancelPendingOrderAfterProtectionFailure(pendingOrder, ref errorText);
-                return false;
-            }
-
-            var modifyResult = ModifyPendingOrderCompat(pendingOrder, pendingOrder.TargetPrice, slPips, tpPips, pendingOrder.ExpirationTime);
+            var modifyResult = ModifyPendingOrderCompat(
+                pendingOrder,
+                pendingOrder.TargetPrice,
+                protectionPlan.StopLossPips,
+                protectionPlan.TakeProfitPips,
+                pendingOrder.ExpirationTime);
             if (modifyResult != null && modifyResult.IsSuccessful)
                 return true;
 
@@ -35132,75 +35083,14 @@ namespace cAlgo.Robots
 
         private double BuildSharedProtectionTarget(Symbol symbol, TradeType tradeType, bool isStopLoss, bool moveCloser, double referencePrice, IEnumerable<double> existingLevels)
         {
-            var step = GetChartProtectionStepPrice(symbol);
-            var minDistance = symbol != null && symbol.PipSize > 0 ? symbol.PipSize * Math.Max(1.0, MinStopPips) : step;
-            var levels = existingLevels != null ? existingLevels.Where(v => v > 0).Distinct().ToList() : new List<double>();
-
-            Func<double, bool> validSide;
-            Func<IEnumerable<double>, double?> nearestOnSide;
-            double fallback;
-
-            if (tradeType == TradeType.Buy && isStopLoss)
-            {
-                validSide = v => v < referencePrice;
-                nearestOnSide = values => values.Where(validSide).OrderByDescending(v => v).Cast<double?>().FirstOrDefault();
-                fallback = referencePrice - minDistance;
-            }
-            else if (tradeType == TradeType.Buy)
-            {
-                validSide = v => v > referencePrice;
-                nearestOnSide = values => values.Where(validSide).OrderBy(v => v).Cast<double?>().FirstOrDefault();
-                fallback = referencePrice + minDistance;
-            }
-            else if (isStopLoss)
-            {
-                validSide = v => v > referencePrice;
-                nearestOnSide = values => values.Where(validSide).OrderBy(v => v).Cast<double?>().FirstOrDefault();
-                fallback = referencePrice + minDistance;
-            }
-            else
-            {
-                validSide = v => v < referencePrice;
-                nearestOnSide = values => values.Where(validSide).OrderByDescending(v => v).Cast<double?>().FirstOrDefault();
-                fallback = referencePrice - minDistance;
-            }
-
-            var baseLevel = nearestOnSide(levels) ?? fallback;
-            double nextTarget;
-
-            if (tradeType == TradeType.Buy && isStopLoss)
-                nextTarget = moveCloser ? baseLevel + step : baseLevel - step;
-            else if (tradeType == TradeType.Buy)
-                nextTarget = moveCloser ? baseLevel - step : baseLevel + step;
-            else if (isStopLoss)
-                nextTarget = moveCloser ? baseLevel - step : baseLevel + step;
-            else
-                nextTarget = moveCloser ? baseLevel + step : baseLevel - step;
-
-            if (moveCloser)
-            {
-                if (tradeType == TradeType.Buy && isStopLoss)
-                    nextTarget = Math.Min(nextTarget, referencePrice - (symbol.PipSize * 0.5));
-                else if (tradeType == TradeType.Buy)
-                    nextTarget = Math.Max(nextTarget, referencePrice + (symbol.PipSize * 0.5));
-                else if (isStopLoss)
-                    nextTarget = Math.Max(nextTarget, referencePrice + (symbol.PipSize * 0.5));
-                else
-                    nextTarget = Math.Min(nextTarget, referencePrice - (symbol.PipSize * 0.5));
-            }
-            else
-            {
-                if (tradeType == TradeType.Buy && isStopLoss)
-                    nextTarget = Math.Min(nextTarget, referencePrice - minDistance);
-                else if (tradeType == TradeType.Buy)
-                    nextTarget = Math.Max(nextTarget, referencePrice + minDistance);
-                else if (isStopLoss)
-                    nextTarget = Math.Max(nextTarget, referencePrice + minDistance);
-                else
-                    nextTarget = Math.Min(nextTarget, referencePrice - minDistance);
-            }
-
-            return NormalizePriceToSymbol(symbol, nextTarget);
+            return CTraderExecutionEngine.BuildSharedProtectionTarget(
+                symbol,
+                tradeType,
+                isStopLoss,
+                moveCloser,
+                referencePrice,
+                existingLevels,
+                MinStopPips);
         }
 
         private int ApplySharedProtectionTarget(string symbolName, TradeType tradeType, bool isStopLoss, double targetPrice)
@@ -35384,8 +35274,8 @@ namespace cAlgo.Robots
                     }
                     else
                     {
-                        var volumeToClose = pos.VolumeInUnits * (percentToClose / 100.0);
-                        volumeToClose = posSymbol.NormalizeVolumeInUnits(volumeToClose, RoundingMode.Down);
+                        var volumeToClose = CTraderExecutionEngine.ResolveNormalizedPartialCloseVolume(
+                            posSymbol, pos.VolumeInUnits, percentToClose);
                         if (volumeToClose < posSymbol.VolumeInUnitsMin)
                         {
                             skippedCount++;
@@ -35398,7 +35288,6 @@ namespace cAlgo.Robots
                             );
                             continue;
                         }
-                        if (volumeToClose > pos.VolumeInUnits) volumeToClose = pos.VolumeInUnits;
                         closeVolume = volumeToClose;
                         result = ClosePosition(pos, volumeToClose);
                     }
@@ -36784,8 +36673,10 @@ namespace cAlgo.Robots
 
                             var currentSl = res.Position.StopLoss;
                             var currentTp = res.Position.TakeProfit;
-                            var slCloseEnough = !needsSl || (currentSl.HasValue && Math.Abs(currentSl.Value - normalizedSl) <= symbol.PipSize * 0.5);
-                            var tpCloseEnough = !needsTp || (currentTp.HasValue && Math.Abs(currentTp.Value - normalizedTp) <= symbol.PipSize * 0.5);
+                            var slCloseEnough = CTraderExecutionEngine.IsProtectionCloseEnough(
+                                currentSl, normalizedSl, needsSl, symbol.PipSize * 0.5);
+                            var tpCloseEnough = CTraderExecutionEngine.IsProtectionCloseEnough(
+                                currentTp, normalizedTp, needsTp, symbol.PipSize * 0.5);
 
                             if (HasRequiredProtection(res.Position, needsSl, needsTp) && slCloseEnough && tpCloseEnough)
                             {
@@ -41429,6 +41320,371 @@ namespace cAlgo.Robots
                     entries.Add(candidate);
             }
             return entries;
+        }
+    }
+
+    // Broker protection values prepared before cTrader modify/submit calls.
+    internal sealed class CTraderExecutionProtectionPlan
+    {
+        public bool IsValid;
+        public double TargetPrice;
+        public double StopLossPrice;
+        public double TakeProfitPrice;
+        public double? StopLossPips;
+        public double? TakeProfitPips;
+        public string Error;
+    }
+
+    internal sealed class CTraderExecutionReversePlan
+    {
+        public bool IsValid;
+        public TradeType TradeType;
+        public string Action;
+        public double EntryPrice;
+        public double StopLoss;
+        public double TakeProfit;
+        public double RiskDistance;
+        public string Error;
+    }
+
+    // Owns deterministic execution plans. Broker API calls and live account gates stay in TVBridgeCBot.
+    internal static class CTraderExecutionEngine
+    {
+        public static bool UsesNativeTrailing(TVBridgeCBot.StrategyExitMode mode)
+        {
+            return mode == TVBridgeCBot.StrategyExitMode.Trailing_Stop ||
+                mode == TVBridgeCBot.StrategyExitMode.Trailing_Stop_Reversed_when_SL;
+        }
+
+        public static bool UsesNativeBreakEven(TVBridgeCBot.StrategyExitMode mode)
+        {
+            return mode == TVBridgeCBot.StrategyExitMode.Break_Even ||
+                mode == TVBridgeCBot.StrategyExitMode.Break_Even_Reversed_when_SL;
+        }
+
+        public static bool ReversesStoppedPosition(TVBridgeCBot.StrategyExitMode mode)
+        {
+            return mode == TVBridgeCBot.StrategyExitMode.Reversed_when_SL ||
+                mode == TVBridgeCBot.StrategyExitMode.Trailing_Stop_Reversed_when_SL ||
+                mode == TVBridgeCBot.StrategyExitMode.Break_Even_Reversed_when_SL;
+        }
+
+        public static double ResolveBreakEvenTriggerPips(double entryPrice, double stopLoss, double pipSize)
+        {
+            return pipSize > 0
+                ? Math.Max(10.1, Math.Abs(entryPrice - stopLoss) / pipSize)
+                : 0;
+        }
+
+        public static double? ResolveDistancePips(
+            Symbol symbol,
+            double referencePrice,
+            double protectionPrice,
+            int decimals = 2)
+        {
+            if (symbol == null || symbol.PipSize <= 0 || !(referencePrice > 0) || !(protectionPrice > 0))
+                return null;
+            return Math.Round(Math.Abs(referencePrice - protectionPrice) / symbol.PipSize, decimals);
+        }
+
+        public static bool HasRequiredProtection(
+            bool hasStopLoss,
+            bool hasTakeProfit,
+            bool needsStopLoss,
+            bool needsTakeProfit)
+        {
+            return (!needsStopLoss || hasStopLoss) && (!needsTakeProfit || hasTakeProfit);
+        }
+
+        public static bool IsProtectionCloseEnough(
+            double? currentPrice,
+            double expectedPrice,
+            bool required,
+            double tolerance)
+        {
+            return !required ||
+                (currentPrice.HasValue && Math.Abs(currentPrice.Value - expectedPrice) <= tolerance);
+        }
+
+        public static double ResolveAdjustedProtectionPrice(
+            Symbol symbol,
+            string action,
+            double entryPrice,
+            bool isStopLoss,
+            double minimumStopPips)
+        {
+            if (symbol == null || symbol.PipSize <= 0 || !(entryPrice > 0))
+                return 0;
+            var distance = Math.Max(1.0, minimumStopPips) * symbol.PipSize;
+            var isSell = string.Equals(action, "SELL", StringComparison.OrdinalIgnoreCase);
+            var price = isStopLoss
+                ? (isSell ? entryPrice + distance : entryPrice - distance)
+                : (isSell ? entryPrice - distance : entryPrice + distance);
+            return CTraderRiskEngine.NormalizePrice(symbol, price);
+        }
+
+        public static HashSet<long> CapturePositionIds(IEnumerable<Position> positions)
+        {
+            return new HashSet<long>((positions ?? Enumerable.Empty<Position>())
+                .Where(position => position != null)
+                .Select(position => (long)position.Id));
+        }
+
+        public static Position FindPositionCreatedAfterSubmit(
+            IEnumerable<Position> positions,
+            ISet<long> previousPositionIds,
+            string symbolName,
+            string label,
+            TradeType tradeType)
+        {
+            return (positions ?? Enumerable.Empty<Position>())
+                .Where(position => position != null)
+                .Where(position => previousPositionIds == null || !previousPositionIds.Contains((long)position.Id))
+                .Where(position => string.Equals(position.SymbolName, symbolName, StringComparison.OrdinalIgnoreCase))
+                .Where(position => position.TradeType == tradeType)
+                .Where(position => string.Equals(position.Label, label, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(position => position.Id)
+                .FirstOrDefault();
+        }
+
+        public static bool TryBuildReversePlan(
+            Symbol symbol,
+            TradeType closedTradeType,
+            double closedEntryPrice,
+            double closedStopLoss,
+            double bid,
+            double ask,
+            double rewardRisk,
+            out CTraderExecutionReversePlan plan)
+        {
+            plan = new CTraderExecutionReversePlan();
+            if (symbol == null || symbol.PipSize <= 0 || !(closedEntryPrice > 0) || !(closedStopLoss > 0))
+            {
+                plan.Error = "symbol_or_original_sl_unavailable";
+                return false;
+            }
+
+            var riskDistance = Math.Abs(closedEntryPrice - closedStopLoss);
+            if (!CTraderTechnicalEngine.IsFinite(riskDistance) || !(riskDistance > 0))
+            {
+                plan.Error = "invalid_original_risk_distance";
+                return false;
+            }
+
+            var reverseTradeType = closedTradeType == TradeType.Buy ? TradeType.Sell : TradeType.Buy;
+            var executionPrice = reverseTradeType == TradeType.Buy ? ask : bid;
+            if (!CTraderTechnicalEngine.IsFinite(executionPrice) || !(executionPrice > 0))
+            {
+                plan.Error = "invalid_execution_price";
+                return false;
+            }
+
+            var ratio = Math.Max(0.1, rewardRisk);
+            plan.IsValid = true;
+            plan.TradeType = reverseTradeType;
+            plan.Action = reverseTradeType == TradeType.Buy ? "BUY" : "SELL";
+            plan.EntryPrice = executionPrice;
+            plan.RiskDistance = riskDistance;
+            plan.StopLoss = CTraderRiskEngine.NormalizePrice(
+                symbol,
+                reverseTradeType == TradeType.Buy ? executionPrice - riskDistance : executionPrice + riskDistance);
+            plan.TakeProfit = CTraderRiskEngine.NormalizePrice(
+                symbol,
+                reverseTradeType == TradeType.Buy ? executionPrice + riskDistance * ratio : executionPrice - riskDistance * ratio);
+            return true;
+        }
+
+        public static void ReanchorProtectionToFilledEntry(
+            Symbol symbol,
+            string action,
+            double plannedEntry,
+            double filledEntry,
+            ref double stopLoss,
+            ref double takeProfit)
+        {
+            if (symbol == null || plannedEntry <= 0 || filledEntry <= 0)
+                return;
+            string reason;
+            if (CTraderStrategyEngine.TryValidatePrices(symbol, action, filledEntry, stopLoss, takeProfit, out reason))
+                return;
+
+            var stopDistance = stopLoss > 0 ? Math.Abs(stopLoss - plannedEntry) : 0;
+            var targetDistance = takeProfit > 0 ? Math.Abs(takeProfit - plannedEntry) : 0;
+            var isSell = string.Equals(action, "SELL", StringComparison.OrdinalIgnoreCase);
+            if (stopDistance > 0)
+            {
+                stopLoss = CTraderRiskEngine.NormalizePrice(
+                    symbol,
+                    isSell ? filledEntry + stopDistance : filledEntry - stopDistance);
+            }
+            if (targetDistance > 0)
+            {
+                takeProfit = CTraderRiskEngine.NormalizePrice(
+                    symbol,
+                    isSell ? filledEntry - targetDistance : filledEntry + targetDistance);
+            }
+        }
+
+        public static CTraderExecutionProtectionPlan BuildPendingProtectionPlan(
+            Symbol symbol,
+            string action,
+            double targetPrice,
+            double stopLossPrice,
+            double takeProfitPrice)
+        {
+            var plan = new CTraderExecutionProtectionPlan { Error = "" };
+            if (symbol == null || symbol.PipSize <= 0)
+            {
+                plan.Error = "symbol_missing";
+                return plan;
+            }
+
+            plan.TargetPrice = CTraderRiskEngine.NormalizePrice(symbol, targetPrice);
+            plan.StopLossPrice = stopLossPrice > 0 ? CTraderRiskEngine.NormalizePrice(symbol, stopLossPrice) : 0;
+            plan.TakeProfitPrice = takeProfitPrice > 0 ? CTraderRiskEngine.NormalizePrice(symbol, takeProfitPrice) : 0;
+            if (!(plan.StopLossPrice > 0))
+            {
+                plan.Error = "pending_stop_loss_missing";
+                return plan;
+            }
+
+            string reason;
+            if (!CTraderStrategyEngine.TryValidatePrices(
+                    symbol, action, plan.TargetPrice, plan.StopLossPrice, plan.TakeProfitPrice, out reason))
+            {
+                plan.Error = "pending_protection_rejected: " + reason;
+                return plan;
+            }
+
+            var isBuy = string.Equals(action, "BUY", StringComparison.OrdinalIgnoreCase);
+            plan.StopLossPips = Math.Round(
+                (isBuy ? plan.TargetPrice - plan.StopLossPrice : plan.StopLossPrice - plan.TargetPrice) / symbol.PipSize,
+                2);
+            if (plan.TakeProfitPrice > 0)
+            {
+                plan.TakeProfitPips = Math.Round(
+                    (isBuy ? plan.TakeProfitPrice - plan.TargetPrice : plan.TargetPrice - plan.TakeProfitPrice) / symbol.PipSize,
+                    2);
+            }
+            if (plan.StopLossPips.Value <= 0)
+            {
+                plan.Error = "pending_sl_pips_invalid";
+                return plan;
+            }
+            if (plan.TakeProfitPips.HasValue && plan.TakeProfitPips.Value <= 0)
+            {
+                plan.Error = "pending_tp_pips_invalid";
+                return plan;
+            }
+
+            plan.IsValid = true;
+            return plan;
+        }
+
+        public static bool TryResolveAffordableSplitLegs(
+            Symbol symbol,
+            IList<double> entries,
+            IList<double> weights,
+            double stopLoss,
+            double finalRiskMoney,
+            List<double> affordableEntries,
+            List<double> affordableWeights)
+        {
+            affordableEntries.Clear();
+            affordableWeights.Clear();
+            if (symbol == null || entries == null || weights == null || stopLoss <= 0)
+                return false;
+
+            var totalInputWeight = 0.0;
+            var alignedCount = Math.Min(entries.Count, weights.Count);
+            for (var i = 0; i < alignedCount; i++)
+                totalInputWeight += weights[i];
+            for (var i = 0; i < alignedCount; i++)
+            {
+                var sliceRiskMoney = finalRiskMoney > 0 ? Math.Max(0, finalRiskMoney * weights[i]) : 0;
+                if (!(sliceRiskMoney > 0))
+                    continue;
+                var minRiskForLeg = CTraderRiskEngine.EstimateRisk(
+                    symbol, entries[i], stopLoss, symbol.VolumeInUnitsMin);
+                if (minRiskForLeg > 0 && sliceRiskMoney < minRiskForLeg)
+                    continue;
+                affordableEntries.Add(entries[i]);
+                affordableWeights.Add(weights[i]);
+            }
+            if (affordableEntries.Count == 0)
+                return false;
+
+            var keptWeightSum = affordableWeights.Sum();
+            if (keptWeightSum > 0 && totalInputWeight > 0)
+            {
+                var scale = totalInputWeight / keptWeightSum;
+                for (var i = 0; i < affordableWeights.Count; i++)
+                    affordableWeights[i] *= scale;
+            }
+            return true;
+        }
+
+        public static double ResolveNormalizedPartialCloseVolume(
+            Symbol symbol,
+            double positionVolume,
+            double percentToClose)
+        {
+            if (symbol == null || !(positionVolume > 0) || !(percentToClose > 0))
+                return 0;
+            if (percentToClose >= 100)
+                return positionVolume;
+            var volume = symbol.NormalizeVolumeInUnits(
+                positionVolume * (percentToClose / 100.0),
+                RoundingMode.Down);
+            if (volume > positionVolume)
+                volume = positionVolume;
+            return volume;
+        }
+
+        public static double ResolveProtectionStepPrice(Symbol symbol, double minimumStopPips)
+        {
+            var pipDistance = symbol != null && symbol.PipSize > 0 ? symbol.PipSize : 0;
+            var tickDistance = symbol != null && symbol.TickSize > 0 ? symbol.TickSize : 0;
+            var pipBlock = pipDistance > 0
+                ? pipDistance * Math.Max(5.0, Math.Min(25.0, Math.Max(1.0, minimumStopPips) * 0.5))
+                : 0;
+            var tickBlock = tickDistance > 0 ? tickDistance * 5.0 : 0;
+            var step = Math.Max(Math.Max(pipDistance, tickDistance), Math.Max(pipBlock, tickBlock));
+            return step > 0 ? step : 0.0001;
+        }
+
+        public static double BuildSharedProtectionTarget(
+            Symbol symbol,
+            TradeType tradeType,
+            bool isStopLoss,
+            bool moveCloser,
+            double referencePrice,
+            IEnumerable<double> existingLevels,
+            double minimumStopPips)
+        {
+            var step = ResolveProtectionStepPrice(symbol, minimumStopPips);
+            var minDistance = symbol != null && symbol.PipSize > 0
+                ? symbol.PipSize * Math.Max(1.0, minimumStopPips)
+                : step;
+            var levels = existingLevels != null
+                ? existingLevels.Where(value => value > 0).Distinct()
+                : Enumerable.Empty<double>();
+            var wantBelow = tradeType == TradeType.Buy ? isStopLoss : !isStopLoss;
+            var baseLevel = wantBelow
+                ? levels.Where(value => value < referencePrice).OrderByDescending(value => value).FirstOrDefault()
+                : levels.Where(value => value > referencePrice).OrderBy(value => value).FirstOrDefault();
+            if (!(baseLevel > 0))
+                baseLevel = wantBelow ? referencePrice - minDistance : referencePrice + minDistance;
+
+            var direction = wantBelow ? -1.0 : 1.0;
+            var nextTarget = baseLevel + (moveCloser ? -direction * step : direction * step);
+            var boundaryDistance = moveCloser && symbol != null
+                ? symbol.PipSize * 0.5
+                : minDistance;
+            nextTarget = wantBelow
+                ? Math.Min(nextTarget, referencePrice - boundaryDistance)
+                : Math.Max(nextTarget, referencePrice + boundaryDistance);
+            return CTraderRiskEngine.NormalizePrice(symbol, nextTarget);
         }
     }
 
