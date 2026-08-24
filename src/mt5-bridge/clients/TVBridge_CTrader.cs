@@ -3882,10 +3882,8 @@ namespace cAlgo.Robots
 
         private string NormalizeChartTradeProfileSelection(string raw = null)
         {
-            var value = string.IsNullOrWhiteSpace(raw) ? _chartSelectedTradeProfile : raw.Trim();
-            if (value.Equals("Swing", StringComparison.OrdinalIgnoreCase)) return "Swing";
-            if (value.Equals("Daily", StringComparison.OrdinalIgnoreCase)) return "Daily";
-            return "Scalp";
+            return CTraderChartEngine.NormalizeToolbarTradeProfile(
+                raw, _chartSelectedTradeProfile);
         }
 
         private string GetChartTradeProfileRaw(string raw = null)
@@ -4580,45 +4578,17 @@ namespace cAlgo.Robots
 
         private static void TrySetPropertyValue(object target, string propertyName, object value)
         {
-            if (target == null || string.IsNullOrWhiteSpace(propertyName) || value == null) return;
-            try
-            {
-                var prop = target.GetType().GetProperty(propertyName);
-                if (prop == null || !prop.CanWrite) return;
-                var targetType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
-                object converted = value;
-                if (targetType != value.GetType())
-                    converted = Convert.ChangeType(value, targetType, CultureInfo.InvariantCulture);
-                prop.SetValue(target, converted, null);
-            }
-            catch
-            {
-            }
+            CTraderChartEngine.TrySetPropertyValue(target, propertyName, value);
         }
 
         private static void TrySetEnumPropertyValue(object target, string propertyName, string enumName)
         {
-            if (target == null || string.IsNullOrWhiteSpace(propertyName) || string.IsNullOrWhiteSpace(enumName)) return;
-            try
-            {
-                var prop = target.GetType().GetProperty(propertyName);
-                if (prop == null || !prop.CanWrite) return;
-                var targetType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
-                if (!targetType.IsEnum) return;
-                var parsed = Enum.Parse(targetType, enumName, true);
-                prop.SetValue(target, parsed, null);
-            }
-            catch
-            {
-            }
+            CTraderChartEngine.TrySetEnumPropertyValue(target, propertyName, enumName);
         }
 
         private static void TryStyleChartText(object chartText, int fontSize, string fontFamily, bool isBold)
         {
-            if (chartText == null) return;
-            TrySetPropertyValue(chartText, "FontSize", fontSize);
-            TrySetPropertyValue(chartText, "FontFamily", fontFamily);
-            TrySetPropertyValue(chartText, "IsBold", isBold);
+            CTraderChartEngine.TryStyleText(chartText, fontSize, fontFamily, isBold);
         }
 
         private bool _displayPrefsApplied;
@@ -5028,86 +4998,27 @@ namespace cAlgo.Robots
 
         private int GetChartMarkerFontSize()
         {
-            switch (MarkerFontSize)
-            {
-                case ChartMarkerFontSizeMode.None:
-                    return 0;
-                case ChartMarkerFontSizeMode.Tiny:
-                    return 6;
-                case ChartMarkerFontSizeMode.Medium:
-                    return 10;
-                case ChartMarkerFontSizeMode.Large:
-                    return 12;
-                case ChartMarkerFontSizeMode.Small:
-                default:
-                    return 8;
-            }
+            return CTraderChartEngine.GetMarkerFontSize(MarkerFontSize);
         }
 
         private int GetChartMarkerFontLevel()
         {
-            switch (MarkerFontSize)
-            {
-                case ChartMarkerFontSizeMode.None:
-                    return -1;
-                case ChartMarkerFontSizeMode.Tiny:
-                    return 0;
-                case ChartMarkerFontSizeMode.Medium:
-                    return 2;
-                case ChartMarkerFontSizeMode.Large:
-                    return 3;
-                case ChartMarkerFontSizeMode.Small:
-                default:
-                    return 1;
-            }
+            return CTraderChartEngine.GetMarkerFontLevel(MarkerFontSize);
         }
 
         private int ResolveChartMarkerFontSize(TimeFrame sourceTimeFrame)
         {
-            if (!ShouldDrawChartMarkers())
-                return 0;
-            var level = GetChartMarkerFontLevel();
-            var chartTimeFrame = Chart != null ? Chart.TimeFrame : TimeFrame.Minute;
-            var chartTfMinutes = Math.Max(1, TimeFrameToMinutes(chartTimeFrame));
-            var sourceTfMinutes = Math.Max(1, TimeFrameToMinutes(sourceTimeFrame));
-
-            if (sourceTfMinutes > chartTfMinutes)
-            {
-                if (sourceTfMinutes >= 1440)
-                    level += 3;
-                else if (sourceTfMinutes >= 240)
-                    level += 2;
-                else if (sourceTfMinutes >= 60)
-                    level += 1;
-                else if (sourceTfMinutes >= 15)
-                    level += 1;
-            }
-
-            level = Math.Max(0, Math.Min(3, level));
-            switch (level)
-            {
-                case 0:
-                    return 6;
-                case 1:
-                    return 8;
-                case 2:
-                    return 10;
-                case 3:
-                default:
-                    return 12;
-            }
+            return CTraderChartEngine.ResolveMarkerFontSize(
+                MarkerFontSize,
+                Chart != null ? Chart.TimeFrame : TimeFrame.Minute,
+                sourceTimeFrame,
+                ShouldDrawChartMarkers());
         }
 
         private string FormatDirectionalMarkerText(string label, bool isBullish)
         {
-            if (ShowMarkerLabel == ChartLabelVisibilityMode.No)
-                return GetDirectionalMarkerIcon(isBullish);
-
-            var normalized = string.IsNullOrWhiteSpace(label)
-                ? "evt"
-                : label.Trim().ToUpperInvariant();
-            var prefix = GetDirectionalMarkerIcon(isBullish);
-            return prefix + " " + normalized;
+            return CTraderChartEngine.FormatDirectionalMarkerText(
+                label, isBullish, MarkerSymbol, ShowMarkerLabel);
         }
 
         private string FormatCanonicalEventMarkerText(CanonicalMarketEvent evt, string shortLabel)
@@ -5117,9 +5028,7 @@ namespace cAlgo.Robots
 
         private string GetDirectionalMarkerIcon(bool isBullish)
         {
-            return MarkerSymbol == ChartMarkerSymbolMode.Triangles
-                ? (isBullish ? "▲" : "▼")
-                : (isBullish ? "↑" : "↓");
+            return CTraderChartEngine.GetDirectionalMarkerIcon(MarkerSymbol, isBullish);
         }
 
         private static string GetDirectionalArrowIcon(bool isBullish)
@@ -5161,7 +5070,7 @@ namespace cAlgo.Robots
 
         private static ChartIconType GetDirectionalChartIconType(bool isBullish)
         {
-            return isBullish ? ChartIconType.UpArrow : ChartIconType.DownArrow;
+            return CTraderChartEngine.GetDirectionalChartIconType(isBullish);
         }
 
         private static string FormatStrategyMarkerText(StrategyChartMarker marker)
@@ -5188,9 +5097,9 @@ namespace cAlgo.Robots
 
         private double ResolveDirectionalLabelPrice(bool isBullish, double wickPrice, double barRange, int slotIndex, double fallbackRange = 0.0)
         {
-            var effectiveRange = Math.Max(Math.Max(barRange, fallbackRange), Symbol != null ? Symbol.PipSize * 8.0 : 0.0000001);
-            var textPad = Math.Max(Symbol != null ? Symbol.PipSize * (0.8 + (slotIndex * 0.4)) : 0.0000001, effectiveRange * (0.012 + (slotIndex * 0.007)));
-            return isBullish ? wickPrice - textPad : wickPrice + textPad;
+            return CTraderChartEngine.ResolveDirectionalLabelPrice(
+                isBullish, wickPrice, barRange, slotIndex, fallbackRange,
+                Symbol != null ? Symbol.PipSize : 0.0);
         }
 
         private Tuple<DateTime, DateTime, double, double> ResolvePatternRangeBox(Bars sourceBars, TimeFrame sourceTimeFrame, int barIndex, int patternSpan)
@@ -5283,10 +5192,7 @@ namespace cAlgo.Robots
 
         private static void TrySetChartObjectBackground(object chartObject)
         {
-            if (chartObject == null) return;
-            TrySetPropertyValue(chartObject, "IsBackground", true);
-            TrySetPropertyValue(chartObject, "IsInteractive", false);
-            TrySetPropertyValue(chartObject, "ZIndex", -10);
+            CTraderChartEngine.TrySetBackground(chartObject);
         }
 
         private int DrawBlurredCandleOverlay(
@@ -5303,159 +5209,54 @@ namespace cAlgo.Robots
             Color bodyFillColor,
             Color bodyBorderColor)
         {
-            if (endTime <= startTime)
-                return objectIndex;
-
-            var isMiniChart = string.Equals(objectPrefix, "MINI", StringComparison.OrdinalIgnoreCase);
-            var bodyHigh = Math.Max(open, close);
-            var bodyLow = Math.Min(open, close);
-            var durationMinutes = Math.Max(1.0, (endTime - startTime).TotalMinutes);
-            var wickStart = startTime.AddMinutes(durationMinutes * (isMiniChart ? 0.44 : 0.47));
-            var wickEnd = startTime.AddMinutes(durationMinutes * (isMiniChart ? 0.56 : 0.53));
-            if (wickEnd <= wickStart)
-                wickEnd = wickStart.AddMinutes(1);
-
-            if (high > bodyHigh)
-            {
-                var upperWick = Chart.DrawRectangle(
-                    objectPrefix + "_WICK_U_" + objectIndex.ToString(CultureInfo.InvariantCulture),
-                    wickStart,
-                    high,
-                    wickEnd,
-                    bodyHigh,
-                    wickFillColor);
-                TrySetPropertyValue(upperWick, "IsFilled", true);
-                TrySetPropertyValue(upperWick, "Color", wickFillColor);
-                TrySetPropertyValue(upperWick, "BorderColor", wickBorderColor);
-                TrySetPropertyValue(upperWick, "Thickness", isMiniChart ? 1 : 0);
-                TrySetChartObjectBackground(upperWick);
-            }
-
-            if (bodyLow > low)
-            {
-                var lowerWick = Chart.DrawRectangle(
-                    objectPrefix + "_WICK_L_" + objectIndex.ToString(CultureInfo.InvariantCulture),
-                    wickStart,
-                    bodyLow,
-                    wickEnd,
-                    low,
-                    wickFillColor);
-                TrySetPropertyValue(lowerWick, "IsFilled", true);
-                TrySetPropertyValue(lowerWick, "Color", wickFillColor);
-                TrySetPropertyValue(lowerWick, "BorderColor", wickBorderColor);
-                TrySetPropertyValue(lowerWick, "Thickness", isMiniChart ? 1 : 0);
-                TrySetChartObjectBackground(lowerWick);
-            }
-
-            var bodyRect = Chart.DrawRectangle(
-                objectPrefix + "_BODY_" + objectIndex.ToString(CultureInfo.InvariantCulture),
-                startTime,
-                bodyHigh,
-                endTime,
-                bodyLow,
-                bodyFillColor);
-            TrySetPropertyValue(bodyRect, "IsFilled", true);
-            TrySetPropertyValue(bodyRect, "Color", bodyFillColor);
-            TrySetPropertyValue(bodyRect, "BorderColor", bodyBorderColor);
-            TrySetPropertyValue(bodyRect, "Thickness", isMiniChart ? 1 : 1);
-            TrySetChartObjectBackground(bodyRect);
-
-            return objectIndex + 1;
+            return CTraderChartEngine.DrawBlurredCandle(
+                Chart, objectPrefix, objectIndex, startTime, endTime, high, low, open, close,
+                wickFillColor, wickBorderColor, bodyFillColor, bodyBorderColor);
         }
 
         private static bool TryInvokeVoidMethod(object target, string methodName, params object[] args)
         {
-            if (target == null || string.IsNullOrWhiteSpace(methodName)) return false;
-            try
-            {
-                var methods = target.GetType().GetMethods().Where(m => m.Name == methodName).ToList();
-                foreach (var method in methods)
-                {
-                    var parameters = method.GetParameters();
-                    if (parameters.Length != (args != null ? args.Length : 0)) continue;
-                    method.Invoke(target, args);
-                    return true;
-                }
-            }
-            catch
-            {
-            }
-            return false;
+            return CTraderChartEngine.TryInvokeVoidMethod(target, methodName, args);
         }
 
         private static bool TryClearCollection(object target)
         {
-            if (target == null) return false;
-            try
-            {
-                var clearMethod = target.GetType().GetMethod("Clear", Type.EmptyTypes);
-                if (clearMethod == null) return false;
-                clearMethod.Invoke(target, null);
-                return true;
-            }
-            catch
-            {
-            }
-            return false;
+            return CTraderChartEngine.TryClearCollection(target);
         }
 
         private static bool TryAddToCollection(object collection, object item)
         {
-            if (collection == null || item == null) return false;
-            try
-            {
-                var addMethod = collection.GetType().GetMethod("Add");
-                if (addMethod == null) return false;
-                addMethod.Invoke(collection, new[] { item });
-                return true;
-            }
-            catch
-            {
-            }
-            return false;
+            return CTraderChartEngine.TryAddToCollection(collection, item);
         }
 
         private static string PadCell(string value, int width, bool alignRight = false)
         {
-            var safe = string.IsNullOrEmpty(value) ? "" : value;
-            if (safe.Length > width)
-                safe = safe.Substring(0, width);
-            return alignRight ? safe.PadLeft(width, ' ') : safe.PadRight(width, ' ');
+            return CTraderChartEngine.PadCell(value, width, alignRight);
         }
 
         private static string BuildTextTableRow(params string[] cells)
         {
-            if (cells == null || cells.Length == 0) return "";
-            return " " + string.Join("   ", cells) + " ";
+            return CTraderChartEngine.BuildTextTableRow(cells);
         }
 
         private static string BuildOffsetText(int blankLines, string content)
         {
-            if (blankLines <= 0) return content ?? "";
-            return new string('\n', blankLines) + (content ?? "");
+            return CTraderChartEngine.BuildOffsetText(blankLines, content);
         }
 
         private static int CountTextLines(string text)
         {
-            if (string.IsNullOrEmpty(text)) return 0;
-            return text.Split(new[] { '\n' }, StringSplitOptions.None).Length;
+            return CTraderChartEngine.CountTextLines(text);
         }
 
         private static string FormatDashboardNumber(double value)
         {
-            if (double.IsNaN(value) || double.IsInfinity(value)) return "-";
-            var abs = Math.Abs(value);
-            if (abs >= 1.0)
-                return Math.Round(value, 0, MidpointRounding.AwayFromZero).ToString("0", CultureInfo.InvariantCulture);
-            if (abs <= 0.0000001)
-                return "0";
-            return value.ToString("0.##", CultureInfo.InvariantCulture);
+            return CTraderChartEngine.FormatDashboardNumber(value);
         }
 
         private static string FormatDashboardPercent(double value)
         {
-            if (double.IsNaN(value) || double.IsInfinity(value)) return "-";
-            return value.ToString("0.00", CultureInfo.InvariantCulture);
+            return CTraderChartEngine.FormatDashboardPercent(value);
         }
 
         private List<string> BuildRiskDashboardLines(RiskGateState riskState)
@@ -5575,18 +5376,12 @@ namespace cAlgo.Robots
 
         private static Color WithAlpha(Color color, int alpha)
         {
-            return Color.FromArgb(alpha, color.R, color.G, color.B);
+            return CTraderChartEngine.WithAlpha(color, alpha);
         }
 
         private static string FormatCompactDecimal(double value)
         {
-            if (double.IsNaN(value) || double.IsInfinity(value))
-                return "-";
-
-            if (Math.Abs(value - Math.Round(value)) < 0.0001)
-                return Math.Round(value).ToString("0", CultureInfo.InvariantCulture);
-
-            return value.ToString("0.#", CultureInfo.InvariantCulture);
+            return CTraderChartEngine.FormatCompactDecimal(value);
         }
 
         private double MinStopPips
@@ -6320,46 +6115,9 @@ namespace cAlgo.Robots
         // cTrader kill/restart the chart.
         private void RemoveChartObjectsByPrefixes(params string[] prefixes)
         {
-            if (Chart == null || prefixes == null || prefixes.Length == 0)
-                return;
-
-            try
-            {
-                var namesToRemove = new List<string>();
-                foreach (var chartObject in Chart.Objects)
-                {
-                    if (chartObject == null)
-                        continue;
-
-                    var name = chartObject.Name;
-                    if (string.IsNullOrWhiteSpace(name))
-                        continue;
-
-                    for (var i = 0; i < prefixes.Length; i++)
-                    {
-                        if (name.StartsWith(prefixes[i], StringComparison.Ordinal))
-                        {
-                            namesToRemove.Add(name);
-                            break;
-                        }
-                    }
-                }
-
-                foreach (var name in namesToRemove)
-                {
-                    try
-                    {
-                        Chart.RemoveObject(name);
-                    }
-                    catch
-                    {
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                SafePrint("[Visuals] Object sweep failed: {0}", ex.Message);
-            }
+            var error = CTraderChartEngine.RemoveObjectsByPrefixes(Chart, prefixes);
+            if (!string.IsNullOrWhiteSpace(error))
+                SafePrint("[Visuals] Object sweep failed: {0}", error);
         }
 
         private void RemoveChartVisualObjects()
@@ -6376,14 +6134,7 @@ namespace cAlgo.Robots
         // draw functions skip (lower priority first) so the total never exceeds the limit.
         private bool ChartObjectsOverBudget()
         {
-            try
-            {
-                return Chart != null && Chart.Objects.Count >= MaxChartObjectBudget;
-            }
-            catch
-            {
-                return false;
-            }
+            return CTraderChartEngine.ObjectsOverBudget(Chart, MaxChartObjectBudget);
         }
 
         private void RemoveTechnicalOverlayObjects()
@@ -6772,7 +6523,8 @@ namespace cAlgo.Robots
                         RefreshChartSummaryPanel(BuildPanelRiskGateStateSafe());
                         break;
                 }
-                _liteVisualRefreshPhase = (_liteVisualRefreshPhase + 1) % LiteVisualRefreshPhaseCount;
+                _liteVisualRefreshPhase = CTraderChartEngine.AdvanceRefreshPhase(
+                    _liteVisualRefreshPhase, LiteVisualRefreshPhaseCount);
                 WriteBridgeDebugLog("Visuals: lite." + phaseName + " complete added=" + objectIndex.ToString(CultureInfo.InvariantCulture));
 
                 sw.Stop();
@@ -6787,23 +6539,23 @@ namespace cAlgo.Robots
                 SafePrint("[Visuals] Lite zones failed: {0}", ex.Message);
                 // Never let one overlay family pin the phased renderer before its dashboard
                 // turn; otherwise Scan and health text remain frozen indefinitely.
-                _liteVisualRefreshPhase = (_liteVisualRefreshPhase + 1) % LiteVisualRefreshPhaseCount;
+                _liteVisualRefreshPhase = CTraderChartEngine.AdvanceRefreshPhase(
+                    _liteVisualRefreshPhase, LiteVisualRefreshPhaseCount);
             }
         }
 
         private static void CommitLiteBreakdown(List<string> breakdown, int beforeCount, int afterCount, string label)
         {
-            var added = afterCount - beforeCount;
-            if (added > 0)
-                breakdown.Add(label + ":" + added.ToString(CultureInfo.InvariantCulture));
+            CTraderChartEngine.CommitBreakdown(breakdown, beforeCount, afterCount, label);
         }
 
         // 4H splitter grid: only changes at 4H boundaries / visible window edge / day rollover.
         private int RefreshLite4HSplitters(int objectIndex, List<string> breakdown)
         {
             var stateKey = Build4HSplitterStateKey();
-            if (_last4HSplitterBarsCount == Bars.Count &&
-                string.Equals(_last4HSplitterStateKey, stateKey, StringComparison.Ordinal))
+            if (!CTraderChartEngine.ShouldRefresh(
+                    _last4HSplitterBarsCount, _last4HSplitterStateKey, Bars.Count, stateKey,
+                    DateTime.MinValue, DateTime.UtcNow, 0))
                 return objectIndex;
             _last4HSplitterBarsCount = Bars.Count;
             _last4HSplitterStateKey = stateKey;
@@ -6888,8 +6640,9 @@ namespace cAlgo.Robots
         private int RefreshLiteHtfBackground(int objectIndex, List<string> breakdown)
         {
             var stateKey = BuildHtfBackgroundStateKey();
-            if (_lastHtfBackgroundBarsCount == Bars.Count &&
-                string.Equals(_lastHtfBackgroundStateKey, stateKey, StringComparison.Ordinal))
+            if (!CTraderChartEngine.ShouldRefresh(
+                    _lastHtfBackgroundBarsCount, _lastHtfBackgroundStateKey, Bars.Count, stateKey,
+                    DateTime.MinValue, DateTime.UtcNow, 0))
                 return objectIndex;
             _lastHtfBackgroundBarsCount = Bars.Count;
             _lastHtfBackgroundStateKey = stateKey;
@@ -6913,13 +6666,10 @@ namespace cAlgo.Robots
         private int RefreshLiteMiniCharts(int objectIndex, List<string> breakdown)
         {
             var stateKey = BuildMiniChartStateKey();
-            if (_lastMiniChartBarsCount == Bars.Count &&
-                string.Equals(_lastMiniChartStateKey, stateKey, StringComparison.Ordinal))
-                return objectIndex;
-
             var nowUtc = DateTime.UtcNow;
-            if (_lastMiniChartRedrawAtUtc != DateTime.MinValue &&
-                (nowUtc - _lastMiniChartRedrawAtUtc).TotalSeconds < LiteRedrawMinIntervalSeconds)
+            if (!CTraderChartEngine.ShouldRefresh(
+                    _lastMiniChartBarsCount, _lastMiniChartStateKey, Bars.Count, stateKey,
+                    _lastMiniChartRedrawAtUtc, nowUtc, LiteRedrawMinIntervalSeconds))
                 return objectIndex;
             _lastMiniChartBarsCount = Bars.Count;
             _lastMiniChartStateKey = stateKey;
@@ -7912,50 +7662,16 @@ namespace cAlgo.Robots
 
         private List<TimeFrame> GetAutoSplitterTimeFrames(TimeFrame chartTimeFrame)
         {
-            var chartTfMinutes = Math.Max(1, TimeFrameToMinutes(chartTimeFrame));
-            if (chartTfMinutes <= 1)
-                return new List<TimeFrame> { TimeFrame.Minute15, TimeFrame.Hour, TimeFrame.Hour4 };
-            if (chartTfMinutes <= 5)
-                return new List<TimeFrame> { TimeFrame.Hour, TimeFrame.Hour4 };
-            if (chartTfMinutes <= 15)
-                return new List<TimeFrame> { TimeFrame.Hour4 };
-            if (chartTfMinutes <= 60)
-                return new List<TimeFrame> { TimeFrame.Hour4 };
-            return new List<TimeFrame>();
+            return CTraderChartEngine.GetAutoSplitterTimeFrames(chartTimeFrame);
         }
 
         private void ResolveAutoSplitterStyle(TimeFrame splitTimeFrame, out Color color, out int thickness, out string lineStyle)
         {
-            var tfMinutes = Math.Max(1, TimeFrameToMinutes(splitTimeFrame));
-            var baseColor = GetTimeFrameStructureColor(splitTimeFrame);
-
-            if (tfMinutes >= 1440)
-            {
-                color = WithAlpha(baseColor, 92);
-                thickness = 1;
-                lineStyle = "Lines";
-                return;
-            }
-
-            if (tfMinutes >= 240)
-            {
-                color = WithAlpha(baseColor, 64);
-                thickness = 1;
-                lineStyle = "Dots";
-                return;
-            }
-
-            if (tfMinutes >= 60)
-            {
-                color = WithAlpha(baseColor, 68);
-                thickness = 1;
-                lineStyle = "Dots";
-                return;
-            }
-
-            color = WithAlpha(baseColor, 54);
-            thickness = 1;
-            lineStyle = "Dots";
+            var style = CTraderChartEngine.ResolveAutoSplitterStyle(
+                splitTimeFrame, GetTimeFrameStructureColor(splitTimeFrame));
+            color = style.Color;
+            thickness = style.Thickness;
+            lineStyle = style.LineStyle;
         }
 
         private int DrawSplitterFamily(
@@ -8103,29 +7819,7 @@ namespace cAlgo.Robots
         // still land on real bar boundaries; N = number of base bars per step.
         private TimeFrame ResolveSplitterBaseTimeFrame(int stepMinutes, out int baseMinutes, out int nth)
         {
-            var candidates = new[]
-            {
-                Tuple.Create(TimeFrame.Weekly, 10080),
-                Tuple.Create(TimeFrame.Daily, 1440),
-                Tuple.Create(TimeFrame.Hour4, 240),
-                Tuple.Create(TimeFrame.Hour, 60),
-                Tuple.Create(TimeFrame.Minute30, 30),
-                Tuple.Create(TimeFrame.Minute15, 15),
-                Tuple.Create(TimeFrame.Minute5, 5),
-                Tuple.Create(TimeFrame.Minute, 1)
-            };
-            foreach (var candidate in candidates)
-            {
-                if (stepMinutes % candidate.Item2 == 0)
-                {
-                    baseMinutes = candidate.Item2;
-                    nth = stepMinutes / candidate.Item2;
-                    return candidate.Item1;
-                }
-            }
-            baseMinutes = stepMinutes;
-            nth = 1;
-            return null;
+            return CTraderChartEngine.ResolveSplitterBaseTimeFrame(stepMinutes, out baseMinutes, out nth);
         }
 
         private int DrawHtfMiniCharts(int objectIndex)
@@ -8256,8 +7950,8 @@ namespace cAlgo.Robots
         // remain visually aligned regardless of the source timeframe.
         private double GetMiniChartSlotWidthBars(TimeFrame timeFrame, int miniBarCount)
         {
-            var candleCount = Math.Max(2, miniBarCount);
-            return Math.Max(4.0, candleCount * GetMiniChartBarWidthBars(timeFrame));
+            return CTraderChartEngine.GetMiniChartSlotWidth(
+                miniBarCount, GetMiniChartBarWidthBars(timeFrame));
         }
 
         // Candle width in normal chart bars, shared by HTF1 and HTF2.
@@ -8959,14 +8653,7 @@ namespace cAlgo.Robots
         // W=4, D=7, 4H=12, 1H/30m/15m and below=24.
         private int GetMiniChartBarsForTimeFrame(TimeFrame timeFrame)
         {
-            var tfMinutes = Math.Max(1, TimeFrameToMinutes(timeFrame));
-            if (tfMinutes >= 10080) // weekly+
-                return 4;
-            if (tfMinutes >= 1440)  // daily
-                return 7;
-            if (tfMinutes >= 240)   // 4h
-                return 12;
-            return 24;              // <= 1h (15m/30m/1h and below)
+            return CTraderChartEngine.GetMiniChartBars(timeFrame);
         }
 
         private int DrawMiniChartSpacer(int chartTfMinutes, double futureOffsetBars, int objectIndex)
@@ -9072,18 +8759,7 @@ namespace cAlgo.Robots
 
         private List<TimeFrame> GetAutoHigherTimeframes(TimeFrame chartTimeFrame)
         {
-            var chartTfMinutes = Math.Max(1, TimeFrameToMinutes(chartTimeFrame));
-            if (chartTfMinutes <= 1)
-                return new List<TimeFrame> { TimeFrame.Minute15, TimeFrame.Hour };
-            if (chartTfMinutes <= 5)
-                return new List<TimeFrame> { TimeFrame.Hour, TimeFrame.Hour4 };
-            if (chartTfMinutes <= 15)
-                return new List<TimeFrame> { TimeFrame.Hour4, TimeFrame.Daily };
-            if (chartTfMinutes <= 60)
-                return new List<TimeFrame> { TimeFrame.Daily, TimeFrame.Weekly };
-            if (chartTfMinutes <= 240)
-                return new List<TimeFrame> { TimeFrame.Weekly };
-            return new List<TimeFrame> { TimeFrame.Weekly };
+            return CTraderChartEngine.GetAutoHigherTimeFrames(chartTimeFrame);
         }
 
         private TimeFrame ResolveConfiguredHtfSlotTimeFrame(TimeFrame chartTimeFrame, int slotIndex)
@@ -9091,41 +8767,13 @@ namespace cAlgo.Robots
             var selection = slotIndex == 0
                 ? DrawAutoHtf1
                 : DrawAutoHtf2;
-
-            switch (selection)
-            {
-                case HtfSlotMode.Off:
-                    return null;
-                case HtfSlotMode.Auto:
-                    var autoFrames = GetAutoHigherTimeframes(chartTimeFrame);
-                    return slotIndex >= 0 && slotIndex < autoFrames.Count ? autoFrames[slotIndex] : null;
-                case HtfSlotMode.m15:
-                    return TimeFrame.Minute15;
-                case HtfSlotMode.h1:
-                    return TimeFrame.Hour;
-                case HtfSlotMode.h4:
-                    return TimeFrame.Hour4;
-                case HtfSlotMode.d1:
-                    return TimeFrame.Daily;
-                case HtfSlotMode.w1:
-                    return TimeFrame.Weekly;
-                default:
-                    return null;
-            }
+            return CTraderChartEngine.ResolveHtfSlotTimeFrame(chartTimeFrame, slotIndex, selection);
         }
 
         private List<TimeFrame> GetEnabledAutoHigherTimeframes(TimeFrame chartTimeFrame)
         {
-            var enabled = new List<TimeFrame>();
-            for (var slotIndex = 0; slotIndex < 2; slotIndex++)
-            {
-                var resolved = ResolveConfiguredHtfSlotTimeFrame(chartTimeFrame, slotIndex);
-                if (resolved == null)
-                    continue;
-                if (!enabled.Contains(resolved))
-                    enabled.Add(resolved);
-            }
-            return enabled;
+            return CTraderChartEngine.GetEnabledHigherTimeFrames(
+                chartTimeFrame, DrawAutoHtf1, DrawAutoHtf2);
         }
 
         private string GetAutoHigherTimeframeButtonLabel(TimeFrame chartTimeFrame, int slotIndex)
@@ -14285,20 +13933,9 @@ namespace cAlgo.Robots
 
         private int DrawIndicatorSegment(int objectIndex, string prefix, int index, double previousValue, double currentValue, Color color, int thickness, string lineStyle)
         {
-            if (Chart == null || Bars == null || index <= 0 || index >= Bars.Count || !IsFiniteNumber(previousValue) || !IsFiniteNumber(currentValue))
-                return objectIndex;
-
-            var line = Chart.DrawTrendLine(
-                prefix + objectIndex.ToString(CultureInfo.InvariantCulture),
-                Bars.OpenTimes[index - 1],
-                previousValue,
-                Bars.OpenTimes[index],
-                currentValue,
-                color);
-            TrySetPropertyValue(line, "Thickness", thickness);
-            TrySetEnumPropertyValue(line, "LineStyle", lineStyle);
-            TrySetPropertyValue(line, "ZIndex", 2);
-            return objectIndex + 1;
+            return CTraderChartEngine.DrawIndicatorSegment(
+                Chart, Bars, objectIndex, prefix, index, previousValue, currentValue,
+                color, thickness, lineStyle);
         }
 
         private void DrawRightEdgeIndicatorLabel(string prefix, int objectIndex, double value, Color color, string labelText, int labelFontSize = 9, int labelSlot = 0)
@@ -14333,98 +13970,13 @@ namespace cAlgo.Robots
 
         private string NormalizeDisplayTimeFramePrefix(string value)
         {
-            var text = string.IsNullOrWhiteSpace(value) ? "" : value.Trim();
-            if (string.IsNullOrWhiteSpace(text))
-                return text;
-
-            var replacements = new[]
-            {
-                new[] { "1m.", "m1." },
-                new[] { "5m.", "m5." },
-                new[] { "15m.", "m15." },
-                new[] { "30m.", "m30." },
-                new[] { "1h.", "h1." },
-                new[] { "4h.", "h4." },
-                new[] { "1d.", "d1." },
-                new[] { "1w.", "w1." },
-                new[] { "1mn.", "mn1." },
-                new[] { "1mo.", "mn1." }
-            };
-
-            foreach (var replacement in replacements)
-            {
-                if (text.StartsWith(replacement[0], StringComparison.OrdinalIgnoreCase))
-                    return replacement[1] + text.Substring(replacement[0].Length);
-            }
-
-            return text;
+            return CTraderChartEngine.NormalizeDisplayTimeFramePrefix(value);
         }
 
         private string NormalizeArtifactDisplayLabel(string labelText, TimeFrame sourceTimeFrame = null)
         {
-            var normalized = NormalizeDisplayTimeFramePrefix(labelText);
-            var reactionTfPrefixes = new[]
-            {
-                new[] { "r.1m.", "m1.r." },
-                new[] { "r.5m.", "m5.r." },
-                new[] { "r.15m.", "m15.r." },
-                new[] { "r.30m.", "m30.r." },
-                new[] { "r.1h.", "h1.r." },
-                new[] { "r.4h.", "h4.r." },
-                new[] { "r.1d.", "d1.r." },
-                new[] { "r.1w.", "w1.r." },
-                new[] { "r.1mn.", "mn1.r." },
-                new[] { "r.1mo.", "mn1.r." },
-                new[] { "r.m1.", "m1.r." },
-                new[] { "r.m5.", "m5.r." },
-                new[] { "r.m15.", "m15.r." },
-                new[] { "r.m30.", "m30.r." },
-                new[] { "r.h1.", "h1.r." },
-                new[] { "r.h4.", "h4.r." },
-                new[] { "r.d1.", "d1.r." },
-                new[] { "r.w1.", "w1.r." },
-                new[] { "r.mn1.", "mn1.r." }
-            };
-            foreach (var replacement in reactionTfPrefixes)
-            {
-                if (normalized.StartsWith(replacement[0], StringComparison.OrdinalIgnoreCase))
-                {
-                    normalized = replacement[1] + normalized.Substring(replacement[0].Length);
-                    break;
-                }
-            }
             var tfLabel = sourceTimeFrame != null ? GetArtifactDisplayTimeFrameLabel(sourceTimeFrame) : "";
-            var replacements = new[]
-            {
-                new[] { "Key High", string.IsNullOrWhiteSpace(tfLabel) ? "p.h" : tfLabel + ".p.h" },
-                new[] { "Key Low", string.IsNullOrWhiteSpace(tfLabel) ? "p.l" : tfLabel + ".p.l" },
-                new[] { "Bar High", string.IsNullOrWhiteSpace(tfLabel) ? "p.h" : tfLabel + ".p.h" },
-                new[] { "Bar Low", string.IsNullOrWhiteSpace(tfLabel) ? "p.l" : tfLabel + ".p.l" },
-                new[] { "Range High", string.IsNullOrWhiteSpace(tfLabel) ? "rng.h" : tfLabel + ".rng.h" },
-                new[] { "Range Low", string.IsNullOrWhiteSpace(tfLabel) ? "rng.l" : tfLabel + ".rng.l" },
-                new[] { "Swing High", string.IsNullOrWhiteSpace(tfLabel) ? "sw.h" : tfLabel + ".sw.h" },
-                new[] { "Swing Low", string.IsNullOrWhiteSpace(tfLabel) ? "sw.l" : tfLabel + ".sw.l" },
-                new[] { "Resistance", string.IsNullOrWhiteSpace(tfLabel) ? "rng.h" : tfLabel + ".rng.h" },
-                new[] { "Resitence", string.IsNullOrWhiteSpace(tfLabel) ? "rng.h" : tfLabel + ".rng.h" },
-                new[] { "Support", string.IsNullOrWhiteSpace(tfLabel) ? "rng.l" : tfLabel + ".rng.l" },
-                new[] { "Supply", "Sup" },
-                new[] { "Demand", "Dem" },
-                new[] { "SPLY", "Sup" },
-                new[] { "DEM", "Dem" },
-                new[] { "RES", string.IsNullOrWhiteSpace(tfLabel) ? "rng.h" : tfLabel + ".rng.h" },
-                new[] { "SUP", string.IsNullOrWhiteSpace(tfLabel) ? "rng.l" : tfLabel + ".rng.l" }
-            };
-
-            foreach (var replacement in replacements)
-            {
-                var source = replacement[0];
-                if (string.Equals(normalized, source, StringComparison.OrdinalIgnoreCase))
-                    return replacement[1];
-                if (normalized.StartsWith(source + " ", StringComparison.OrdinalIgnoreCase))
-                    return replacement[1] + normalized.Substring(source.Length);
-            }
-
-            return normalized;
+            return CTraderChartEngine.NormalizeArtifactDisplayLabel(labelText, tfLabel);
         }
 
         private DateTime GetRightEdgeLabelColumnTime(TimeFrame sourceTimeFrame)
@@ -15038,71 +14590,12 @@ namespace cAlgo.Robots
 
         private int GetEventLabelPriorityScore(string label)
         {
-            var key = NormalizeEventLabelPriorityKey(label);
-            switch (key)
-            {
-                // Structure events: reversal/structure change first, then break/reaction, then continuation context.
-                case "CHOCH": return 100;
-                case "BOS": return 95;
-                case "SR":
-                case "SWP":
-                case "SWEEP": return 90;
-                case "BR": return 86;
-                case "RJ": return 84;
-                case "IM": return 80;
-                case "PB": return 72;
-                case "CT": return 68;
-
-                // Candle patterns: multi-candle reversals first, then strong continuation/reversal patterns.
-                case "MOR": return 92;
-                case "EVE": return 92;
-                case "3WS": return 88;
-                case "3BC": return 88;
-                case "ENG": return 84;
-                case "DCC": return 80;
-                case "PRC": return 80;
-                case "PIN": return 76;
-                case "HAM": return 76;
-                case "SST": return 76;
-                case "IHM": return 74;
-                case "HGM": return 74;
-                case "BIG": return 70;
-                case "HAR": return 62;
-
-                // Technical events: slower/stronger momentum changes outrank simple price crosses.
-                case "MD0": return 78;
-                case "MDX": return 74;
-                case "EMX": return 72;
-                case "STX": return 70;
-                case "STO": return 70;
-                case "PXE": return 68;
-                case "VWX": return 68;
-                case "BBX": return 68;
-                case "R50": return 68;
-                case "ROS": return 66;
-                case "ROB": return 66;
-                case "VWR": return 64;
-                case "BBR": return 64;
-                case "EMT": return 62;
-                default: return 0;
-            }
+            return CTraderChartEngine.GetEventLabelPriorityScore(label);
         }
 
         private string NormalizeEventLabelPriorityKey(string label)
         {
-            var key = string.IsNullOrWhiteSpace(label) ? "" : label.Trim().ToUpperInvariant();
-            if (key.EndsWith("_CONFIRMED", StringComparison.OrdinalIgnoreCase))
-                key = key.Substring(0, key.Length - "_CONFIRMED".Length);
-            if (key.EndsWith("_REJECTED", StringComparison.OrdinalIgnoreCase))
-                key = key.Substring(0, key.Length - "_REJECTED".Length);
-            if (key.EndsWith(".C", StringComparison.OrdinalIgnoreCase) || key.EndsWith("_C", StringComparison.OrdinalIgnoreCase) ||
-                key.EndsWith(".R", StringComparison.OrdinalIgnoreCase) || key.EndsWith("_R", StringComparison.OrdinalIgnoreCase))
-                key = key.Substring(0, key.Length - 2);
-
-            var spaceIndex = key.IndexOf(' ');
-            if (spaceIndex >= 0)
-                key = key.Substring(0, spaceIndex);
-            return key;
+            return CTraderChartEngine.NormalizeEventLabelPriorityKey(label);
         }
 
         // Fallback pattern label for markers drawn without an explicit label: re-resolve the
@@ -19636,6 +19129,7 @@ namespace cAlgo.Robots
             ValidateStrategyEngineContracts();
             ValidateExecutionEngineContracts();
             ValidateSyncEngineContracts();
+            ValidateChartEngineContracts();
             _startedAtUtc = DateTime.UtcNow;
             _startupWarmupUntilUtc = _startedAtUtc.AddSeconds(12);
             _startupWarmupAnnounced = false;
@@ -31106,19 +30600,12 @@ namespace cAlgo.Robots
 
         private string NormalizeChartDirectionSelection(string raw = null)
         {
-            var value = string.IsNullOrWhiteSpace(raw) ? _chartSelectedDirection : raw.Trim();
-            if (string.Equals(value, "Buy", StringComparison.OrdinalIgnoreCase)) return "Buy";
-            if (string.Equals(value, "Sell", StringComparison.OrdinalIgnoreCase)) return "Sell";
-            return "All";
+            return CTraderChartEngine.NormalizeToolbarDirection(raw, _chartSelectedDirection);
         }
 
         private bool DirectionMatchesTradeType(string selectedDirection, TradeType tradeType)
         {
-            var normalized = NormalizeChartDirectionSelection(selectedDirection);
-            if (normalized == "All") return true;
-            if (normalized == "Buy") return tradeType == TradeType.Buy;
-            if (normalized == "Sell") return tradeType == TradeType.Sell;
-            return true;
+            return CTraderChartEngine.DirectionMatchesTradeType(selectedDirection, tradeType);
         }
 
         private bool SymbolHasOpenPositions(string symbolName, string selectedDirection = null)
@@ -31624,13 +31111,7 @@ namespace cAlgo.Robots
 
         private string NormalizeChartOrderCountSelection(string raw = null)
         {
-            var value = string.IsNullOrWhiteSpace(raw) ? _chartSelectedOrderCount : raw.Trim();
-            if (value.Equals("1", StringComparison.OrdinalIgnoreCase)) return "1";
-            if (value.Equals("2", StringComparison.OrdinalIgnoreCase)) return "2";
-            if (value.Equals("3", StringComparison.OrdinalIgnoreCase)) return "3";
-            if (value.Equals("4", StringComparison.OrdinalIgnoreCase)) return "4";
-            if (value.Equals("5", StringComparison.OrdinalIgnoreCase)) return "5";
-            return "Auto";
+            return CTraderChartEngine.NormalizeToolbarOrderCount(raw, _chartSelectedOrderCount);
         }
 
         private string ReadChartOrderCountSelection()
@@ -31661,13 +31142,7 @@ namespace cAlgo.Robots
         // 1..5 = fixed number of orders per click.
         private int ResolveChartOrderCount()
         {
-            var value = string.IsNullOrWhiteSpace(_chartSelectedOrderCount) ? "Auto" : _chartSelectedOrderCount.Trim();
-            if (string.Equals(value, "Auto", StringComparison.OrdinalIgnoreCase))
-                return 0;
-            int count;
-            return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out count)
-                ? Math.Max(1, Math.Min(5, count))
-                : 0;
+            return CTraderChartEngine.ResolveToolbarOrderCount(_chartSelectedOrderCount);
         }
 
         // Resolve the strategy n.Trades parameter into a leg count: 0 = Auto
@@ -32892,6 +32367,67 @@ namespace cAlgo.Robots
                 CTraderSyncEngine.TrimClosedTicketSet(tickets, 5, 3) != 3 || tickets.Count != 3)
             {
                 throw new InvalidOperationException("Sync payload/result/retention contract failed.");
+            }
+        }
+
+        private static void ValidateChartEngineContracts()
+        {
+            if (CTraderChartEngine.GetMarkerFontSize(ChartMarkerFontSizeMode.None) != 0 ||
+                CTraderChartEngine.GetMarkerFontSize(ChartMarkerFontSizeMode.Small) != 8 ||
+                CTraderChartEngine.ResolveMarkerFontSize(
+                    ChartMarkerFontSizeMode.Small, TimeFrame.Minute15, TimeFrame.Daily, true) != 12 ||
+                CTraderChartEngine.GetDirectionalMarkerIcon(ChartMarkerSymbolMode.Triangles, true) != "▲" ||
+                CTraderChartEngine.FormatDirectionalMarkerText(
+                    "bos", false, ChartMarkerSymbolMode.Arrows, ChartLabelVisibilityMode.Yes) != "↓ BOS")
+            {
+                throw new InvalidOperationException("Chart marker policy contract failed.");
+            }
+
+            var splitterFrames = CTraderChartEngine.GetAutoSplitterTimeFrames(TimeFrame.Minute);
+            int baseMinutes;
+            int nth;
+            var splitterBase = CTraderChartEngine.ResolveSplitterBaseTimeFrame(480, out baseMinutes, out nth);
+            var htfFrames = CTraderChartEngine.GetEnabledHigherTimeFrames(
+                TimeFrame.Minute15, HtfSlotMode.Auto, HtfSlotMode.Auto);
+            if (splitterFrames.Count != 3 || splitterFrames[0] != TimeFrame.Minute15 ||
+                splitterBase != TimeFrame.Hour4 || baseMinutes != 240 || nth != 2 ||
+                htfFrames.Count != 2 || htfFrames[0] != TimeFrame.Hour4 || htfFrames[1] != TimeFrame.Daily ||
+                CTraderChartEngine.GetMiniChartBars(TimeFrame.Weekly) != 4 ||
+                CTraderChartEngine.GetMiniChartBars(TimeFrame.Hour4) != 12 ||
+                Math.Abs(CTraderChartEngine.GetMiniChartSlotWidth(7, 4.0) - 28.0) > 0.0000001)
+            {
+                throw new InvalidOperationException("Chart HTF layout contract failed.");
+            }
+
+            if (CTraderChartEngine.NormalizeDisplayTimeFramePrefix("1h.eql") != "h1.eql" ||
+                CTraderChartEngine.NormalizeArtifactDisplayLabel("r.1h.Key High", "h1") != "h1.r.Key High" ||
+                CTraderChartEngine.NormalizeArtifactDisplayLabel("Key Low", "h4") != "h4.p.l" ||
+                CTraderChartEngine.NormalizeEventLabelPriorityKey("CHOCH_CONFIRMED") != "CHOCH" ||
+                CTraderChartEngine.GetEventLabelPriorityScore("bos.r") != 95)
+            {
+                throw new InvalidOperationException("Chart label contract failed.");
+            }
+
+            var now = new DateTime(2026, 8, 24, 12, 0, 0, DateTimeKind.Utc);
+            if (CTraderChartEngine.ShouldRefresh(10, "same", 10, "same", DateTime.MinValue, now, 0) ||
+                CTraderChartEngine.ShouldRefresh(10, "old", 11, "new", now.AddSeconds(-4), now, 5) ||
+                !CTraderChartEngine.ShouldRefresh(10, "old", 11, "new", now.AddSeconds(-5), now, 5) ||
+                CTraderChartEngine.AdvanceRefreshPhase(5, 6) != 0 ||
+                CTraderChartEngine.NormalizeToolbarDirection("sell", "All") != "Sell" ||
+                CTraderChartEngine.NormalizeToolbarOrderCount("9", "Auto") != "Auto" ||
+                CTraderChartEngine.ResolveToolbarOrderCount("4") != 4 ||
+                CTraderChartEngine.NormalizeToolbarTradeProfile("daily", "Scalp") != "Daily")
+            {
+                throw new InvalidOperationException("Chart refresh/toolbar contract failed.");
+            }
+
+            if (CTraderChartEngine.PadCell("abcdef", 4, false) != "abcd" ||
+                CTraderChartEngine.BuildTextTableRow("A", "B") != " A   B " ||
+                CTraderChartEngine.CountTextLines("a\nb") != 2 ||
+                CTraderChartEngine.FormatDashboardNumber(1.6) != "2" ||
+                CTraderChartEngine.FormatDashboardPercent(1.5) != "1.50")
+            {
+                throw new InvalidOperationException("Chart dashboard-formatting contract failed.");
             }
         }
 
@@ -38692,15 +38228,9 @@ namespace cAlgo.Robots
             ref string lastText,
             ref string lastColorKey)
         {
-            var normalizedText = text ?? "";
-            var colorKey = color.ToString();
-            if (string.Equals(lastText, normalizedText, StringComparison.Ordinal) &&
-                string.Equals(lastColorKey, colorKey, StringComparison.Ordinal))
-                return null;
-
-            lastText = normalizedText;
-            lastColorKey = colorKey;
-            return Chart.DrawStaticText(objectName, normalizedText, verticalAlignment, horizontalAlignment, color);
+            return CTraderChartEngine.DrawStaticTextIfChanged(
+                Chart, objectName, text, verticalAlignment, horizontalAlignment, color,
+                ref lastText, ref lastColorKey);
         }
 
         private void RefreshDebugPanelNow(bool includeVisualOverlays, bool refreshAnalysis)
@@ -42253,6 +41783,608 @@ namespace cAlgo.Robots
                 count++;
             }
             return count > 0 ? total / count : double.NaN;
+        }
+    }
+
+    internal sealed class CTraderChartSplitterStyle
+    {
+        public Color Color;
+        public int Thickness;
+        public string LineStyle;
+    }
+
+    // Owns reusable chart policy, layout, object lifecycle, and primitive cTrader rendering.
+    internal static class CTraderChartEngine
+    {
+        public static void TrySetPropertyValue(object target, string propertyName, object value)
+        {
+            if (target == null || string.IsNullOrWhiteSpace(propertyName) || value == null) return;
+            try
+            {
+                var property = target.GetType().GetProperty(propertyName);
+                if (property == null || !property.CanWrite) return;
+                var targetType = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+                var converted = targetType == value.GetType()
+                    ? value
+                    : Convert.ChangeType(value, targetType, CultureInfo.InvariantCulture);
+                property.SetValue(target, converted, null);
+            }
+            catch
+            {
+            }
+        }
+
+        public static void TrySetEnumPropertyValue(object target, string propertyName, string enumName)
+        {
+            if (target == null || string.IsNullOrWhiteSpace(propertyName) || string.IsNullOrWhiteSpace(enumName)) return;
+            try
+            {
+                var property = target.GetType().GetProperty(propertyName);
+                if (property == null || !property.CanWrite) return;
+                var targetType = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+                if (!targetType.IsEnum) return;
+                property.SetValue(target, Enum.Parse(targetType, enumName, true), null);
+            }
+            catch
+            {
+            }
+        }
+
+        public static void TryStyleText(object chartText, int fontSize, string fontFamily, bool isBold)
+        {
+            if (chartText == null) return;
+            TrySetPropertyValue(chartText, "FontSize", fontSize);
+            TrySetPropertyValue(chartText, "FontFamily", fontFamily);
+            TrySetPropertyValue(chartText, "IsBold", isBold);
+        }
+
+        public static void TrySetBackground(object chartObject)
+        {
+            if (chartObject == null) return;
+            TrySetPropertyValue(chartObject, "IsBackground", true);
+            TrySetPropertyValue(chartObject, "IsInteractive", false);
+            TrySetPropertyValue(chartObject, "ZIndex", -10);
+        }
+
+        public static bool TryInvokeVoidMethod(object target, string methodName, params object[] args)
+        {
+            if (target == null || string.IsNullOrWhiteSpace(methodName)) return false;
+            try
+            {
+                foreach (var method in target.GetType().GetMethods().Where(candidate => candidate.Name == methodName))
+                {
+                    if (method.GetParameters().Length != (args != null ? args.Length : 0)) continue;
+                    method.Invoke(target, args);
+                    return true;
+                }
+            }
+            catch
+            {
+            }
+            return false;
+        }
+
+        public static bool TryClearCollection(object target)
+        {
+            if (target == null) return false;
+            try
+            {
+                var method = target.GetType().GetMethod("Clear", Type.EmptyTypes);
+                if (method == null) return false;
+                method.Invoke(target, null);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public static bool TryAddToCollection(object collection, object item)
+        {
+            if (collection == null || item == null) return false;
+            try
+            {
+                var method = collection.GetType().GetMethod("Add");
+                if (method == null) return false;
+                method.Invoke(collection, new[] { item });
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public static string PadCell(string value, int width, bool alignRight)
+        {
+            var safe = string.IsNullOrEmpty(value) ? "" : value;
+            if (safe.Length > width)
+                safe = safe.Substring(0, width);
+            return alignRight ? safe.PadLeft(width, ' ') : safe.PadRight(width, ' ');
+        }
+
+        public static string BuildTextTableRow(params string[] cells)
+        {
+            return cells == null || cells.Length == 0 ? "" : " " + string.Join("   ", cells) + " ";
+        }
+
+        public static string BuildOffsetText(int blankLines, string content)
+        {
+            return blankLines <= 0 ? content ?? "" : new string('\n', blankLines) + (content ?? "");
+        }
+
+        public static int CountTextLines(string text)
+        {
+            return string.IsNullOrEmpty(text) ? 0 : text.Split(new[] { '\n' }, StringSplitOptions.None).Length;
+        }
+
+        public static string FormatDashboardNumber(double value)
+        {
+            if (double.IsNaN(value) || double.IsInfinity(value)) return "-";
+            var absolute = Math.Abs(value);
+            if (absolute >= 1.0)
+                return Math.Round(value, 0, MidpointRounding.AwayFromZero).ToString("0", CultureInfo.InvariantCulture);
+            if (absolute <= 0.0000001)
+                return "0";
+            return value.ToString("0.##", CultureInfo.InvariantCulture);
+        }
+
+        public static string FormatDashboardPercent(double value)
+        {
+            return double.IsNaN(value) || double.IsInfinity(value)
+                ? "-"
+                : value.ToString("0.00", CultureInfo.InvariantCulture);
+        }
+
+        public static string FormatCompactDecimal(double value)
+        {
+            if (double.IsNaN(value) || double.IsInfinity(value)) return "-";
+            return Math.Abs(value - Math.Round(value)) < 0.0001
+                ? Math.Round(value).ToString("0", CultureInfo.InvariantCulture)
+                : value.ToString("0.#", CultureInfo.InvariantCulture);
+        }
+
+        public static bool ShouldRefresh(
+            int previousBarsCount,
+            string previousStateKey,
+            int currentBarsCount,
+            string currentStateKey,
+            DateTime previousRefreshUtc,
+            DateTime nowUtc,
+            double minimumIntervalSeconds)
+        {
+            if (previousBarsCount == currentBarsCount &&
+                string.Equals(previousStateKey, currentStateKey, StringComparison.Ordinal))
+                return false;
+            return previousRefreshUtc == DateTime.MinValue ||
+                (nowUtc - previousRefreshUtc).TotalSeconds >= Math.Max(0, minimumIntervalSeconds);
+        }
+
+        public static int AdvanceRefreshPhase(int currentPhase, int phaseCount)
+        {
+            return phaseCount <= 0 ? 0 : (Math.Max(0, currentPhase) + 1) % phaseCount;
+        }
+
+        public static void CommitBreakdown(List<string> breakdown, int beforeCount, int afterCount, string label)
+        {
+            var added = afterCount - beforeCount;
+            if (breakdown != null && added > 0)
+                breakdown.Add((label ?? "") + ":" + added.ToString(CultureInfo.InvariantCulture));
+        }
+
+        public static string NormalizeToolbarDirection(string raw, string fallback)
+        {
+            var value = string.IsNullOrWhiteSpace(raw) ? fallback : raw.Trim();
+            if (string.Equals(value, "Buy", StringComparison.OrdinalIgnoreCase)) return "Buy";
+            if (string.Equals(value, "Sell", StringComparison.OrdinalIgnoreCase)) return "Sell";
+            return "All";
+        }
+
+        public static bool DirectionMatchesTradeType(string selectedDirection, TradeType tradeType)
+        {
+            var normalized = NormalizeToolbarDirection(selectedDirection, "All");
+            return normalized == "All" ||
+                (normalized == "Buy" && tradeType == TradeType.Buy) ||
+                (normalized == "Sell" && tradeType == TradeType.Sell);
+        }
+
+        public static string NormalizeToolbarOrderCount(string raw, string fallback)
+        {
+            var value = string.IsNullOrWhiteSpace(raw) ? fallback : raw.Trim();
+            return value == "1" || value == "2" || value == "3" || value == "4" || value == "5"
+                ? value
+                : "Auto";
+        }
+
+        public static int ResolveToolbarOrderCount(string value)
+        {
+            var normalized = NormalizeToolbarOrderCount(value, "Auto");
+            if (normalized == "Auto") return 0;
+            int count;
+            return int.TryParse(normalized, NumberStyles.Integer, CultureInfo.InvariantCulture, out count)
+                ? Math.Max(1, Math.Min(5, count))
+                : 0;
+        }
+
+        public static string NormalizeToolbarTradeProfile(string raw, string fallback)
+        {
+            var value = string.IsNullOrWhiteSpace(raw) ? fallback : raw.Trim();
+            if (string.Equals(value, "Swing", StringComparison.OrdinalIgnoreCase)) return "Swing";
+            if (string.Equals(value, "Daily", StringComparison.OrdinalIgnoreCase)) return "Daily";
+            return "Scalp";
+        }
+
+        public static Color WithAlpha(Color color, int alpha)
+        {
+            return Color.FromArgb(alpha, color.R, color.G, color.B);
+        }
+
+        public static int GetMarkerFontLevel(TVBridgeCBot.ChartMarkerFontSizeMode mode)
+        {
+            switch (mode)
+            {
+                case TVBridgeCBot.ChartMarkerFontSizeMode.None: return -1;
+                case TVBridgeCBot.ChartMarkerFontSizeMode.Tiny: return 0;
+                case TVBridgeCBot.ChartMarkerFontSizeMode.Medium: return 2;
+                case TVBridgeCBot.ChartMarkerFontSizeMode.Large: return 3;
+                default: return 1;
+            }
+        }
+
+        public static int GetMarkerFontSize(TVBridgeCBot.ChartMarkerFontSizeMode mode)
+        {
+            switch (mode)
+            {
+                case TVBridgeCBot.ChartMarkerFontSizeMode.None: return 0;
+                case TVBridgeCBot.ChartMarkerFontSizeMode.Tiny: return 6;
+                case TVBridgeCBot.ChartMarkerFontSizeMode.Medium: return 10;
+                case TVBridgeCBot.ChartMarkerFontSizeMode.Large: return 12;
+                default: return 8;
+            }
+        }
+
+        public static int ResolveMarkerFontSize(
+            TVBridgeCBot.ChartMarkerFontSizeMode mode,
+            TimeFrame chartTimeFrame,
+            TimeFrame sourceTimeFrame,
+            bool visualsEnabled)
+        {
+            if (!visualsEnabled || mode == TVBridgeCBot.ChartMarkerFontSizeMode.None)
+                return 0;
+            var level = GetMarkerFontLevel(mode);
+            var chartMinutes = Math.Max(1, CTraderTimeFrameEngine.ToMinutes(chartTimeFrame));
+            var sourceMinutes = Math.Max(1, CTraderTimeFrameEngine.ToMinutes(sourceTimeFrame));
+            if (sourceMinutes > chartMinutes)
+            {
+                if (sourceMinutes >= 1440) level += 3;
+                else if (sourceMinutes >= 240) level += 2;
+                else if (sourceMinutes >= 60) level += 1;
+                else if (sourceMinutes >= 15) level += 1;
+            }
+            switch (Math.Max(0, Math.Min(3, level)))
+            {
+                case 0: return 6;
+                case 1: return 8;
+                case 2: return 10;
+                default: return 12;
+            }
+        }
+
+        public static string GetDirectionalMarkerIcon(TVBridgeCBot.ChartMarkerSymbolMode mode, bool isBullish)
+        {
+            return mode == TVBridgeCBot.ChartMarkerSymbolMode.Triangles
+                ? (isBullish ? "▲" : "▼")
+                : (isBullish ? "↑" : "↓");
+        }
+
+        public static string FormatDirectionalMarkerText(
+            string label,
+            bool isBullish,
+            TVBridgeCBot.ChartMarkerSymbolMode symbolMode,
+            TVBridgeCBot.ChartLabelVisibilityMode labelVisibility)
+        {
+            var icon = GetDirectionalMarkerIcon(symbolMode, isBullish);
+            if (labelVisibility == TVBridgeCBot.ChartLabelVisibilityMode.No)
+                return icon;
+            return icon + " " + (string.IsNullOrWhiteSpace(label) ? "evt" : label.Trim().ToUpperInvariant());
+        }
+
+        public static ChartIconType GetDirectionalChartIconType(bool isBullish)
+        {
+            return isBullish ? ChartIconType.UpArrow : ChartIconType.DownArrow;
+        }
+
+        public static double ResolveDirectionalLabelPrice(
+            bool isBullish,
+            double wickPrice,
+            double barRange,
+            int slotIndex,
+            double fallbackRange,
+            double pipSize)
+        {
+            var effectiveRange = Math.Max(Math.Max(barRange, fallbackRange), pipSize > 0 ? pipSize * 8.0 : 0.0000001);
+            var textPad = Math.Max(pipSize > 0 ? pipSize * (0.8 + slotIndex * 0.4) : 0.0000001,
+                effectiveRange * (0.012 + slotIndex * 0.007));
+            return isBullish ? wickPrice - textPad : wickPrice + textPad;
+        }
+
+        public static List<TimeFrame> GetAutoSplitterTimeFrames(TimeFrame chartTimeFrame)
+        {
+            var minutes = Math.Max(1, CTraderTimeFrameEngine.ToMinutes(chartTimeFrame));
+            if (minutes <= 1) return new List<TimeFrame> { TimeFrame.Minute15, TimeFrame.Hour, TimeFrame.Hour4 };
+            if (minutes <= 5) return new List<TimeFrame> { TimeFrame.Hour, TimeFrame.Hour4 };
+            if (minutes <= 60) return new List<TimeFrame> { TimeFrame.Hour4 };
+            return new List<TimeFrame>();
+        }
+
+        public static CTraderChartSplitterStyle ResolveAutoSplitterStyle(TimeFrame splitTimeFrame, Color baseColor)
+        {
+            var minutes = Math.Max(1, CTraderTimeFrameEngine.ToMinutes(splitTimeFrame));
+            var alpha = minutes >= 1440 ? 92 : minutes >= 240 ? 64 : minutes >= 60 ? 68 : 54;
+            return new CTraderChartSplitterStyle
+            {
+                Color = WithAlpha(baseColor, alpha),
+                Thickness = 1,
+                LineStyle = minutes >= 1440 ? "Lines" : "Dots"
+            };
+        }
+
+        public static TimeFrame ResolveSplitterBaseTimeFrame(int stepMinutes, out int baseMinutes, out int nth)
+        {
+            var candidates = new[]
+            {
+                Tuple.Create(TimeFrame.Weekly, 10080), Tuple.Create(TimeFrame.Daily, 1440),
+                Tuple.Create(TimeFrame.Hour4, 240), Tuple.Create(TimeFrame.Hour, 60),
+                Tuple.Create(TimeFrame.Minute30, 30), Tuple.Create(TimeFrame.Minute15, 15),
+                Tuple.Create(TimeFrame.Minute5, 5), Tuple.Create(TimeFrame.Minute, 1)
+            };
+            foreach (var candidate in candidates)
+            {
+                if (stepMinutes % candidate.Item2 != 0) continue;
+                baseMinutes = candidate.Item2;
+                nth = stepMinutes / candidate.Item2;
+                return candidate.Item1;
+            }
+            baseMinutes = stepMinutes;
+            nth = 1;
+            return null;
+        }
+
+        public static List<TimeFrame> GetAutoHigherTimeFrames(TimeFrame chartTimeFrame)
+        {
+            var minutes = Math.Max(1, CTraderTimeFrameEngine.ToMinutes(chartTimeFrame));
+            if (minutes <= 1) return new List<TimeFrame> { TimeFrame.Minute15, TimeFrame.Hour };
+            if (minutes <= 5) return new List<TimeFrame> { TimeFrame.Hour, TimeFrame.Hour4 };
+            if (minutes <= 15) return new List<TimeFrame> { TimeFrame.Hour4, TimeFrame.Daily };
+            if (minutes <= 60) return new List<TimeFrame> { TimeFrame.Daily, TimeFrame.Weekly };
+            return new List<TimeFrame> { TimeFrame.Weekly };
+        }
+
+        public static TimeFrame ResolveHtfSlotTimeFrame(
+            TimeFrame chartTimeFrame,
+            int slotIndex,
+            TVBridgeCBot.HtfSlotMode selection)
+        {
+            switch (selection)
+            {
+                case TVBridgeCBot.HtfSlotMode.Off: return null;
+                case TVBridgeCBot.HtfSlotMode.Auto:
+                    var frames = GetAutoHigherTimeFrames(chartTimeFrame);
+                    return slotIndex >= 0 && slotIndex < frames.Count ? frames[slotIndex] : null;
+                case TVBridgeCBot.HtfSlotMode.m15: return TimeFrame.Minute15;
+                case TVBridgeCBot.HtfSlotMode.h1: return TimeFrame.Hour;
+                case TVBridgeCBot.HtfSlotMode.h4: return TimeFrame.Hour4;
+                case TVBridgeCBot.HtfSlotMode.d1: return TimeFrame.Daily;
+                case TVBridgeCBot.HtfSlotMode.w1: return TimeFrame.Weekly;
+                default: return null;
+            }
+        }
+
+        public static List<TimeFrame> GetEnabledHigherTimeFrames(
+            TimeFrame chartTimeFrame,
+            TVBridgeCBot.HtfSlotMode first,
+            TVBridgeCBot.HtfSlotMode second)
+        {
+            var result = new List<TimeFrame>();
+            var selections = new[] { first, second };
+            for (var index = 0; index < selections.Length; index++)
+            {
+                var frame = ResolveHtfSlotTimeFrame(chartTimeFrame, index, selections[index]);
+                if (frame != null && !result.Contains(frame)) result.Add(frame);
+            }
+            return result;
+        }
+
+        public static int GetMiniChartBars(TimeFrame timeFrame)
+        {
+            var minutes = Math.Max(1, CTraderTimeFrameEngine.ToMinutes(timeFrame));
+            if (minutes >= 10080) return 4;
+            if (minutes >= 1440) return 7;
+            if (minutes >= 240) return 12;
+            return 24;
+        }
+
+        public static double GetMiniChartSlotWidth(int miniBarCount, double candleWidthBars)
+        {
+            return Math.Max(4.0, Math.Max(2, miniBarCount) * candleWidthBars);
+        }
+
+        public static string NormalizeDisplayTimeFramePrefix(string value)
+        {
+            var text = string.IsNullOrWhiteSpace(value) ? "" : value.Trim();
+            var replacements = new[]
+            {
+                new[] { "1m.", "m1." }, new[] { "5m.", "m5." }, new[] { "15m.", "m15." },
+                new[] { "30m.", "m30." }, new[] { "1h.", "h1." }, new[] { "4h.", "h4." },
+                new[] { "1d.", "d1." }, new[] { "1w.", "w1." }, new[] { "1mn.", "mn1." },
+                new[] { "1mo.", "mn1." }
+            };
+            foreach (var replacement in replacements)
+                if (text.StartsWith(replacement[0], StringComparison.OrdinalIgnoreCase))
+                    return replacement[1] + text.Substring(replacement[0].Length);
+            return text;
+        }
+
+        public static string NormalizeArtifactDisplayLabel(string labelText, string timeFrameLabel)
+        {
+            var normalized = NormalizeDisplayTimeFramePrefix(labelText);
+            var reactionPrefixes = new[]
+            {
+                new[] { "r.1m.", "m1.r." }, new[] { "r.5m.", "m5.r." }, new[] { "r.15m.", "m15.r." },
+                new[] { "r.30m.", "m30.r." }, new[] { "r.1h.", "h1.r." }, new[] { "r.4h.", "h4.r." },
+                new[] { "r.1d.", "d1.r." }, new[] { "r.1w.", "w1.r." }, new[] { "r.1mn.", "mn1.r." },
+                new[] { "r.1mo.", "mn1.r." }, new[] { "r.m1.", "m1.r." }, new[] { "r.m5.", "m5.r." },
+                new[] { "r.m15.", "m15.r." }, new[] { "r.m30.", "m30.r." }, new[] { "r.h1.", "h1.r." },
+                new[] { "r.h4.", "h4.r." }, new[] { "r.d1.", "d1.r." }, new[] { "r.w1.", "w1.r." },
+                new[] { "r.mn1.", "mn1.r." }
+            };
+            foreach (var replacement in reactionPrefixes)
+            {
+                if (!normalized.StartsWith(replacement[0], StringComparison.OrdinalIgnoreCase)) continue;
+                normalized = replacement[1] + normalized.Substring(replacement[0].Length);
+                break;
+            }
+            var tf = string.IsNullOrWhiteSpace(timeFrameLabel) ? "" : timeFrameLabel.Trim().ToLowerInvariant();
+            var replacements = new[]
+            {
+                new[] { "Key High", string.IsNullOrEmpty(tf) ? "p.h" : tf + ".p.h" },
+                new[] { "Key Low", string.IsNullOrEmpty(tf) ? "p.l" : tf + ".p.l" },
+                new[] { "Bar High", string.IsNullOrEmpty(tf) ? "p.h" : tf + ".p.h" },
+                new[] { "Bar Low", string.IsNullOrEmpty(tf) ? "p.l" : tf + ".p.l" },
+                new[] { "Range High", string.IsNullOrEmpty(tf) ? "rng.h" : tf + ".rng.h" },
+                new[] { "Range Low", string.IsNullOrEmpty(tf) ? "rng.l" : tf + ".rng.l" },
+                new[] { "Swing High", string.IsNullOrEmpty(tf) ? "sw.h" : tf + ".sw.h" },
+                new[] { "Swing Low", string.IsNullOrEmpty(tf) ? "sw.l" : tf + ".sw.l" },
+                new[] { "Resistance", string.IsNullOrEmpty(tf) ? "rng.h" : tf + ".rng.h" },
+                new[] { "Resitence", string.IsNullOrEmpty(tf) ? "rng.h" : tf + ".rng.h" },
+                new[] { "Support", string.IsNullOrEmpty(tf) ? "rng.l" : tf + ".rng.l" },
+                new[] { "Supply", "Sup" }, new[] { "Demand", "Dem" }, new[] { "SPLY", "Sup" },
+                new[] { "DEM", "Dem" }, new[] { "RES", string.IsNullOrEmpty(tf) ? "rng.h" : tf + ".rng.h" },
+                new[] { "SUP", string.IsNullOrEmpty(tf) ? "rng.l" : tf + ".rng.l" }
+            };
+            foreach (var replacement in replacements)
+            {
+                if (string.Equals(normalized, replacement[0], StringComparison.OrdinalIgnoreCase)) return replacement[1];
+                if (normalized.StartsWith(replacement[0] + " ", StringComparison.OrdinalIgnoreCase))
+                    return replacement[1] + normalized.Substring(replacement[0].Length);
+            }
+            return normalized;
+        }
+
+        public static string NormalizeEventLabelPriorityKey(string label)
+        {
+            var key = string.IsNullOrWhiteSpace(label) ? "" : label.Trim().ToUpperInvariant();
+            if (key.EndsWith("_CONFIRMED", StringComparison.OrdinalIgnoreCase)) key = key.Substring(0, key.Length - 10);
+            if (key.EndsWith("_REJECTED", StringComparison.OrdinalIgnoreCase)) key = key.Substring(0, key.Length - 9);
+            if (key.EndsWith(".C", StringComparison.OrdinalIgnoreCase) || key.EndsWith("_C", StringComparison.OrdinalIgnoreCase) ||
+                key.EndsWith(".R", StringComparison.OrdinalIgnoreCase) || key.EndsWith("_R", StringComparison.OrdinalIgnoreCase))
+                key = key.Substring(0, key.Length - 2);
+            var space = key.IndexOf(' ');
+            return space >= 0 ? key.Substring(0, space) : key;
+        }
+
+        public static int GetEventLabelPriorityScore(string label)
+        {
+            switch (NormalizeEventLabelPriorityKey(label))
+            {
+                case "CHOCH": return 100; case "BOS": return 95; case "SR": case "SWP": case "SWEEP": return 90;
+                case "BR": return 86; case "RJ": return 84; case "IM": return 80; case "PB": return 72; case "CT": return 68;
+                case "MOR": case "EVE": return 92; case "3WS": case "3BC": return 88; case "ENG": return 84;
+                case "DCC": case "PRC": return 80; case "PIN": case "HAM": case "SST": return 76;
+                case "IHM": case "HGM": return 74; case "BIG": return 70; case "HAR": return 62;
+                case "MD0": return 78; case "MDX": return 74; case "EMX": return 72; case "STX": case "STO": return 70;
+                case "PXE": case "VWX": case "BBX": case "R50": return 68; case "ROS": case "ROB": return 66;
+                case "VWR": case "BBR": return 64; case "EMT": return 62; default: return 0;
+            }
+        }
+
+        public static string RemoveObjectsByPrefixes(Chart chart, params string[] prefixes)
+        {
+            if (chart == null || prefixes == null || prefixes.Length == 0) return "";
+            try
+            {
+                var names = chart.Objects
+                    .Where(item => item != null && !string.IsNullOrWhiteSpace(item.Name) &&
+                        prefixes.Any(prefix => item.Name.StartsWith(prefix, StringComparison.Ordinal)))
+                    .Select(item => item.Name)
+                    .ToList();
+                foreach (var name in names)
+                {
+                    try { chart.RemoveObject(name); } catch { }
+                }
+                return "";
+            }
+            catch (Exception ex)
+            {
+                return ex.Message;
+            }
+        }
+
+        public static bool ObjectsOverBudget(Chart chart, int maximumObjects)
+        {
+            try { return chart != null && chart.Objects.Count >= maximumObjects; }
+            catch { return false; }
+        }
+
+        public static int DrawBlurredCandle(
+            Chart chart, string objectPrefix, int objectIndex, DateTime startTime, DateTime endTime,
+            double high, double low, double open, double close, Color wickFillColor,
+            Color wickBorderColor, Color bodyFillColor, Color bodyBorderColor)
+        {
+            if (chart == null || endTime <= startTime) return objectIndex;
+            var mini = string.Equals(objectPrefix, "MINI", StringComparison.OrdinalIgnoreCase);
+            var bodyHigh = Math.Max(open, close);
+            var bodyLow = Math.Min(open, close);
+            var duration = Math.Max(1.0, (endTime - startTime).TotalMinutes);
+            var wickStart = startTime.AddMinutes(duration * (mini ? 0.44 : 0.47));
+            var wickEnd = startTime.AddMinutes(duration * (mini ? 0.56 : 0.53));
+            if (wickEnd <= wickStart) wickEnd = wickStart.AddMinutes(1);
+            if (high > bodyHigh)
+                DrawCandleRectangle(chart, objectPrefix + "_WICK_U_" + objectIndex.ToString(CultureInfo.InvariantCulture), wickStart, high, wickEnd, bodyHigh, wickFillColor, wickBorderColor, mini ? 1 : 0);
+            if (bodyLow > low)
+                DrawCandleRectangle(chart, objectPrefix + "_WICK_L_" + objectIndex.ToString(CultureInfo.InvariantCulture), wickStart, bodyLow, wickEnd, low, wickFillColor, wickBorderColor, mini ? 1 : 0);
+            DrawCandleRectangle(chart, objectPrefix + "_BODY_" + objectIndex.ToString(CultureInfo.InvariantCulture), startTime, bodyHigh, endTime, bodyLow, bodyFillColor, bodyBorderColor, 1);
+            return objectIndex + 1;
+        }
+
+        private static void DrawCandleRectangle(Chart chart, string name, DateTime startTime, double high, DateTime endTime, double low, Color fill, Color border, int thickness)
+        {
+            var rectangle = chart.DrawRectangle(name, startTime, high, endTime, low, fill);
+            TrySetPropertyValue(rectangle, "IsFilled", true);
+            TrySetPropertyValue(rectangle, "Color", fill);
+            TrySetPropertyValue(rectangle, "BorderColor", border);
+            TrySetPropertyValue(rectangle, "Thickness", thickness);
+            TrySetBackground(rectangle);
+        }
+
+        public static int DrawIndicatorSegment(
+            Chart chart, Bars bars, int objectIndex, string prefix, int index, double previousValue,
+            double currentValue, Color color, int thickness, string lineStyle)
+        {
+            if (chart == null || bars == null || index <= 0 || index >= bars.Count ||
+                double.IsNaN(previousValue) || double.IsInfinity(previousValue) ||
+                double.IsNaN(currentValue) || double.IsInfinity(currentValue))
+                return objectIndex;
+            var line = chart.DrawTrendLine(prefix + objectIndex.ToString(CultureInfo.InvariantCulture),
+                bars.OpenTimes[index - 1], previousValue, bars.OpenTimes[index], currentValue, color);
+            TrySetPropertyValue(line, "Thickness", thickness);
+            TrySetEnumPropertyValue(line, "LineStyle", lineStyle);
+            TrySetPropertyValue(line, "ZIndex", 2);
+            return objectIndex + 1;
+        }
+
+        public static ChartStaticText DrawStaticTextIfChanged(
+            Chart chart, string objectName, string text, VerticalAlignment verticalAlignment,
+            HorizontalAlignment horizontalAlignment, Color color, ref string lastText, ref string lastColorKey)
+        {
+            var normalized = text ?? "";
+            var colorKey = color.ToString();
+            if (string.Equals(lastText, normalized, StringComparison.Ordinal) &&
+                string.Equals(lastColorKey, colorKey, StringComparison.Ordinal)) return null;
+            lastText = normalized;
+            lastColorKey = colorKey;
+            return chart != null ? chart.DrawStaticText(objectName, normalized, verticalAlignment, horizontalAlignment, color) : null;
         }
     }
 
