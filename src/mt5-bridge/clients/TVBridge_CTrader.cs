@@ -11355,6 +11355,7 @@ namespace cAlgo.Robots
             public TimeFrame SourceTimeFrame;
             public DateTime SignalTime;
             public DateTime EntryConfirmationTime;
+            public int PatternToEntryBars;
             public int TradeChainSlot;
             public string WaitConfirmTriggerKey;
             public bool UseLimitOrder;
@@ -24550,6 +24551,7 @@ namespace cAlgo.Robots
                 TradeType = tradeType,
                 SourceTimeFrame = strategyTimeFrame,
                 SignalTime = signalTime,
+                PatternToEntryBars = 1,
                 UseLimitOrder = false,
                 EntryPrice = hasCandlePlan ? candlePlan.BaseEntryPrice : 0,
                 SecondaryEntryPrice = hasCandlePlan ? candlePlan.SecondaryEntryPrice : 0,
@@ -24642,6 +24644,7 @@ namespace cAlgo.Robots
 
             TradeTriggerEvent priorTrigger = default(TradeTriggerEvent);
             var priorStopDistance = 0.0;
+            var priorPatternEndIndex = -1;
             foreach (var triggerBar in priorTriggerCandidates
                 .GroupBy(trigger => trigger.BarTime)
                 .OrderByDescending(group => group.Key))
@@ -24656,9 +24659,27 @@ namespace cAlgo.Robots
                 if (!triggerBundlePassed)
                     continue;
 
-                if (!TryResolvePrimaryTradeTrigger(candidatesOnBar, selectedOptions, isBullish, out priorTrigger))
+                TradeTriggerEvent candidateTrigger;
+                if (!TryResolvePrimaryTradeTrigger(candidatesOnBar, selectedOptions, isBullish, out candidateTrigger))
                     continue;
 
+                var candidateTriggerIndex = ResolveSourceBarIndex(sourceBars, candidateTrigger.BarTime);
+                if (!IsValidBarIndex(sourceBars, candidateTriggerIndex))
+                    continue;
+                var candidatePatternEndIndex = candidateTriggerIndex;
+                int candidatePatternStartIndex;
+                int resolvedPatternEndIndex;
+                if (TryGetCustomEventPatternWindow(candidateTrigger.Option, candidateTriggerIndex, out candidatePatternStartIndex, out resolvedPatternEndIndex))
+                    candidatePatternEndIndex = Math.Min(resolvedPatternEndIndex, sourceBars.Count - 2);
+                if (!CTraderStrategyEngine.IsFirstDirectionalBarAfter(
+                    sourceBars,
+                    candidatePatternEndIndex,
+                    justClosedIndex,
+                    isBullish))
+                    continue;
+
+                priorTrigger = candidateTrigger;
+                priorPatternEndIndex = candidatePatternEndIndex;
                 priorStopDistance = ResolveTradeTriggerStopDistance(candidatesOnBar, selectedOptions, isBullish);
                 break;
             }
@@ -24717,6 +24738,7 @@ namespace cAlgo.Robots
                 // The group belongs to this just-closed confirmation bar, not the older trigger.
                 SignalTime = sourceBars.OpenTimes[justClosedIndex],
                 EntryConfirmationTime = sourceBars.OpenTimes[justClosedIndex],
+                PatternToEntryBars = CTraderStrategyEngine.ResolvePatternToEntryBars(priorPatternEndIndex, justClosedIndex),
                 TradeChainSlot = tradeChainSlot,
                 WaitConfirmTriggerKey = waitConfirmTriggerKey,
                 UseLimitOrder = false,
@@ -25682,7 +25704,7 @@ namespace cAlgo.Robots
                 symbol, signal.TradeType, entryPrice, stopLoss, targetRewardRisk, multiplier);
         }
 
-        private string BuildStrategyOrderComment(string sid, int legNumber, string symbolName, TimeFrame sourceTimeFrame, string eventName, double entryPrice = 0, double takeProfit = 0, double stopLoss = 0, string riskComment = "", string entryMode = "", bool isLimitOrder = false)
+        private string BuildStrategyOrderComment(string sid, int legNumber, string symbolName, TimeFrame sourceTimeFrame, string eventName, double entryPrice = 0, double takeProfit = 0, double stopLoss = 0, string riskComment = "", string entryMode = "", bool isLimitOrder = false, int patternToEntryBars = 1)
         {
             if (sourceTimeFrame == null)
                 return "";
@@ -25699,12 +25721,9 @@ namespace cAlgo.Robots
                 .Trim();
             if (string.IsNullOrWhiteSpace(eventLabel))
                 eventLabel = "event";
-            var modeLabel = string.IsNullOrWhiteSpace(entryMode) ? "Now" : entryMode.Trim();
             sb.Append(eventLabel)
                 .Append('|')
-                .Append(modeLabel)
-                .Append('.')
-                .Append(Math.Max(1, legNumber).ToString(CultureInfo.InvariantCulture));
+                .Append(CTraderStrategyEngine.FormatEntryModeLeg(entryMode, legNumber, patternToEntryBars));
             if (!string.IsNullOrWhiteSpace(riskComment))
                 sb.Append('|').Append(riskComment.Trim());
             var priceRoute = BuildPriceCommentSuffix(entryPrice, takeProfit, stopLoss);
@@ -27299,7 +27318,8 @@ namespace cAlgo.Robots
                         approvedSl,
                         firstOrderRiskComment,
                         GetStrategyOrderEntryModeComment(signal),
-                        true));
+                        true,
+                        signal.PatternToEntryBars));
 
                 if (result != null && result.IsSuccessful && result.PendingOrder != null)
                 {
@@ -27346,7 +27366,8 @@ namespace cAlgo.Robots
                         approvedSl,
                         firstOrderRiskComment,
                         GetStrategyOrderEntryModeComment(signal),
-                        false));
+                        false,
+                        signal.PatternToEntryBars));
             }
 
             if (result != null && result.IsSuccessful)
@@ -27550,7 +27571,8 @@ namespace cAlgo.Robots
                             approvedExtraSl,
                             extraRiskComment,
                             GetStrategyOrderEntryModeComment(signal),
-                            true));
+                            true,
+                            signal.PatternToEntryBars));
                     if (extraResult == null || !extraResult.IsSuccessful)
                     {
                         SafePrint(
@@ -40026,6 +40048,56 @@ namespace cAlgo.Robots
     {
         public const int AutoStopLossSourceCount = 5;
         public const int AutoTakeProfitSourceCount = 7;
+
+        public static bool IsFirstDirectionalBarAfter(
+            Bars sourceBars,
+            int patternEndIndex,
+            int confirmationIndex,
+            bool bullish)
+        {
+            if (sourceBars == null || patternEndIndex < 0 || confirmationIndex <= patternEndIndex || confirmationIndex >= sourceBars.Count)
+                return false;
+
+            var directions = new List<int>();
+            for (var index = patternEndIndex + 1; index <= confirmationIndex; index++)
+            {
+                var open = sourceBars.OpenPrices[index];
+                var close = sourceBars.ClosePrices[index];
+                directions.Add(close == open ? 0 : close > open ? 1 : -1);
+            }
+            return IsFirstDirectionalBarAtEnd(directions, bullish);
+        }
+
+        public static bool IsFirstDirectionalBarAtEnd(IReadOnlyList<int> directions, bool bullish)
+        {
+            if (directions == null || directions.Count == 0)
+                return false;
+            var expectedDirection = bullish ? 1 : -1;
+            for (var index = 0; index < directions.Count; index++)
+            {
+                if (directions[index] != expectedDirection)
+                    continue;
+                return index == directions.Count - 1;
+            }
+            return false;
+        }
+
+        public static int ResolvePatternToEntryBars(int patternEndIndex, int confirmationIndex)
+        {
+            return patternEndIndex >= 0 && confirmationIndex >= patternEndIndex
+                ? Math.Max(1, confirmationIndex - patternEndIndex + 1)
+                : 1;
+        }
+
+        public static string FormatEntryModeLeg(string entryMode, int legNumber, int patternToEntryBars)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "{0}.{1}-{2}",
+                string.IsNullOrWhiteSpace(entryMode) ? "Now" : entryMode.Trim(),
+                Math.Max(1, legNumber),
+                Math.Max(1, patternToEntryBars));
+        }
 
         public static CTraderStrategyStopSource ResolveAutoStopLossSource(int priorityIndex)
         {
