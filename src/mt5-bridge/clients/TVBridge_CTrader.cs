@@ -4408,15 +4408,8 @@ namespace cAlgo.Robots
 
         private string DeriveSyncEventCode(string executionStatus, bool statusChanged, bool slChanged, bool tpChanged, bool partialChanged)
         {
-            var exec = (executionStatus ?? "").Trim().ToUpperInvariant();
-            if (exec == "CLOSED") return "SNAPSHOT_CLOSED";
-            if (exec == "CANCELLED") return "SNAPSHOT_CANCELLED";
-            if (statusChanged && exec == "FILLED") return "STATUS_FILLED";
-            if (statusChanged && exec == "PENDING") return "STATUS_PENDING";
-            if (slChanged || tpChanged) return "PROTECTION_UPDATED";
-            if (partialChanged) return "PARTIALS_UPDATED";
-            if (statusChanged && !string.IsNullOrEmpty(exec)) return "STATUS_UPDATED";
-            return "SYNC_UPDATED";
+            return CTraderSyncEngine.DeriveSyncEventCode(
+                executionStatus, statusChanged, slChanged, tpChanged, partialChanged);
         }
 
         private void AddSyncEvent(string itemId, string sid, string symbol, string action, string eventCode, string detail, string bucket)
@@ -19294,8 +19287,7 @@ namespace cAlgo.Robots
 
         private bool IsErrorStatus(string status)
         {
-            var normalized = string.IsNullOrWhiteSpace(status) ? "" : status.Trim().ToUpperInvariant();
-            return normalized == "FAIL" || normalized == "ERROR" || normalized == "REJECTED";
+            return CTraderSyncEngine.IsErrorAckStatus(status);
         }
 
         private bool ShouldEmitLog(string level, string message)
@@ -19643,6 +19635,7 @@ namespace cAlgo.Robots
             ValidateStructureEngineV2Contracts();
             ValidateStrategyEngineContracts();
             ValidateExecutionEngineContracts();
+            ValidateSyncEngineContracts();
             _startedAtUtc = DateTime.UtcNow;
             _startupWarmupUntilUtc = _startedAtUtc.AddSeconds(12);
             _startupWarmupAnnounced = false;
@@ -29139,8 +29132,8 @@ namespace cAlgo.Robots
             }
 
             // --- Sync / Pull first. Bars should not compete during startup or recovery. ---
-            bool doSync = _lastSyncAttemptTime == DateTime.MinValue || (now - _lastSyncAttemptTime).TotalSeconds >= SyncIntervalSeconds;
-            bool doPoll = _lastPollAttemptTime == DateTime.MinValue || (now - _lastPollAttemptTime).TotalSeconds >= PollSeconds;
+            bool doSync = CTraderSyncEngine.IsDue(now, _lastSyncAttemptTime, SyncIntervalSeconds);
+            bool doPoll = CTraderSyncEngine.IsDue(now, _lastPollAttemptTime, PollSeconds);
             if (!apiOffline && doSync && !_busySync)
             {
                 WriteBridgeDebugLog("MasterTimerTick: sync start");
@@ -29160,7 +29153,7 @@ namespace cAlgo.Robots
             }
 
             // --- Bar push ---
-            if (!apiOffline && ancillaryReady && IsBarsPersistenceEnabled() && !_busyPull && !_busySync && BarPushEnabled && !_busyBars && (_lastBarTime == DateTime.MinValue || (now - _lastBarTime).TotalSeconds >= BarPushSeconds))
+            if (!apiOffline && ancillaryReady && IsBarsPersistenceEnabled() && !_busyPull && !_busySync && BarPushEnabled && !_busyBars && CTraderSyncEngine.IsDue(now, _lastBarTime, BarPushSeconds))
             {
                 _busyBars = true; _barStatus = "PUSHING";
                 var syms = GetActiveSymbols();
@@ -29178,7 +29171,7 @@ namespace cAlgo.Robots
             }
 
             // --- Incremental bars ---
-            if (!apiOffline && ancillaryReady && IsBarsPersistenceEnabled() && !_busyPull && !_busySync && !_busyBars && EnableIncrementalBars && !_busyIncSync && (_lastIncrementalSync == DateTime.MinValue || (now - _lastIncrementalSync).TotalSeconds >= IncrementalBarsSeconds))
+            if (!apiOffline && ancillaryReady && IsBarsPersistenceEnabled() && !_busyPull && !_busySync && !_busyBars && EnableIncrementalBars && !_busyIncSync && CTraderSyncEngine.IsDue(now, _lastIncrementalSync, IncrementalBarsSeconds))
             {
                 _busyIncSync = true;
                 var syms = GetActiveSymbols();
@@ -29619,8 +29612,7 @@ namespace cAlgo.Robots
                     // --- Incremental bars sync (every IncrementalBarsSeconds) ---
                     if (IsBarsPersistenceEnabled() && EnableIncrementalBars)
                     {
-                        if (_lastIncrementalSync == DateTime.MinValue ||
-                            (DateTime.Now - _lastIncrementalSync).TotalSeconds >= IncrementalBarsSeconds)
+                        if (CTraderSyncEngine.IsDue(DateTime.Now, _lastIncrementalSync, IncrementalBarsSeconds))
                         {
                             var incSyms = _trackedSymbols.Count > 0 ? _trackedSymbols : new List<string>();
                             if (incSyms.Count == 0)
@@ -29639,8 +29631,7 @@ namespace cAlgo.Robots
 
                     // --- Sync: build payload + push to VPS (every SyncIntervalSeconds) ---
                     var now = DateTime.Now;
-                    var doSync = _lastSyncTime == DateTime.MinValue ||
-                        (now - _lastSyncTime).TotalSeconds >= SyncIntervalSeconds;
+                    var doSync = CTraderSyncEngine.IsDue(now, _lastSyncTime, SyncIntervalSeconds);
                     // Always pull signals on PollSeconds cadence
 
                     string balance = null, equity = null, margin = null, brokerName = null;
@@ -32829,6 +32820,78 @@ namespace cAlgo.Robots
                 affordableEntries.Count != 0 || affordableWeights.Count != 0)
             {
                 throw new InvalidOperationException("Execution split-validation contract failed.");
+            }
+        }
+
+        private static void ValidateSyncEngineContracts()
+        {
+            var now = new DateTime(2026, 8, 24, 12, 0, 0, DateTimeKind.Utc);
+            if (!CTraderSyncEngine.IsDue(now, DateTime.MinValue, 30) ||
+                CTraderSyncEngine.IsDue(now, now.AddSeconds(-29), 30) ||
+                !CTraderSyncEngine.IsDue(now, now.AddSeconds(-30), 30))
+            {
+                throw new InvalidOperationException("Sync cadence contract failed.");
+            }
+            if (!CTraderSyncEngine.IsErrorAckStatus(" rejected ") ||
+                CTraderSyncEngine.IsErrorAckStatus("FILLED") ||
+                CTraderSyncEngine.ResolveAckRetryDelayMilliseconds(1) != 400 ||
+                CTraderSyncEngine.ResolveAckRetryDelayMilliseconds(2) != 800)
+            {
+                throw new InvalidOperationException("Sync acknowledgement contract failed.");
+            }
+            if (CTraderSyncEngine.DeriveSyncEventCode("CLOSED", false, false, false, false) != "SNAPSHOT_CLOSED" ||
+                CTraderSyncEngine.DeriveSyncEventCode("FILLED", true, false, false, false) != "STATUS_FILLED" ||
+                CTraderSyncEngine.DeriveSyncEventCode("FILLED", false, true, false, false) != "PROTECTION_UPDATED" ||
+                CTraderSyncEngine.ResolveSyncEventBucket("cancelled") != "closed" ||
+                CTraderSyncEngine.ResolveSyncEventBucket("filled") != "changed")
+            {
+                throw new InvalidOperationException("Sync event-classification contract failed.");
+            }
+
+            var coverage = CTraderSyncEngine.ParseCoverage(
+                "{\"items\":[{\"symbol\":\"EURUSD\",\"tf\":\"15\",\"existing_bars\":125,\"bars_number\":500,\"end\":1700000000}]}",
+                "eurusd",
+                "15");
+            var fetchPlan = CTraderSyncEngine.BuildIncrementalFetchPlan(
+                coverage.RemoteEnd, coverage.ExistingBars, coverage.TargetBars, 1700001800, 900);
+            if (coverage.ExistingBars != 125 || coverage.TargetBars != 500 || coverage.RemoteEnd != 1700000000 ||
+                !fetchPlan.ShouldFetch || fetchPlan.FetchStart != 1700000900 || fetchPlan.NeededBars != 2)
+            {
+                throw new InvalidOperationException("Sync incremental-coverage contract failed.");
+            }
+            var backfillPlan = CTraderSyncEngine.BuildIncrementalFetchPlan(0, 0, 500, 1700000000, 60);
+            if (!backfillPlan.ShouldFetch || backfillPlan.FetchStart != 1699970000 || backfillPlan.NeededBars != 500 ||
+                CTraderSyncEngine.ResolveIncrementalPostLimit(true, 100) != 500 ||
+                CTraderSyncEngine.ResolveIncrementalPostLimit(false, 900) != 500 ||
+                CTraderSyncEngine.ToUnixTimeSeconds(new DateTime(1970, 1, 1)) != 0)
+            {
+                throw new InvalidOperationException("Sync incremental-planning contract failed.");
+            }
+
+            int inserted;
+            int duplicated;
+            CTraderSyncEngine.ParseIncrementalResult("{\"inserted\":12,\"duplicated\":3}", out inserted, out duplicated);
+            var barsPayload = CTraderSyncEngine.BuildBarsPayload("\"account_id\":\"A1\"", new[] { "{\"t\":1}" });
+            var incrementalPayload = CTraderSyncEngine.BuildIncrementalBarsPayload(
+                "\"account_id\":\"A1\"", new[] { "{\"symbol\":\"EURUSD\"}" });
+            var syncPayload = CTraderSyncEngine.BuildSyncPayload(
+                "\"account_id\":\"A1\"", 100, 101, 2, "Broker", "provider", "build",
+                new[] { "{\"id\":1}" }, new string[0], new string[0], "[]", true,
+                new string[0], new[] { Tuple.Create("EURUSD", 1.1, 1.2) });
+            var ackPayload = CTraderSyncEngine.BuildAckPayload(
+                "\"account_id\":\"A1\"", "sid", "token", "FILLED", "ticket", "", 1.1,
+                10, 0.1, 1, 1, 2, 2, 10, 20);
+            var tickets = new HashSet<string>(Enumerable.Range(1, 6).Select(value => value.ToString(CultureInfo.InvariantCulture)));
+            if (inserted != 12 || duplicated != 3 ||
+                barsPayload != "{\"account_id\":\"A1\",\"bars\":[{\"t\":1}]}" ||
+                incrementalPayload != "{\"account_id\":\"A1\",\"sync_mode\":\"incremental\",\"items\":[{\"symbol\":\"EURUSD\"}]}" ||
+                !syncPayload.Contains("\"queue_snapshot_hydrated\":true") ||
+                !syncPayload.Contains("\"prices\":[{\"s\":\"EURUSD\",\"b\":1.10000,\"a\":1.20000}]") ||
+                !ackPayload.Contains("\"execution_status\":\"FILLED\"") ||
+                !ackPayload.Contains("\"sl_pips\":10.00,\"tp_pips\":20.00") ||
+                CTraderSyncEngine.TrimClosedTicketSet(tickets, 5, 3) != 3 || tickets.Count != 3)
+            {
+                throw new InvalidOperationException("Sync payload/result/retention contract failed.");
             }
         }
 
@@ -36872,15 +36935,10 @@ namespace cAlgo.Robots
             }
 
             // Clean up old synced closed tickets
-            if (_syncedClosedTickets.Count > 500)
-            {
-                var toRemove = _syncedClosedTickets.Take(_syncedClosedTickets.Count - 250).ToList();
-                foreach (var ticket in toRemove)
-                {
-                    _syncedClosedTickets.Remove(ticket);
-                }
-                SafePrint("[Cleanup] Removed {0} old closed tickets from memory", toRemove.Count);
-            }
+            var removedClosedTickets = CTraderSyncEngine.TrimClosedTicketSet(
+                _syncedClosedTickets, 500, 250);
+            if (removedClosedTickets > 0)
+                SafePrint("[Cleanup] Removed {0} old closed tickets from memory", removedClosedTickets);
 
             // Clean up old partial TP tracking
             if (_executedPartials.Count > 200)
@@ -36912,10 +36970,6 @@ namespace cAlgo.Robots
             var startedAt = DateTime.Now;
             try
             {
-                var priceList = new List<string>();
-                foreach (var p in priceData ?? new List<Tuple<string, double, double>>())
-                    priceList.Add("{\"s\":\"" + p.Item1 + "\",\"b\":" + p.Item2.ToString("F5", CultureInfo.InvariantCulture) + ",\"a\":" + p.Item3.ToString("F5", CultureInfo.InvariantCulture) + "}");
-
                 _lastPushPositionCount = posList != null ? posList.Count : 0;
                 _lastPushOrderCount = ordersList != null ? ordersList.Count : 0;
                 _lastPushClosedCount = closedList != null ? closedList.Count : 0;
@@ -36923,21 +36977,21 @@ namespace cAlgo.Robots
                 _lastPushPriceSymbolCount = priceData != null ? priceData.Select(p => p.Item1).Where(s => !string.IsNullOrWhiteSpace(s)).Distinct(StringComparer.OrdinalIgnoreCase).Count() : 0;
                 if (_lastPushPriceSymbolCount > 0) _priceStatus = "PUSHING";
                 var resolvedProviderCode = ResolveProviderCode(brokerName);
-                var payload = "{" + GetBridgeIdentityJson(accId)
-                    + ",\"balance\":" + bal.ToString("F2", CultureInfo.InvariantCulture)
-                    + ",\"equity\":" + eq.ToString("F2", CultureInfo.InvariantCulture)
-                    + ",\"margin\":" + marg.ToString("F2", CultureInfo.InvariantCulture)
-                    + ",\"broker_name\":\"" + (brokerName ?? "").Replace("\"", "'") + "\""
-                    + ",\"provider_code\":\"" + (resolvedProviderCode ?? "").Replace("\"", "'") + "\""
-                    + ",\"build_version\":\"" + BuildVersion + "\""
-                    + ",\"positions\":[" + string.Join(",", posList ?? new List<string>()) + "]"
-                    + ",\"orders\":[" + string.Join(",", ordersList ?? new List<string>()) + "]"
-                    + ",\"closed\":[" + string.Join(",", closedList ?? new List<string>()) + "]"
-                    + ",\"queue_actions\":" + (string.IsNullOrWhiteSpace(queueActionsJson) ? "[]" : queueActionsJson)
-                    + ",\"queue_snapshot_complete\":" + (queueSnapshotComplete ? "true" : "false")
-                    + ",\"queue_snapshot_hydrated\":" + (queueSnapshotComplete ? "true" : "false")
-                    + ",\"symbol_metrics\":[" + string.Join(",", metricsList ?? new List<string>()) + "]"
-                    + ",\"prices\":[" + string.Join(",", priceList) + "]}";
+                var payload = CTraderSyncEngine.BuildSyncPayload(
+                    GetBridgeIdentityJson(accId),
+                    bal,
+                    eq,
+                    marg,
+                    brokerName,
+                    resolvedProviderCode,
+                    BuildVersion,
+                    posList,
+                    ordersList,
+                    closedList,
+                    queueActionsJson,
+                    queueSnapshotComplete,
+                    metricsList,
+                    priceData);
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
                 using (request = new HttpRequestMessage(System.Net.Http.HttpMethod.Post, BuildServerApiUrl("broker/sync")))
                 {
@@ -37187,7 +37241,7 @@ namespace cAlgo.Robots
                     return;
                 }
 
-                var payload = "{" + GetBridgeIdentityJson(accId) + ",\"bars\":[" + string.Join(",", barList) + "]}";
+                var payload = CTraderSyncEngine.BuildBarsPayload(GetBridgeIdentityJson(accId), barList);
                 HttpResponseMessage response = null;
                 var sendTimeoutSeconds = Math.Max(5, Math.Min(30, SyncTimeoutSeconds));
                 var retriedAfterReset = false;
@@ -37320,7 +37374,8 @@ namespace cAlgo.Robots
                     var items = new List<string>();
                     int totalBars = 0;
                     bool isFirstSync = _incrementalSyncCount == 0;
-                    int maxBars = Math.Min(isFirstSync ? 500 : IncrementalBarsMaxPerPost, 500);
+                    int maxBars = CTraderSyncEngine.ResolveIncrementalPostLimit(
+                        isFirstSync, IncrementalBarsMaxPerPost);
                     const int maxMainThreadMs = 250;
 
                     foreach (var sym in symbols)
@@ -37335,55 +37390,7 @@ namespace cAlgo.Robots
                             if (totalBars >= maxBars) break;
                             try
                             {
-                                // Parse remote end from coverage
-                                long remoteEnd = 0;
-                                int existingBars = 0, targetBars = 500;
-                                var symPattern = "\"symbol\":\"" + symUpper + "\"";
-                                var symIdx = covJson.IndexOf(symPattern, StringComparison.OrdinalIgnoreCase);
-                                if (symIdx >= 0)
-                                {
-                                    var tfPattern = "\"tf\":\"" + tfStr + "\"";
-                                    var tfIdx = covJson.IndexOf(tfPattern, symIdx);
-                                    if (tfIdx >= 0)
-                                    {
-                                        // Parse existing_bars
-                                        var ebIdx = covJson.IndexOf("\"existing_bars\"", tfIdx);
-                                        if (ebIdx >= 0)
-                                        {
-                                            var colIdx = covJson.IndexOf(':', ebIdx);
-                                            if (colIdx >= 0)
-                                            {
-                                                var ns = colIdx + 1;
-                                                while (ns < covJson.Length && (covJson[ns] == ' ' || covJson[ns] == '"')) ns++;
-                                                int.TryParse(new string(covJson.Skip(ns).TakeWhile(c => char.IsDigit(c)).ToArray()), out existingBars);
-                                            }
-                                        }
-                                        // Parse bars_number (target)
-                                        var bnIdx = covJson.IndexOf("\"bars_number\"", tfIdx);
-                                        if (bnIdx >= 0)
-                                        {
-                                            var colIdx2 = covJson.IndexOf(':', bnIdx);
-                                            if (colIdx2 >= 0)
-                                            {
-                                                var ns2 = colIdx2 + 1;
-                                                while (ns2 < covJson.Length && (covJson[ns2] == ' ' || covJson[ns2] == '"')) ns2++;
-                                                int.TryParse(new string(covJson.Skip(ns2).TakeWhile(c => char.IsDigit(c)).ToArray()), out targetBars);
-                                            }
-                                        }
-                                        // Parse end
-                                        var endIdx = covJson.IndexOf("\"end\"", tfIdx);
-                                        if (endIdx >= 0)
-                                        {
-                                            var colIdx3 = covJson.IndexOf(':', endIdx);
-                                            if (colIdx3 >= 0)
-                                            {
-                                                var ns3 = colIdx3 + 1;
-                                                while (ns3 < covJson.Length && (covJson[ns3] == ' ' || covJson[ns3] == '"' || covJson[ns3] == 'n')) ns3++;
-                                                long.TryParse(new string(covJson.Skip(ns3).TakeWhile(c => char.IsDigit(c)).ToArray()), out remoteEnd);
-                                            }
-                                        }
-                                    }
-                                }
+                                var coverage = CTraderSyncEngine.ParseCoverage(covJson, symUpper, tfStr);
 
                                 TimeFrame tf;
                                 switch (tfStr)
@@ -37403,23 +37410,15 @@ namespace cAlgo.Robots
                                 long latestTime = ToUnixTime(latestBar.OpenTime);
                                 int tfSec = int.Parse(tfStr) * 60;
 
-                                long fetchStart = remoteEnd > 0 ? remoteEnd + tfSec : latestTime - 500 * tfSec;
-                                if (fetchStart >= latestTime) continue;
-
-                                int timeNeeded = (int)((latestTime - fetchStart) / tfSec) + 1;
-
-                                // Compute needed bars. Backfill until target reached, then incremental 1 bar.
-                                int needed;
-                                if (existingBars < targetBars)
-                                {
-                                    needed = Math.Min(timeNeeded, targetBars - existingBars);
-                                    if (needed > 500) needed = 500;
-                                }
-                                else
-                                {
-                                    needed = 1;
-                                }
-                                if (needed < 1) continue;
+                                var fetchPlan = CTraderSyncEngine.BuildIncrementalFetchPlan(
+                                    coverage.RemoteEnd,
+                                    coverage.ExistingBars,
+                                    coverage.TargetBars,
+                                    latestTime,
+                                    tfSec);
+                                if (!fetchPlan.ShouldFetch) continue;
+                                var fetchStart = fetchPlan.FetchStart;
+                                var needed = fetchPlan.NeededBars;
 
                                 var barArr = new List<string>();
                                 int sent = 0;
@@ -37463,8 +37462,8 @@ namespace cAlgo.Robots
                 }
 
                 // 3. POST to prices-sync
-                var payload = "{" + GetBridgeIdentityJson(accId)
-                    + ",\"sync_mode\":\"incremental\",\"items\":[" + string.Join(",", syncItems) + "]}";
+                var payload = CTraderSyncEngine.BuildIncrementalBarsPayload(
+                    GetBridgeIdentityJson(accId), syncItems);
                 activeOperation = "incbars.post";
                 HttpResponseMessage postResponse = null;
                 try
@@ -37497,11 +37496,9 @@ namespace cAlgo.Robots
                 {
                     MarkApiReachable();
                     var respJson = await postResponse.Content.ReadAsStringAsync();
-                    int inserted = 0, duplicated = 0;
-                    var insMatch = Regex.Match(respJson, "\"inserted\"\\s*:\\s*(\\d+)");
-                    var dupMatch = Regex.Match(respJson, "\"duplicated\"\\s*:\\s*(\\d+)");
-                    if (insMatch.Success) int.TryParse(insMatch.Groups[1].Value, out inserted);
-                    if (dupMatch.Success) int.TryParse(dupMatch.Groups[1].Value, out duplicated);
+                    int inserted;
+                    int duplicated;
+                    CTraderSyncEngine.ParseIncrementalResult(respJson, out inserted, out duplicated);
                     _incrementalSyncCount++;
                     _incrementalTotalInserted += inserted;
                     _lastIncrementalErr = "None";
@@ -37535,10 +37532,7 @@ namespace cAlgo.Robots
 
         private long ToUnixTime(DateTime dt)
         {
-            var normalized = dt.Kind == DateTimeKind.Unspecified
-                ? DateTime.SpecifyKind(dt, DateTimeKind.Utc)
-                : dt.ToUniversalTime();
-            return new DateTimeOffset(normalized).ToUnixTimeSeconds();
+            return CTraderSyncEngine.ToUnixTimeSeconds(dt);
         }
 
         private string FormatServerErrorForPanel(string raw)
@@ -37695,8 +37689,7 @@ namespace cAlgo.Robots
                     if (partialChanged) detailParts.Add("partials updated");
                     if (!string.IsNullOrWhiteSpace(rejectionReason)) detailParts.Add(rejectionReason.Trim());
                     var eventCode = DeriveSyncEventCode(exec, statusChanged, slChanged, tpChanged, partialChanged);
-                    var execUpper = (exec ?? "").Trim().ToUpperInvariant();
-                    var bucket = (execUpper == "CLOSED" || execUpper == "CANCELLED") ? "closed" : "changed";
+                    var bucket = CTraderSyncEngine.ResolveSyncEventBucket(exec);
                     if (!hasServerSummary)
                     {
                         if (bucket == "closed") _lastSyncSummary.Closed++;
@@ -37780,23 +37773,22 @@ namespace cAlgo.Robots
                 });
                 return;
             }
-            var payload = "{" + GetBridgeIdentityJson(accountId) + ",\"trade_id\":\"" + sid
-                + "\",\"lease_token\":\"" + (token ?? "") + "\""
-                + ",\"execution_status\":\"" + status + "\""
-                + ",\"broker_trade_id\":\"" + (ticket ?? "") + "\""
-                + ",\"error\":\"" + (err ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"") + "\""
-                + ",\"message\":\"" + (err ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"") + "\""
-                + ",\"entry_exec\":" + entryExec.ToString("F5", CultureInfo.InvariantCulture)
-                + ",\"risk_money_planned\":" + riskMoneyPlanned.ToString("F2", CultureInfo.InvariantCulture)
-                + ",\"volume\":" + volumeLots.ToString("F2", CultureInfo.InvariantCulture)
-                + ",\"requested_sl\":" + requestedSl.ToString("F5", CultureInfo.InvariantCulture)
-                + ",\"sl_exec\":" + usedSl.ToString("F5", CultureInfo.InvariantCulture)
-                + ",\"used_sl\":" + usedSl.ToString("F5", CultureInfo.InvariantCulture)
-                + ",\"requested_tp\":" + requestedTp.ToString("F5", CultureInfo.InvariantCulture)
-                + ",\"tp_exec\":" + usedTp.ToString("F5", CultureInfo.InvariantCulture)
-                + ",\"used_tp\":" + usedTp.ToString("F5", CultureInfo.InvariantCulture)
-                + ",\"sl_pips\":" + slPips.ToString("F2", CultureInfo.InvariantCulture)
-                + ",\"tp_pips\":" + tpPips.ToString("F2", CultureInfo.InvariantCulture) + "}";
+            var payload = CTraderSyncEngine.BuildAckPayload(
+                GetBridgeIdentityJson(accountId),
+                sid,
+                token,
+                status,
+                ticket,
+                err,
+                entryExec,
+                riskMoneyPlanned,
+                volumeLots,
+                requestedSl,
+                usedSl,
+                requestedTp,
+                usedTp,
+                slPips,
+                tpPips);
             var content = new StringContent(payload, Encoding.UTF8, "application/json");
             content.Headers.Add("x-api-key", EaApiKey);
             var response = await _httpClient.PostAsync(BuildServerApiUrl("broker/ack"), content);
@@ -37827,7 +37819,7 @@ namespace cAlgo.Robots
         {
             Task.Run(async () =>
             {
-                const int maxAttempts = 3;
+                const int maxAttempts = CTraderSyncEngine.AckMaxAttempts;
                 try
                 {
                     for (int attempt = 1; attempt <= maxAttempts; attempt++)
@@ -37878,7 +37870,7 @@ namespace cAlgo.Robots
                                     ex
                                 );
                             }
-                            await Task.Delay(400 * attempt);
+                            await Task.Delay(CTraderSyncEngine.ResolveAckRetryDelayMilliseconds(attempt));
                         }
                     }
                     SafeLog(
@@ -42264,7 +42256,266 @@ namespace cAlgo.Robots
         }
     }
 
-    // HTTP transport behavior and compact server-error parsing, independent from timer scheduling.
+    // Server-reported bar coverage used by incremental synchronization planning.
+    internal sealed class CTraderSyncCoverage
+    {
+        public int ExistingBars;
+        public int TargetBars = 500;
+        public long RemoteEnd;
+    }
+
+    internal sealed class CTraderIncrementalFetchPlan
+    {
+        public bool ShouldFetch;
+        public long FetchStart;
+        public int NeededBars;
+    }
+
+    // Owns deterministic sync cadence, payload, acknowledgement, and incremental-bar policy.
+    internal static class CTraderSyncEngine
+    {
+        public const int AckMaxAttempts = 3;
+
+        public static bool IsDue(DateTime now, DateTime lastAttempt, double intervalSeconds)
+        {
+            return lastAttempt == DateTime.MinValue ||
+                (now - lastAttempt).TotalSeconds >= Math.Max(0, intervalSeconds);
+        }
+
+        public static bool IsErrorAckStatus(string status)
+        {
+            var normalized = string.IsNullOrWhiteSpace(status) ? "" : status.Trim().ToUpperInvariant();
+            return normalized == "FAIL" || normalized == "ERROR" || normalized == "REJECTED";
+        }
+
+        public static int ResolveAckRetryDelayMilliseconds(int failedAttempt)
+        {
+            return 400 * Math.Max(1, failedAttempt);
+        }
+
+        public static string DeriveSyncEventCode(
+            string executionStatus,
+            bool statusChanged,
+            bool stopLossChanged,
+            bool takeProfitChanged,
+            bool partialChanged)
+        {
+            var execution = (executionStatus ?? "").Trim().ToUpperInvariant();
+            if (execution == "CLOSED") return "SNAPSHOT_CLOSED";
+            if (execution == "CANCELLED") return "SNAPSHOT_CANCELLED";
+            if (statusChanged && execution == "FILLED") return "STATUS_FILLED";
+            if (statusChanged && execution == "PENDING") return "STATUS_PENDING";
+            if (stopLossChanged || takeProfitChanged) return "PROTECTION_UPDATED";
+            if (partialChanged) return "PARTIALS_UPDATED";
+            if (statusChanged && !string.IsNullOrEmpty(execution)) return "STATUS_UPDATED";
+            return "SYNC_UPDATED";
+        }
+
+        public static string ResolveSyncEventBucket(string executionStatus)
+        {
+            var execution = (executionStatus ?? "").Trim().ToUpperInvariant();
+            return execution == "CLOSED" || execution == "CANCELLED" ? "closed" : "changed";
+        }
+
+        public static string BuildSyncPayload(
+            string bridgeIdentityJson,
+            double balance,
+            double equity,
+            double margin,
+            string brokerName,
+            string providerCode,
+            string buildVersion,
+            IEnumerable<string> positions,
+            IEnumerable<string> orders,
+            IEnumerable<string> closed,
+            string queueActionsJson,
+            bool queueSnapshotComplete,
+            IEnumerable<string> symbolMetrics,
+            IEnumerable<Tuple<string, double, double>> prices)
+        {
+            var priceRows = (prices ?? Enumerable.Empty<Tuple<string, double, double>>())
+                .Where(price => price != null)
+                .Select(price => "{\"s\":\"" + EscapeFragment(price.Item1) + "\",\"b\":" +
+                    price.Item2.ToString("F5", CultureInfo.InvariantCulture) + ",\"a\":" +
+                    price.Item3.ToString("F5", CultureInfo.InvariantCulture) + "}");
+            return "{" + (bridgeIdentityJson ?? "")
+                + ",\"balance\":" + balance.ToString("F2", CultureInfo.InvariantCulture)
+                + ",\"equity\":" + equity.ToString("F2", CultureInfo.InvariantCulture)
+                + ",\"margin\":" + margin.ToString("F2", CultureInfo.InvariantCulture)
+                + ",\"broker_name\":\"" + (brokerName ?? "").Replace("\"", "'") + "\""
+                + ",\"provider_code\":\"" + (providerCode ?? "").Replace("\"", "'") + "\""
+                + ",\"build_version\":\"" + (buildVersion ?? "") + "\""
+                + ",\"positions\":[" + string.Join(",", positions ?? Enumerable.Empty<string>()) + "]"
+                + ",\"orders\":[" + string.Join(",", orders ?? Enumerable.Empty<string>()) + "]"
+                + ",\"closed\":[" + string.Join(",", closed ?? Enumerable.Empty<string>()) + "]"
+                + ",\"queue_actions\":" + (string.IsNullOrWhiteSpace(queueActionsJson) ? "[]" : queueActionsJson)
+                + ",\"queue_snapshot_complete\":" + (queueSnapshotComplete ? "true" : "false")
+                + ",\"queue_snapshot_hydrated\":" + (queueSnapshotComplete ? "true" : "false")
+                + ",\"symbol_metrics\":[" + string.Join(",", symbolMetrics ?? Enumerable.Empty<string>()) + "]"
+                + ",\"prices\":[" + string.Join(",", priceRows) + "]}";
+        }
+
+        public static string BuildAckPayload(
+            string bridgeIdentityJson,
+            string sid,
+            string token,
+            string status,
+            string ticket,
+            string error,
+            double entryExecution,
+            double plannedRiskMoney,
+            double volumeLots,
+            double requestedStopLoss,
+            double usedStopLoss,
+            double requestedTakeProfit,
+            double usedTakeProfit,
+            double stopLossPips,
+            double takeProfitPips)
+        {
+            var escapedError = EscapeFragment(error);
+            return "{" + (bridgeIdentityJson ?? "")
+                + ",\"trade_id\":\"" + (sid ?? "") + "\""
+                + ",\"lease_token\":\"" + (token ?? "") + "\""
+                + ",\"execution_status\":\"" + (status ?? "") + "\""
+                + ",\"broker_trade_id\":\"" + (ticket ?? "") + "\""
+                + ",\"error\":\"" + escapedError + "\""
+                + ",\"message\":\"" + escapedError + "\""
+                + ",\"entry_exec\":" + entryExecution.ToString("F5", CultureInfo.InvariantCulture)
+                + ",\"risk_money_planned\":" + plannedRiskMoney.ToString("F2", CultureInfo.InvariantCulture)
+                + ",\"volume\":" + volumeLots.ToString("F2", CultureInfo.InvariantCulture)
+                + ",\"requested_sl\":" + requestedStopLoss.ToString("F5", CultureInfo.InvariantCulture)
+                + ",\"sl_exec\":" + usedStopLoss.ToString("F5", CultureInfo.InvariantCulture)
+                + ",\"used_sl\":" + usedStopLoss.ToString("F5", CultureInfo.InvariantCulture)
+                + ",\"requested_tp\":" + requestedTakeProfit.ToString("F5", CultureInfo.InvariantCulture)
+                + ",\"tp_exec\":" + usedTakeProfit.ToString("F5", CultureInfo.InvariantCulture)
+                + ",\"used_tp\":" + usedTakeProfit.ToString("F5", CultureInfo.InvariantCulture)
+                + ",\"sl_pips\":" + stopLossPips.ToString("F2", CultureInfo.InvariantCulture)
+                + ",\"tp_pips\":" + takeProfitPips.ToString("F2", CultureInfo.InvariantCulture) + "}";
+        }
+
+        public static string BuildBarsPayload(string bridgeIdentityJson, IEnumerable<string> bars)
+        {
+            return "{" + (bridgeIdentityJson ?? "") + ",\"bars\":[" +
+                string.Join(",", bars ?? Enumerable.Empty<string>()) + "]}";
+        }
+
+        public static string BuildIncrementalBarsPayload(string bridgeIdentityJson, IEnumerable<string> items)
+        {
+            return "{" + (bridgeIdentityJson ?? "") +
+                ",\"sync_mode\":\"incremental\",\"items\":[" +
+                string.Join(",", items ?? Enumerable.Empty<string>()) + "]}";
+        }
+
+        public static long ToUnixTimeSeconds(DateTime value)
+        {
+            var normalized = value.Kind == DateTimeKind.Unspecified
+                ? DateTime.SpecifyKind(value, DateTimeKind.Utc)
+                : value.ToUniversalTime();
+            return new DateTimeOffset(normalized).ToUnixTimeSeconds();
+        }
+
+        public static int ResolveIncrementalPostLimit(bool firstSync, int configuredMaximum)
+        {
+            return Math.Min(firstSync ? 500 : configuredMaximum, 500);
+        }
+
+        public static CTraderSyncCoverage ParseCoverage(string json, string symbol, string timeFrame)
+        {
+            var coverage = new CTraderSyncCoverage();
+            var raw = json ?? "";
+            var symbolPattern = "\"symbol\":\"" + (symbol ?? "").ToUpperInvariant() + "\"";
+            var symbolIndex = raw.IndexOf(symbolPattern, StringComparison.OrdinalIgnoreCase);
+            if (symbolIndex < 0)
+                return coverage;
+            var timeFramePattern = "\"tf\":\"" + (timeFrame ?? "") + "\"";
+            var timeFrameIndex = raw.IndexOf(timeFramePattern, symbolIndex, StringComparison.OrdinalIgnoreCase);
+            if (timeFrameIndex < 0)
+                return coverage;
+            var existingDigits = ParseDigitsAfter(raw, "\"existing_bars\"", timeFrameIndex);
+            if (existingDigits != null)
+                int.TryParse(existingDigits, out coverage.ExistingBars);
+            var targetDigits = ParseDigitsAfter(raw, "\"bars_number\"", timeFrameIndex);
+            if (targetDigits != null)
+                int.TryParse(targetDigits, out coverage.TargetBars);
+            var endDigits = ParseDigitsAfter(raw, "\"end\"", timeFrameIndex);
+            if (endDigits != null)
+                long.TryParse(endDigits, out coverage.RemoteEnd);
+            return coverage;
+        }
+
+        public static CTraderIncrementalFetchPlan BuildIncrementalFetchPlan(
+            long remoteEnd,
+            int existingBars,
+            int targetBars,
+            long latestBarTime,
+            int timeFrameSeconds)
+        {
+            var plan = new CTraderIncrementalFetchPlan();
+            if (latestBarTime <= 0 || timeFrameSeconds <= 0)
+                return plan;
+            plan.FetchStart = remoteEnd > 0
+                ? remoteEnd + timeFrameSeconds
+                : latestBarTime - 500L * timeFrameSeconds;
+            if (plan.FetchStart >= latestBarTime)
+                return plan;
+            var timeNeeded = (int)((latestBarTime - plan.FetchStart) / timeFrameSeconds) + 1;
+            if (existingBars < targetBars)
+                plan.NeededBars = Math.Min(500, Math.Min(timeNeeded, targetBars - existingBars));
+            else
+                plan.NeededBars = 1;
+            plan.ShouldFetch = plan.NeededBars >= 1;
+            return plan;
+        }
+
+        public static void ParseIncrementalResult(string json, out int inserted, out int duplicated)
+        {
+            inserted = 0;
+            duplicated = 0;
+            var raw = json ?? "";
+            var insertedMatch = Regex.Match(raw, "\"inserted\"\\s*:\\s*(\\d+)");
+            var duplicatedMatch = Regex.Match(raw, "\"duplicated\"\\s*:\\s*(\\d+)");
+            if (insertedMatch.Success)
+                int.TryParse(insertedMatch.Groups[1].Value, out inserted);
+            if (duplicatedMatch.Success)
+                int.TryParse(duplicatedMatch.Groups[1].Value, out duplicated);
+        }
+
+        public static int TrimClosedTicketSet(HashSet<string> tickets, int maximumCount, int retainedCount)
+        {
+            if (tickets == null || tickets.Count <= maximumCount)
+                return 0;
+            var removed = 0;
+            foreach (var ticket in tickets.Take(Math.Max(0, tickets.Count - retainedCount)).ToList())
+            {
+                tickets.Remove(ticket);
+                removed++;
+            }
+            return removed;
+        }
+
+        private static string ParseDigitsAfter(string raw, string key, int startIndex)
+        {
+            var keyIndex = raw.IndexOf(key, startIndex, StringComparison.OrdinalIgnoreCase);
+            if (keyIndex < 0)
+                return null;
+            var colonIndex = raw.IndexOf(':', keyIndex);
+            if (colonIndex < 0)
+                return null;
+            var numberStart = colonIndex + 1;
+            while (numberStart < raw.Length &&
+                (raw[numberStart] == ' ' || raw[numberStart] == '"' || raw[numberStart] == 'n'))
+            {
+                numberStart++;
+            }
+            return new string(raw.Skip(numberStart).TakeWhile(char.IsDigit).ToArray());
+        }
+
+        private static string EscapeFragment(string value)
+        {
+            return (value ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"");
+        }
+    }
+
     internal static class CTraderTransportEngine
     {
         public static string BuildApiUrl(string baseUrl, string relativePath)
