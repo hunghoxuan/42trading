@@ -34,6 +34,8 @@ namespace cAlgo.Robots
         private const string CandlePatternCacheVersion = "2";
         private const string ScoredZoneCacheFileName = "scored_zones.tsv";
         private const string ScoredZoneCacheVersion = "1";
+        private const string WaitConfirmQueueFileName = "wait_confirm_queue.json";
+        private const string WaitConfirmQueueVersion = "1";
         private const int AnalysisCacheOverlapBars = 12;
         private const int AnalysisCacheFlushMinutes = 60;
         private const int SharedIndicatorSnapshotCacheMaxEntries = 2048;
@@ -206,8 +208,9 @@ namespace cAlgo.Robots
         private Task _customUiSettingsPersistenceTask = Task.CompletedTask;
         private readonly Dictionary<string, long> _liveStrategyLastProcessedBarTicks = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, long> _strategyTargetLastProcessedBarTicks = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<string, PendingStrategyEntry> _pendingStrategyEntries = new Dictionary<string, PendingStrategyEntry>(StringComparer.OrdinalIgnoreCase);
-        private readonly HashSet<string> _releasedEntryBarSignalKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly CTraderWaitConfirmQueueEngine _waitConfirmQueueEngine = new CTraderWaitConfirmQueueEngine();
+        private Dictionary<string, PendingStrategyEntry> _pendingStrategyEntries { get { return _waitConfirmQueueEngine.Waiting; } }
+        private HashSet<string> _releasedEntryBarSignalKeys { get { return _waitConfirmQueueEngine.TerminalKeys; } }
         private readonly Dictionary<string, string> _strategyQueueTerminalUpdates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private bool _strategyQueueHydratedFromServer;
         private string _lastStrategyQueueSyncState = "";
@@ -774,6 +777,21 @@ namespace cAlgo.Robots
 
         [Parameter("3rd Trade", Group = "Trade Config", DefaultValue = StrategyTradeChainMode.No)]
         public StrategyTradeChainMode ThirdTradeMode { get; set; }
+
+        [Parameter("Wait bars max", Group = "Trade Config", DefaultValue = 10, MinValue = 1, MaxValue = 50, Step = 1)]
+        public int WaitConfirmMaxBars { get; set; }
+
+        [Parameter("Wait pullback", Group = "Trade Config", DefaultValue = YesNoMode.Yes)]
+        public YesNoMode WaitConfirmRequirePullback { get; set; }
+
+        [Parameter("Wait chase max R", Group = "Trade Config", DefaultValue = 0.25, MinValue = 0.0, MaxValue = 3.0, Step = 0.05)]
+        public double WaitConfirmMaxChaseR { get; set; }
+
+        [Parameter("Wait risk max x", Group = "Trade Config", DefaultValue = 1.25, MinValue = 1.0, MaxValue = 5.0, Step = 0.05)]
+        public double WaitConfirmMaxRiskMultiplier { get; set; }
+
+        [Parameter("Wait invalidate", Group = "Trade Config", DefaultValue = YesNoMode.Yes)]
+        public YesNoMode WaitConfirmInvalidateOnClose { get; set; }
 
         [Parameter("n.Trades", Group = "Trade Config", DefaultValue = StrategyOrderCountMode.Auto)]
         public StrategyOrderCountMode StrategyOrderCount { get; set; }
@@ -11359,6 +11377,9 @@ namespace cAlgo.Robots
             public DateTime SignalTime;
             public DateTime EntryConfirmationTime;
             public int PatternToEntryBars;
+            public double OriginalEntryReference;
+            public double OriginalRiskDistance;
+            public double OriginalInvalidationPrice;
             public int TradeChainSlot;
             public bool UseLimitOrder;
             public double EntryPrice;
@@ -11381,7 +11402,7 @@ namespace cAlgo.Robots
             public string ConfluenceDetail;
         }
 
-        private class PendingStrategyEntry
+        internal class PendingStrategyEntry
         {
             public string SymbolName;
             public BacktestStrategySignal Signal;
@@ -19285,6 +19306,7 @@ namespace cAlgo.Robots
             _toggleKeyLevels = DrawKeyLevels;
             _toggleSupplyDemand = DrawSupplyDemand;
             ApplyCustomUiSettingsOverrides();
+            LoadWaitConfirmQueueLocal();
             ApplyChartDisplayPreferences();
             ApplyVisualGroupCombos();
             SafePrint(
@@ -24644,6 +24666,7 @@ namespace cAlgo.Robots
                     : note,
                 EventSlDistance = eventSlDistance
             };
+            InitializeWaitConfirmReference(symbolName, strategyTimeFrame, ref signal);
             ApplyStrategyConfluenceSizing(symbolName, strategyTimeFrame, ref signal);
             SafePrint(
                 "[StrategyTrigger] CustomTrade NOW symbol={0} tf={1} side={2} label={3} signal={4:yyyy-MM-dd HH:mm} audit={5}",
@@ -24654,6 +24677,60 @@ namespace cAlgo.Robots
                 signal.SignalTime,
                 BuildRecentCandlePatternTriggerAudit(symbolName, strategyTimeFrame, 4));
             return true;
+        }
+
+        private void InitializeWaitConfirmReference(
+            string symbolName,
+            TimeFrame strategyTimeFrame,
+            ref BacktestStrategySignal signal)
+        {
+            Bars sourceBars;
+            try { sourceBars = GetBarsForCurrentMasterTimer(strategyTimeFrame, symbolName); }
+            catch { sourceBars = null; }
+            var triggerIndex = ResolveSourceBarIndex(sourceBars, signal.SignalTime);
+            if (!IsValidBarIndex(sourceBars, triggerIndex))
+                return;
+
+            var referenceEntry = sourceBars.ClosePrices[triggerIndex];
+            var isBuy = signal.TradeType == TradeType.Buy;
+            var invalidationCandidates = new List<double>();
+            AddWaitConfirmInvalidationCandidate(invalidationCandidates, signal.StopLoss, referenceEntry, isBuy);
+            AddWaitConfirmInvalidationCandidate(invalidationCandidates, isBuy ? signal.OriginalPatternLow : signal.OriginalPatternHigh, referenceEntry, isBuy);
+            AddWaitConfirmInvalidationCandidate(invalidationCandidates, isBuy ? signal.RelatedZoneLow : signal.RelatedZoneHigh, referenceEntry, isBuy);
+            foreach (var level in signal.RelatedStopLevels ?? new List<double>())
+                AddWaitConfirmInvalidationCandidate(invalidationCandidates, level, referenceEntry, isBuy);
+
+            var invalidation = invalidationCandidates
+                .OrderBy(price => Math.Abs(referenceEntry - price))
+                .FirstOrDefault();
+            var triggerRange = Math.Max(0, sourceBars.HighPrices[triggerIndex] - sourceBars.LowPrices[triggerIndex]);
+            if (!(invalidation > 0))
+            {
+                var fallbackDistance = Math.Max(signal.EventSlDistance, triggerRange);
+                invalidation = fallbackDistance > 0
+                    ? (isBuy ? referenceEntry - fallbackDistance : referenceEntry + fallbackDistance)
+                    : 0;
+            }
+
+            signal.OriginalEntryReference = referenceEntry;
+            signal.OriginalInvalidationPrice = invalidation;
+            signal.OriginalRiskDistance = invalidation > 0
+                ? Math.Abs(referenceEntry - invalidation)
+                : Math.Max(signal.EventSlDistance, triggerRange);
+        }
+
+        private static void AddWaitConfirmInvalidationCandidate(
+            List<double> candidates,
+            double price,
+            double referenceEntry,
+            bool isBuy)
+        {
+            if (candidates == null || !(price > 0) || !(referenceEntry > 0))
+                return;
+            if (isBuy ? price >= referenceEntry : price <= referenceEntry)
+                return;
+            if (!candidates.Any(existing => Math.Abs(existing - price) <= 0.0000001))
+                candidates.Add(price);
         }
 
         private bool MarkerMatchesSelectedCandleOption(
@@ -26194,6 +26271,9 @@ namespace cAlgo.Robots
                 + ",\"trade_chain_mode\":\"" + (pending.EntryBarMode == StrategyEntryBarMode.First_bar_same_trend ? StrategyTradeChainMode.Wait_confirm.ToString() : StrategyTradeChainMode.Now.ToString()) + "\""
                 + ",\"entry_bar_mode\":\"" + pending.EntryBarMode + "\""
                 + ",\"pattern_to_entry_bars\":" + Math.Max(1, signal.PatternToEntryBars).ToString(CultureInfo.InvariantCulture)
+                + ",\"original_entry_reference\":" + SerializeStrategyQueueNumber(signal.OriginalEntryReference)
+                + ",\"original_risk_distance\":" + SerializeStrategyQueueNumber(signal.OriginalRiskDistance)
+                + ",\"original_invalidation_price\":" + SerializeStrategyQueueNumber(signal.OriginalInvalidationPrice)
                 + ",\"strategy_id\":\"" + EscapeJson(signal.StrategyId) + "\""
                 + ",\"strategy_mode\":\"" + signal.StrategyMode + "\""
                 + ",\"source_label\":\"" + EscapeJson(signal.SourceLabel) + "\""
@@ -26217,6 +26297,71 @@ namespace cAlgo.Robots
                 + ",\"confluence_volume_multiplier\":" + SerializeStrategyQueueNumber(signal.ConfluenceVolumeMultiplier)
                 + ",\"confluence_detail\":\"" + EscapeJson(signal.ConfluenceDetail) + "\""
                 + "}";
+        }
+
+        private string GetWaitConfirmQueueFilePath()
+        {
+            var accountId = Account != null
+                ? Account.Number.ToString(CultureInfo.InvariantCulture)
+                : "unknown";
+            return Path.Combine(
+                GetBaseServerRootPath(),
+                "data",
+                "runtime",
+                "ctrader",
+                SafePathPart(accountId, "unknown"),
+                WaitConfirmQueueFileName);
+        }
+
+        private string BuildWaitConfirmQueuePersistenceJson()
+        {
+            var actions = _pendingStrategyEntries
+                .Where(item => !_releasedEntryBarSignalKeys.Contains(item.Key))
+                .Select(item => BuildPendingStrategyQueueActionJson(item.Key, item.Value));
+            var terminalIds = _releasedEntryBarSignalKeys
+                .Where(value => value.StartsWith("ENTRYBAR|", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+                .Select(value => "\"" + EscapeJson(value) + "\"");
+            return "{"
+                + "\"version\":\"" + WaitConfirmQueueVersion + "\""
+                + ",\"saved_at\":\"" + DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture) + "\""
+                + ",\"queue_actions\":[" + string.Join(",", actions) + "]"
+                + ",\"queue_terminal_action_ids\":[" + string.Join(",", terminalIds) + "]"
+                + "}";
+        }
+
+        private void PersistWaitConfirmQueueLocal()
+        {
+            if (IsBacktestingRuntime())
+                return;
+            try
+            {
+                var filePath = GetWaitConfirmQueueFilePath();
+                WriteAnalysisCacheFile(filePath, new[] { BuildWaitConfirmQueuePersistenceJson() });
+            }
+            catch (Exception ex)
+            {
+                SafePrint("[WaitConfirm] Local persistence failed: {0}", ex.Message);
+            }
+        }
+
+        private void LoadWaitConfirmQueueLocal()
+        {
+            if (IsBacktestingRuntime())
+                return;
+            try
+            {
+                var filePath = GetWaitConfirmQueueFilePath();
+                if (!System.IO.File.Exists(filePath))
+                    return;
+                var json = System.IO.File.ReadAllText(filePath);
+                ProcessServerQueueActions(json, false, true);
+                PersistWaitConfirmQueueLocal();
+            }
+            catch (Exception ex)
+            {
+                SafePrint("[WaitConfirm] Local restore failed: {0}", ex.Message);
+            }
         }
 
         private string BuildStrategyQueueActionsSyncJson()
@@ -26270,17 +26415,25 @@ namespace cAlgo.Robots
                 : values.Select(ToSharedRuleNumber).Where(IsFiniteNumber).ToList();
         }
 
-        private void ProcessServerQueueActions(string json, bool reconcile = false)
+        private void ProcessServerQueueActions(string json, bool reconcile = false, bool localSnapshot = false)
         {
             if (string.IsNullOrWhiteSpace(json) || json.IndexOf("\"queue_actions\"", StringComparison.OrdinalIgnoreCase) < 0)
                 return;
             Dictionary<string, object> root;
             try { root = CTraderRuleEngine.ParseJson(json) as Dictionary<string, object>; }
             catch { root = null; }
+            if (localSnapshot && root != null &&
+                !string.Equals(ConvertToInvariantString(GetDictionaryValue(root, "version")), WaitConfirmQueueVersion, StringComparison.Ordinal))
+            {
+                SafePrint("[WaitConfirm] Ignored unsupported local queue version");
+                return;
+            }
             var actions = root != null ? GetDictionaryValue(root, "queue_actions") as List<object> : null;
             if (actions == null)
                 return;
-            _strategyQueueHydratedFromServer = true;
+            if (!localSnapshot)
+                _strategyQueueHydratedFromServer = true;
+            var localStateChanged = false;
 
             var terminalIds = GetDictionaryValue(root, "queue_terminal_action_ids") as List<object>;
             if (terminalIds != null)
@@ -26290,8 +26443,11 @@ namespace cAlgo.Robots
                     var terminalId = ConvertToInvariantString(rawTerminalId);
                     if (string.IsNullOrWhiteSpace(terminalId))
                         continue;
-                    _pendingStrategyEntries.Remove(terminalId);
-                    _releasedEntryBarSignalKeys.Add(terminalId);
+                    if (_pendingStrategyEntries.Remove(terminalId))
+                        localStateChanged = true;
+                    if (terminalId.StartsWith("ENTRYBAR|", StringComparison.OrdinalIgnoreCase) &&
+                        _releasedEntryBarSignalKeys.Add(terminalId))
+                        localStateChanged = true;
                     _suppressedPositionActionQueueKeys.Add(terminalId);
                 }
             }
@@ -26313,7 +26469,7 @@ namespace cAlgo.Robots
                 if (!string.IsNullOrWhiteSpace(actionType) && !string.Equals(actionType, "trade.open", StringComparison.OrdinalIgnoreCase))
                     continue;
                 var alreadyPending = _pendingStrategyEntries.ContainsKey(actionId);
-                if ((!reconcile && alreadyPending) || _releasedEntryBarSignalKeys.Contains(actionId) || _strategyQueueTerminalUpdates.ContainsKey(actionId))
+                if (alreadyPending || _releasedEntryBarSignalKeys.Contains(actionId) || _strategyQueueTerminalUpdates.ContainsKey(actionId))
                     continue;
 
                 TimeFrame sourceTimeFrame;
@@ -26355,6 +26511,9 @@ namespace cAlgo.Robots
                     SourceTimeFrame = sourceTimeFrame,
                     SignalTime = signalTime,
                     PatternToEntryBars = Math.Max(1, (int)Math.Round(ToSharedRuleNumber(GetDictionaryValue(action, "pattern_to_entry_bars")))),
+                    OriginalEntryReference = ToSharedRuleNumber(GetDictionaryValue(action, "original_entry_reference")),
+                    OriginalRiskDistance = ToSharedRuleNumber(GetDictionaryValue(action, "original_risk_distance")),
+                    OriginalInvalidationPrice = ToSharedRuleNumber(GetDictionaryValue(action, "original_invalidation_price")),
                     TradeChainSlot = tradeChainSlot,
                     UseLimitOrder = SharedRuleTruthy(GetDictionaryValue(action, "use_limit_order")),
                     EntryPrice = ToSharedRuleNumber(GetDictionaryValue(action, "entry")),
@@ -26376,6 +26535,8 @@ namespace cAlgo.Robots
                     ConfluenceDetail = ConvertToInvariantString(GetDictionaryValue(action, "confluence_detail"))
                 };
                 var symbolName = string.IsNullOrWhiteSpace(signal.SymbolName) ? Symbol.Name : signal.SymbolName;
+                if (!(signal.OriginalEntryReference > 0) || !(signal.OriginalRiskDistance > 0) || !(signal.OriginalInvalidationPrice > 0))
+                    InitializeWaitConfirmReference(symbolName, sourceTimeFrame, ref signal);
                 if (!IsStrategySignalTimeAlignedToSourceBar(symbolName, signal))
                 {
                     _strategyQueueTerminalUpdates[actionId] = "CANCELLED";
@@ -26396,20 +26557,21 @@ namespace cAlgo.Robots
                     RequireHtfBiasConfluence = SharedRuleTruthy(GetDictionaryValue(action, "require_htf_bias")),
                     EntryBarMode = entryBarMode
                 };
+                localStateChanged = true;
                 AddCustomTradeTriggerMarker(symbolName, signal);
                 if (alreadyPending) updated++; else restored++;
             }
+            // Local disk is authoritative. A temporary server omission must never delete a
+            // valid Wait_confirm action and recreate the restart-loss bug this queue replaces.
             var removed = 0;
-            if (reconcile)
-            {
-                foreach (var actionId in _pendingStrategyEntries.Keys.Where(key => !serverActionIds.Contains(key)).ToList())
-                {
-                    _pendingStrategyEntries.Remove(actionId);
-                    removed++;
-                }
-            }
             if (restored > 0 || updated > 0 || removed > 0)
-                SafePrint("[ActionQueue] Synced from 42trade: restored={0}, updated={1}, removed={2}", restored, updated, removed);
+                SafePrint(
+                    localSnapshot
+                        ? "[WaitConfirm] Restored locally: restored={0}, updated={1}, removed={2}"
+                        : "[ActionQueue] Synced from 42trade: restored={0}, updated={1}, removed={2}",
+                    restored,
+                    updated,
+                    removed);
             var syncState = string.Format(
                 CultureInfo.InvariantCulture,
                 "hydrated={0}; server_waiting={1}; local_waiting={2}; terminal_updates={3}",
@@ -26422,6 +26584,8 @@ namespace cAlgo.Robots
                 _lastStrategyQueueSyncState = syncState;
                 SafePrint("[ActionQueue] Sync state: {0}", syncState);
             }
+            if (!localSnapshot && localStateChanged)
+                PersistWaitConfirmQueueLocal();
         }
 
         private bool TryResolveStrategyEntryBar(
@@ -26525,6 +26689,104 @@ namespace cAlgo.Robots
                 : StrategyEntryBarMode.First_bar_after_trigger;
         }
 
+        private bool TryEvaluateWaitConfirm(
+            string symbolName,
+            ref BacktestStrategySignal signal,
+            out CTraderWaitConfirmDecision decision,
+            out Bars sourceBars,
+            out int triggerIndex)
+        {
+            decision = null;
+            sourceBars = null;
+            triggerIndex = -1;
+            try { sourceBars = GetBarsForCurrentMasterTimer(signal.SourceTimeFrame, symbolName); }
+            catch { sourceBars = null; }
+            if (sourceBars == null || sourceBars.Count < 3)
+                return false;
+
+            triggerIndex = ResolveSourceBarIndex(sourceBars, signal.SignalTime);
+            var latestClosedIndex = sourceBars.Count - 2;
+            if (!IsValidBarIndex(sourceBars, triggerIndex) || triggerIndex >= latestClosedIndex)
+                return false;
+
+            if (!(signal.OriginalEntryReference > 0) || !(signal.OriginalRiskDistance > 0) || !(signal.OriginalInvalidationPrice > 0))
+                InitializeWaitConfirmReference(symbolName, signal.SourceTimeFrame, ref signal);
+
+            var maxBars = Math.Max(1, WaitConfirmMaxBars);
+            var evaluationEndIndex = Math.Min(latestClosedIndex, triggerIndex + maxBars + 1);
+            var count = evaluationEndIndex - triggerIndex + 1;
+            var opens = new double[count];
+            var closes = new double[count];
+            for (var offset = 0; offset < count; offset++)
+            {
+                opens[offset] = sourceBars.OpenPrices[triggerIndex + offset];
+                closes[offset] = sourceBars.ClosePrices[triggerIndex + offset];
+            }
+
+            decision = _waitConfirmQueueEngine.Evaluate(
+                opens,
+                closes,
+                signal.TradeType == TradeType.Buy,
+                signal.OriginalEntryReference,
+                signal.OriginalRiskDistance,
+                signal.OriginalInvalidationPrice,
+                maxBars,
+                WaitConfirmRequirePullback == YesNoMode.Yes,
+                WaitConfirmMaxChaseR,
+                WaitConfirmMaxRiskMultiplier,
+                WaitConfirmInvalidateOnClose == YesNoMode.Yes);
+            return decision != null;
+        }
+
+        private void FinalizeWaitConfirmQueueEntry(string key, string status)
+        {
+            _pendingStrategyEntries.Remove(key);
+            _releasedEntryBarSignalKeys.Add(key);
+            _strategyQueueTerminalUpdates[key] = status;
+            // Persist terminal state before any order submission so a restart cannot release
+            // the same original trigger for a second time.
+            PersistWaitConfirmQueueLocal();
+        }
+
+        private bool TryValidateFinalWaitConfirmRisk(
+            BacktestStrategySignal signal,
+            double finalEntry,
+            double finalStopLoss,
+            out string reason)
+        {
+            reason = "";
+            if (signal.EntryConfirmationTime == DateTime.MinValue || signal.EntryConfirmationTime == signal.SignalTime)
+                return true;
+            if (!(signal.OriginalEntryReference > 0) || !(signal.OriginalRiskDistance > 0) || !(finalEntry > 0) || !(finalStopLoss > 0))
+            {
+                reason = "wait_confirm_final_reference_invalid";
+                return false;
+            }
+
+            var isBuy = signal.TradeType == TradeType.Buy;
+            var decision = _waitConfirmQueueEngine.EvaluateFinalRisk(
+                isBuy,
+                signal.OriginalEntryReference,
+                signal.OriginalRiskDistance,
+                finalEntry,
+                finalStopLoss,
+                WaitConfirmMaxChaseR,
+                WaitConfirmMaxRiskMultiplier);
+            if (decision.Kind == CTraderWaitConfirmDecisionKind.Cancel)
+            {
+                reason = string.Format(
+                    CultureInfo.InvariantCulture,
+                    "wait_confirm_final_{0} chase_r={1:0.###}/{2:0.###} risk_x={3:0.###}/{4:0.###}",
+                    decision.Reason,
+                    decision.ChaseR,
+                    WaitConfirmMaxChaseR,
+                    decision.RiskMultiplier,
+                    WaitConfirmMaxRiskMultiplier);
+                return false;
+            }
+            return true;
+        }
+
         private bool TryPassStrategyEntryBarGate(string symbolName, ref BacktestStrategySignal signal, bool requireHtfBiasConfluence)
         {
             // Signals explicitly stamped with their trigger bar as confirmation (Now) proceed
@@ -26537,6 +26799,8 @@ namespace cAlgo.Robots
             var entryBarMode = _pendingStrategyEntries.TryGetValue(key, out existingPending)
                 ? existingPending.EntryBarMode
                 : ResolveStrategyTradeChainEntryBarMode(signal.TradeChainSlot);
+            if (existingPending != null)
+                signal = existingPending.Signal;
             if (entryBarMode == StrategyEntryBarMode.First_bar_after_trigger)
             {
                 signal.EntryConfirmationTime = signal.SignalTime;
@@ -26546,9 +26810,14 @@ namespace cAlgo.Robots
             if (_releasedEntryBarSignalKeys.Contains(key))
                 return false;
 
-            DateTime entryBarTime;
-            if (!TryResolveStrategyEntryBar(symbolName, signal.SourceTimeFrame, signal.SignalTime, signal.TradeType, entryBarMode, out entryBarTime))
+            CTraderWaitConfirmDecision decision;
+            Bars sourceBars;
+            int triggerIndex;
+            if (!TryEvaluateWaitConfirm(symbolName, ref signal, out decision, out sourceBars, out triggerIndex) ||
+                decision.Kind == CTraderWaitConfirmDecisionKind.Waiting)
             {
+                if (existingPending != null)
+                    existingPending.Signal = signal;
                 if (!_pendingStrategyEntries.ContainsKey(key))
                 {
                     var detectedAt = DateTime.UtcNow;
@@ -26560,63 +26829,65 @@ namespace cAlgo.Robots
                         RequireHtfBiasConfluence = requireHtfBiasConfluence,
                         EntryBarMode = entryBarMode
                     };
+                    PersistWaitConfirmQueueLocal();
                     SafePrint(
-                        "[Strategy] Entry waiting: {0} {1} trigger={2:yyyy-MM-dd HH:mm} detected={3:yyyy-MM-dd HH:mm:ss} source_tf={4} mode={5}",
+                        "[WaitConfirm] WAITING symbol={0} side={1} trigger={2:yyyy-MM-dd HH:mm} detected={3:yyyy-MM-dd HH:mm:ss} tf={4} max_bars={5} pullback={6} chase_max_r={7:0.##} risk_max_x={8:0.##}",
                         symbolName,
                         signal.TradeType,
                         signal.SignalTime,
                         detectedAt,
                         GetMiniChartLabel(signal.SourceTimeFrame),
-                        entryBarMode);
+                        WaitConfirmMaxBars,
+                        WaitConfirmRequirePullback,
+                        WaitConfirmMaxChaseR,
+                        WaitConfirmMaxRiskMultiplier);
                 }
                 return false;
             }
 
-            if (!IsStrategyEntryConfirmationFresh(symbolName, signal.SourceTimeFrame, entryBarTime))
+            if (decision.Kind != CTraderWaitConfirmDecisionKind.Confirm)
             {
-                _pendingStrategyEntries.Remove(key);
-                _releasedEntryBarSignalKeys.Add(key);
-                _strategyQueueTerminalUpdates[key] = "CANCELLED";
+                var terminalStatus = decision.Kind == CTraderWaitConfirmDecisionKind.Expire ? "EXPIRED" : "CANCELLED";
+                FinalizeWaitConfirmQueueEntry(key, terminalStatus);
                 SafePrint(
-                    "[Strategy] Entry queue cancelled as stale: {0} {1} trigger={2:yyyy-MM-dd HH:mm} entry_bar={3:yyyy-MM-dd HH:mm} source_tf={4} mode={5}",
+                    "[WaitConfirm] {0} symbol={1} side={2} trigger={3:yyyy-MM-dd HH:mm} tf={4} age_bars={5} reason={6} pullback={7} chase_r={8:0.###}/{9:0.###} risk_x={10:0.###}/{11:0.###}",
+                    terminalStatus,
                     symbolName,
                     signal.TradeType,
                     signal.SignalTime,
-                    entryBarTime,
                     GetMiniChartLabel(signal.SourceTimeFrame),
-                    entryBarMode);
+                    decision.AgeBars,
+                    decision.Reason,
+                    decision.PullbackSeen,
+                    decision.ChaseR,
+                    WaitConfirmMaxChaseR,
+                    decision.RiskMultiplier,
+                    WaitConfirmMaxRiskMultiplier);
                 return false;
             }
 
-            _pendingStrategyEntries.Remove(key);
-            _releasedEntryBarSignalKeys.Add(key);
-            _strategyQueueTerminalUpdates[key] = "RELEASED";
+            var confirmationIndex = triggerIndex + decision.ConfirmationOffset;
+            if (!IsValidBarIndex(sourceBars, confirmationIndex))
+                return false;
+            var entryBarTime = sourceBars.OpenTimes[confirmationIndex];
+            FinalizeWaitConfirmQueueEntry(key, "RELEASED");
             signal.EntryConfirmationTime = entryBarTime;
-            try
-            {
-                var confirmationBars = GetBarsForCurrentMasterTimer(signal.SourceTimeFrame, symbolName);
-                var triggerIndex = ResolveSourceBarIndex(confirmationBars, signal.SignalTime);
-                var confirmationIndex = ResolveSourceBarIndex(confirmationBars, entryBarTime);
-                if (IsValidBarIndex(confirmationBars, confirmationIndex))
-                {
-                    signal.EntryPrice = confirmationBars.ClosePrices[confirmationIndex];
-                    signal.EventSlDistance = Math.Max(
-                        signal.EventSlDistance,
-                        Math.Max(0, confirmationBars.HighPrices[confirmationIndex] - confirmationBars.LowPrices[confirmationIndex]));
-                    signal.PatternToEntryBars = CTraderStrategyEngine.ResolvePatternToEntryBars(triggerIndex, confirmationIndex);
-                }
-            }
-            catch
-            {
-            }
+            signal.EntryPrice = sourceBars.ClosePrices[confirmationIndex];
+            signal.EventSlDistance = Math.Max(
+                signal.EventSlDistance,
+                Math.Max(0, sourceBars.HighPrices[confirmationIndex] - sourceBars.LowPrices[confirmationIndex]));
+            signal.PatternToEntryBars = CTraderStrategyEngine.ResolvePatternToEntryBars(triggerIndex, confirmationIndex);
             ApplyStrategyConfluenceSizing(symbolName, signal.SourceTimeFrame, ref signal);
             SafePrint(
-                "[Strategy] Entry bar matched: {0} {1} trigger={2:yyyy-MM-dd HH:mm} entry_bar={3:yyyy-MM-dd HH:mm} mode={4}",
+                "[WaitConfirm] RELEASED symbol={0} side={1} trigger={2:yyyy-MM-dd HH:mm} entry_bar={3:yyyy-MM-dd HH:mm} bars={4} pullback={5} chase_r={6:0.###} risk_x={7:0.###}",
                 symbolName,
                 signal.TradeType,
                 signal.SignalTime,
                 entryBarTime,
-                entryBarMode);
+                signal.PatternToEntryBars,
+                decision.PullbackSeen,
+                decision.ChaseR,
+                decision.RiskMultiplier);
             return true;
         }
 
@@ -26941,6 +27212,14 @@ namespace cAlgo.Robots
                 RebuildConfirmedEntryProtection(symbol, symbolName, signal, effectiveEntryPrice, ref sl, ref tp);
             ApplyStrategyProtectionModes(symbol, symbolName, signal, effectiveEntryPrice, profileRaw, ref sl, ref tp);
             ApplyStrategySignalRewardRisk(symbol, signal, effectiveEntryPrice, sl, ref tp);
+            string waitConfirmRiskRejectReason;
+            if (!TryValidateFinalWaitConfirmRisk(signal, effectiveEntryPrice, sl, out waitConfirmRiskRejectReason))
+            {
+                FinalizeWaitConfirmQueueEntry(BuildEntryBarSignalKey(symbolName, signal), "CANCELLED");
+                LogStrategyReject(signal.StrategyId, symbolName, waitConfirmRiskRejectReason);
+                _backtestStrategyHandledEventKeys.Add(eventKey);
+                return;
+            }
             if (!(sl > 0))
             {
                 LogStrategySkip(signal.StrategyId, symbolName, "missing_stop_loss");
@@ -29262,6 +29541,7 @@ namespace cAlgo.Robots
             {
             }
             WaitForCustomUiSettingsPersistence();
+            PersistWaitConfirmQueueLocal();
             if (DisableOnStopCleanupForIsolation)
             {
                 try { _watchdogCts?.Cancel(); } catch { }
@@ -39925,6 +40205,195 @@ namespace cAlgo.Robots
         OrderBlockEdge,
         FvgEdge,
         RewardRisk2
+    }
+
+    internal enum CTraderWaitConfirmDecisionKind
+    {
+        Waiting,
+        Confirm,
+        Cancel,
+        Expire
+    }
+
+    internal sealed class CTraderWaitConfirmDecision
+    {
+        public CTraderWaitConfirmDecisionKind Kind;
+        public int AgeBars;
+        public int ConfirmationOffset = -1;
+        public double ConfirmationEntry;
+        public double ChaseR;
+        public double RiskMultiplier;
+        public bool PullbackSeen;
+        public string Reason = "";
+    }
+
+    // Owns the durable Wait_confirm lifecycle and its deterministic price rules.
+    internal sealed class CTraderWaitConfirmQueueEngine
+    {
+        public readonly Dictionary<string, TVBridgeCBot.PendingStrategyEntry> Waiting =
+            new Dictionary<string, TVBridgeCBot.PendingStrategyEntry>(StringComparer.OrdinalIgnoreCase);
+        public readonly HashSet<string> TerminalKeys =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        public CTraderWaitConfirmDecision Evaluate(
+            double[] opens,
+            double[] closes,
+            bool isBuy,
+            double originalEntry,
+            double originalRisk,
+            double invalidationPrice,
+            int maxBars,
+            bool requirePullback,
+            double maxChaseR,
+            double maxRiskMultiplier,
+            bool invalidateOnClose)
+        {
+            var decision = new CTraderWaitConfirmDecision();
+            if (opens == null || closes == null || opens.Length != closes.Length || opens.Length < 2)
+            {
+                decision.Kind = CTraderWaitConfirmDecisionKind.Waiting;
+                decision.Reason = "bars_unavailable";
+                return decision;
+            }
+
+            decision.AgeBars = opens.Length - 1;
+            maxBars = Math.Max(1, maxBars);
+            maxChaseR = Math.Max(0, maxChaseR);
+            maxRiskMultiplier = Math.Max(1.0, maxRiskMultiplier);
+            var risk = Math.Max(0, originalRisk);
+            if (!(originalEntry > 0) || !(risk > 0) || !(invalidationPrice > 0))
+            {
+                decision.Kind = CTraderWaitConfirmDecisionKind.Cancel;
+                decision.Reason = "original_reference_invalid";
+                return decision;
+            }
+
+            var pullbackSeen = false;
+            for (var offset = 1; offset < opens.Length; offset++)
+            {
+                if (offset > maxBars)
+                {
+                    decision.Kind = CTraderWaitConfirmDecisionKind.Expire;
+                    decision.PullbackSeen = pullbackSeen;
+                    decision.Reason = "max_bars_exceeded";
+                    return decision;
+                }
+                var open = opens[offset];
+                var close = closes[offset];
+                if (invalidateOnClose && (isBuy ? close <= invalidationPrice : close >= invalidationPrice))
+                {
+                    decision.Kind = CTraderWaitConfirmDecisionKind.Cancel;
+                    decision.PullbackSeen = pullbackSeen;
+                    decision.Reason = "invalidation_close";
+                    return decision;
+                }
+
+                var direction = close == open ? 0 : close > open ? 1 : -1;
+                var confirmsDirection = isBuy ? direction > 0 : direction < 0;
+                if (!confirmsDirection)
+                {
+                    if (isBuy ? direction < 0 : direction > 0)
+                        pullbackSeen = true;
+                    continue;
+                }
+
+                decision.ConfirmationOffset = offset;
+                decision.ConfirmationEntry = close;
+                decision.PullbackSeen = pullbackSeen;
+                if (offset != opens.Length - 1)
+                {
+                    decision.Kind = CTraderWaitConfirmDecisionKind.Cancel;
+                    decision.Reason = "confirmation_no_longer_fresh";
+                    return decision;
+                }
+                if (offset > maxBars)
+                {
+                    decision.Kind = CTraderWaitConfirmDecisionKind.Expire;
+                    decision.Reason = "max_bars_exceeded";
+                    return decision;
+                }
+                if (requirePullback && !pullbackSeen)
+                {
+                    decision.Kind = CTraderWaitConfirmDecisionKind.Cancel;
+                    decision.Reason = "pullback_missing";
+                    return decision;
+                }
+
+                var adverseEntryMove = isBuy
+                    ? Math.Max(0, close - originalEntry)
+                    : Math.Max(0, originalEntry - close);
+                decision.ChaseR = adverseEntryMove / risk;
+                if (decision.ChaseR > maxChaseR + 0.0000001)
+                {
+                    decision.Kind = CTraderWaitConfirmDecisionKind.Cancel;
+                    decision.Reason = "chase_r_exceeded";
+                    return decision;
+                }
+
+                decision.RiskMultiplier = Math.Abs(close - invalidationPrice) / risk;
+                if (decision.RiskMultiplier > maxRiskMultiplier + 0.0000001)
+                {
+                    decision.Kind = CTraderWaitConfirmDecisionKind.Cancel;
+                    decision.Reason = "risk_multiplier_exceeded";
+                    return decision;
+                }
+
+                decision.Kind = CTraderWaitConfirmDecisionKind.Confirm;
+                decision.Reason = "confirmed";
+                return decision;
+            }
+
+            decision.PullbackSeen = pullbackSeen;
+            if (decision.AgeBars >= maxBars)
+            {
+                decision.Kind = CTraderWaitConfirmDecisionKind.Expire;
+                decision.Reason = "max_bars_reached";
+                return decision;
+            }
+
+            decision.Kind = CTraderWaitConfirmDecisionKind.Waiting;
+            decision.Reason = pullbackSeen ? "waiting_confirmation" : "waiting_pullback";
+            return decision;
+        }
+
+        public CTraderWaitConfirmDecision EvaluateFinalRisk(
+            bool isBuy,
+            double originalEntry,
+            double originalRisk,
+            double finalEntry,
+            double finalStopLoss,
+            double maxChaseR,
+            double maxRiskMultiplier)
+        {
+            var decision = new CTraderWaitConfirmDecision
+            {
+                ConfirmationEntry = finalEntry,
+                Kind = CTraderWaitConfirmDecisionKind.Confirm,
+                Reason = "confirmed"
+            };
+            if (!(originalEntry > 0) || !(originalRisk > 0) || !(finalEntry > 0) || !(finalStopLoss > 0))
+            {
+                decision.Kind = CTraderWaitConfirmDecisionKind.Cancel;
+                decision.Reason = "reference_invalid";
+                return decision;
+            }
+
+            decision.ChaseR = (isBuy
+                ? Math.Max(0, finalEntry - originalEntry)
+                : Math.Max(0, originalEntry - finalEntry)) / originalRisk;
+            decision.RiskMultiplier = Math.Abs(finalEntry - finalStopLoss) / originalRisk;
+            if (decision.ChaseR > Math.Max(0, maxChaseR) + 0.0000001)
+            {
+                decision.Kind = CTraderWaitConfirmDecisionKind.Cancel;
+                decision.Reason = "chase_r_exceeded";
+            }
+            else if (decision.RiskMultiplier > Math.Max(1.0, maxRiskMultiplier) + 0.0000001)
+            {
+                decision.Kind = CTraderWaitConfirmDecisionKind.Cancel;
+                decision.Reason = "risk_multiplier_exceeded";
+            }
+            return decision;
+        }
     }
 
     // Owns strategy signal and price-plan semantics that do not depend on live account state.
