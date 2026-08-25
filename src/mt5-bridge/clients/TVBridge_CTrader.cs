@@ -72,7 +72,6 @@ namespace cAlgo.Robots
         private readonly Queue<SharedPatternDetectionCacheKey> _sharedPatternDetectionCacheOrder = new Queue<SharedPatternDetectionCacheKey>();
         private readonly CTraderCacheEngine _cacheEngine = new CTraderCacheEngine();
         private readonly HashSet<string> _backtestStrategyHandledEventKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        private readonly HashSet<string> _usedWaitConfirmTriggerKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, BacktestExportTradeSnapshot> _backtestExportTradeSnapshots = new Dictionary<string, BacktestExportTradeSnapshot>(StringComparer.OrdinalIgnoreCase);
         private readonly List<BacktestExportTradeSnapshot> _backtestExportTradeSequence = new List<BacktestExportTradeSnapshot>();
         private bool _backtestRiskStopTriggered;
@@ -5075,6 +5074,9 @@ namespace cAlgo.Robots
 
         private static string FormatStrategyMarkerText(StrategyChartMarker marker)
         {
+            if (marker.Kind == StrategyMarkerKind.Trigger)
+                return string.IsNullOrWhiteSpace(marker.Text) ? "T" : "T " + marker.Text;
+
             var isEntry = marker.Kind == StrategyMarkerKind.Entry;
             if (isEntry)
                 return !string.IsNullOrWhiteSpace(marker.Text)
@@ -10955,6 +10957,7 @@ namespace cAlgo.Robots
 
         private enum StrategyMarkerKind
         {
+            Trigger,
             Entry,
             Exit
         }
@@ -11357,7 +11360,6 @@ namespace cAlgo.Robots
             public DateTime EntryConfirmationTime;
             public int PatternToEntryBars;
             public int TradeChainSlot;
-            public string WaitConfirmTriggerKey;
             public bool UseLimitOrder;
             public double EntryPrice;
             public double SecondaryEntryPrice;
@@ -11561,8 +11563,9 @@ namespace cAlgo.Robots
 
             foreach (var marker in visibleMarkers)
             {
+                var isTrigger = marker.Kind == StrategyMarkerKind.Trigger;
                 var isEntry = marker.Kind == StrategyMarkerKind.Entry;
-                var iconColor = isEntry
+                var iconColor = isTrigger || isEntry
                     ? (marker.TradeType == TradeType.Buy ? Color.LimeGreen : Color.OrangeRed)
                     : (marker.IsWinning ? Color.LimeGreen : Color.OrangeRed);
                 var iconType = marker.TradeType == TradeType.Buy ? ChartIconType.UpArrow : ChartIconType.DownArrow;
@@ -11577,7 +11580,7 @@ namespace cAlgo.Robots
                     marker.Time,
                     anchorPrice,
                     iconColor);
-                TrySetPropertyValue(icon, "Thickness", 1);
+                TrySetPropertyValue(icon, "Thickness", isTrigger ? 2 : 1);
 
                 var text = Chart.DrawText(
                     "STRAT_TXT_" + objectIndex.ToString(CultureInfo.InvariantCulture),
@@ -11726,6 +11729,7 @@ namespace cAlgo.Robots
                 .OrderBy(item => item.CloseTime)
                 .TakeLast(120)
                 .ToList();
+            var drawnTriggerKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var item in visibleClosedTrades)
             {
@@ -11740,6 +11744,29 @@ namespace cAlgo.Robots
                 var iconColor = netProfit >= 0 ? Color.LimeGreen : Color.OrangeRed;
                 var iconText = isBuy ? "▲" : "▼";
                 var pad = Math.Max(chartSymbol != null ? chartSymbol.PipSize * 5.0 : 0.0000001, 0.0000001);
+                DateTime triggerBarTime;
+                string triggerEventLabel;
+                if (TryParseStrategyTriggerAudit(item.Deal.Comment, out triggerBarTime, out triggerEventLabel))
+                {
+                    var triggerKey = string.Format(
+                        CultureInfo.InvariantCulture,
+                        "{0}|{1}|{2}",
+                        triggerBarTime.Ticks,
+                        isBuy ? "B" : "S",
+                        triggerEventLabel);
+                    var triggerIndex = ResolveSourceBarIndex(Bars, triggerBarTime);
+                    if (drawnTriggerKeys.Add(triggerKey) && IsValidBarIndex(Bars, triggerIndex))
+                    {
+                        var triggerPrice = isBuy ? Bars.LowPrices[triggerIndex] - pad : Bars.HighPrices[triggerIndex] + pad;
+                        var trigger = Chart.DrawText(
+                            "TRADE_TRIGGER_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                            "T " + triggerEventLabel,
+                            Bars.OpenTimes[triggerIndex],
+                            triggerPrice,
+                            isBuy ? Color.LimeGreen : Color.OrangeRed);
+                        TryStyleChartText(trigger, GetChartMarkerFontSize(), "Courier New", true);
+                    }
+                }
                 var anchorPrice = isBuy ? closePrice - pad : closePrice + pad;
                 var marker = Chart.DrawText(
                     "TRADEH_" + objectIndex.ToString(CultureInfo.InvariantCulture),
@@ -11765,6 +11792,34 @@ namespace cAlgo.Robots
             }
 
             return objectIndex;
+        }
+
+        private bool TryParseStrategyTriggerAudit(string comment, out DateTime triggerBarTime, out string eventLabel)
+        {
+            triggerBarTime = DateTime.MinValue;
+            eventLabel = "";
+            if (string.IsNullOrWhiteSpace(comment))
+                return false;
+
+            var parts = comment.Split('|');
+            if (parts.Length < 3 || string.IsNullOrWhiteSpace(parts[0]))
+                return false;
+            var triggerPart = parts.FirstOrDefault(part => part.StartsWith("tr:", StringComparison.OrdinalIgnoreCase));
+            if (string.IsNullOrWhiteSpace(triggerPart) || triggerPart.Length <= 3)
+                return false;
+
+            DateTime parsed;
+            if (!DateTime.TryParseExact(
+                triggerPart.Substring(3),
+                "yyMMddHHmm",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out parsed))
+                return false;
+
+            triggerBarTime = DateTime.SpecifyKind(parsed, DateTimeKind.Unspecified);
+            eventLabel = parts[0].Trim();
+            return !string.IsNullOrWhiteSpace(eventLabel);
         }
 
         private string FormatClosedTradeMarkerText(HistoricalTrade deal)
@@ -21149,6 +21204,24 @@ namespace cAlgo.Robots
                     Comment = position.Comment
                 };
 
+                DateTime triggerBarTime;
+                string triggerEventLabel;
+                if (TryParseStrategyTriggerAudit(position.Comment, out triggerBarTime, out triggerEventLabel))
+                {
+                    AddStrategyChartMarker(new StrategyChartMarker
+                    {
+                        PositionId = -Math.Abs(position.Id),
+                        SymbolName = position.SymbolName,
+                        TradeType = position.TradeType,
+                        Kind = StrategyMarkerKind.Trigger,
+                        Time = triggerBarTime,
+                        Price = position.EntryPrice,
+                        Pnl = 0,
+                        IsWinning = false,
+                        Text = triggerEventLabel
+                    });
+                }
+
                 AddStrategyChartMarker(new StrategyChartMarker
                 {
                     PositionId = position.Id,
@@ -24583,191 +24656,6 @@ namespace cAlgo.Robots
             return true;
         }
 
-        // Wait_confirm is intentionally evaluated from the just-closed source bar, not from a
-        // persistent queue. The bar supplies the confirmation direction; the signal identity
-        // comes from the latest selected event in the preceding five completed bars.
-        private bool TryBuildCustomWaitConfirmSignal(
-            string symbolName,
-            TimeFrame strategyTimeFrame,
-            int tradeChainSlot,
-            out BacktestStrategySignal signal)
-        {
-            signal = default(BacktestStrategySignal);
-            if (ResolveStrategyTradeChainMode(tradeChainSlot) != StrategyTradeChainMode.Wait_confirm)
-                return false;
-
-            Bars sourceBars;
-            try { sourceBars = GetBarsForCurrentMasterTimer(strategyTimeFrame, symbolName); }
-            catch { sourceBars = null; }
-            if (sourceBars == null || sourceBars.Count < 4)
-                return false;
-
-            var justClosedIndex = sourceBars.Count - 2;
-            var open = sourceBars.OpenPrices[justClosedIndex];
-            var close = sourceBars.ClosePrices[justClosedIndex];
-            if (close == open)
-                return false;
-
-            var isBullish = close > open;
-            var selectedOptions = GetSelectedStrategyCustomEventOptions();
-            if (selectedOptions.Count == 0)
-                return false;
-
-            var previousSnapshot = BuildSharedIndicatorSnapshot(sourceBars, Math.Max(0, justClosedIndex - 1));
-            var currentSnapshot = BuildSharedIndicatorSnapshot(sourceBars, justClosedIndex);
-            if (!TryPassSelectedStrategyCustomRules(
-                symbolName,
-                sourceBars,
-                strategyTimeFrame,
-                justClosedIndex,
-                previousSnapshot,
-                currentSnapshot,
-                isBullish))
-            {
-                SafePrint(
-                    "[WaitConfirm] cancelled symbol={0} tf={1} closed={2:yyyy-MM-dd HH:mm} side={3} confluence_failed {4}",
-                    symbolName,
-                    GetMiniChartLabel(strategyTimeFrame),
-                    sourceBars.OpenTimes[justClosedIndex],
-                    isBullish ? "BUY" : "SELL",
-                    BuildStrategyBiasDiagnostic(symbolName, strategyTimeFrame));
-                return false;
-            }
-
-            var earliestIndex = Math.Max(1, justClosedIndex - 5);
-            var earliestTime = sourceBars.OpenTimes[earliestIndex];
-            var confirmationTime = sourceBars.OpenTimes[justClosedIndex];
-            var priorTriggerCandidates = CollectTradeTriggerCandidates(symbolName, strategyTimeFrame)
-                .Where(trigger => trigger.BarTime >= earliestTime && trigger.BarTime < confirmationTime)
-                .Where(trigger => selectedOptions.Any(option => TradeTriggerMatchesSelectedOption(trigger, option)))
-                .ToList();
-
-            TradeTriggerEvent priorTrigger = default(TradeTriggerEvent);
-            var priorStopDistance = 0.0;
-            var priorPatternEndIndex = -1;
-            foreach (var triggerBar in priorTriggerCandidates
-                .GroupBy(trigger => trigger.BarTime)
-                .OrderByDescending(group => group.Key))
-            {
-                var candidatesOnBar = triggerBar.ToList();
-                var optionStates = BuildSelectedTriggerOptionStates(selectedOptions, candidatesOnBar);
-                var matchedCount = optionStates.Count(state =>
-                    (isBullish ? state.Item3 : state.Item4) || state.Item5);
-                var triggerBundlePassed = SelectedStrategyCustomEventsMode == StrategyCustomEventsMode.AND
-                    ? matchedCount == selectedOptions.Count
-                    : matchedCount > 0;
-                if (!triggerBundlePassed)
-                    continue;
-
-                TradeTriggerEvent candidateTrigger;
-                if (!TryResolvePrimaryTradeTrigger(candidatesOnBar, selectedOptions, isBullish, out candidateTrigger))
-                    continue;
-
-                var candidateTriggerIndex = ResolveSourceBarIndex(sourceBars, candidateTrigger.BarTime);
-                if (!IsValidBarIndex(sourceBars, candidateTriggerIndex))
-                    continue;
-                var candidatePatternEndIndex = candidateTriggerIndex;
-                int candidatePatternStartIndex;
-                int resolvedPatternEndIndex;
-                if (TryGetCustomEventPatternWindow(candidateTrigger.Option, candidateTriggerIndex, out candidatePatternStartIndex, out resolvedPatternEndIndex))
-                    candidatePatternEndIndex = Math.Min(resolvedPatternEndIndex, sourceBars.Count - 2);
-                if (!CTraderStrategyEngine.IsFirstDirectionalBarAfter(
-                    sourceBars,
-                    candidatePatternEndIndex,
-                    justClosedIndex,
-                    isBullish))
-                    continue;
-
-                priorTrigger = candidateTrigger;
-                priorPatternEndIndex = candidatePatternEndIndex;
-                priorStopDistance = ResolveTradeTriggerStopDistance(candidatesOnBar, selectedOptions, isBullish);
-                break;
-            }
-
-            if (string.IsNullOrWhiteSpace(priorTrigger.Name))
-            {
-                SafePrint(
-                    "[WaitConfirm] cancelled symbol={0} tf={1} closed={2:yyyy-MM-dd HH:mm} side={3} selected_trigger_bundle_missing mode={4} lookback=5",
-                    symbolName,
-                    GetMiniChartLabel(strategyTimeFrame),
-                    confirmationTime,
-                    isBullish ? "BUY" : "SELL",
-                    SelectedStrategyCustomEventsMode);
-                return false;
-            }
-
-            var priorName = priorTrigger.Name;
-            var priorBarTime = priorTrigger.BarTime;
-            var waitConfirmTriggerKey = BuildWaitConfirmTriggerKey(symbolName, strategyTimeFrame, priorBarTime, isBullish, priorName);
-            if (_usedWaitConfirmTriggerKeys.Contains(waitConfirmTriggerKey))
-                return false;
-
-            var currentRange = Math.Max(sourceBars.HighPrices[justClosedIndex] - sourceBars.LowPrices[justClosedIndex], 0);
-            var originalPatternLow = 0.0;
-            var originalPatternHigh = 0.0;
-            var relatedStopLevels = new List<double>();
-            var priorTriggerIndex = ResolveSourceBarIndex(sourceBars, priorBarTime);
-            int patternStartIndex;
-            int patternEndIndex;
-            if (TryGetCustomEventPatternWindow(priorTrigger.Option, priorTriggerIndex, out patternStartIndex, out patternEndIndex))
-            {
-                patternEndIndex = Math.Min(patternEndIndex, sourceBars.Count - 2);
-                originalPatternLow = Enumerable.Range(patternStartIndex, patternEndIndex - patternStartIndex + 1)
-                    .Select(index => sourceBars.LowPrices[index])
-                    .Min();
-                originalPatternHigh = Enumerable.Range(patternStartIndex, patternEndIndex - patternStartIndex + 1)
-                    .Select(index => sourceBars.HighPrices[index])
-                    .Max();
-                relatedStopLevels.Add(originalPatternLow);
-                relatedStopLevels.Add(originalPatternHigh);
-            }
-            if (priorTrigger.HasCanonicalEvent && priorTrigger.CanonicalEvent.ZoneHigh > priorTrigger.CanonicalEvent.ZoneLow)
-            {
-                relatedStopLevels.Add(priorTrigger.CanonicalEvent.ZoneLow);
-                relatedStopLevels.Add(priorTrigger.CanonicalEvent.ZoneHigh);
-            }
-            signal = new BacktestStrategySignal
-            {
-                IsValid = true,
-                StrategyId = "custom_trade",
-                StrategyMode = BacktestStrategyMode.CustomTrade,
-                SymbolName = symbolName,
-                SourceLabel = priorName,
-                TradeType = isBullish ? TradeType.Buy : TradeType.Sell,
-                SourceTimeFrame = strategyTimeFrame,
-                // The group belongs to this just-closed confirmation bar, not the older trigger.
-                SignalTime = sourceBars.OpenTimes[justClosedIndex],
-                EntryConfirmationTime = sourceBars.OpenTimes[justClosedIndex],
-                PatternToEntryBars = CTraderStrategyEngine.ResolvePatternToEntryBars(priorPatternEndIndex, justClosedIndex),
-                TradeChainSlot = tradeChainSlot,
-                WaitConfirmTriggerKey = waitConfirmTriggerKey,
-                UseLimitOrder = false,
-                EntryPrice = close,
-                EventSlDistance = Math.Max(priorStopDistance, currentRange),
-                OriginalPatternLow = originalPatternLow,
-                OriginalPatternHigh = originalPatternHigh,
-                RelatedZoneLow = priorTrigger.HasCanonicalEvent ? priorTrigger.CanonicalEvent.ZoneLow : 0,
-                RelatedZoneHigh = priorTrigger.HasCanonicalEvent ? priorTrigger.CanonicalEvent.ZoneHigh : 0,
-                RelatedStopLevels = relatedStopLevels,
-                Note = string.Format(
-                    CultureInfo.InvariantCulture,
-                    "[wait_confirm trigger={0}@{1:yyyy-MM-dd HH:mm}; lookback=5]",
-                    priorName,
-                    priorBarTime)
-            };
-            ApplyStrategyConfluenceSizing(symbolName, strategyTimeFrame, ref signal);
-            SafePrint(
-                "[WaitConfirm] matched symbol={0} tf={1} closed={2:yyyy-MM-dd HH:mm} side={3} trigger={4}@{5:yyyy-MM-dd HH:mm} lookback=5 slot=#{6}",
-                symbolName,
-                GetMiniChartLabel(strategyTimeFrame),
-                signal.SignalTime,
-                signal.TradeType == TradeType.Buy ? "BUY" : "SELL",
-                priorName,
-                priorBarTime,
-                tradeChainSlot);
-            return true;
-        }
-
         private bool MarkerMatchesSelectedCandleOption(
             DirectionalPatternMarkerAggregate marker,
             IEnumerable<StrategyCustomEventOption> selectedOptions)
@@ -24810,23 +24698,6 @@ namespace cAlgo.Robots
                 high = Math.Max(high, sourceBars.HighPrices[index]);
             }
             return low < double.MaxValue && high > double.MinValue ? Math.Max(0, high - low) : 0;
-        }
-
-        private string BuildWaitConfirmTriggerKey(
-            string symbolName,
-            TimeFrame timeFrame,
-            DateTime markerBarTime,
-            bool isBullish,
-            string canonicalName)
-        {
-            return string.Format(
-                CultureInfo.InvariantCulture,
-                "WAITCONFIRM|{0}|{1}|{2}|{3}|{4}",
-                string.IsNullOrWhiteSpace(symbolName) ? "" : symbolName.Trim().ToUpperInvariant(),
-                GetTimeFrameShortLabel(timeFrame),
-                isBullish ? "B" : "S",
-                markerBarTime.Ticks,
-                canonicalName ?? "");
         }
 
         private bool TryBuildCustomCandlePatternSignalPlan(string symbolName, TimeFrame strategyTimeFrame, TradeType tradeType, out CandlePatternSignalPlan plan)
@@ -25704,14 +25575,14 @@ namespace cAlgo.Robots
                 symbol, signal.TradeType, entryPrice, stopLoss, targetRewardRisk, multiplier);
         }
 
-        private string BuildStrategyOrderComment(string sid, int legNumber, string symbolName, TimeFrame sourceTimeFrame, string eventName, double entryPrice = 0, double takeProfit = 0, double stopLoss = 0, string riskComment = "", string entryMode = "", bool isLimitOrder = false, int patternToEntryBars = 1)
+        private string BuildStrategyOrderComment(string sid, int legNumber, string symbolName, TimeFrame sourceTimeFrame, string eventName, double entryPrice = 0, double takeProfit = 0, double stopLoss = 0, string riskComment = "", string entryMode = "", bool isLimitOrder = false, int patternToEntryBars = 1, DateTime triggerBarTime = default(DateTime))
         {
             if (sourceTimeFrame == null)
                 return "";
 
             var sb = new StringBuilder();
             // Keep broker comments human-verifiable and aligned with the chart label:
-            // m5.pin.r.h|Wait_confirm.1|... . The old #1_m5 prefix and mode: token
+            // m5.pin.r.h|Wait_confirm.1-3|tr:2608251430|... . The old #1_m5 prefix and mode: token
             // obscured the event and made comments diverge from cTrader naming.
             var eventLabel = string.IsNullOrWhiteSpace(eventName) ? "event" : eventName.Trim();
             eventLabel = eventLabel
@@ -25724,6 +25595,8 @@ namespace cAlgo.Robots
             sb.Append(eventLabel)
                 .Append('|')
                 .Append(CTraderStrategyEngine.FormatEntryModeLeg(entryMode, legNumber, patternToEntryBars));
+            if (triggerBarTime != DateTime.MinValue)
+                sb.Append("|tr:").Append(triggerBarTime.ToString("yyMMddHHmm", CultureInfo.InvariantCulture));
             if (!string.IsNullOrWhiteSpace(riskComment))
                 sb.Append('|').Append(riskComment.Trim());
             var priceRoute = BuildPriceCommentSuffix(entryPrice, takeProfit, stopLoss);
@@ -26320,6 +26193,7 @@ namespace cAlgo.Robots
                 + ",\"trade_chain_slot\":" + Math.Max(1, signal.TradeChainSlot).ToString(CultureInfo.InvariantCulture)
                 + ",\"trade_chain_mode\":\"" + (pending.EntryBarMode == StrategyEntryBarMode.First_bar_same_trend ? StrategyTradeChainMode.Wait_confirm.ToString() : StrategyTradeChainMode.Now.ToString()) + "\""
                 + ",\"entry_bar_mode\":\"" + pending.EntryBarMode + "\""
+                + ",\"pattern_to_entry_bars\":" + Math.Max(1, signal.PatternToEntryBars).ToString(CultureInfo.InvariantCulture)
                 + ",\"strategy_id\":\"" + EscapeJson(signal.StrategyId) + "\""
                 + ",\"strategy_mode\":\"" + signal.StrategyMode + "\""
                 + ",\"source_label\":\"" + EscapeJson(signal.SourceLabel) + "\""
@@ -26436,16 +26310,6 @@ namespace cAlgo.Robots
                     continue;
                 serverActionIds.Add(actionId);
                 var actionType = ConvertToInvariantString(GetDictionaryValue(action, "action_type"));
-                // Entry confirmation is now evaluated directly from each just-closed strategy
-                // bar. Do not restore legacy trade-entry waiters from the shared action queue.
-                if (string.Equals(actionType, "trade.open", StringComparison.OrdinalIgnoreCase))
-                {
-                    _pendingStrategyEntries.Remove(actionId);
-                    _strategyQueueTerminalUpdates[actionId] = "CANCELLED";
-                    _releasedEntryBarSignalKeys.Add(actionId);
-                    SafePrint("[ActionQueue] Cancelled legacy trade-entry waiter: action_id={0}", actionId);
-                    continue;
-                }
                 if (!string.IsNullOrWhiteSpace(actionType) && !string.Equals(actionType, "trade.open", StringComparison.OrdinalIgnoreCase))
                     continue;
                 var alreadyPending = _pendingStrategyEntries.ContainsKey(actionId);
@@ -26490,6 +26354,7 @@ namespace cAlgo.Robots
                     TradeType = tradeType,
                     SourceTimeFrame = sourceTimeFrame,
                     SignalTime = signalTime,
+                    PatternToEntryBars = Math.Max(1, (int)Math.Round(ToSharedRuleNumber(GetDictionaryValue(action, "pattern_to_entry_bars")))),
                     TradeChainSlot = tradeChainSlot,
                     UseLimitOrder = SharedRuleTruthy(GetDictionaryValue(action, "use_limit_order")),
                     EntryPrice = ToSharedRuleNumber(GetDictionaryValue(action, "entry")),
@@ -26531,6 +26396,7 @@ namespace cAlgo.Robots
                     RequireHtfBiasConfluence = SharedRuleTruthy(GetDictionaryValue(action, "require_htf_bias")),
                     EntryBarMode = entryBarMode
                 };
+                AddCustomTradeTriggerMarker(symbolName, signal);
                 if (alreadyPending) updated++; else restored++;
             }
             var removed = 0;
@@ -26661,8 +26527,8 @@ namespace cAlgo.Robots
 
         private bool TryPassStrategyEntryBarGate(string symbolName, ref BacktestStrategySignal signal, bool requireHtfBiasConfluence)
         {
-            // Closed-bar Wait_confirm signals are already confirmed by the scheduler matcher.
-            // They must proceed directly instead of creating a second queue item.
+            // Signals explicitly stamped with their trigger bar as confirmation (Now) proceed
+            // directly. Wait_confirm keeps the immutable original trigger in the pending queue.
             if (signal.EntryConfirmationTime != DateTime.MinValue && signal.EntryConfirmationTime == signal.SignalTime)
                 return true;
 
@@ -26729,13 +26595,21 @@ namespace cAlgo.Robots
             try
             {
                 var confirmationBars = GetBarsForCurrentMasterTimer(signal.SourceTimeFrame, symbolName);
+                var triggerIndex = ResolveSourceBarIndex(confirmationBars, signal.SignalTime);
                 var confirmationIndex = ResolveSourceBarIndex(confirmationBars, entryBarTime);
                 if (IsValidBarIndex(confirmationBars, confirmationIndex))
+                {
                     signal.EntryPrice = confirmationBars.ClosePrices[confirmationIndex];
+                    signal.EventSlDistance = Math.Max(
+                        signal.EventSlDistance,
+                        Math.Max(0, confirmationBars.HighPrices[confirmationIndex] - confirmationBars.LowPrices[confirmationIndex]));
+                    signal.PatternToEntryBars = CTraderStrategyEngine.ResolvePatternToEntryBars(triggerIndex, confirmationIndex);
+                }
             }
             catch
             {
             }
+            ApplyStrategyConfluenceSizing(symbolName, signal.SourceTimeFrame, ref signal);
             SafePrint(
                 "[Strategy] Entry bar matched: {0} {1} trigger={2:yyyy-MM-dd HH:mm} entry_bar={3:yyyy-MM-dd HH:mm} mode={4}",
                 symbolName,
@@ -26763,21 +26637,6 @@ namespace cAlgo.Robots
             var pending = _pendingStrategyEntries.Values.ToList();
             foreach (var item in pending)
                 ExecuteBacktestStrategySignal(item.SymbolName, item.Signal, item.RequireHtfBiasConfluence);
-        }
-
-        private void CancelLegacyPendingTradeEntries()
-        {
-            if (_pendingStrategyEntries.Count == 0)
-                return;
-
-            var actionIds = _pendingStrategyEntries.Keys.ToList();
-            _pendingStrategyEntries.Clear();
-            foreach (var actionId in actionIds)
-            {
-                _strategyQueueTerminalUpdates[actionId] = "CANCELLED";
-                _releasedEntryBarSignalKeys.Add(actionId);
-            }
-            SafePrint("[ActionQueue] Cancelled {0} legacy trade-entry waiter(s); Wait_confirm now uses closed-bar matching", actionIds.Count);
         }
 
         private void RebuildConfirmedEntryProtection(
@@ -26900,12 +26759,12 @@ namespace cAlgo.Robots
 
             for (var tradeChainSlot = 1; tradeChainSlot <= 3; tradeChainSlot++)
             {
-                // Wait_confirm is built from a later just-closed bar by the CustomTrade
-                // scheduler path below. It must not queue when the original event fires.
-                if (ResolveStrategyTradeChainMode(tradeChainSlot) != StrategyTradeChainMode.Now)
+                var tradeChainMode = ResolveStrategyTradeChainMode(tradeChainSlot);
+                if (tradeChainMode == StrategyTradeChainMode.No)
                     continue;
                 var stagedSignal = signal;
                 stagedSignal.TradeChainSlot = tradeChainSlot;
+                stagedSignal.PatternToEntryBars = 1;
                 ExecuteBacktestStrategySignalStage(symbolName, stagedSignal, requireHtfBiasConfluence);
             }
         }
@@ -27319,7 +27178,8 @@ namespace cAlgo.Robots
                         firstOrderRiskComment,
                         GetStrategyOrderEntryModeComment(signal),
                         true,
-                        signal.PatternToEntryBars));
+                        signal.PatternToEntryBars,
+                        signal.SignalTime));
 
                 if (result != null && result.IsSuccessful && result.PendingOrder != null)
                 {
@@ -27367,16 +27227,12 @@ namespace cAlgo.Robots
                         firstOrderRiskComment,
                         GetStrategyOrderEntryModeComment(signal),
                         false,
-                        signal.PatternToEntryBars));
+                        signal.PatternToEntryBars,
+                        signal.SignalTime));
             }
 
             if (result != null && result.IsSuccessful)
             {
-                if (!string.IsNullOrWhiteSpace(signal.WaitConfirmTriggerKey))
-                {
-                    _usedWaitConfirmTriggerKeys.Add(signal.WaitConfirmTriggerKey);
-                    SafePrint("[WaitConfirm] consumed trigger={0}", signal.WaitConfirmTriggerKey);
-                }
                 var finalApprovedSl = approvedSl;
                 var finalApprovedTp = approvedTp;
                 if (result.Position != null)
@@ -27572,7 +27428,8 @@ namespace cAlgo.Robots
                             extraRiskComment,
                             GetStrategyOrderEntryModeComment(signal),
                             true,
-                            signal.PatternToEntryBars));
+                            signal.PatternToEntryBars,
+                            signal.SignalTime));
                     if (extraResult == null || !extraResult.IsSuccessful)
                     {
                         SafePrint(
@@ -28188,9 +28045,10 @@ namespace cAlgo.Robots
                 _lastStrategyEngineScanUtc = DateTime.UtcNow;
                 EnsureSharedConfigCatalogLoaded();
                 ProcessSharedPositionRuleActions();
-                CancelLegacyPendingTradeEntries();
                 if (configuredStrategies.Count == 0)
                     return true;
+                if (configuredStrategies.Contains(BacktestStrategyMode.CustomTrade))
+                    ProcessAllPendingStrategyEntries();
                 var isBacktesting = IsBacktestingRuntime();
                 if (isBacktesting && _backtestRiskStopTriggered)
                     return true;
@@ -28240,6 +28098,7 @@ namespace cAlgo.Robots
                                 BacktestStrategySignal customSignal;
                                 if (TryBuildCustomTradeSignal(target.SymbolName, target.TimeFrame, out customSignal))
                                 {
+                                    AddCustomTradeTriggerMarker(target.SymbolName, customSignal);
                                     ExecuteBacktestStrategySignal(target.SymbolName, customSignal, false);
                                 }
                                 else
@@ -28251,12 +28110,6 @@ namespace cAlgo.Robots
                                         "[Strategy] Trigger audit {0}: {1}",
                                         target.SymbolName,
                                         BuildCustomTradeTriggerAudit(target.SymbolName, target.TimeFrame));
-                                }
-                                for (var tradeChainSlot = 1; tradeChainSlot <= 3; tradeChainSlot++)
-                                {
-                                    BacktestStrategySignal waitConfirmSignal;
-                                    if (TryBuildCustomWaitConfirmSignal(target.SymbolName, target.TimeFrame, tradeChainSlot, out waitConfirmSignal))
-                                        ExecuteBacktestStrategySignal(target.SymbolName, waitConfirmSignal, false);
                                 }
                                 MarkLiveStrategyBarProcessed(strategyMode, target.SymbolName, target.TimeFrame);
                                 break;
@@ -38219,6 +38072,37 @@ namespace cAlgo.Robots
             });
         }
 
+        private void AddCustomTradeTriggerMarker(string symbolName, BacktestStrategySignal signal)
+        {
+            if (string.IsNullOrWhiteSpace(symbolName) || signal.SignalTime == DateTime.MinValue)
+                return;
+
+            var markerPrice = signal.EntryPrice;
+            try
+            {
+                var sourceBars = GetBarsForCurrentMasterTimer(signal.SourceTimeFrame, symbolName);
+                var triggerIndex = ResolveSourceBarIndex(sourceBars, signal.SignalTime);
+                if (IsValidBarIndex(sourceBars, triggerIndex))
+                    markerPrice = signal.TradeType == TradeType.Buy
+                        ? sourceBars.LowPrices[triggerIndex]
+                        : sourceBars.HighPrices[triggerIndex];
+            }
+            catch
+            {
+            }
+
+            AddStrategyChartMarker(new StrategyChartMarker
+            {
+                PositionId = BuildVisualStrategyMarkerId(symbolName, BacktestStrategyMode.CustomTrade, signal.TradeType, signal.SignalTime),
+                SymbolName = symbolName,
+                TradeType = signal.TradeType,
+                Kind = StrategyMarkerKind.Trigger,
+                Time = signal.SignalTime,
+                Price = markerPrice,
+                Text = signal.SourceLabel ?? "event"
+            });
+        }
+
         private static long BuildVisualStrategyMarkerId(string symbolName, BacktestStrategyMode mode, TradeType tradeType, DateTime signalTime)
         {
             unchecked
@@ -40085,7 +39969,7 @@ namespace cAlgo.Robots
         public static int ResolvePatternToEntryBars(int patternEndIndex, int confirmationIndex)
         {
             return patternEndIndex >= 0 && confirmationIndex >= patternEndIndex
-                ? Math.Max(1, confirmationIndex - patternEndIndex + 1)
+                ? Math.Max(1, confirmationIndex - patternEndIndex)
                 : 1;
         }
 
