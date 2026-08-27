@@ -5760,14 +5760,14 @@ namespace cAlgo.Robots
             switch (mode)
             {
                 case RsiVisualMode.R21:
-                    return new RsiIndicatorConfig { Period = 21, Midline = 50.0, Oversold = 25.0, Overbought = 60.0 };
+                    return new RsiIndicatorConfig { Period = 21, Midline = 50.0, Oversold = 30.0, Overbought = 70.0 };
                 case RsiVisualMode.Off:
                     return new RsiIndicatorConfig();
                 case RsiVisualMode.R14:
                 case RsiVisualMode.Auto:
                 case RsiVisualMode.Auto_Custom:
                 default:
-                    return new RsiIndicatorConfig { Period = 14, Midline = 50.0, Oversold = 25.0, Overbought = 60.0 };
+                    return new RsiIndicatorConfig { Period = 14, Midline = 50.0, Oversold = 30.0, Overbought = 70.0 };
             }
         }
 
@@ -5776,16 +5776,16 @@ namespace cAlgo.Robots
             switch (mode)
             {
                 case StochasticVisualMode.S9_3_3:
-                    return new StochasticIndicatorConfig { KPeriod = 9, DPeriod = 3, OversoldLevel = 20, OverboughtLevel = 80 };
+                    return new StochasticIndicatorConfig { KPeriod = 9, DPeriod = 3, OversoldLevel = 30, OverboughtLevel = 70 };
                 case StochasticVisualMode.S21_5_5:
-                    return new StochasticIndicatorConfig { KPeriod = 21, DPeriod = 5, OversoldLevel = 20, OverboughtLevel = 80 };
+                    return new StochasticIndicatorConfig { KPeriod = 21, DPeriod = 5, OversoldLevel = 30, OverboughtLevel = 70 };
                 case StochasticVisualMode.Off:
                     return new StochasticIndicatorConfig();
                 case StochasticVisualMode.S14_3_3:
                 case StochasticVisualMode.Auto:
                 case StochasticVisualMode.Auto_Custom:
                 default:
-                    return new StochasticIndicatorConfig { KPeriod = 14, DPeriod = 3, OversoldLevel = 20, OverboughtLevel = 80 };
+                    return new StochasticIndicatorConfig { KPeriod = 14, DPeriod = 3, OversoldLevel = 30, OverboughtLevel = 70 };
             }
         }
 
@@ -6141,11 +6141,19 @@ namespace cAlgo.Robots
         private Color ResolveIchimokuLineColor(string lineName)
         {
             var name = (lineName ?? "").ToLowerInvariant();
-            var lineColor = Color.FromArgb(255, 125, 211, 252);
-            var baseColor = Color.FromArgb(255, 96, 165, 250);
-            return name.Contains("kijun") || name.Contains("span b") || name.Contains("senkou b")
-                ? baseColor
-                : lineColor;
+            // Conventional Ichimoku palette with light/dark variants. Reduced alpha keeps
+            // the five native lines readable without overpowering price and event visuals.
+            if (name.Contains("tenkan") || name.Contains("conversion"))
+                return Color.FromArgb(185, 125, 211, 252); // light blue
+            if (name.Contains("kijun") || name.Contains("base"))
+                return Color.FromArgb(185, 220, 38, 38); // dark red
+            if (name.Contains("chikou") || name.Contains("lagging"))
+                return Color.FromArgb(145, 110, 231, 183); // light green
+            if (name.Contains("span b") || name.Contains("senkou b"))
+                return Color.FromArgb(140, 234, 88, 12); // dark red-orange
+            if (name.Contains("span a") || name.Contains("senkou a"))
+                return Color.FromArgb(140, 22, 163, 74); // dark green
+            return Color.FromArgb(150, 125, 211, 252);
         }
 
         private void ApplyIndicatorLineStyle(ChartIndicator indicator, Color color = null, Func<string, Color> colorSelector = null)
@@ -16367,8 +16375,8 @@ namespace cAlgo.Robots
             return CrossesAbove(
                 ComputeRawStochasticK(sourceBars, index - 1, 14),
                 ComputeRawStochasticK(sourceBars, index, 14),
-                20.0,
-                20.0);
+                30.0,
+                30.0);
         }
 
         private bool MatchBearishStochasticExitOverbought(Bars sourceBars, int index)
@@ -16379,8 +16387,8 @@ namespace cAlgo.Robots
             return CrossesBelow(
                 ComputeRawStochasticK(sourceBars, index - 1, 14),
                 ComputeRawStochasticK(sourceBars, index, 14),
-                80.0,
-                80.0);
+                70.0,
+                70.0);
         }
 
         private bool MatchBullishMacdCross(Bars sourceBars, int index)
