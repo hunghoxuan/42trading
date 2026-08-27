@@ -6124,18 +6124,18 @@ namespace cAlgo.Robots
         // visual defaults after every add/refresh so their appearance is deterministic.
         private void ApplyManagedIndicatorLineStyles()
         {
-            ApplyIndicatorLineStyle(_chartEmaFastIndicator, Color.FromArgb(255, 56, 189, 248));
-            ApplyIndicatorLineStyle(_chartEmaMidIndicator, Color.FromArgb(255, 56, 189, 248));
-            ApplyIndicatorLineStyle(_chartEmaSlowIndicator, Color.FromArgb(255, 56, 189, 248));
-            ApplyIndicatorLineStyle(_chartVwapIndicator, Color.FromArgb(255, 250, 204, 21));
-            ApplyIndicatorLineStyle(_chartBollingerIndicator, Color.FromArgb(255, 244, 114, 182));
+            ApplyIndicatorLineStyle(_chartEmaFastIndicator, Color.FromArgb(120, 56, 189, 248));
+            ApplyIndicatorLineStyle(_chartEmaMidIndicator, Color.FromArgb(120, 56, 189, 248));
+            ApplyIndicatorLineStyle(_chartEmaSlowIndicator, Color.FromArgb(120, 56, 189, 248));
+            ApplyIndicatorLineStyle(_chartVwapIndicator, Color.FromArgb(120, 250, 204, 21));
+            ApplyIndicatorLineStyle(_chartBollingerIndicator, Color.FromArgb(120, 244, 114, 182));
             ApplyIndicatorLineStyle(_chartIchimokuIndicator, null, ResolveIchimokuLineColor);
 
-            // Keep RSI visually distinct in the shared oscillator panel; Stochastic/MACD
-            // retain their platform colors while all managed lines use the requested style.
+            // RSI and Stochastic intentionally retain full opacity in their shared panel.
+            // MACD keeps its platform RGB palette with the reduced technical-line alpha.
             ApplyIndicatorLineStyle(_chartRsiIndicator, Color.FromArgb(255, 250, 204, 21));
             ApplyIndicatorLineStyle(_chartStochasticIndicator, null);
-            ApplyIndicatorLineStyle(_chartMacdIndicator, null);
+            ApplyIndicatorLineStyle(_chartMacdIndicator, null, null, 120);
         }
 
         private Color ResolveIchimokuLineColor(string lineName)
@@ -6144,19 +6144,19 @@ namespace cAlgo.Robots
             // Conventional Ichimoku palette with light/dark variants. Reduced alpha keeps
             // the five native lines readable without overpowering price and event visuals.
             if (name.Contains("tenkan") || name.Contains("conversion"))
-                return Color.FromArgb(185, 125, 211, 252); // light blue
+                return Color.FromArgb(120, 125, 211, 252); // light blue
             if (name.Contains("kijun") || name.Contains("base"))
-                return Color.FromArgb(185, 220, 38, 38); // dark red
+                return Color.FromArgb(120, 220, 38, 38); // dark red
             if (name.Contains("chikou") || name.Contains("lagging"))
-                return Color.FromArgb(145, 110, 231, 183); // light green
+                return Color.FromArgb(100, 110, 231, 183); // light green
             if (name.Contains("span b") || name.Contains("senkou b"))
-                return Color.FromArgb(140, 234, 88, 12); // dark red-orange
+                return Color.FromArgb(90, 234, 88, 12); // dark red-orange
             if (name.Contains("span a") || name.Contains("senkou a"))
-                return Color.FromArgb(140, 22, 163, 74); // dark green
-            return Color.FromArgb(150, 125, 211, 252);
+                return Color.FromArgb(90, 22, 163, 74); // dark green
+            return Color.FromArgb(100, 125, 211, 252);
         }
 
-        private void ApplyIndicatorLineStyle(ChartIndicator indicator, Color color = null, Func<string, Color> colorSelector = null)
+        private void ApplyIndicatorLineStyle(ChartIndicator indicator, Color color = null, Func<string, Color> colorSelector = null, int alpha = -1)
         {
             if (indicator == null || indicator.LineOutputs == null)
                 return;
@@ -6171,6 +6171,8 @@ namespace cAlgo.Robots
                     line.Color = colorSelector(line.Name);
                 else if (color != null)
                     line.Color = color;
+                else if (alpha >= 0)
+                    line.Color = WithAlpha(line.Color, alpha);
             }
         }
 
@@ -14670,7 +14672,7 @@ namespace cAlgo.Robots
                     previousValue,
                     Bars.OpenTimes[i],
                     currentValue,
-                    WithAlpha(color, 180));
+                    WithAlpha(color, 120));
                 TrySetPropertyValue(line, "Thickness", 1);
                 TrySetEnumPropertyValue(line, "LineStyle", lineStyle);
                 TrySetPropertyValue(line, "ZIndex", 2);
@@ -14698,7 +14700,7 @@ namespace cAlgo.Robots
                     " " + displayLabel,
                     labelTime,
                     lastValidValue + familyOffset,
-                    color);
+                    WithAlpha(color, 150));
                 TryStyleChartText(label, labelFontSize, "Courier New", true);
                 TrySetPropertyValue(label, "ZIndex", 3);
             }
@@ -14715,8 +14717,10 @@ namespace cAlgo.Robots
             var start = Math.Max(requestedStart, Bars.Count - MaxIndicatorSegmentsPerSeries - 1);
             var bullishCloudColor = Color.FromArgb(255, 34, 197, 94);
             var bearishCloudColor = Color.FromArgb(255, 239, 68, 68);
-            var lineColor = Color.FromArgb(255, 125, 211, 252);
-            var baseColor = Color.FromArgb(255, 96, 165, 250);
+            var tenkanColor = ResolveIchimokuLineColor("Tenkan Sen");
+            var kijunColor = ResolveIchimokuLineColor("Kijun Sen");
+            var spanAColor = ResolveIchimokuLineColor("Senkou Span A");
+            var spanBColor = ResolveIchimokuLineColor("Senkou Span B");
 
             for (var i = start; i < Bars.Count; i++)
             {
@@ -14736,16 +14740,16 @@ namespace cAlgo.Robots
                     var prevSpanB = ComputeIchimokuSpanB(Bars, i - 1, _resolvedIchimokuOverlayConfig);
 
                     if (IsFiniteNumber(prevConversion) && IsFiniteNumber(conversion))
-                        objectIndex = DrawIndicatorSegment(objectIndex, "ICHI_TENKAN_", i, prevConversion, conversion, WithAlpha(lineColor, 180), 1, "Dots");
+                        objectIndex = DrawIndicatorSegment(objectIndex, "ICHI_TENKAN_", i, prevConversion, conversion, tenkanColor, 1, "Dots");
 
                     if (IsFiniteNumber(prevBaseLine) && IsFiniteNumber(baseLine))
-                        objectIndex = DrawIndicatorSegment(objectIndex, "ICHI_KIJUN_", i, prevBaseLine, baseLine, WithAlpha(baseColor, 210), 1, "Dots");
+                        objectIndex = DrawIndicatorSegment(objectIndex, "ICHI_KIJUN_", i, prevBaseLine, baseLine, kijunColor, 1, "Dots");
 
                     if (IsFiniteNumber(prevSpanA) && IsFiniteNumber(spanA))
-                        objectIndex = DrawIndicatorSegment(objectIndex, "ICHI_SPANA_", i, prevSpanA, spanA, WithAlpha(lineColor, 96), 1, "Dots");
+                        objectIndex = DrawIndicatorSegment(objectIndex, "ICHI_SPANA_", i, prevSpanA, spanA, spanAColor, 1, "Dots");
 
                     if (IsFiniteNumber(prevSpanB) && IsFiniteNumber(spanB))
-                        objectIndex = DrawIndicatorSegment(objectIndex, "ICHI_SPANB_", i, prevSpanB, spanB, WithAlpha(baseColor, 96), 1, "Dots");
+                        objectIndex = DrawIndicatorSegment(objectIndex, "ICHI_SPANB_", i, prevSpanB, spanB, spanBColor, 1, "Dots");
 
                     if (IsFiniteNumber(prevSpanA) && IsFiniteNumber(prevSpanB) && IsFiniteNumber(spanA) && IsFiniteNumber(spanB))
                     {
@@ -14758,7 +14762,7 @@ namespace cAlgo.Robots
                             upper,
                             Bars.OpenTimes[i],
                             lower,
-                            WithAlpha(cloudColor, 22));
+                            WithAlpha(cloudColor, 14));
                         TrySetPropertyValue(cloud, "BorderColor", WithAlpha(cloudColor, 0));
                         TrySetPropertyValue(cloud, "ZIndex", 1);
                         objectIndex++;
@@ -14767,7 +14771,7 @@ namespace cAlgo.Robots
             }
 
             var kijunValue = ComputeIchimokuBaseLine(Bars, Bars.Count - 1, _resolvedIchimokuOverlayConfig);
-            DrawRightEdgeIndicatorLabel("ICHI_KIJUN_", objectIndex, kijunValue, baseColor, GetIchimokuOverlayPairLabel(), 9, 2);
+            DrawRightEdgeIndicatorLabel("ICHI_KIJUN_", objectIndex, kijunValue, WithAlpha(kijunColor, 140), GetIchimokuOverlayPairLabel(), 9, 2);
             return objectIndex;
         }
 
@@ -14797,7 +14801,7 @@ namespace cAlgo.Robots
                 " " + displayLabel,
                 labelTime,
                 value + familyOffset,
-                color);
+                WithAlpha(color, 150));
             TryStyleChartText(label, labelFontSize, "Courier New", true);
             TrySetPropertyValue(label, "ZIndex", 3);
         }
