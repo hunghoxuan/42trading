@@ -556,7 +556,6 @@ namespace cAlgo.Robots
             AllCustom,
             None,
             PerItem,
-            PerItem_Custom,
             Ema,
             Vwap,
             Bollinger,
@@ -4937,8 +4936,7 @@ namespace cAlgo.Robots
         private void ApplyMomentumTechnicalCombo()
         {
             _forceCustomTechnicalOverlays =
-                MomentumTechnicalCombo == MomentumTechnicalComboMode.AllCustom ||
-                MomentumTechnicalCombo == MomentumTechnicalComboMode.PerItem_Custom;
+                MomentumTechnicalCombo == MomentumTechnicalComboMode.AllCustom;
             var ema = false; var vwap = false; var bb = false; var ichi = false;
             var emaE = false; var vwapE = false; var bbE = false; var rsiE = false; var stoE = false; var macdE = false;
             switch (MomentumTechnicalCombo)
@@ -4951,7 +4949,6 @@ namespace cAlgo.Robots
                     emaE = true; vwapE = true; bbE = true; rsiE = true; stoE = true; macdE = true;
                     break;
                 case MomentumTechnicalComboMode.PerItem:
-                case MomentumTechnicalComboMode.PerItem_Custom:
                     ema = DrawEmaOverlay != EmaVisualMode.Off;
                     vwap = DrawVwapOverlay != VwapVisualMode.Off;
                     bb = DrawBollingerOverlay != BollingerVisualMode.Off;
@@ -5151,7 +5148,6 @@ namespace cAlgo.Robots
                 case MomentumTechnicalComboMode.AllCustom:
                     return individualEnabled;
                 case MomentumTechnicalComboMode.PerItem:
-                case MomentumTechnicalComboMode.PerItem_Custom:
                     return individualEnabled;
                 default:
                     return MomentumTechnicalCombo == item;
@@ -5831,8 +5827,8 @@ namespace cAlgo.Robots
             return "ICHI";
         }
 
-        // Auto lets cTrader render a native indicator. Auto_Custom always uses this bot's
-        // code-drawn overlay; the global AllCustom/PerItem_Custom combo keeps that behavior.
+        // In PerItem mode, Auto lets cTrader render the native indicator while Auto_Custom
+        // uses this bot's code-drawn overlay. AllCustom remains the global custom override.
         private bool ShouldUseNativeEmaOverlay()
         {
             return DrawEmaOverlay != EmaVisualMode.Auto_Custom && !_forceCustomTechnicalOverlays;
