@@ -6892,7 +6892,8 @@ namespace cAlgo.Robots
 
             var bodyHigh = Math.Max(open, close);
             var bodyLow = Math.Min(open, close);
-            var minimumBodyHeight = Math.Max(Symbol != null ? Symbol.PipSize : 0.0000001, (high - low) * 0.015);
+            var chartSymbol = ResolveLoadedSymbol(Chart != null ? Chart.SymbolName : "") ?? Symbol;
+            var minimumBodyHeight = Math.Max(chartSymbol != null ? chartSymbol.PipSize : 0.0000001, (high - low) * 0.015);
             if (bodyHigh - bodyLow < minimumBodyHeight)
             {
                 var bodyMid = (bodyHigh + bodyLow) * 0.5;
@@ -7044,8 +7045,8 @@ namespace cAlgo.Robots
                 case 1:
                     RemoveChartObjectsByPrefixes("KZ_", "FVG_", "OB_", "HTF_FVG_", "HTF_OB_", "ZONE_TXT_");
                     if (_toggleKillerZones) objectIndex = DrawConfiguredKillerZones(objectIndex);
-                    if (!ChartObjectsOverBudget() && _toggleFvgZones) objectIndex = DrawRecentFvgZones(Bars, Chart.TimeFrame, "FVG_", objectIndex, GetCurrentChartEndTime());
-                    if (!ChartObjectsOverBudget() && _toggleOrderBlocks) objectIndex = DrawRecentOrderBlocks(Bars, Chart.TimeFrame, "OB_", objectIndex, GetCurrentChartEndTime());
+                    if (!ChartObjectsOverBudget() && _toggleFvgZones) objectIndex = DrawRecentFvgZones(GetCurrentChartVisualBars(), Chart.TimeFrame, "FVG_", objectIndex, GetCurrentChartEndTime());
+                    if (!ChartObjectsOverBudget() && _toggleOrderBlocks) objectIndex = DrawRecentOrderBlocks(GetCurrentChartVisualBars(), Chart.TimeFrame, "OB_", objectIndex, GetCurrentChartEndTime());
                     if (!ChartObjectsOverBudget() && _toggleHigherTimeframeZones) objectIndex = DrawHigherTimeframeZonesOnChart(objectIndex);
                     break;
                 case 2:
@@ -7296,11 +7297,11 @@ namespace cAlgo.Robots
                 }
                 if (_toggleFvgZones)
                 {
-                    objectIndex = DrawRecentFvgZones(Bars, Chart.TimeFrame, "FVG_", objectIndex, GetCurrentChartEndTime());
+                    objectIndex = DrawRecentFvgZones(GetCurrentChartVisualBars(), Chart.TimeFrame, "FVG_", objectIndex, GetCurrentChartEndTime());
                 }
                 if (_toggleOrderBlocks)
                 {
-                    objectIndex = DrawRecentOrderBlocks(Bars, Chart.TimeFrame, "OB_", objectIndex, GetCurrentChartEndTime());
+                    objectIndex = DrawRecentOrderBlocks(GetCurrentChartVisualBars(), Chart.TimeFrame, "OB_", objectIndex, GetCurrentChartEndTime());
                 }
                 if (_toggleHigherTimeframeZones)
                 {
@@ -7638,7 +7639,8 @@ namespace cAlgo.Robots
                 : startTime.AddMinutes(Math.Max(1, TimeFrameToMinutes(sourceTimeFrame)));
             if (endTime <= startTime)
                 endTime = startTime.AddMinutes(Math.Max(1, TimeFrameToMinutes(sourceTimeFrame)));
-            if (Bars != null && Bars.Count > 0 && endTime < Bars.OpenTimes[0])
+            var chartBars = GetCurrentChartVisualBars();
+            if (chartBars != null && chartBars.Count > 0 && endTime < chartBars.OpenTimes[0])
                 return objectIndex;
 
             var open = sourceBars.OpenPrices[sourceIndex];
@@ -7769,7 +7771,8 @@ namespace cAlgo.Robots
                 : startTime.AddMinutes(Math.Max(1, TimeFrameToMinutes(sourceTimeFrame)));
             if (endTime <= startTime)
                 endTime = startTime.AddMinutes(Math.Max(1, TimeFrameToMinutes(sourceTimeFrame)));
-            if (Bars != null && Bars.Count > 0 && endTime < Bars.OpenTimes[0])
+            var chartBars = GetCurrentChartVisualBars();
+            if (chartBars != null && chartBars.Count > 0 && endTime < chartBars.OpenTimes[0])
                 return objectIndex;
 
             var high = sourceBars.HighPrices[sourceIndex];
@@ -7909,7 +7912,8 @@ namespace cAlgo.Robots
                 : startTime.AddMinutes(Math.Max(1, TimeFrameToMinutes(sourceTimeFrame)));
             if (endTime <= startTime)
                 endTime = startTime.AddMinutes(Math.Max(1, TimeFrameToMinutes(sourceTimeFrame)));
-            if (Bars != null && Bars.Count > 0 && endTime < Bars.OpenTimes[0])
+            var chartBars = GetCurrentChartVisualBars();
+            if (chartBars != null && chartBars.Count > 0 && endTime < chartBars.OpenTimes[0])
                 return objectIndex;
 
             var high = sourceBars.HighPrices[sourceIndex];
@@ -8284,7 +8288,8 @@ namespace cAlgo.Robots
         {
             var chartTimeFrame = Chart != null ? Chart.TimeFrame : TimeFrame.Minute;
             var chartTfMinutes = TimeFrameToMinutes(chartTimeFrame);
-            if (chartTfMinutes <= 0 || Bars == null || Bars.Count < 40)
+            var chartBars = GetCurrentChartVisualBars();
+            if (chartTfMinutes <= 0 || chartBars == null || chartBars.Count < 40)
                 return objectIndex;
             if (ChartObjectsOverBudget())
                 return objectIndex;
@@ -8318,7 +8323,11 @@ namespace cAlgo.Robots
                 if (sharedLabelPrice == double.MaxValue || sharedLabelPrice <= 0)
                     sharedLabelPrice = 0;
                 if (sharedHighPrice == double.MinValue || sharedHighPrice <= 0)
-                    sharedHighPrice = sharedLabelPrice > 0 ? sharedLabelPrice + Math.Max(Symbol.PipSize * 200.0, 0.000001) : 0;
+                {
+                    var chartSymbol = ResolveLoadedSymbol(Chart != null ? Chart.SymbolName : "") ?? Symbol;
+                    var chartPipSize = chartSymbol != null ? chartSymbol.PipSize : 0.0000001;
+                    sharedHighPrice = sharedLabelPrice > 0 ? sharedLabelPrice + Math.Max(chartPipSize * 200.0, 0.000001) : 0;
+                }
 
                 // Each mini candle is roughly 3 chart bars wide (per-frame, sized by the
                 // frame's own candle count) so the strip stays compact.
@@ -8358,7 +8367,7 @@ namespace cAlgo.Robots
                         if (slotIndex < miniFrames.Count - 1)
                         {
                             var dividerBars = slotStartBars + slotWidthBars + (slotSpacingBars * 0.5);
-                            var dividerBarIndex = Bars.Count + (int)Math.Round(dividerBars);
+                            var dividerBarIndex = chartBars.Count + (int)Math.Round(dividerBars);
                             var divider = Chart.DrawVerticalLine(
                                 "MINI_DIV_" + objectIndex.ToString(CultureInfo.InvariantCulture),
                                 dividerBarIndex,
@@ -8500,7 +8509,9 @@ namespace cAlgo.Robots
         private int DrawSingleMiniChart(TimeFrame timeFrame, int chartTfMinutes, double futureOffsetBars, int miniSlotIndex, int objectIndex, double sharedLabelPrice = 0, int miniBarCount = 0, double slotWidthBars = 0)
         {
             var sourceBars = GetBarsForCurrentMasterTimer(timeFrame, Chart.SymbolName);
-            if (sourceBars == null || sourceBars.Count < 4)
+            var chartBars = GetCurrentChartVisualBars();
+            var chartSymbol = ResolveLoadedSymbol(Chart != null ? Chart.SymbolName : "") ?? Symbol;
+            if (sourceBars == null || sourceBars.Count < 4 || chartBars == null || chartBars.Count < 4)
                 return objectIndex;
 
             var lastVisibleIndex = sourceBars.Count - 1;
@@ -8532,10 +8543,11 @@ namespace cAlgo.Robots
             var bullishBorder = Color.FromArgb(220, 38, 166, 154);
             var bearishBorder = Color.FromArgb(220, 239, 83, 80);
             var labelColor = WithAlpha(tfBaseColor, 220);
-            var priceRange = Math.Max(priceHigh - priceLow, Symbol.PipSize * 20);
+            var chartPipSize = chartSymbol != null ? chartSymbol.PipSize : 0.0000001;
+            var priceRange = Math.Max(priceHigh - priceLow, chartPipSize * 20);
             var displayWidthBars = slotWidthBars > 0 ? slotWidthBars : GetBarsPerFullDay(chartTfMinutes);
             var slotBarWidth = Math.Max(3.0, displayWidthBars / Math.Max(1, actualCount));
-            var chartBaseBarIndex = Bars.Count;
+            var chartBaseBarIndex = chartBars.Count;
             var labelBarIndex = chartBaseBarIndex + (int)Math.Round(futureOffsetBars + (displayWidthBars * 0.5));
             var slotBarsBySourceIndex = new Dictionary<int, Tuple<int, int>>();
 
@@ -8596,7 +8608,7 @@ namespace cAlgo.Robots
             {
                 // Timeframe tag (e.g. "4H", "D") at the bottom of the mini chart, aligned to the
                 // shared price level (lowest low across all mini frames) so labels line up.
-                var labelGap = Math.Max(Symbol.PipSize * 20.0, 0.000001);
+                var labelGap = Math.Max(chartPipSize * 20.0, 0.000001);
                 var bottomLabelPrice = sharedLabelPrice > 0 ? sharedLabelPrice : priceLow;
                 var bottomLabelY = bottomLabelPrice - labelGap;
 
@@ -9118,23 +9130,24 @@ namespace cAlgo.Robots
 
         private int DrawMiniChartSpacer(int chartTfMinutes, double futureOffsetBars, int objectIndex)
         {
-            if (Bars == null || Bars.Count < 10)
+            var chartBars = GetCurrentChartVisualBars();
+            if (chartBars == null || chartBars.Count < 10)
                 return objectIndex;
 
-            var lookbackBars = Math.Min(Bars.Count, 200);
-            var start = Math.Max(0, Bars.Count - lookbackBars);
+            var lookbackBars = Math.Min(chartBars.Count, 200);
+            var start = Math.Max(0, chartBars.Count - lookbackBars);
             var chartHigh = double.MinValue;
             var chartLow = double.MaxValue;
-            for (var i = start; i < Bars.Count; i++)
+            for (var i = start; i < chartBars.Count; i++)
             {
-                chartHigh = Math.Max(chartHigh, Bars.HighPrices[i]);
-                chartLow = Math.Min(chartLow, Bars.LowPrices[i]);
+                chartHigh = Math.Max(chartHigh, chartBars.HighPrices[i]);
+                chartLow = Math.Min(chartLow, chartBars.LowPrices[i]);
             }
 
             if (chartHigh <= chartLow || chartHigh == double.MinValue || chartLow == double.MaxValue)
                 return objectIndex;
 
-            var padStartBarIndex = Bars.Count + Math.Max(5, (int)Math.Ceiling(futureOffsetBars));
+            var padStartBarIndex = chartBars.Count + Math.Max(5, (int)Math.Ceiling(futureOffsetBars));
             var padEndBarIndex = padStartBarIndex + 8;
             var padColor = Color.FromArgb(1, 255, 255, 255);
             var rect = Chart.DrawRectangle("MINI_PAD_" + objectIndex.ToString(CultureInfo.InvariantCulture), padStartBarIndex, chartHigh, padEndBarIndex, chartLow, padColor);
@@ -9246,8 +9259,9 @@ namespace cAlgo.Robots
 
         private DateTime GetCurrentChartEndTime()
         {
-            if (Bars != null && Bars.Count > 0)
-                return Bars.OpenTimes[Bars.Count - 1];
+            var chartBars = GetCurrentChartVisualBars();
+            if (chartBars != null && chartBars.Count > 0)
+                return chartBars.OpenTimes[chartBars.Count - 1];
             return Server.Time;
         }
 
@@ -20926,9 +20940,13 @@ namespace cAlgo.Robots
         {
             // Avoid a redundant MarketData request for the current chart. This keeps local
             // visuals available when the broker has supplied the chart but has not listed the
-            // symbol in its global symbol collection.
+            // symbol in its global symbol collection. Chart.TryChangeTimeFrameAndSymbol can
+            // change the visible symbol without changing the robot's Bars/ Symbol context, so
+            // only reuse Bars when the requested symbol also matches the attached robot symbol.
             if (Bars != null && Chart != null && timeFrame == Chart.TimeFrame &&
-                string.Equals(NormalizeSymbolAlias(symbolName), NormalizeSymbolAlias(Chart.SymbolName), StringComparison.OrdinalIgnoreCase))
+                Symbol != null &&
+                string.Equals(NormalizeSymbolAlias(symbolName), NormalizeSymbolAlias(Chart.SymbolName), StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(NormalizeSymbolAlias(symbolName), NormalizeSymbolAlias(Symbol.Name), StringComparison.OrdinalIgnoreCase))
                 return Bars;
 
             string brokerSymbol;
@@ -20940,6 +20958,28 @@ namespace cAlgo.Robots
                 brokerSymbol,
                 timeFrame,
                 () => MarketData.GetBars(timeFrame, brokerSymbol));
+        }
+
+        // The visible chart can be switched to another symbol while the cBot remains attached
+        // to its original Symbol/Bars. All chart geometry must therefore use bars belonging to
+        // Chart.SymbolName instead of assuming the robot Bars collection owns the visible axis.
+        private Bars GetCurrentChartVisualBars()
+        {
+            if (Chart == null)
+                return Bars;
+
+            var chartSymbolName = Chart.SymbolName;
+            if (string.IsNullOrWhiteSpace(chartSymbolName))
+                return Bars;
+
+            try
+            {
+                return GetBarsForCurrentMasterTimer(Chart.TimeFrame, chartSymbolName);
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private List<Position> GetCurrentPositionsSnapshot()
