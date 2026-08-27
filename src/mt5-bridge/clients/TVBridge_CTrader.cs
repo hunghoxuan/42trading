@@ -6131,9 +6131,9 @@ namespace cAlgo.Robots
             ApplyIndicatorLineStyle(_chartBollingerIndicator, Color.FromArgb(255, 244, 114, 182));
             ApplyIndicatorLineStyle(_chartIchimokuIndicator, null, ResolveIchimokuLineColor);
 
-            // RSI/Stochastic/MACD have no separate custom chart-rendering palette in this bot;
-            // retain their platform colors while still enforcing the requested dotted style.
-            ApplyIndicatorLineStyle(_chartRsiIndicator, null);
+            // Keep RSI visually distinct in the shared oscillator panel; Stochastic/MACD
+            // retain their platform colors while all managed lines use the requested style.
+            ApplyIndicatorLineStyle(_chartRsiIndicator, Color.FromArgb(255, 250, 204, 21));
             ApplyIndicatorLineStyle(_chartStochasticIndicator, null);
             ApplyIndicatorLineStyle(_chartMacdIndicator, null);
         }
