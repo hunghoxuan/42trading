@@ -5889,6 +5889,9 @@ namespace cAlgo.Robots
         {
             if (ChartIndicators == null)
                 return;
+            var chartBars = GetCurrentChartVisualBars();
+            if (chartBars == null || chartBars.Count < 5)
+                return;
 
             var rsiEnabled =
                 EffectiveMomentumOscillatorEnabled(DrawRsiMode != RsiVisualMode.Off, MomentumTechnicalComboMode.RsiEvents) &&
@@ -5916,14 +5919,19 @@ namespace cAlgo.Robots
             RemoveManagedOscillatorIndicators();
 
             var nextPanelIndex = ResolveOscillatorBasePanelIndex();
+            var sharedRsiStochasticPanelIndex = nextPanelIndex;
+            var sharedRsiStochasticPanelUsed = false;
 
             if (rsiEnabled)
             {
                 _chartRsiIndicator = ChartIndicators.Add(
                     "Relative Strength Index",
-                    new object[] { Bars.ClosePrices, _resolvedRsiEventConfig.Period });
+                    new object[] { chartBars.ClosePrices, _resolvedRsiEventConfig.Period });
                 if (_chartRsiIndicator != null)
-                    _chartRsiIndicator.PanelIndex = nextPanelIndex++;
+                {
+                    _chartRsiIndicator.PanelIndex = sharedRsiStochasticPanelIndex;
+                    sharedRsiStochasticPanelUsed = true;
+                }
             }
 
             if (stochasticEnabled)
@@ -5938,8 +5946,14 @@ namespace cAlgo.Robots
                         MovingAverageType.Simple
                     });
                 if (_chartStochasticIndicator != null)
-                    _chartStochasticIndicator.PanelIndex = nextPanelIndex++;
+                {
+                    _chartStochasticIndicator.PanelIndex = sharedRsiStochasticPanelIndex;
+                    sharedRsiStochasticPanelUsed = true;
+                }
             }
+
+            if (sharedRsiStochasticPanelUsed)
+                nextPanelIndex++;
 
             if (macdEnabled)
             {
@@ -5947,7 +5961,7 @@ namespace cAlgo.Robots
                     "Macd Histogram",
                     new object[]
                     {
-                        Bars.ClosePrices,
+                        chartBars.ClosePrices,
                         _resolvedMacdEventConfig.SlowPeriod,
                         _resolvedMacdEventConfig.FastPeriod,
                         _resolvedMacdEventConfig.SignalPeriod
