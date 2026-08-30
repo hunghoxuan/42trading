@@ -1320,10 +1320,36 @@ function ExtraPlanBlock({
   );
 }
 
-export default function TradeDetailCard({
+export default function TradeDetailCard(props) {
+  const {
+    emptyText = "Select an item to inspect details.",
+    showWhenEmpty = false,
+    header = null,
+    response = null,
+    tradePlan = null,
+    chart = null,
+    metaItems = [],
+    history = null,
+  } = props;
+  const hasContent = Boolean(
+    showWhenEmpty ||
+      header ||
+      response?.hasData ||
+      tradePlan?.enabled ||
+      chart?.enabled ||
+      metaItems.length ||
+      history?.enabled,
+  );
+
+  return hasContent ? (
+    <TradeDetailCardContent {...props} />
+  ) : (
+    <div className="empty-state">{emptyText}</div>
+  );
+}
+
+function TradeDetailCardContent({
   mode = "generic",
-  emptyText = "Select an item to inspect details.",
-  showWhenEmpty = false,
   header = null,
   response = null,
   tradePlan = null,
@@ -1339,18 +1365,6 @@ export default function TradeDetailCard({
   const pendingResponseText = String(
     response?.pendingText || "Refreshing analysis...",
   ).trim();
-
-  if (
-    !showWhenEmpty &&
-    !header &&
-    !hasResponseData &&
-    !tradePlan?.enabled &&
-    !chart?.enabled &&
-    !metaItems.length &&
-    !history?.enabled
-  ) {
-    return <div className="empty-state">{emptyText}</div>;
-  }
 
   const tfTabs =
     Array.isArray(chart?.detailTfTabs) && chart.detailTfTabs.length

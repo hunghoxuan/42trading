@@ -1207,6 +1207,10 @@ export const api = {
     del(`/api/accounts/${encodeURIComponent(accountId)}`),
   v2AccountBridgeReadiness: (accountId) =>
     post(`/api/accounts/${encodeURIComponent(accountId)}/bridge-readiness`, {}),
+  v2AccountHistoryImport: (accountId) =>
+    get(`/api/accounts/${encodeURIComponent(accountId)}/history-import`),
+  v2StartAccountHistoryImport: (accountId) =>
+    post(`/api/accounts/${encodeURIComponent(accountId)}/history-import`, {}),
   v2Sources: (options = {}) => get("/api/sources", options),
   v2Trades: (params = {}) => get(`/api/trades?${buildQueryString(params)}`),
   v2Trades2Counts: () => get("/api/trades/counts"),
@@ -1217,6 +1221,12 @@ export const api = {
   v2CreateTrade: (payload = {}) => post("/api/trades", payload),
   v2UpdateTrade: (tradeId, payload = {}) =>
     put(`/api/trades/${encodeURIComponent(tradeId)}`, payload),
+  tradeQueue: (params = {}) =>
+    get(`/api/trades/queue?${buildQueryString(params)}`),
+  updateTradeQueueItem: (actionId, payload = {}) =>
+    put(`/api/trades/queue/${encodeURIComponent(actionId)}`, payload),
+  deleteTradeQueueItem: (actionId, payload = {}) =>
+    del(`/api/trades/queue/${encodeURIComponent(actionId)}`, payload),
   v2TradesBulkAction: (action, filters = {}) =>
     post("/v2/trades/bulk-action", { action, ...filters }),
   v2TradeCounts: () => get("/api/trades/counts"),
@@ -1239,6 +1249,14 @@ export const api = {
   deleteBacktest: (runId) => del(`/api/backtests/${encodeURIComponent(runId)}`),
   listRules: () => get("/api/rules"),
   saveRule: (payload = {}) => post("/api/rules", payload),
+  listSharedCatalog: (kind) =>
+    get(`/api/shared-catalog/${encodeURIComponent(kind)}`),
+  getSharedCatalogItem: (kind, itemId) =>
+    get(`/api/shared-catalog/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}`),
+  saveSharedCatalogItem: (kind, payload = {}) =>
+    post(`/api/shared-catalog/${encodeURIComponent(kind)}`, payload),
+  deleteSharedCatalogItem: (kind, itemId) =>
+    del(`/api/shared-catalog/${encodeURIComponent(kind)}/${encodeURIComponent(itemId)}`),
   listStrategies: () => get("/api/strategies"),
   listAvailableStrategies: () => get("/api/strategies"),
   getStrategy: (strategyId) => get(`/api/strategies/${encodeURIComponent(strategyId)}`),
@@ -1771,9 +1789,12 @@ export const api = {
   upsertSetting: (payload = {}) => post("/api/settings", payload),
   notificationPulse: () => get("/api/notifications/pulse"),
   notificationEvents: () => get("/api/notifications/events"),
+  notificationChannels: () => get("/api/notifications/channels"),
   notificationSettings: () => get("/api/notifications/settings"),
   notificationSaveSettings: (settings) =>
     post("/api/notifications/settings", { settings }),
+  notificationSaveChannels: (channels) =>
+    post("/api/notifications/channels", { channels }),
   notificationTest: (payload = {}) => post("/api/notifications/test", payload),
   chartStrategyCheckNotify: (payload = {}) =>
     post("/api/chart/strategy-checks/notify", payload),

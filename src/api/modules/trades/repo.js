@@ -9,7 +9,9 @@ const { tradesRepo: createLegacyTradesRepo } = require("../42trade/trades0");
 
 const TRADES_SCOPE = "__trades__";
 const TRADE_ENTITY_TYPE = "trade";
+const STRATEGY_ACTION_PROCESS_TYPE = "strategy_queue_action";
 const SOURCE_SYSTEM = "42trade_trades";
+const STRATEGY_ACTION_WAITING_STATUS = "WAITING";
 
 function text(value, fallback = "") {
   const out = String(value ?? "").trim();
@@ -19,6 +21,21 @@ function text(value, fallback = "") {
 
 function clone(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+function normalizeStrategyQueueAction(input = {}, userId = "", accountId = "") {
+  const actionId = text(input.action_id || input.id);
+  if (!actionId) return null;
+  const now = new Date().toISOString();
+  return {
+    ...clone(input),
+    action_id: actionId,
+    user_id: text(input.user_id || userId),
+    account_id: text(input.account_id || accountId),
+    status: text(input.status, "WAITING").toUpperCase(),
+    created_at: text(input.created_at, now),
+    updated_at: text(input.updated_at, now),
+  };
 }
 
 function numberOrNull(value) {
@@ -325,6 +342,13 @@ function normalizeStoredTrade(input = {}) {
       raw.skip_recommendation ?? raw.skipRecommendation ?? null,
     risk_management: raw.risk_management ?? raw.riskManagement ?? null,
     note: text(raw.note) || null,
+    comment:
+      text(raw.comment || raw.Comment) ||
+      text(objectValue(raw.metadata, {}).comment) ||
+      text(objectValue(raw.metadata, {}).ctrader_comment) ||
+      text(objectValue(objectValue(raw.metadata, {}).broker_data, {}).comment) ||
+      text(objectValue(raw.raw_json, {}).comment) ||
+      null,
     lease_token: text(raw.lease_token || raw.leaseToken) || null,
     lease_expires_at:
       raw.lease_expires_at || raw.leaseExpiresAt
@@ -1024,6 +1048,47 @@ function normalizeBrokerIdentitySid(value) {
   return /^[A-Z0-9]{9}$/.test(collapsed) ? collapsed : "";
 }
 
+function brokerIdentityLookupKeys(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return [];
+  const prefix = normalizeBrokerCommentSid(raw);
+  const candidates = [raw, prefix]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .map((item) => item.toUpperCase());
+  const compact = normalizeBrokerIdentitySid(raw);
+  if (compact) candidates.push(compact);
+  return [...new Set(candidates)];
+}
+
+function brokerSidIdentityCandidates(value) {
+  const prefix = normalizeBrokerCommentSid(value);
+  return [
+    normalizeBrokerIdentitySid(prefix),
+    normalizeBrokerIdentitySid(value),
+  ].filter(Boolean);
+}
+
+// Mirrors the server-side builder: an order label is treated as the strategy
+// name when it is non-empty, not purely numeric, and not identical to the
+// broker comment (i.e. it is a meaningful strategy label like "custom_trade").
+function brokerStrategyLabel(item = {}) {
+  const label = text(item.label).trim();
+  if (!label) return "";
+  if (/^\d+$/.test(label)) return "";
+  const comment = text(item.comment).trim();
+  if (comment && label === comment) return "";
+  return label;
+}
+
+function brokerSourceId(options = {}, item = {}) {
+  const preferred = text(options.sourceId);
+  if (preferred && preferred !== "BROKER") return preferred;
+  const direct =
+    text(item.source_id) || text(item.source) || text(item.channel);
+  return direct || "BROKER";
+}
+
 function firstTradePlanCandidate(value) {
   if (Array.isArray(value)) {
     return value.find((item) => item && typeof item === "object") || {};
@@ -1089,7 +1154,7 @@ function isBrokerSyncNoteMatchCandidate(row) {
     .trim()
     .toUpperCase();
   if (!(executionStatus === "PENDING" || executionStatus === "FILLED")) return false;
-  return Boolean(normalizeBrokerIdentitySid(row.note || row.sid || ""));
+  return brokerIdentityLookupKeys(row.note || row.sid || "").length > 0;
 }
 
 function isTerminalExecutionStatus(status) {
@@ -1599,6 +1664,177 @@ function createTradesRepo(options = {}) {
     return tradeFromEntity(entity);
   }
 
+  async function listStrategyQueueProcesses(userId = "", accountId = "") {
+    const uid = text(userId);
+    const aid = text(accountId);
+    if (!uid) return [];
+    return repo.listProcesses({
+      tenantId: TRADES_SCOPE,
+      processType: STRATEGY_ACTION_PROCESS_TYPE,
+      ...(aid ? { topic: aid } : {}),
+      userId: uid,
+      limit: 1000,
+      sortBy: "run_at",
+      sortDirection: "asc",
+    });
+  }
+
+  async function findStrategyQueueProcess(userId = "", accountId = "", actionId = "") {
+    const wanted = text(actionId);
+    if (!wanted) return null;
+    const rows = await listStrategyQueueProcesses(userId, accountId);
+    return rows.find((row) =>
+      text(row.entity_key || row.entityKey || row.payload?.action_id) === wanted,
+    ) || null;
+  }
+
+  async function listStrategyQueueActions(userId = "", accountId = "") {
+    const uid = text(userId);
+    const aid = text(accountId);
+    const rows = await listStrategyQueueProcesses(uid, aid);
+    return rows
+      .filter((row) => text(row.status).toUpperCase() === STRATEGY_ACTION_WAITING_STATUS)
+      .map((row) => normalizeStrategyQueueAction(row.payload, uid, aid || row.topic))
+      .filter(Boolean);
+  }
+
+  async function listStrategyQueueTerminalActionIds(userId = "", accountId = "") {
+    const rows = await listStrategyQueueProcesses(userId, accountId);
+    return [...new Set(
+      rows
+        .filter((row) => text(row.status).toUpperCase() !== STRATEGY_ACTION_WAITING_STATUS)
+        .map((row) => text(row.entity_key || row.entityKey || row.payload?.action_id))
+        .filter(Boolean),
+    )];
+  }
+
+  async function upsertStrategyQueueProcess(action, previous = null) {
+    const status = text(action.status, STRATEGY_ACTION_WAITING_STATUS).toUpperCase();
+    return repo.upsertProcess({
+      id: `${STRATEGY_ACTION_PROCESS_TYPE}|${action.account_id}|${action.action_id}`,
+      tenantId: TRADES_SCOPE,
+      processType: STRATEGY_ACTION_PROCESS_TYPE,
+      topic: action.account_id,
+      entityType: STRATEGY_ACTION_PROCESS_TYPE,
+      entityKey: action.action_id,
+      userId: action.user_id,
+      status,
+      priority: Number(action.priority) || 0,
+      maxAttempts: 1,
+      runAt: action.trigger_time || action.created_at,
+      payload: action,
+      result: status === STRATEGY_ACTION_WAITING_STATUS
+        ? {}
+        : { ...(previous?.result || {}), terminal_status: status },
+      createdAt: action.created_at,
+      updatedAt: action.updated_at,
+    });
+  }
+
+  async function syncStrategyQueueActions(userId = "", accountId = "", actions = [], options = {}) {
+    const uid = text(userId);
+    const aid = text(accountId);
+    if (!uid || !aid) throw new Error("user_id and account_id are required");
+    let accepted = 0;
+    let removed = 0;
+    const incomingActions = Array.isArray(actions) ? actions.slice(0, 1000) : [];
+    const incomingIds = new Set();
+    for (const rawAction of incomingActions) {
+      const action = normalizeStrategyQueueAction(rawAction, uid, aid);
+      if (!action || action.account_id !== aid || action.user_id !== uid) continue;
+      incomingIds.add(action.action_id);
+      const previous = await findStrategyQueueProcess(uid, aid, action.action_id);
+      const previousStatus = text(previous?.status).toUpperCase();
+      if (
+        action.status === STRATEGY_ACTION_WAITING_STATUS &&
+        previousStatus &&
+        previousStatus !== STRATEGY_ACTION_WAITING_STATUS
+      ) {
+        continue;
+      }
+      const preserveAdminEdit =
+        action.status === STRATEGY_ACTION_WAITING_STATUS &&
+        Boolean(text(previous?.payload?.admin_edited_at));
+      const merged = normalizeStrategyQueueAction(
+        preserveAdminEdit
+          ? { ...action, ...previous.payload, status: action.status }
+          : { ...(previous?.payload || {}), ...action },
+        uid,
+        aid,
+      );
+      await upsertStrategyQueueProcess(merged, previous);
+      accepted += 1;
+    }
+    if (options.snapshotComplete === true) {
+      const currentRows = await listStrategyQueueProcesses(uid, aid);
+      for (const row of currentRows) {
+        if (text(row.status).toUpperCase() !== STRATEGY_ACTION_WAITING_STATUS)
+          continue;
+        const current = normalizeStrategyQueueAction(row.payload, uid, aid);
+        if (!current || incomingIds.has(current.action_id)) continue;
+        const cancelled = {
+          ...current,
+          status: "CANCELLED",
+          cancelled_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          terminal_reason: "queue_snapshot_missing",
+        };
+        await upsertStrategyQueueProcess(cancelled, row);
+        removed += 1;
+      }
+    }
+    const items = await listStrategyQueueActions(uid, aid);
+    const terminalActionIds = await listStrategyQueueTerminalActionIds(uid, aid);
+    return { ok: true, accepted, removed, items, terminalActionIds };
+  }
+
+  async function updateStrategyQueueAction(userId = "", actionId = "", patch = {}, accountId = "") {
+    const uid = text(userId);
+    const aid = text(accountId || patch.account_id);
+    if (!uid || !text(actionId)) throw new Error("user_id and action_id are required");
+    const previous = await findStrategyQueueProcess(uid, aid, actionId);
+    if (!previous || text(previous.status).toUpperCase() !== STRATEGY_ACTION_WAITING_STATUS) {
+      throw new Error("waiting queue action not found");
+    }
+    const previousAction = normalizeStrategyQueueAction(previous.payload, uid, previous.topic || aid);
+    const action = normalizeStrategyQueueAction(
+      {
+        ...previousAction,
+        ...clone(patch),
+        action_id: previousAction.action_id,
+        user_id: uid,
+        account_id: previousAction.account_id,
+        status: STRATEGY_ACTION_WAITING_STATUS,
+        created_at: previousAction.created_at,
+        admin_edited_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      uid,
+      previousAction.account_id,
+    );
+    await upsertStrategyQueueProcess(action, previous);
+    return { ok: true, item: action };
+  }
+
+  async function removeStrategyQueueAction(userId = "", actionId = "", accountId = "") {
+    const uid = text(userId);
+    const aid = text(accountId);
+    if (!uid || !text(actionId)) throw new Error("user_id and action_id are required");
+    const previous = await findStrategyQueueProcess(uid, aid, actionId);
+    if (!previous || text(previous.status).toUpperCase() !== STRATEGY_ACTION_WAITING_STATUS) {
+      throw new Error("waiting queue action not found");
+    }
+    const previousAction = normalizeStrategyQueueAction(previous.payload, uid, previous.topic || aid);
+    const action = {
+      ...previousAction,
+      status: "CANCELLED",
+      cancelled_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    await upsertStrategyQueueProcess(action, previous);
+    return { ok: true, item: action };
+  }
+
   return {
     getStorageInfo() {
       const info = repo.info();
@@ -1620,6 +1856,26 @@ function createTradesRepo(options = {}) {
           reason: options.reason || "manual_upsert",
         }),
       };
+    },
+
+    listStrategyQueueActions(userId, accountId) {
+      return listStrategyQueueActions(userId, accountId);
+    },
+
+    listStrategyQueueTerminalActionIds(userId, accountId) {
+      return listStrategyQueueTerminalActionIds(userId, accountId);
+    },
+
+    syncStrategyQueueActions(userId, accountId, actions = [], options = {}) {
+      return syncStrategyQueueActions(userId, accountId, actions, options);
+    },
+
+    updateStrategyQueueAction(userId, actionId, patch = {}, accountId = "") {
+      return updateStrategyQueueAction(userId, actionId, patch, accountId);
+    },
+
+    removeStrategyQueueAction(userId, actionId, accountId = "") {
+      return removeStrategyQueueAction(userId, actionId, accountId);
     },
 
     async getTrade(input = {}) {
@@ -2219,20 +2475,38 @@ function createTradesRepo(options = {}) {
           accountMatchesTrade(row, aid),
       );
       const bySid = new Map(allTrades.map((row) => [String(row.sid || ""), row]));
-      const byTicket = new Map(
-        allTrades
-          .filter((row) => String(row.broker_trade_id || "").trim())
-          .map((row) => [String(row.broker_trade_id || "").trim(), row]),
-      );
-      const byNote = new Map(
-        allTrades
-          .filter(
-            (row) =>
-              String(row.note || "").trim() &&
-              isBrokerSyncNoteMatchCandidate(row),
-          )
-          .map((row) => [String(row.note || "").trim().toUpperCase(), row]),
-      );
+      const byTicket = new Map();
+      for (const row of allTrades) {
+        const metadata = objectValue(row.metadata, {});
+        const brokerData = objectValue(metadata.broker_data, {});
+        const ticketValues = [
+          row.broker_trade_id,
+          metadata.broker_position_id,
+          metadata.position_ticket,
+          metadata.deal_ticket,
+          metadata.order_ticket,
+          brokerData.position_id,
+          brokerData.position_ticket,
+          brokerData.deal_ticket,
+          brokerData.order_ticket,
+          ...(Array.isArray(brokerData.ticket_candidates)
+            ? brokerData.ticket_candidates
+            : []),
+        ];
+        for (const value of ticketValues) {
+          const ticket = String(value || "").trim();
+          if (ticket && !byTicket.has(ticket)) byTicket.set(ticket, row);
+        }
+      }
+      const byNote = new Map();
+      for (const row of allTrades) {
+        if (!String(row.note || "").trim() || !isBrokerSyncNoteMatchCandidate(row)) {
+          continue;
+        }
+        for (const key of brokerIdentityLookupKeys(row.note || row.sid || "")) {
+          byNote.set(key, row);
+        }
+      }
       const oldStatusMap = new Map();
       const oldTicketMap = new Map();
       for (const row of allTrades) {
@@ -2264,10 +2538,10 @@ function createTradesRepo(options = {}) {
 
       for (const it of Array.isArray(items) ? items : []) {
         const trustedSidCandidates = [
-          normalizeBrokerIdentitySid(it.sid),
-          normalizeBrokerIdentitySid(it.comment),
-          normalizeBrokerIdentitySid(it.trade_id),
-          normalizeBrokerIdentitySid(it.signal_id),
+          ...brokerSidIdentityCandidates(it.sid),
+          ...brokerSidIdentityCandidates(it.comment),
+          ...brokerSidIdentityCandidates(it.trade_id),
+          ...brokerSidIdentityCandidates(it.signal_id),
         ].filter(Boolean);
         const identityCandidates = [
           ...trustedSidCandidates,
@@ -2315,14 +2589,12 @@ function createTradesRepo(options = {}) {
         }
 
         const noteCandidates = [
-          normalizeBrokerIdentitySid(it.note),
-          normalizeBrokerIdentitySid(it.comment),
-          normalizeBrokerIdentitySid(it.trade_id),
-          normalizeBrokerIdentitySid(it.signal_id),
-          normalizeBrokerIdentitySid(it.sid),
-        ]
-          .filter(Boolean)
-          .map((value) => value.toUpperCase());
+          ...brokerIdentityLookupKeys(it.note),
+          ...brokerIdentityLookupKeys(it.comment),
+          ...brokerIdentityLookupKeys(it.trade_id),
+          ...brokerIdentityLookupKeys(it.signal_id),
+          ...brokerIdentityLookupKeys(it.sid),
+        ];
         const existing =
           identityCandidates.map((value) => bySid.get(String(value))).find(Boolean) ||
           noteCandidates.map((value) => byNote.get(value)).find(Boolean) ||
@@ -2410,6 +2682,22 @@ function createTradesRepo(options = {}) {
                 ? null
                 : existing.rejection_reason,
               note: existing.note || it.note || null,
+              comment: it.comment || existing.comment || null,
+              source_id:
+                existing.source_id && existing.source_id !== "BROKER"
+                  ? existing.source_id
+                  : brokerSourceId(options, it),
+              strategy:
+                existing.strategy && existing.strategy !== "BROKER"
+                  ? existing.strategy
+                  : String(
+                      it.strategy ||
+                        it.strategy_name ||
+                        it.metadata?.strategy ||
+                        it.raw_json?.strategy ||
+                        brokerStrategyLabel(it) ||
+                        "",
+                    ).trim() || existing.strategy || null,
               metadata: nextMetadata,
               opened_at: resolvePersistedOpenedAt(it, existing, nowIso),
               closed_at: isTerminalExecutionStatus(nextExecutionStatus)
@@ -2419,7 +2707,12 @@ function createTradesRepo(options = {}) {
               lease_expires_at: consumeLease ? null : existing.lease_expires_at,
               sl: it.sl ?? existing.sl ?? null,
               tp: it.tp ?? existing.tp ?? null,
-              tp1: it.tp1 ?? existing.tp1 ?? null,
+              tp1:
+                Number.isFinite(Number(it.tp1)) && Number(it.tp1) > 0
+                  ? Number(it.tp1)
+                  : Number.isFinite(Number(existing.tp1)) && Number(existing.tp1) > 0
+                    ? existing.tp1
+                    : it.tp ?? null,
               tp2: it.tp2 ?? existing.tp2 ?? null,
               tp3: it.tp3 ?? existing.tp3 ?? null,
               updated_at: nowIso,
@@ -2434,7 +2727,9 @@ function createTradesRepo(options = {}) {
             byTicket.set(String(updated.broker_trade_id), updated);
           }
           if (String(updated.note || "").trim()) {
-            byNote.set(String(updated.note || "").trim().toUpperCase(), updated);
+            for (const key of brokerIdentityLookupKeys(updated.note || updated.sid || "")) {
+              byNote.set(key, updated);
+            }
           }
           matched += 1;
           synced += 1;
@@ -2448,10 +2743,15 @@ function createTradesRepo(options = {}) {
           continue;
         }
 
+        const discoveryExecutionStatus = String(
+          it.execution_status || "",
+        ).toUpperCase();
+        const canDiscoverHistoricalClosed =
+          options.allowHistoricalDiscovery === true &&
+          discoveryExecutionStatus === "CLOSED";
         if (
-          !["FILLED", "PENDING"].includes(
-            String(it.execution_status || "").toUpperCase(),
-          )
+          !["FILLED", "PENDING"].includes(discoveryExecutionStatus) &&
+          !canDiscoverHistoricalClosed
         ) {
           results.push({
             ticket: it.ticket,
@@ -2488,8 +2788,14 @@ function createTradesRepo(options = {}) {
           continue;
         }
 
+        const deterministicHistorySid = canDiscoverHistoricalClosed
+          ? `H_${aid}_${ticketCandidates[0] || "trade"}`
+              .replace(/[^a-zA-Z0-9_-]/g, "_")
+              .slice(0, 120)
+          : "";
         const discoverySid = String(
           identityCandidates[0] ||
+            deterministicHistorySid ||
             (ticketCandidates[0]
               ? `M_${ticketCandidates[0]}`
               : (options.generateSid && options.generateSid()) ||
@@ -2510,8 +2816,8 @@ function createTradesRepo(options = {}) {
                   it.strategy_name ||
                   it.metadata?.strategy ||
                   it.raw_json?.strategy ||
-                  options.sourceId ||
-                  "BROKER",
+                  brokerStrategyLabel(it) ||
+                  "",
               ).trim() || null,
             entry_model:
               String(
@@ -2526,13 +2832,17 @@ function createTradesRepo(options = {}) {
             entry: it.entry || 0,
             sl: it.sl ?? null,
             tp: it.tp ?? null,
-            tp1: it.tp1 ?? null,
+            tp1:
+              Number.isFinite(Number(it.tp1)) && Number(it.tp1) > 0
+                ? Number(it.tp1)
+                : it.tp ?? null,
             tp2: it.tp2 ?? null,
             tp3: it.tp3 ?? null,
             note: it.note || "",
+            comment: it.comment || null,
             execution_status: String(it.execution_status || "PENDING").toUpperCase(),
             dispatch_status: "CONSUMED",
-            source_id: options.sourceId || "BROKER",
+            source_id: brokerSourceId(options, it),
             metadata: mergeBrokerSyncMetadata({}, syncMeta),
             broker_trade_id: ticketCandidates[0] || "",
             broker_pips: Number(it.pips ?? 0),
@@ -2541,6 +2851,9 @@ function createTradesRepo(options = {}) {
             broker_swap: Number(it.swap ?? 0),
             broker_volume: Number(it.broker_volume ?? 0),
             broker_pnl: Number(it.pnl ?? 0),
+            pnl_realized: canDiscoverHistoricalClosed
+              ? Number(it.pnl ?? 0)
+              : null,
             broker_margin: Number(it.margin ?? 0),
             planned_tp_pnl: options.resolvePlannedTpPnl
               ? options.resolvePlannedTpPnl(it)
@@ -2551,7 +2864,13 @@ function createTradesRepo(options = {}) {
             broker_tp_pnl: it.tp_pnl ?? null,
             broker_sl_pnl: it.sl_pnl ?? null,
             opened_at: resolvePersistedOpenedAt(it, null, nowIso),
-            created_at: nowIso,
+            closed_at: canDiscoverHistoricalClosed
+              ? it.closed_at || nowIso
+              : null,
+            close_reason: canDiscoverHistoricalClosed
+              ? it.close_reason || "MANUAL"
+              : null,
+            created_at: resolvePersistedOpenedAt(it, null, nowIso),
             updated_at: nowIso,
           },
           {
@@ -2564,7 +2883,9 @@ function createTradesRepo(options = {}) {
           byTicket.set(String(created.broker_trade_id), created);
         }
         if (String(created.note || "").trim()) {
-          byNote.set(String(created.note || "").trim().toUpperCase(), created);
+          for (const key of brokerIdentityLookupKeys(created.note || created.sid || "")) {
+            byNote.set(key, created);
+          }
         }
         matched += 1;
         synced += 1;
@@ -2615,10 +2936,9 @@ function createTradesRepo(options = {}) {
             byTicket.set(String(updatedRow.broker_trade_id), updatedRow);
           }
           if (String(updatedRow.note || "").trim()) {
-            byNote.set(
-              String(updatedRow.note || "").trim().toUpperCase(),
-              updatedRow,
-            );
+            for (const key of brokerIdentityLookupKeys(updatedRow.note || updatedRow.sid || "")) {
+              byNote.set(key, updatedRow);
+            }
           }
           closedRows.push(updatedRow);
         }
@@ -2719,6 +3039,7 @@ function createTradesRepo(options = {}) {
 module.exports = {
   TRADES_SCOPE,
   TRADE_ENTITY_TYPE,
+  STRATEGY_ACTION_PROCESS_TYPE,
   SOURCE_SYSTEM,
   createTradesRepo,
   normalizeStoredTrade,

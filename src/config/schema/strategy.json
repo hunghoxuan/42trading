@@ -101,7 +101,9 @@
             "minLength": 1,
             "maxLength": 120
           },
-          "when": {},
+          "when": {
+            "type": ["object", "string"]
+          },
           "actions": {
             "type": "array",
             "minItems": 1,
@@ -117,6 +119,11 @@
                   "type": "string",
                   "enum": [
                     "trade",
+                    "trade.open.long",
+                    "trade.open.short",
+                    "trade.close",
+                    "trade.close.long",
+                    "trade.close.short",
                     "notify.toast",
                     "notify.notification",
                     "chart.note",
@@ -171,7 +178,9 @@
             "type": "string",
             "enum": ["strong", "medium", "weak"]
           },
-          "when": {},
+          "when": {
+            "type": ["object", "string"]
+          },
           "actions": {
             "type": "array",
             "minItems": 1,
@@ -187,6 +196,11 @@
                   "type": "string",
                   "enum": [
                     "trade",
+                    "trade.open.long",
+                    "trade.open.short",
+                    "trade.close",
+                    "trade.close.long",
+                    "trade.close.short",
                     "draw",
                     "notify.toast",
                     "notify.notification",

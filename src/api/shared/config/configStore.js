@@ -52,6 +52,7 @@ function createConfigStore(options = {}) {
     if (kind === "schema") return path.join(rootDir, "schema", `${id}.json`);
     if (kind === "strategy") return path.join(rootDir, "strategies", `${id}.json`);
     if (kind === "rule") return path.join(rootDir, "rules", `${id}.json`);
+    if (kind === "event") return path.join(rootDir, "events", `${id}.json`);
     throw new Error(`Unsupported config kind "${kind}"`);
   }
 
@@ -80,8 +81,10 @@ function createConfigStore(options = {}) {
   }
 
   async function listKeys(kind) {
-    const dirName = kind === "rule" ? "rules" : "strategies";
+    const dirName =
+      kind === "rule" ? "rules" : kind === "event" ? "events" : "strategies";
     const dirPath = path.join(rootDir, dirName);
+    await fsp.mkdir(dirPath, { recursive: true, mode: 0o700 });
     const entries = await fsp.readdir(dirPath, { withFileTypes: true });
     return entries
       .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
@@ -151,6 +154,26 @@ function createConfigStore(options = {}) {
       return Promise.all(
         keys.map((key) => this.getRule(key, { ...options, refresh: true })),
       );
+    },
+    async getEvent(name, options = {}) {
+      return loadFileBackedDocument("event", name, options);
+    },
+    async saveEvent(name, value) {
+      return saveFileBackedDocument("event", name, value);
+    },
+    async listEvents(options = {}) {
+      const keys = await listKeys("event");
+      return Promise.all(
+        keys.map((key) => this.getEvent(key, { ...options, refresh: true })),
+      );
+    },
+    async deleteDocument(kind, name) {
+      if (!["rule", "event", "strategy"].includes(kind)) {
+        throw new Error(`Unsupported config kind "${kind}"`);
+      }
+      const safeId = normalizeId(name);
+      await fsp.unlink(resolvePath(kind, safeId));
+      await repo.deleteObject(systemUserId, objectTypeForKind(kind), safeId);
     },
   };
 }

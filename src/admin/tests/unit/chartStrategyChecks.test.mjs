@@ -90,6 +90,33 @@ test("evaluateChartStrategies returns the latest matching event inside the lookb
   assert.equal(result.matches[0].ruleEvent?.abbr, "entry_long");
 });
 
+test("evaluateChartStrategies compiles shared text expressions for chart and replay scans", () => {
+  const strategy = {
+    id: "shared_text_strategy",
+    name: "Shared Text Strategy",
+    engine_version: "42trade.strategy.v2",
+    indicators: [],
+    rules: [
+      {
+        id: "text_entry",
+        name: "Text Entry",
+        when: "close > 10 and close < 20",
+        actions: [{ id: "draw", action: "draw" }],
+      },
+    ],
+  };
+  const result = evaluateChartStrategies({
+    bars: makeBars([8, 9, 11, 12]),
+    strategies: [strategy],
+    lookbackBars: 4,
+    symbol: "EURUSD",
+    tf: "1m",
+  });
+  assert.equal(result.matches.length, 2);
+  assert.equal(result.matches.every((item) => item.strategyId === "shared_text_strategy"), true);
+  assert.equal(result.matches.every((item) => item.eventId === "text_entry"), true);
+});
+
 test("evaluateChartStrategies drops matches that only occurred before the lookback window", () => {
   const strategy = {
     id: "price_break",

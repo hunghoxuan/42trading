@@ -5,6 +5,7 @@ const {
   findPredefinedRule,
   listPredefinedRules,
   normalizeRuleDefinition,
+  compileRuleExpression,
 } = require("../../../../shared/rules-engine/index.cjs");
 
 const defaultConfigStore = createConfigStore();
@@ -24,24 +25,33 @@ function validateRulePayload(input = {}) {
   const id = normalizeRuleId(input.id);
   const abbr = String(input.abbr || input.short_name || "").trim();
   const name = String(input.name || input.label || "").trim();
-  const condition =
-    input.condition && typeof input.condition === "object" && !Array.isArray(input.condition)
-      ? input.condition
-      : input.when && typeof input.when === "object" && !Array.isArray(input.when)
-        ? input.when
-        : null;
+  const condition = input.condition ?? input.when ?? input.expression ?? null;
+  let compiledCondition = null;
+  try {
+    compiledCondition = compileRuleExpression(condition);
+  } catch (error) {
+    errors.push(`condition: ${error.message}`);
+  }
   if (!id || id.length < 3) errors.push("id must be at least 3 characters");
   if (!abbr) errors.push("abbr is required");
   if (!name) errors.push("name is required");
-  if (!condition) errors.push("condition must be an expression object");
+  if (!compiledCondition) errors.push("condition must be a JSON or text expression");
   const rule = normalizeRuleDefinition({
     ...input,
     id,
     abbr,
     name,
-    condition,
+    condition: compiledCondition,
   });
-  return { ok: errors.length === 0, errors, rule };
+  return {
+    ok: errors.length === 0,
+    errors,
+    rule: {
+      ...rule,
+      condition,
+      compiled_condition: compiledCondition,
+    },
+  };
 }
 
 async function readSchema(configStore = defaultConfigStore) {
@@ -51,7 +61,10 @@ async function readSchema(configStore = defaultConfigStore) {
 async function listCustomRules(configStore = defaultConfigStore) {
   const rows = await configStore.listRules({ refresh: true }).catch(() => []);
   return rows
-    .map((row, index) => validateRulePayload(row).ok ? normalizeRuleDefinition(row, index) : null)
+    .map((row) => {
+      const validation = validateRulePayload(row);
+      return validation.ok ? validation.rule : null;
+    })
     .filter(Boolean)
     .map((rule) => ({ ...rule, kind: "custom" }));
 }
@@ -85,6 +98,7 @@ async function saveRule(input = {}, configStore = defaultConfigStore) {
     kind: undefined,
   };
   delete rule.kind;
+  delete rule.compiled_condition;
   await configStore.saveRule(rule.id, rule);
   return { ...rule, kind: "custom" };
 }

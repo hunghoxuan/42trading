@@ -17,8 +17,31 @@ const SOUNDS = [
   { v: "NEWS_ALERT", l: "News Alert" },
   { v: "SESSION_START", l: "Session Start" },
 ];
+const CHANNEL_TYPES = [
+  { v: "telegram", l: "Telegram" },
+  { v: "slack", l: "Slack" },
+  { v: "whatsapp", l: "WhatsApp" },
+];
+
+function slugChannelId(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function buildChannelId(label, fallback = "") {
+  const slug = slugChannelId(label);
+  if (slug) return slug;
+  const suffix = String(Date.now()).slice(-8);
+  const base = slugChannelId(fallback) || "channel";
+  return `${base}_${suffix}`;
+}
+
 function useNotificationState() {
   const [events, setEvents] = useState([]);
+  const [channels, setChannels] = useState([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
@@ -39,8 +62,12 @@ function useNotificationState() {
   async function load() {
     try {
       setLoading(true);
-      const data = await api.notificationEvents();
+      const [data, channelsRes] = await Promise.all([
+        api.notificationEvents(),
+        api.notificationChannels().catch(() => ({ channels: [] })),
+      ]);
       setEvents(data.events || []);
+      setChannels(channelsRes.channels || []);
       setError("");
     } catch (e) {
       setError(e?.message || "Failed to load notification events.");
@@ -64,14 +91,31 @@ function useNotificationState() {
           ticker: ev.ticker ?? false,
           db_log: ev.db_log ?? true,
           hub: ev.hub ?? true,
+          telegram: ev.telegram === true,
+          telegram_channel: ev.telegram_channel || "",
           sound: ev.sound || null,
         };
       });
       await api.notificationSaveSettings(s);
+      await api.notificationSaveChannels(channels);
       setMsg("Saved.");
       setTimeout(() => setMsg(""), 3000);
     } catch (e) {
       setError(e?.message || "Failed to save notification settings.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveChannelsOnly() {
+    try {
+      setSaving(true);
+      await api.notificationSaveChannels(channels);
+      await load();
+      setMsg("Channels saved.");
+      setTimeout(() => setMsg(""), 3000);
+    } catch (e) {
+      setError(e?.message || "Failed to save notification channels.");
     } finally {
       setSaving(false);
     }
@@ -93,8 +137,38 @@ function useNotificationState() {
     });
   }
 
+  function addChannel() {
+    const nextId = buildChannelId("", "channel");
+    setChannels((prev) => [
+      ...prev,
+      {
+        id: nextId,
+        label: "New channel",
+        type: "telegram",
+        bot_token: "",
+        chat_id: "",
+        webhook_url: "",
+        target: "",
+        is_enabled: true,
+      },
+    ]);
+  }
+
+  function updateChannel(idx, key, val) {
+    setChannels((prev) => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], [key]: val };
+      return next;
+    });
+  }
+
+  function removeChannel(idx) {
+    setChannels((prev) => prev.filter((_, index) => index !== idx));
+  }
+
   return {
     events,
+    channels,
     loading,
     saving,
     msg,
@@ -103,12 +177,19 @@ function useNotificationState() {
     fire,
     load,
     save,
+    saveChannelsOnly,
     toggle,
     setField,
+    addChannel,
+    updateChannel,
+    removeChannel,
   };
 }
 
 function EventRow({ event, idx, toggle, setField, state }) {
+  const telegramChannels = (state.channels || []).filter(
+    (channel) => String(channel?.type || "").toLowerCase() === "telegram",
+  );
   return (
     <tr>
       <td>
@@ -153,6 +234,25 @@ function EventRow({ event, idx, toggle, setField, state }) {
       </td>
       <td>
         <InputComboSelect
+          value={event.telegram_channel || ""}
+          onChange={(e) => {
+            const value = e.target.value;
+            setField(idx, "telegram_channel", value);
+            setField(idx, "telegram", Boolean(String(value || "").trim()));
+          }}
+          style={{ width: "100%", fontSize: 10, padding: "2px 4px" }}
+        >
+          <option value="">Off</option>
+          {telegramChannels.map((channel) => (
+            <option key={channel.id} value={channel.id}>
+              {channel.label || channel.id}
+              {channel.label && channel.id ? ` (${channel.id})` : ""}
+            </option>
+          ))}
+        </InputComboSelect>
+      </td>
+      <td>
+        <InputComboSelect
           value={event.sound || ""}
           onChange={(e) => setField(idx, "sound", e.target.value)}
           style={{ width: "100%", fontSize: 10, padding: "2px 4px" }}
@@ -178,6 +278,8 @@ function EventRow({ event, idx, toggle, setField, state }) {
                 ticker: event.ticker === true,
                 db_log: event.db_log !== false,
                 hub: event.hub !== false,
+                telegram: event.telegram === true,
+                telegram_channel: event.telegram_channel || "",
                 sound: event.sound || null,
               },
             });
@@ -192,7 +294,21 @@ function EventRow({ event, idx, toggle, setField, state }) {
 
 export function EventsPageContent({ embedded = false }) {
   const state = useNotificationState();
-  const { events, loading, msg, error, load, save, toggle, setField } = state;
+  const {
+    events,
+    channels,
+    loading,
+    msg,
+    error,
+    load,
+    save,
+    saveChannelsOnly,
+    toggle,
+    setField,
+    addChannel,
+    updateChannel,
+    removeChannel,
+  } = state;
   const [searchText, setSearchText] = useState("");
   const [activeFilter, setActiveFilter] = useState("all");
   const sortedEvents = useMemo(() => buildSortedEvents(events), [events]);
@@ -223,6 +339,163 @@ export function EventsPageContent({ embedded = false }) {
           <span className="minor-text" style={{ marginLeft: 8, fontSize: 10 }}>
             Configure channels per event type
           </span>
+        </div>
+        <div className="panel" style={{ padding: 12 }}>
+          <div className="panel-label">
+            CHANNEL CONFIGS
+            <span className="minor-text" style={{ marginLeft: 8, fontSize: 10 }}>
+              Telegram is active now. Slack/WhatsApp can be stored for later use.
+            </span>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 10,
+              marginBottom: 10,
+              flexWrap: "wrap",
+            }}
+          >
+            <div className="minor-text" style={{ fontSize: 11 }}>
+              Changes here are only draft until you click `SAVE CHANNELS`.
+            </div>
+            <button
+              className="primary-button"
+              onClick={saveChannelsOnly}
+              disabled={state.saving}
+            >
+              {state.saving ? "..." : "SAVE CHANNELS"}
+            </button>
+          </div>
+          <div className="stack-layout" style={{ gap: 8 }}>
+            {channels.length === 0 ? (
+              <div className="minor-text">No channels configured.</div>
+            ) : null}
+            {channels.map((channel, index) => (
+              <div
+                key={channel.id || index}
+                className="card-item"
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "140px 1fr 120px 1.2fr 1fr 1fr 90px",
+                  gap: 8,
+                  alignItems: "end",
+                }}
+              >
+                <div>
+                  <div className="minor-text" style={{ fontSize: 10 }}>CHANNEL ID</div>
+                  <input
+                    type="text"
+                    value={channel.id || ""}
+                    readOnly
+                    title="Auto-generated from label"
+                    style={{ opacity: 0.8, cursor: "not-allowed" }}
+                  />
+                </div>
+                <div>
+                  <div className="minor-text" style={{ fontSize: 10 }}>LABEL</div>
+                  <input
+                    type="text"
+                    value={channel.label || ""}
+                    onChange={(e) => {
+                      const nextLabel = e.target.value;
+                      updateChannel(index, "label", nextLabel);
+                      const currentId = String(channel.id || "").trim();
+                      if (!currentId || currentId.startsWith("channel_")) {
+                        updateChannel(
+                          index,
+                          "id",
+                          buildChannelId(nextLabel, channel.type || "channel"),
+                        );
+                      }
+                    }}
+                    placeholder="Main Telegram"
+                  />
+                </div>
+                <div>
+                  <div className="minor-text" style={{ fontSize: 10 }}>TYPE</div>
+                  <InputComboSelect
+                    value={channel.type || "telegram"}
+                    onChange={(e) =>
+                      updateChannel(index, "type", e.target.value)
+                    }
+                  >
+                    {CHANNEL_TYPES.map((item) => (
+                      <option key={item.v} value={item.v}>
+                        {item.l}
+                      </option>
+                    ))}
+                  </InputComboSelect>
+                </div>
+                <div>
+                  <div className="minor-text" style={{ fontSize: 10 }}>
+                    {channel.type === "telegram" ? "BOT TOKEN" : "WEBHOOK / TOKEN"}
+                  </div>
+                  <input
+                    type="text"
+                    value={
+                      channel.type === "telegram"
+                        ? channel.bot_token || ""
+                        : channel.webhook_url || ""
+                    }
+                    onChange={(e) =>
+                      updateChannel(
+                        index,
+                        channel.type === "telegram" ? "bot_token" : "webhook_url",
+                        e.target.value,
+                      )
+                    }
+                  />
+                </div>
+                <div>
+                  <div className="minor-text" style={{ fontSize: 10 }}>
+                    {channel.type === "telegram" ? "CHAT ID / USER ID" : "TARGET"}
+                  </div>
+                  <input
+                    type="text"
+                    value={
+                      channel.type === "telegram"
+                        ? channel.chat_id || ""
+                        : channel.target || ""
+                    }
+                    onChange={(e) =>
+                      updateChannel(
+                        index,
+                        channel.type === "telegram" ? "chat_id" : "target",
+                        e.target.value,
+                      )
+                    }
+                  />
+                </div>
+                <div>
+                  <div className="minor-text" style={{ fontSize: 10 }}>STATUS</div>
+                  <InputComboSelect
+                    value={channel.is_enabled === false ? "off" : "on"}
+                    onChange={(e) =>
+                      updateChannel(index, "is_enabled", e.target.value === "on")
+                    }
+                  >
+                    <option value="on">Enabled</option>
+                    <option value="off">Disabled</option>
+                  </InputComboSelect>
+                </div>
+                <div>
+                  <button
+                    className="secondary-button"
+                    onClick={() => removeChannel(index)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+            <div>
+              <button className="secondary-button" onClick={addChannel}>
+                ADD CHANNEL
+              </button>
+            </div>
+          </div>
         </div>
         <div
           style={{
@@ -286,6 +559,9 @@ export function EventsPageContent({ embedded = false }) {
             <StatusDisplay status="ok" label={state.testMsg} size="md" />
           )}
         </div>
+        <div className="minor-text" style={{ fontSize: 11, marginTop: -4, marginBottom: 12 }}>
+          `ADD CHANNEL` only creates the row. `SAVE CHANNELS` persists channel configs. Bottom `SAVE` persists both channel configs and event settings.
+        </div>
         <div style={{ overflowX: "auto" }}>
           <table
             className="events-table"
@@ -299,6 +575,7 @@ export function EventsPageContent({ embedded = false }) {
                 <th style={{ width: 60, textAlign: "center" }}>TICKER</th>
                 <th style={{ width: 60, textAlign: "center" }}>LOG</th>
                 <th style={{ width: 60, textAlign: "center" }}>HUB</th>
+                <th style={{ width: 160, textAlign: "center" }}>TELEGRAM BOT</th>
                 <th style={{ width: 110 }}>SOUND</th>
                 <th style={{ width: 40 }}>TEST</th>
               </tr>
@@ -307,7 +584,7 @@ export function EventsPageContent({ embedded = false }) {
               {loading && (
                 <tr>
                   <td
-                    colSpan={8}
+                    colSpan={9}
                     style={{ textAlign: "center", padding: 30 }}
                     className="minor-text"
                   >
@@ -318,7 +595,7 @@ export function EventsPageContent({ embedded = false }) {
               {!loading && events.length === 0 && (
                 <tr>
                   <td
-                    colSpan={8}
+                    colSpan={9}
                     style={{ textAlign: "center", padding: 30 }}
                     className="minor-text"
                   >
@@ -329,7 +606,7 @@ export function EventsPageContent({ embedded = false }) {
               {!loading && events.length > 0 && filteredEvents.length === 0 && (
                 <tr>
                   <td
-                    colSpan={8}
+                    colSpan={9}
                     style={{ textAlign: "center", padding: 30 }}
                     className="minor-text"
                   >

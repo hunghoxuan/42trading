@@ -396,6 +396,46 @@ test("simulateStrategy logs triggered events and supports non-trade actions in v
   assert.equal(result.event_log[1].message, "Breakout fired");
 });
 
+test("simulateStrategy executes shared trade.close.long actions as rule exits", () => {
+  const bars = [
+    { time: 0, open: 100, high: 100.2, low: 99.8, close: 100, volume: 10 },
+    { time: 60, open: 100, high: 101.2, low: 99.9, close: 101, volume: 11 },
+    { time: 120, open: 101, high: 101.1, low: 100.4, close: 100.5, volume: 12 },
+    { time: 180, open: 100.5, high: 100.8, low: 100.2, close: 100.7, volume: 13 },
+  ];
+  const strategy = {
+    key: "shared_dynamic_exit",
+    engine_version: "42trade.strategy.v2",
+    indicators: [],
+    events: [
+      {
+        id: "enter",
+        name: "Enter",
+        when: { "==": [{ var: "bar.time" }, 60] },
+        actions: [{ id: "open", action: "trade.open.long" }],
+      },
+      {
+        id: "leave",
+        name: "Leave",
+        when: { "==": [{ var: "bar.time" }, 120] },
+        actions: [{ id: "close", action: "trade.close.long" }],
+      },
+    ],
+    rules: {
+      stop_loss_long: { "-": [{ var: "bar.close" }, 10] },
+      take_profit_long: { "+": [{ var: "bar.close" }, 10] },
+    },
+  };
+
+  const result = simulateStrategy(bars, strategy, { returnDetails: true });
+
+  assert.equal(result.trades.length, 1);
+  assert.equal(result.trades[0].action, "BUY");
+  assert.equal(result.trades[0].exit_reason, "rule_exit");
+  assert.equal(result.trades[0].exit_time_unix, 120);
+  assert.equal(result.event_log.find((entry) => entry.action_id === "close")?.action_type, "trade.close.long");
+});
+
 test("all built-in preset strategies are rule-based and executable through the generic simulator", async () => {
   const bars = [];
   for (let index = 0; index < 320; index += 1) {

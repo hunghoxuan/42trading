@@ -568,6 +568,8 @@ function inferPatternAt(bars = [], index = 0) {
   };
 
   const preCurrentPressure = inferPriorPressure(index - 1, 4);
+  // Harami context ends before its mother candle; the mother must not create
+  // the trend that the two-candle reversal pattern is supposed to reverse.
   const preStarPressure = inferPriorPressure(index - 2, 4);
   const preSequencePressure = inferPriorPressure(index - 3, 5);
   const lowerShadowReversalShape =
@@ -635,27 +637,23 @@ function inferPatternAt(bars = [], index = 0) {
   ) {
     out.push("bearish_dark_cloud_cover");
   }
-  if (
-    prevStats.bearish &&
+  const isHaramiGeometry =
     prevStats.bodyRatio >= 0.5 &&
-    barStats.bullish &&
     barStats.bodyHigh <= prevStats.bodyHigh &&
     barStats.bodyLow >= prevStats.bodyLow &&
-    barStats.body <= prevStats.body * 0.75 &&
-    preCurrentPressure === "down"
-  ) {
+    barStats.body <= prevStats.body * 0.75;
+  const haramiCrossBody = barStats.body <= barStats.range * 0.1;
+  if (isHaramiGeometry && preStarPressure === "down" && prevStats.bearish && barStats.bullish) {
     out.push("bullish_harami");
   }
-  if (
-    prevStats.bullish &&
-    prevStats.bodyRatio >= 0.5 &&
-    barStats.bearish &&
-    barStats.bodyHigh <= prevStats.bodyHigh &&
-    barStats.bodyLow >= prevStats.bodyLow &&
-    barStats.body <= prevStats.body * 0.75 &&
-    preCurrentPressure === "up"
-  ) {
+  if (isHaramiGeometry && preStarPressure === "up" && prevStats.bullish && barStats.bearish) {
     out.push("bearish_harami");
+  }
+  if (isHaramiGeometry && haramiCrossBody && preStarPressure === "down" && prevStats.bearish) {
+    out.push("bullish_harami_cross");
+  }
+  if (isHaramiGeometry && haramiCrossBody && preStarPressure === "up" && prevStats.bullish) {
+    out.push("bearish_harami_cross");
   }
   if (
     prev2Stats &&

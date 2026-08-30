@@ -360,6 +360,8 @@ Header auth alternative (recommended for non-TV clients):
 - `POST /api/broker/sync` (reconcile account snapshot, feature-flagged)
 - `POST /api/broker/heartbeat` (broker liveness update, feature-flagged)
 - `POST /api/broker/trades/create` (v2 broker-originated trade, feature-flagged)
+
+`/api/broker/pull` and `/api/broker/sync` share the complete broker state contract. Both responses include `queue_actions`; sync accepts `queue_actions` so pending future strategy actions survive broker restarts in the configured 42trade database. Destructive complete-snapshot reconciliation requires both `queue_snapshot_complete=true` and `queue_snapshot_hydrated=true`, preventing empty pre-hydration broker memory from deleting the persisted queue during startup.
 - `GET /api/accounts` (v2 admin account list)
 - `GET /api/sources` (v2 admin source list)
 - `GET /api/accounts/{account_id}/subscriptions` (v2 admin subscription list)

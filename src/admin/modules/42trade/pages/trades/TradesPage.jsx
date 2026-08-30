@@ -389,7 +389,7 @@ function resolveAccountOption(item = {}) {
         item?.account_broker_name ||
         accountId,
     ).trim() || accountId;
-  return { account_id: accountId, name: label };
+  return { ...item, account_id: accountId, name: label };
 }
 
 function resolveSourceOption(item = {}) {
@@ -448,6 +448,10 @@ export default function TradesPage() {
   const [settings, setSettings] = useState([]);
   const [selectedCronName, setSelectedCronName] = useState("");
   const [runCronLoading, setRunCronLoading] = useState(false);
+  const [historyImportJob, setHistoryImportJob] = useState(null);
+  const [historyImportBusy, setHistoryImportBusy] = useState(false);
+  const [historyImportError, setHistoryImportError] = useState("");
+  const completedHistoryImportRef = useRef("");
 
   // Redirect /trades/{sid} to /trades/{status}/{sid}
   useEffect(() => {
@@ -758,6 +762,79 @@ export default function TradesPage() {
     (accounts || []).forEach((a) => map.set(String(a.account_id || ""), a));
     return map;
   }, [accounts]);
+
+  useEffect(() => {
+    const accountId = String(filter.account_id || "").trim();
+    if (!accountId) {
+      setHistoryImportJob(null);
+      setHistoryImportError("");
+      return undefined;
+    }
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const response = await api.v2AccountHistoryImport(accountId);
+        if (!cancelled) {
+          setHistoryImportJob(response?.job || null);
+          setHistoryImportError("");
+        }
+      } catch (requestError) {
+        if (!cancelled) {
+          setHistoryImportError(
+            requestError?.message || "Could not read MT5 import status",
+          );
+        }
+      }
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [filter.account_id]);
+
+  useEffect(() => {
+    const jobId = String(historyImportJob?.id || "");
+    if (
+      String(historyImportJob?.status || "") !== "COMPLETED" ||
+      !jobId ||
+      completedHistoryImportRef.current === jobId
+    ) {
+      return;
+    }
+    completedHistoryImportRef.current = jobId;
+    loadTrades();
+  }, [historyImportJob?.id, historyImportJob?.status]);
+
+  async function handleStartHistoryImport() {
+    const accountId = String(filter.account_id || "").trim();
+    if (!accountId) {
+      setHistoryImportError("Select one MT5 account first.");
+      return;
+    }
+    const account = accountById.get(accountId);
+    const accountName = account?.name || accountId;
+    const approved = await confirm({
+      title: "Import all MT5 history?",
+      message: `Import all closed broker positions for ${accountName}. Existing trades will be matched and updated, not duplicated.`,
+      confirmLabel: "Start Import",
+      cancelLabel: "Cancel",
+    });
+    if (!approved) return;
+    setHistoryImportBusy(true);
+    setHistoryImportError("");
+    try {
+      const response = await api.v2StartAccountHistoryImport(accountId);
+      setHistoryImportJob(response?.job || null);
+    } catch (requestError) {
+      setHistoryImportError(
+        requestError?.message || "Could not start MT5 history import",
+      );
+    } finally {
+      setHistoryImportBusy(false);
+    }
+  }
 
   const uniqueOptions = useMemo(() => {
     const symbols = new Set();
@@ -1642,24 +1719,57 @@ export default function TradesPage() {
         className="trades-page-header"
         title={pageTitle}
         actions={
-          <CronRunLauncher
-            value={selectedCronName}
-            onChange={setSelectedCronName}
-            onRun={handleRunCron}
-            options={cronSettings.map((cron) => ({
-              value: cron.name,
-              label: cron.name,
-            }))}
-            disabled={cronSettings.length === 0}
-            loading={runCronLoading}
-            selectAriaLabel="Trades cron selector"
-            getConfirmOptions={(cronName) => ({
-              title: "Run cron?",
-              message: `Run cron "${cronName}" now?`,
-              confirmLabel: "Run",
-              tone: "danger",
-            })}
-          />
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            {historyImportJob?.status ? (
+              <span className={historyImportJob.status === "COMPLETED" ? "loading" : "panel-label"}>
+                MT5 {historyImportJob.status}
+                {Number(historyImportJob.total || 0) > 0
+                  ? ` ${Number(historyImportJob.processed || 0)}/${Number(historyImportJob.total || 0)}`
+                  : ""}
+                {historyImportJob.status === "COMPLETED"
+                  ? ` (${Number(historyImportJob.created || 0)} new, ${Number(historyImportJob.updated || 0)} updated)`
+                  : ""}
+              </span>
+            ) : null}
+            {historyImportError ? <span className="error">{historyImportError}</span> : null}
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={handleStartHistoryImport}
+              disabled={
+                historyImportBusy ||
+                !filter.account_id ||
+                ["REQUESTED", "RUNNING"].includes(
+                  String(historyImportJob?.status || ""),
+                )
+              }
+              title={
+                filter.account_id
+                  ? "Import all closed MT5 positions for the selected account"
+                  : "Select one account in the filter first"
+              }
+            >
+              {historyImportBusy ? "STARTING..." : "IMPORT MT5 HISTORY"}
+            </button>
+            <CronRunLauncher
+              value={selectedCronName}
+              onChange={setSelectedCronName}
+              onRun={handleRunCron}
+              options={cronSettings.map((cron) => ({
+                value: cron.name,
+                label: cron.name,
+              }))}
+              disabled={cronSettings.length === 0}
+              loading={runCronLoading}
+              selectAriaLabel="Trades cron selector"
+              getConfirmOptions={(cronName) => ({
+                title: "Run cron?",
+                message: `Run cron "${cronName}" now?`,
+                confirmLabel: "Run",
+                tone: "danger",
+              })}
+            />
+          </div>
         }
       />
 

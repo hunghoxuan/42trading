@@ -251,9 +251,6 @@ void ParsePartialTps(string sid, string rawJson, string fullResp = "")
       }
    }
 }
-      start = o2 + 1;
-   }
-}
 double   g_ackEquity = 0.0;
 double   g_ackPnlRealized = 0.0;
 bool     g_ackHasPnlRealized = false;
@@ -299,6 +296,8 @@ string   g_ordMapSignalId[];
 datetime g_syncLastTime = 0;
 datetime g_syncHistoryLastTime = 0;
 datetime g_lastClosedDealSyncTime = 0;
+string   g_lastCompletedHistoryImportId = "";
+string   g_historyImportStatus = "IDLE";
 
 string   g_lastPullPayload = "None";
 string   g_lastSyncPayload = "None";
@@ -629,6 +628,14 @@ string JsonEscape(const string s)
          out += StringSubstr(s, i, 1);
    }
    return out;
+}
+
+string BrokerIdentityJson()
+{
+   string accountId = IntegerToString((long)AccountInfoInteger(ACCOUNT_LOGIN));
+   return "\"source_id\":\"mt5:" + accountId
+          + "\",\"client_id\":\"" + accountId
+          + "\",\"platform\":\"mt5\",\"account_id\":\"" + accountId + "\"";
 }
 
 datetime ParseSignalTime(const string raw)
@@ -2113,7 +2120,7 @@ void RemoteLog(string msg, string level = "INFO")
       return;
 
    string body = "{";
-   body += "\"source_id\":\"MT5\",\"account_id\":\"" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN)) + "\",";
+   body += BrokerIdentityJson() + ",";
    body += "\"level\":\"" + JsonEscape(level) + "\",";
    body += "\"message\":\"" + JsonEscape(msg) + "\"";
    body += "}";
@@ -2167,7 +2174,7 @@ void Ack(const string signalId, const string status, const string ticket, const 
    if(StringLen(g_ackVolumeNote) > 0) ackNote += " volNote=" + g_ackVolumeNote;
    if(StringLen(g_ackStopNote) > 0) ackNote += " stopNote=" + g_ackStopNote;
    string body = "{";
-   body += "\"source_id\":\"MT5\",\"account_id\":\"" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN)) + "\",";
+   body += BrokerIdentityJson() + ",";
    body += "\"signal_id\":\"" + JsonEscape(signalId) + "\",";
    body += "\"status\":\"" + JsonEscape(status) + "\",";
    body += "\"execution_status\":\"" + JsonEscape(status) + "\",";
@@ -3215,7 +3222,8 @@ void OnTimer()
       g_syncHistoryLastTime = now;
    }
 
-   string url = BuildApiUrl("/mt5/ea/pull?account=" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN)) + "&max_items=50");
+   string pullAccountId = IntegerToString((long)AccountInfoInteger(ACCOUNT_LOGIN));
+   string url = BuildApiUrl("/mt5/ea/pull?account=" + pullAccountId + "&source_id=mt5:" + pullAccountId + "&client_id=" + pullAccountId + "&platform=mt5&max_items=50");
    string resp;
    if(!HttpGet(url, resp))
    {
@@ -3230,6 +3238,15 @@ void OnTimer()
    g_lastPullCode = g_lastHttpCode;
    g_lastPullPayload = SanitizeOneLine(resp, 220);
    g_lastPullUpdate = TimeCurrent();
+
+   string historyImportId = JsonGetString(resp, "history_import_id");
+   string historyImportState = JsonGetString(resp, "history_import_status");
+   if(historyImportId != "" &&
+      (historyImportState == "REQUESTED" || historyImportState == "RUNNING") &&
+      historyImportId != g_lastCompletedHistoryImportId)
+   {
+      SyncAllHistory(historyImportId);
+   }
 
    if(StringFind(resp, "\"items\":[]") >= 0 || StringFind(resp, "\"items\":null") >= 0)
    {
@@ -3327,6 +3344,208 @@ void OnTimer()
     RefreshDebugPanel();
 }
 
+int FindHistoryPositionIndex(const ulong &positionIds[], const ulong positionId)
+{
+   for(int i = 0; i < ArraySize(positionIds); i++)
+      if(positionIds[i] == positionId)
+         return i;
+   return -1;
+}
+
+void SyncAllHistory(const string jobId)
+{
+   if(jobId == "" || jobId == g_lastCompletedHistoryImportId)
+      return;
+
+   g_historyImportStatus = "SCANNING";
+   datetime now = TimeCurrent();
+   if(!HistorySelect(0, now))
+   {
+      g_historyImportStatus = "FAILED history_select";
+      Print("[HistoryImport] HistorySelect failed: ", GetLastError());
+      return;
+   }
+
+   ulong positionIds[];
+   ulong lastDealTickets[];
+   ulong lastOrderTickets[];
+   string symbols[];
+   string actions[];
+   string comments[];
+   string closeReasons[];
+   double pnlTotals[];
+   double commissionTotals[];
+   double swapTotals[];
+   double entryVolumes[];
+   double entryValues[];
+   double closedVolumes[];
+   double exitValues[];
+   datetime openedTimes[];
+   datetime closedTimes[];
+   bool hasClosingDeal[];
+
+   int dealsTotal = HistoryDealsTotal();
+   for(int i = 0; i < dealsTotal; i++)
+   {
+      ulong dealTicket = HistoryDealGetTicket(i);
+      if(dealTicket == 0)
+         continue;
+      ENUM_DEAL_TYPE dealType = (ENUM_DEAL_TYPE)HistoryDealGetInteger(dealTicket, DEAL_TYPE);
+      if(dealType != DEAL_TYPE_BUY && dealType != DEAL_TYPE_SELL)
+         continue;
+      ulong positionId = (ulong)HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+      if(positionId == 0)
+         continue;
+
+      int idx = FindHistoryPositionIndex(positionIds, positionId);
+      if(idx < 0)
+      {
+         idx = ArraySize(positionIds);
+         ArrayResize(positionIds, idx + 1);
+         ArrayResize(lastDealTickets, idx + 1);
+         ArrayResize(lastOrderTickets, idx + 1);
+         ArrayResize(symbols, idx + 1);
+         ArrayResize(actions, idx + 1);
+         ArrayResize(comments, idx + 1);
+         ArrayResize(closeReasons, idx + 1);
+         ArrayResize(pnlTotals, idx + 1);
+         ArrayResize(commissionTotals, idx + 1);
+         ArrayResize(swapTotals, idx + 1);
+         ArrayResize(entryVolumes, idx + 1);
+         ArrayResize(entryValues, idx + 1);
+         ArrayResize(closedVolumes, idx + 1);
+         ArrayResize(exitValues, idx + 1);
+         ArrayResize(openedTimes, idx + 1);
+         ArrayResize(closedTimes, idx + 1);
+         ArrayResize(hasClosingDeal, idx + 1);
+         positionIds[idx] = positionId;
+         closeReasons[idx] = "MANUAL";
+         hasClosingDeal[idx] = false;
+      }
+
+      double volume = HistoryDealGetDouble(dealTicket, DEAL_VOLUME);
+      double price = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+      datetime dealTime = (datetime)HistoryDealGetInteger(dealTicket, DEAL_TIME);
+      ENUM_DEAL_ENTRY entryType = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
+      pnlTotals[idx] += HistoryDealGetDouble(dealTicket, DEAL_PROFIT)
+                        + HistoryDealGetDouble(dealTicket, DEAL_COMMISSION)
+                        + HistoryDealGetDouble(dealTicket, DEAL_SWAP);
+      commissionTotals[idx] += HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
+      swapTotals[idx] += HistoryDealGetDouble(dealTicket, DEAL_SWAP);
+      if(symbols[idx] == "")
+         symbols[idx] = HistoryDealGetString(dealTicket, DEAL_SYMBOL);
+      string dealComment = HistoryDealGetString(dealTicket, DEAL_COMMENT);
+      if(comments[idx] == "" && dealComment != "")
+         comments[idx] = dealComment;
+
+      if(entryType == DEAL_ENTRY_IN)
+      {
+         entryVolumes[idx] += volume;
+         entryValues[idx] += price * volume;
+         if(openedTimes[idx] == 0 || dealTime < openedTimes[idx])
+            openedTimes[idx] = dealTime;
+         actions[idx] = dealType == DEAL_TYPE_BUY ? "BUY" : "SELL";
+      }
+      else if(entryType == DEAL_ENTRY_OUT || entryType == DEAL_ENTRY_OUT_BY)
+      {
+         hasClosingDeal[idx] = true;
+         closedVolumes[idx] += volume;
+         exitValues[idx] += price * volume;
+         if(dealTime >= closedTimes[idx])
+         {
+            closedTimes[idx] = dealTime;
+            lastDealTickets[idx] = dealTicket;
+            lastOrderTickets[idx] = (ulong)HistoryDealGetInteger(dealTicket, DEAL_ORDER);
+         }
+         ENUM_DEAL_REASON reason = (ENUM_DEAL_REASON)HistoryDealGetInteger(dealTicket, DEAL_REASON);
+         if(reason == DEAL_REASON_TP)
+            closeReasons[idx] = "TP";
+         else if(reason == DEAL_REASON_SL || reason == DEAL_REASON_SO)
+            closeReasons[idx] = "SL";
+         if(actions[idx] == "")
+            actions[idx] = dealType == DEAL_TYPE_BUY ? "SELL" : "BUY";
+      }
+   }
+
+   int completePositions[];
+   for(int i = 0; i < ArraySize(positionIds); i++)
+   {
+      if(!hasClosingDeal[i] || closedTimes[i] <= 0)
+         continue;
+      if(PositionSelectByTicket(positionIds[i]))
+         continue;
+      int n = ArraySize(completePositions);
+      ArrayResize(completePositions, n + 1);
+      completePositions[n] = i;
+   }
+
+   int total = ArraySize(completePositions);
+   int processed = 0;
+   const int batchSize = 100;
+   g_historyImportStatus = "UPLOADING 0/" + IntegerToString(total);
+
+   while(processed < total || (total == 0 && processed == 0))
+   {
+      int endAt = MathMin(total, processed + batchSize);
+      string itemsJson = "";
+      for(int n = processed; n < endAt; n++)
+      {
+         int idx = completePositions[n];
+         double entryPrice = entryVolumes[idx] > 0 ? entryValues[idx] / entryVolumes[idx] : 0;
+         double exitPrice = closedVolumes[idx] > 0 ? exitValues[idx] / closedVolumes[idx] : 0;
+         if(itemsJson != "") itemsJson += ",";
+         itemsJson += "{";
+         itemsJson += "\"ticket\":\"" + IntegerToString((long)positionIds[idx]) + "\",";
+         itemsJson += "\"position_ticket\":\"" + IntegerToString((long)positionIds[idx]) + "\",";
+         itemsJson += "\"deal_ticket\":\"" + IntegerToString((long)lastDealTickets[idx]) + "\",";
+         itemsJson += "\"order_ticket\":\"" + IntegerToString((long)lastOrderTickets[idx]) + "\",";
+         itemsJson += "\"symbol\":\"" + JsonEscape(symbols[idx]) + "\",";
+         itemsJson += "\"action\":\"" + JsonEscape(actions[idx]) + "\",";
+         itemsJson += "\"type\":\"MARKET\",";
+         itemsJson += "\"status\":\"CLOSED\",";
+         itemsJson += "\"close_reason\":\"" + JsonEscape(closeReasons[idx]) + "\",";
+         itemsJson += "\"comment\":\"" + JsonEscape(comments[idx]) + "\",";
+         itemsJson += "\"lots\":" + DoubleToString(closedVolumes[idx], 2) + ",";
+         itemsJson += "\"volume\":" + DoubleToString(closedVolumes[idx], 2) + ",";
+         itemsJson += "\"entry\":" + DoubleToString(entryPrice, 8) + ",";
+         itemsJson += "\"exit_price\":" + DoubleToString(exitPrice, 8) + ",";
+         itemsJson += "\"pnl\":" + DoubleToString(pnlTotals[idx], 2) + ",";
+         itemsJson += "\"commission\":" + DoubleToString(commissionTotals[idx], 2) + ",";
+         itemsJson += "\"swap\":" + DoubleToString(swapTotals[idx], 2) + ",";
+         itemsJson += "\"opened_at\":\"" + IsoTime(openedTimes[idx]) + "\",";
+         itemsJson += "\"closed_at\":\"" + IsoTime(closedTimes[idx]) + "\"";
+         itemsJson += "}";
+      }
+
+      int nextProcessed = endAt;
+      bool complete = nextProcessed >= total;
+      string body = "{";
+      body += BrokerIdentityJson() + ",";
+      body += "\"job_id\":\"" + JsonEscape(jobId) + "\",";
+      body += "\"total\":" + IntegerToString(total) + ",";
+      body += "\"processed\":" + IntegerToString(nextProcessed) + ",";
+      body += "\"complete\":" + (complete ? "true" : "false") + ",";
+      body += "\"items\":[" + itemsJson + "]";
+      body += "}";
+
+      string response;
+      if(!HttpPostJsonWithResponse(BuildApiUrl("/api/trades/ea/history-import"), body, response))
+      {
+         g_historyImportStatus = "FAILED " + ExtractApiError(response);
+         Print("[HistoryImport] Upload failed at ", processed, "/", total, ": ", response);
+         return;
+      }
+      processed = nextProcessed;
+      g_historyImportStatus = "UPLOADING " + IntegerToString(processed) + "/" + IntegerToString(total);
+      if(total == 0)
+         break;
+   }
+
+   g_lastCompletedHistoryImportId = jobId;
+   g_historyImportStatus = "COMPLETED " + IntegerToString(total);
+   Print("[HistoryImport] Completed job ", jobId, " positions=", total);
+}
+
 void SyncClosedHistory()
 {
    // Increased window to 7 days for more robust auditing
@@ -3384,7 +3603,7 @@ void SyncClosedHistory()
 
    if(count > 0)
    {
-      string body = "{\"source_id\":\"MT5\",\"account_id\":\"" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN)) + "\",\"updates\":[" + updates + "]}";
+      string body = "{" + BrokerIdentityJson() + ",\"updates\":[" + updates + "]}";
       HttpPostJson(BuildApiUrl("/api/ea/trades/sync-bulk"), body);
    }
 }
@@ -4060,7 +4279,7 @@ void SyncWithVps()
    }
 
    string body = "{";
-   body += "\"source_id\":\"MT5\",\"account_id\":\"" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN)) + "\",";
+   body += BrokerIdentityJson() + ",";
    body += "\"balance\":" + DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2) + ",";
    body += "\"equity\":" + DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2) + ",";
    body += "\"margin\":" + DoubleToString(AccountInfoDouble(ACCOUNT_MARGIN), 2) + ",";
@@ -4257,7 +4476,7 @@ void PushPrices()
    }
 
    string body = "{";
-   body += "\"source_id\":\"MT5\",\"account_id\":\"" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN)) + "\",";
+   body += BrokerIdentityJson() + ",";
    body += "\"ts\":" + IntegerToString(ts) + ",";
    body += "\"p\":[" + priceList + "]";
    body += "}";
@@ -4375,8 +4594,7 @@ void PushBars()
       return;
 
    string body = "{";
-   body += "\"source_id\":\"MT5\",";
-   body += "\"account_id\":\"" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN)) + "\",";
+   body += BrokerIdentityJson() + ",";
    body += "\"bars\":[" + barItems + "]";
    body += "}";
 
@@ -4544,8 +4762,7 @@ void SyncBarsIncremental()
    // 4. POST to prices-sync
    g_lastIncrementalStatus = "POSTING";
    string body = "{";
-   body += "\"source_id\":\"MT5\",";
-   body += "\"account_id\":\"" + IntegerToString(accountId) + "\",";
+   body += BrokerIdentityJson() + ",";
    body += "\"sync_mode\":\"incremental\",";
    body += "\"items\":[" + syncItems + "]";
    body += "}";

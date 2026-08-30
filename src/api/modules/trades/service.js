@@ -75,6 +75,26 @@ class TradesService {
   brokerSyncTrades(userId, accountId, items = [], options = {}) {
     return this.repo.brokerSyncTrades(userId, accountId, items, options);
   }
+
+  listStrategyQueueActions(userId, accountId) {
+    return this.repo.listStrategyQueueActions(userId, accountId);
+  }
+
+  listStrategyQueueTerminalActionIds(userId, accountId) {
+    return this.repo.listStrategyQueueTerminalActionIds(userId, accountId);
+  }
+
+  syncStrategyQueueActions(userId, accountId, actions = [], options = {}) {
+    return this.repo.syncStrategyQueueActions(userId, accountId, actions, options);
+  }
+
+  updateStrategyQueueAction(userId, actionId, patch = {}, accountId = "") {
+    return this.repo.updateStrategyQueueAction(userId, actionId, patch, accountId);
+  }
+
+  removeStrategyQueueAction(userId, actionId, accountId = "") {
+    return this.repo.removeStrategyQueueAction(userId, actionId, accountId);
+  }
 }
 
 function createTradesService(options = {}) {

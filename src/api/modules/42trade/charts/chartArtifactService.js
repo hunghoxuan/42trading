@@ -75,9 +75,7 @@ const marketArtifactFlushTimers = new Map();
 function marketArtifactCacheKey(symbol, timeframe, options = {}) {
   const sym = String(symbol || "").trim().toUpperCase() || "UNKNOWN";
   const tf = normalizeTf(timeframe) || "default";
-  const start = normalizeUnixTime(options.startTime ?? options.start_time) ?? "";
-  const end = normalizeUnixTime(options.endTime ?? options.end_time) ?? "";
-  return `${sym}|${tf}|${start}|${end}`;
+  return `${sym}|${tf}`;
 }
 
 // Fingerprint of everything the artifact file actually carries that is derived from data
@@ -1177,6 +1175,31 @@ function dedupeItems(items = []) {
   return out;
 }
 
+function artifactIdentity(item = {}) {
+  return [
+    String(item?.family || ""),
+    String(item?.type || ""),
+    String(item?.subtype || ""),
+    String(item?.timeframe || ""),
+    String(item?.id || ""),
+  ].join("|");
+}
+
+// Merge deltas by identity instead of append-only concatenation. This lets a forming-bar
+// artifact update its bounds/status without duplicating the marker in the shared snapshot.
+function mergeArtifactItems(existingItems = [], incomingItems = []) {
+  const merged = new Map();
+  for (const item of dedupeItems(existingItems)) {
+    merged.set(artifactIdentity(item), item);
+  }
+  for (const raw of Array.isArray(incomingItems) ? incomingItems : []) {
+    const item = normalizeChartArtifactItem(raw);
+    const key = artifactIdentity(item);
+    if (!key.endsWith("|")) merged.set(key, item);
+  }
+  return [...merged.values()];
+}
+
 function artifactReferencePrice(item = {}) {
   const price = Number(item?.price);
   const low = Number(item?.price_low);
@@ -1436,6 +1459,46 @@ function mergeMarketArtifacts({
   return envelope;
 }
 
+function mergeMarketArtifactDelta({
+  symbol = "",
+  timeframe = "",
+  items = [],
+  existing = null,
+  bars = [],
+  indicators = {},
+  metadata = {},
+  provider = "",
+  userId = "default",
+  startTime = null,
+  endTime = null,
+} = {}) {
+  const normalizedTf = normalizeTf(timeframe);
+  const normalizedExisting = existing && typeof existing === "object" ? existing : null;
+  const mergedItems = mergeArtifactItems(normalizedExisting?.items, items);
+  return buildEnvelope({
+    scopeType: normalizedExisting?.scope?.scope_type || "market",
+    symbol: String(symbol || normalizedExisting?.scope?.symbol || "").toUpperCase(),
+    timeframe: normalizedTf,
+    userId: userId || normalizedExisting?.scope?.user_id || "default",
+    bars: Array.isArray(bars) && bars.length ? bars : [],
+    indicators:
+      indicators && typeof indicators === "object" && Object.keys(indicators).length
+        ? indicators
+        : normalizedExisting?.series?.indicators || {},
+    items: mergedItems,
+    provider: provider || normalizedExisting?.bars_ref?.provider || "",
+    requestedStartTime: startTime ?? normalizedExisting?.bars_ref?.requested_start_time,
+    requestedEndTime: endTime ?? normalizedExisting?.bars_ref?.requested_end_time,
+    meta: {
+      ...(normalizedExisting?.meta && typeof normalizedExisting.meta === "object"
+        ? clone(normalizedExisting.meta)
+        : {}),
+      ...(metadata && typeof metadata === "object" ? clone(metadata) : {}),
+      artifact_source: "shared_incremental",
+    },
+  });
+}
+
 function migrateLegacyMarketArtifacts(symbol, timeframe, options = {}) {
   const metadata = chartArtifactRepo.readJson(
     resolveMarketMetadataPath(symbol, timeframe, options),
@@ -1530,8 +1593,10 @@ module.exports = {
   marketArtifactCacheStats,
   marketArtifactInputChanged,
   mergeMarketArtifacts,
+  mergeMarketArtifactDelta,
   migrateLegacyMarketArtifacts,
   normalizeChartArtifactItem,
+  normalizeTf,
   readCanonicalEventCache,
   readMarketArtifacts,
   readTradeArtifacts,

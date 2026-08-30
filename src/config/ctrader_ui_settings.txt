@@ -1,6 +1,6 @@
 chart.direction=Sell
 chart.orders_per_click=Auto
-chart.symbol=EURUSD
+chart.symbol=BTCUSD
 chart.trade_profile=Scalp
 toggle.big_candle=True
 toggle.bollinger_events=True

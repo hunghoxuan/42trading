@@ -30,7 +30,7 @@ bash scripts/start/start_dev.sh
 # → http://localhost:3001  (API)
 ```
 `start_dev.sh` keeps the API on `3001` alive independently via the webhook `launchctl` helper, so closing or interrupting the foreground admin runner should no longer take the API down with it.
-Local startup defaults to Postgres for both trades and 42Pay. The API reads `MT5_POSTGRES_URL` from [src/api/.env](/Users/macmini/Projects/moza/42trade/src/api/.env), and `42Pay` now follows the same backend selection as trades.
+Local startup defaults to SQLite through `MT5_STORAGE=sqlite`, using `MT5_SQLITE_PATH` for the database file. PostgreSQL URLs may be configured for optional backend switching, but their presence does not activate PostgreSQL.
 
 If you switch the UI DB dropdown to `VPS DB`, the local backend will auto-open the SSH tunnel to `127.0.0.1:15432` during development.
 

@@ -125,6 +125,8 @@ const {
 const backtestService = backtestsDomain.backtestService;
 const strategyConfigService = strategiesDomain.strategyConfigService;
 const ruleConfigService = rulesDomain.ruleConfigService;
+const { createSharedCatalogService } = require("../modules/42trade/catalog/sharedCatalogService");
+const sharedCatalogService = createSharedCatalogService();
 const systemConfigStore = createConfigStore();
 const { tradesRepo } = tradesDomain;
 const tradeArtifactSync = tradesDomain.tradeArtifactSync;
@@ -4025,6 +4027,33 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
     hub: true,
     sound: null,
   },
+  BROKER_DISCONNECT: {
+    toast: true,
+    console_log: false,
+    ticker: true,
+    db_log: true,
+    hub: true,
+    telegram: true,
+    sound: null,
+  },
+  BROKER_RECONNECT: {
+    toast: true,
+    console_log: false,
+    ticker: true,
+    db_log: true,
+    hub: true,
+    telegram: true,
+    sound: null,
+  },
+  MT5_BRIDGE_DISCONNECT: {
+    toast: true,
+    console_log: false,
+    ticker: true,
+    db_log: true,
+    hub: true,
+    telegram: true,
+    sound: null,
+  },
   CHART_STRATEGY: {
     toast: true,
     console_log: false,
@@ -4163,6 +4192,7 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
 class NotificationManager {
   constructor() {
     this.settingsCache = new Map();
+    this.channelCache = new Map();
     this._pool = null;
     this._settingsLoaded = false;
   }
@@ -4173,20 +4203,39 @@ class NotificationManager {
     await this.loadSettings();
   }
 
-  /** Load notification_config rows from user_settings into cache */
+  /** Load notification_config + notification_channel_config rows into cache */
   async loadSettings() {
     if (!this._pool) return;
+    const configUserId =
+      String(CFG.mt5DefaultUserId || "default").trim() || "default";
     try {
-      const rows = await settingsStore.listUserSettingsByType(
-        null,
-        "notification_config",
-      );
+      const [rows, channelRows] = await Promise.all([
+        settingsStore.listUserSettingsByType(
+          configUserId,
+          "notification_config",
+        ),
+        settingsStore.listUserSettingsByType(
+          configUserId,
+          "notification_channel_config",
+        ),
+      ]);
       this.settingsCache.clear();
+      this.channelCache.clear();
       for (const row of rows) {
         const eventType = row.name;
         const settings = row.data;
         if (eventType && settings && typeof settings === "object") {
           this.settingsCache.set(eventType, settings);
+        }
+      }
+      for (const row of channelRows) {
+        const channelId = String(row?.name || "").trim();
+        const channel = sanitizeNotificationChannelConfig({
+          id: channelId,
+          ...(row?.data && typeof row.data === "object" ? row.data : {}),
+        });
+        if (channel?.id) {
+          this.channelCache.set(channel.id, channel);
         }
       }
       this._settingsLoaded = true;
@@ -4208,6 +4257,75 @@ class NotificationManager {
     return { ...defaults, ...custom };
   }
 
+  getChannel(channelId) {
+    const key = String(channelId || "").trim();
+    if (!key) return null;
+    return this.channelCache.get(key) || null;
+  }
+
+  async getChannelResolved(channelId) {
+    const key = String(channelId || "").trim();
+    if (!key) return null;
+    const cached = this.getChannel(key);
+    if (cached) return cached;
+    const configUserId =
+      String(CFG.mt5DefaultUserId || "default").trim() || "default";
+    const row = await settingsStore
+      .getUserSetting(configUserId, "notification_channel_config", key)
+      .catch(() => null);
+    const channel = sanitizeNotificationChannelConfig({
+      id: key,
+      ...(row?.data && typeof row.data === "object" ? row.data : {}),
+    });
+    if (channel?.id) {
+      this.channelCache.set(channel.id, channel);
+      return channel;
+    }
+    return null;
+  }
+
+  listChannels() {
+    return [...this.channelCache.values()];
+  }
+
+  getDefaultTelegramChannel() {
+    const telegramChannels = this.listChannels().filter(
+      (channel) =>
+        String(channel?.type || "").toLowerCase() === "telegram" &&
+        channel?.is_enabled !== false,
+    );
+    if (telegramChannels.length === 1) return telegramChannels[0];
+    return null;
+  }
+
+  async getDefaultTelegramChannelResolved() {
+    const cached = this.getDefaultTelegramChannel();
+    if (cached) return cached;
+    const configUserId =
+      String(CFG.mt5DefaultUserId || "default").trim() || "default";
+    const rows = await settingsStore
+      .listUserSettingsByType(configUserId, "notification_channel_config")
+      .catch(() => []);
+    const telegramChannels = (rows || [])
+      .map((row) =>
+        sanitizeNotificationChannelConfig({
+          id: row?.name,
+          ...(row?.data && typeof row.data === "object" ? row.data : {}),
+        }),
+      )
+      .filter(
+        (channel) =>
+          channel &&
+          String(channel.type || "").toLowerCase() === "telegram" &&
+          channel.is_enabled !== false,
+      );
+    if (telegramChannels.length === 1) {
+      this.channelCache.set(telegramChannels[0].id, telegramChannels[0]);
+      return telegramChannels[0];
+    }
+    return null;
+  }
+
   /**
    * Route a notification to all enabled channels based on settings for eventType.
    *
@@ -4227,6 +4345,8 @@ class NotificationManager {
       console_log: settings.console_log,
       ticker: settings.ticker,
       hub: settings.hub !== false,
+      telegram: settings.telegram === true,
+      telegram_channel: String(settings.telegram_channel || "").trim() || null,
       sound: payload.sound || settings.sound || null,
       notification: payload.notification !== false,
     };
@@ -4292,10 +4412,48 @@ class NotificationManager {
         fileLog(objectId, objectTable, payload, userId);
       }
     }
+
+    // 4) telegram channel
+    const telegramChannelId = String(
+      payload.telegram_channel ||
+        settings.telegram_channel ||
+        payload.telegramChannel ||
+        "",
+    ).trim();
+    if (settings.telegram === true || payload._force_telegram || telegramChannelId) {
+      const text = buildTelegramNotificationText(eventType, merged);
+      Promise.resolve()
+        .then(async () => {
+          const channel = telegramChannelId
+            ? await this.getChannelResolved(telegramChannelId)
+            : await this.getDefaultTelegramChannelResolved();
+          const result = await sendTelegram(text, channel);
+          if (result?.skipped) {
+            console.warn(
+              `[telegram] skipped eventType=${eventType} event=${evName} channel=${telegramChannelId || channel?.id || "-"} reason=${result.reason || "unknown"}`,
+            );
+          }
+          return result;
+        })
+        .catch((e) => {
+          console.warn(
+            "[NotificationManager] telegram send error:",
+            e instanceof Error ? e.message : String(e),
+          );
+        });
+    }
   }
 }
 
 const notificationManager = new NotificationManager();
+
+function resolveNotificationConfigUserId(req = null) {
+  const sess = req ? getUiSessionFromReq(req) : null;
+  return (
+    String(CFG.mt5DefaultUserId || sess?.user_id || "default").trim() ||
+    "default"
+  );
+}
 
 function notifyMutationResult({
   eventType = "SYSTEM_EVENT",
@@ -14559,20 +14717,83 @@ function formatSignal(signal) {
     .join("\n");
 }
 
-async function sendTelegram(text) {
-  if (!CFG.telegramBotToken || !CFG.telegramChatId) {
+function buildTelegramNotificationText(eventType, payload = {}) {
+  const title = String(payload.event || eventType || "NOTIFICATION")
+    .trim()
+    .toUpperCase();
+  if (title === "BROKER_STATUS") {
+    return `[BROKER_STATUS] ${String(payload.message || "").trim()}`;
+  }
+  const sourceId = String(
+    payload.account_id ||
+      payload.source_id ||
+      payload.sourceId ||
+      payload.object_id ||
+      payload.objectId ||
+      "",
+  ).trim();
+  const sourceType = String(
+    payload.source_type || payload.sourceType || payload.object_table || "",
+  ).trim();
+  const status = String(payload.status || payload.type || "info")
+    .trim()
+    .toUpperCase();
+  const message = String(payload.message || "").trim();
+  const symbol = String(payload.symbol || "").trim().toUpperCase();
+  const pieces = [
+    `[${title}]`,
+    status ? `status=${status}` : "",
+    sourceType ? `type=${sourceType}` : "",
+    sourceId ? `id=${sourceId}` : "",
+    symbol ? `symbol=${symbol}` : "",
+    message,
+  ].filter(Boolean);
+  return pieces.join(" | ");
+}
+
+function sanitizeNotificationChannelConfig(input = {}) {
+  const type = String(input.type || "telegram")
+    .trim()
+    .toLowerCase();
+  const id = String(input.id || input.channel_id || input.name || "")
+    .trim()
+    .replace(/\s+/g, "_");
+  if (!id) return null;
+  return {
+    id,
+    type,
+    label: String(input.label || id).trim() || id,
+    bot_token: String(input.bot_token || "").trim(),
+    chat_id: String(input.chat_id || "").trim(),
+    webhook_url: String(input.webhook_url || "").trim(),
+    target: String(input.target || "").trim(),
+    is_enabled: input.is_enabled !== false,
+  };
+}
+
+async function sendTelegram(text, channelConfig = null) {
+  const channel = sanitizeNotificationChannelConfig(channelConfig || {});
+  const botToken =
+    channel?.type === "telegram" && channel?.bot_token
+      ? channel.bot_token
+      : CFG.telegramBotToken;
+  const chatId =
+    channel?.type === "telegram" && channel?.chat_id
+      ? channel.chat_id
+      : CFG.telegramChatId;
+  if (!botToken || !chatId) {
     return {
       ok: false,
       skipped: true,
-      reason: "Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID",
+      reason: "Missing telegram bot token or chat id",
     };
   }
-  const endpoint = `https://api.telegram.org/bot${CFG.telegramBotToken}/sendMessage`;
+  const endpoint = `https://api.telegram.org/bot${botToken}/sendMessage`;
   const response = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      chat_id: CFG.telegramChatId,
+      chat_id: chatId,
       text,
       disable_web_page_preview: true,
     }),
@@ -14582,6 +14803,9 @@ async function sendTelegram(text) {
   if (!response.ok || !data.ok) {
     throw new Error(`Telegram API error: ${JSON.stringify(data)}`);
   }
+  console.log(
+    `[telegram] status=${response.status} ok=true channel=${channel?.id || "env_default"} chat_id=${chatId}`,
+  );
   return data;
 }
 
@@ -15391,9 +15615,421 @@ function sanitizeAccountForUi(account = {}) {
   return {
     ...account,
     broker,
+    broker_activity: deriveBrokerAccountActivity(account),
     connection: undefined,
     broker_has_password: hasPassword,
   };
+}
+
+// Treat broker disconnect as a strong signal that likely needs manual recovery,
+// not a brief cTrader refresh / silent interval. We only mark disconnected after
+// a sustained no-touch period, then hold an extra grace window before notifying.
+const BROKER_DISCONNECT_STALE_MS = 5 * 60 * 1000;
+const BROKER_DISCONNECT_GRACE_MS = 60 * 1000;
+const BROKER_DISCONNECT_CHECK_INTERVAL_MS = 15 * 1000;
+const MT5_BRIDGE_DISCONNECT_CHECK_INTERVAL_MS = 15 * 1000;
+
+function parseTimestampMs(value) {
+  const ms = Date.parse(String(value || ""));
+  return Number.isFinite(ms) ? ms : NaN;
+}
+
+function firstNonEmptyText(...values) {
+  for (const value of values) {
+    const text = String(value || "").trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function deriveBrokerAccountActivity(account = {}, nowMs = Date.now()) {
+  const metadata =
+    account?.metadata && typeof account.metadata === "object"
+      ? account.metadata
+      : {};
+  const sourceIds = normalizeAccountSourceIdsCache(
+    account?.source_ids_cache ?? metadata?.source_ids_cache ?? [],
+  );
+  const lastTouchAt = firstNonEmptyText(
+    metadata.last_broker_touch_at,
+    metadata.last_sync_at,
+    metadata.health_updated_at,
+    metadata.last_price_push_at,
+  );
+  const lastTouchMs = parseTimestampMs(lastTouchAt);
+  const hasTouch = Number.isFinite(lastTouchMs);
+  const staleMs = hasTouch ? Math.max(0, nowMs - lastTouchMs) : null;
+  const pendingDisconnectAt = firstNonEmptyText(
+    metadata.broker_disconnect_pending_since,
+  );
+  const pendingDisconnectMs = parseTimestampMs(pendingDisconnectAt);
+  const pendingElapsedMs = Number.isFinite(pendingDisconnectMs)
+    ? Math.max(0, nowMs - pendingDisconnectMs)
+    : 0;
+  const staleExceeded = !hasTouch || staleMs > BROKER_DISCONNECT_STALE_MS;
+  const disconnected =
+    !hasTouch ||
+    (staleExceeded &&
+      Number.isFinite(pendingDisconnectMs) &&
+      pendingElapsedMs >= BROKER_DISCONNECT_GRACE_MS);
+  const touchSource = firstNonEmptyText(
+    metadata.last_broker_touch_source,
+    metadata.last_sync_source,
+    metadata.last_price_push_source,
+    sourceIds[0],
+  );
+  const sourceActivity =
+    metadata.broker_source_activity &&
+    typeof metadata.broker_source_activity === "object"
+      ? Object.entries(metadata.broker_source_activity)
+          .map(([sourceId, value]) => ({
+            source_id: sourceId,
+            ...(value && typeof value === "object" ? value : {}),
+          }))
+          .sort(
+            (left, right) =>
+              parseTimestampMs(right.last_seen_at) -
+              parseTimestampMs(left.last_seen_at),
+          )
+      : [];
+  const trackable = Boolean(
+    hasTouch ||
+      sourceIds.length ||
+      sourceActivity.length ||
+      account?.broker?.Login ||
+      account?.broker?.Server ||
+      account?.provider_code ||
+      metadata.provider_code,
+  );
+  const status = !hasTouch
+    ? "UNKNOWN"
+    : disconnected
+      ? "DISCONNECTED"
+      : "CONNECTED";
+  return {
+    status,
+    trackable,
+    disconnected,
+    stale_exceeded: staleExceeded,
+    last_sync_at: lastTouchAt || null,
+    last_sync_source: touchSource || null,
+    last_touch_type: firstNonEmptyText(
+      metadata.last_broker_touch_type,
+      metadata.last_sync_type,
+    ) || null,
+    stale_ms: staleMs,
+    stale_seconds: staleMs == null ? null : Math.floor(staleMs / 1000),
+    disconnect_after_seconds: Math.floor(BROKER_DISCONNECT_STALE_MS / 1000),
+    disconnect_grace_seconds: Math.floor(BROKER_DISCONNECT_GRACE_MS / 1000),
+    disconnect_pending_since: pendingDisconnectAt || null,
+    disconnect_pending_seconds:
+      Number.isFinite(pendingDisconnectMs) && staleExceeded
+        ? Math.floor(pendingElapsedMs / 1000)
+        : 0,
+    source_ids: sourceIds,
+    sources: sourceActivity,
+    disconnected_at: metadata.broker_disconnected_at || null,
+    disconnect_notified_at: metadata.broker_disconnect_notified_at || null,
+  };
+}
+
+async function markBrokerAccountActivity(accountId, payload = {}, options = {}) {
+  const rawAccountId = String(accountId || "").trim();
+  if (!rawAccountId) return null;
+  const account =
+    options.account ||
+    (await resolveCanonicalUserAccount(
+      payload.user_id || CFG.mt5DefaultUserId,
+      rawAccountId,
+      payload,
+    ));
+  if (!account) return null;
+
+  const targetId = String(account.account_id || rawAccountId).trim();
+  const userId =
+    String(account.user_id || payload.user_id || CFG.mt5DefaultUserId).trim() ||
+    CFG.mt5DefaultUserId;
+  const store = getUserAccountObjectStore();
+  const dynamic = await getDynamicUserAccountRecord(userId, targetId);
+  const currentMeta =
+    dynamic?.metadata && typeof dynamic.metadata === "object"
+      ? dynamic.metadata
+      : account?.metadata && typeof account.metadata === "object"
+        ? account.metadata
+        : {};
+  const nowIso = mt5NowIso();
+  const touchSource = firstNonEmptyText(
+    options.touchSource,
+    payload.source_id,
+    payload.client_id,
+    currentMeta.last_broker_touch_source,
+  ) || "unknown";
+  const existingSourceActivity =
+    currentMeta.broker_source_activity &&
+    typeof currentMeta.broker_source_activity === "object"
+      ? currentMeta.broker_source_activity
+      : {};
+  const previousConnectionStatus = String(
+    currentMeta.broker_connection_status || "",
+  )
+    .trim()
+    .toUpperCase();
+  const reconnected = previousConnectionStatus === "DISCONNECTED";
+  const nextMeta = {
+    ...currentMeta,
+    last_broker_touch_at: nowIso,
+    last_broker_touch_source: touchSource,
+    last_broker_touch_type: firstNonEmptyText(
+      options.touchType,
+      currentMeta.last_broker_touch_type,
+    ) || null,
+    last_sync_at: nowIso,
+    last_sync_source: touchSource,
+    last_sync_type: firstNonEmptyText(
+      options.touchType,
+      currentMeta.last_sync_type,
+    ) || null,
+    broker_connection_status: "CONNECTED",
+    broker_connection_checked_at: nowIso,
+    broker_disconnected_at: null,
+    broker_disconnect_notified_at: null,
+    broker_disconnect_pending_since: null,
+    broker_source_activity: {
+      ...existingSourceActivity,
+      [touchSource]: {
+        source_id: touchSource,
+        client_id: firstNonEmptyText(payload.client_id, payload.source_id) || null,
+        platform: firstNonEmptyText(payload.platform) || null,
+        account_id: targetId,
+        last_seen_at: nowIso,
+        last_touch_type:
+          firstNonEmptyText(options.touchType, currentMeta.last_sync_type) || null,
+      },
+    },
+    ...(reconnected ? { broker_reconnected_at: nowIso } : {}),
+  };
+
+  await store.upsertDynamicObject(
+    userId,
+    "user_accounts",
+    targetId,
+    nextMeta,
+    dynamic?.status || account.status || "ACTIVE",
+    {
+      created_at: dynamic?.created_at || account.created_at || nowIso,
+      updated_at: nowIso,
+    },
+  );
+  const merged = await store.getUnifiedObject(userId, "user_accounts", targetId);
+  await StateRepo.del("USER_ACCOUNTS", userId).catch(() => {});
+  const sanitized = sanitizeAccountForUi(merged || { ...account, metadata: nextMeta });
+  if (reconnected) {
+    const activity = deriveBrokerAccountActivity(sanitized, Date.now());
+    console.log(
+      `[broker-disconnect-monitor] reconnect account=${targetId} user=${userId} source=${touchSource}`,
+    );
+    notificationManager.handle("BROKER_RECONNECT", "restored", {
+      user_id: userId,
+      account_id: targetId,
+      source_id: touchSource || sourceIdsLabel(activity.source_ids),
+      source_type: "account",
+      event: "BROKER_STATUS",
+      status: "ok",
+      type: "success",
+      message: `${account.name || targetId} CONNECTED`,
+      notification: true,
+    });
+  }
+  return sanitized;
+}
+
+async function checkBrokerDisconnectsOnce() {
+  if (!CFG.mt5Enabled) return;
+  const primaryUserId =
+    String(CFG.mt5DefaultUserId || "default").trim() || "default";
+  const store = getUserAccountObjectStore();
+  const byUserAccounts = await store
+    .listUnifiedObjects(primaryUserId, "user_accounts")
+    .then((rows) => rows.map(sanitizeAccountForUi))
+    .catch(() => []);
+  const fallbackAccounts =
+    byUserAccounts.length > 0 ? [] : await mt5ListAccountsV2().catch(() => []);
+  const accounts = byUserAccounts.length > 0 ? byUserAccounts : fallbackAccounts;
+  const nowMs = Date.now();
+  let notified = 0;
+  for (const account of Array.isArray(accounts) ? accounts : []) {
+    if (!account || String(account.status || "").toUpperCase() === "ARCHIVED")
+      continue;
+    const activity = deriveBrokerAccountActivity(account, nowMs);
+    if (!activity.last_sync_at) continue;
+    const metadata =
+      account?.metadata && typeof account.metadata === "object"
+        ? account.metadata
+        : {};
+    const connectionStatus = String(
+      metadata.broker_connection_status || "",
+    ).toUpperCase();
+    const userId =
+      String(account.user_id || CFG.mt5DefaultUserId).trim() ||
+      CFG.mt5DefaultUserId;
+    const targetId = String(account.account_id || "").trim();
+    if (!targetId) continue;
+    const nowIso = mt5NowIso();
+    const dynamic = await getDynamicUserAccountRecord(userId, targetId).catch(
+      () => null,
+    );
+    const currentMeta =
+      dynamic?.metadata && typeof dynamic.metadata === "object"
+        ? dynamic.metadata
+        : metadata;
+    const pendingSince = firstNonEmptyText(
+      currentMeta.broker_disconnect_pending_since,
+    );
+    const pendingSinceMs = parseTimestampMs(pendingSince);
+    const graceElapsed =
+      Number.isFinite(pendingSinceMs) &&
+      nowMs - pendingSinceMs >= BROKER_DISCONNECT_GRACE_MS;
+    const staleExceeded = activity.stale_exceeded === true;
+
+    if (!staleExceeded) {
+      if (pendingSince) {
+        const clearedMeta = {
+          ...currentMeta,
+          broker_connection_checked_at: nowIso,
+          broker_disconnect_pending_since: null,
+        };
+        await store.upsertDynamicObject(
+          userId,
+          "user_accounts",
+          targetId,
+          clearedMeta,
+          dynamic?.status || account.status || "ACTIVE",
+          {
+            created_at: dynamic?.created_at || account.created_at || nowIso,
+            updated_at: nowIso,
+          },
+        );
+        await StateRepo.del("USER_ACCOUNTS", userId).catch(() => {});
+      }
+      continue;
+    }
+
+    if (!pendingSince && activity.last_sync_at) {
+      const pendingMeta = {
+        ...currentMeta,
+        broker_connection_checked_at: nowIso,
+        broker_disconnect_pending_since: nowIso,
+      };
+      await store.upsertDynamicObject(
+        userId,
+        "user_accounts",
+        targetId,
+        pendingMeta,
+        dynamic?.status || account.status || "ACTIVE",
+        {
+          created_at: dynamic?.created_at || account.created_at || nowIso,
+          updated_at: nowIso,
+        },
+      );
+      await StateRepo.del("USER_ACCOUNTS", userId).catch(() => {});
+      continue;
+    }
+
+    if (!graceElapsed) continue;
+    if (!activity.disconnected) continue;
+
+    if (connectionStatus === "DISCONNECTED") {
+      continue;
+    }
+    const nextMeta = {
+      ...currentMeta,
+      broker_connection_status: "DISCONNECTED",
+      broker_connection_checked_at: nowIso,
+      broker_disconnected_at:
+        currentMeta.broker_disconnected_at || pendingSince || activity.last_sync_at || nowIso,
+      broker_disconnect_notified_at: nowIso,
+      broker_disconnect_pending_since:
+        currentMeta.broker_disconnect_pending_since || pendingSince || nowIso,
+    };
+    await store.upsertDynamicObject(
+      userId,
+      "user_accounts",
+      targetId,
+      nextMeta,
+      dynamic?.status || account.status || "ACTIVE",
+      {
+        created_at: dynamic?.created_at || account.created_at || nowIso,
+        updated_at: nowIso,
+      },
+    );
+    const merged = await store
+      .getUnifiedObject(userId, "user_accounts", targetId)
+      .catch(() => null);
+    await StateRepo.del("USER_ACCOUNTS", userId).catch(() => {});
+
+    console.log(
+      `[broker-disconnect-monitor] disconnect account=${targetId} user=${userId} last_sync=${activity.last_sync_at || "never"} stale_sec=${activity.stale_seconds ?? "n/a"} source=${activity.last_sync_source || sourceIdsLabel(activity.source_ids) || "-"}`,
+    );
+
+    notificationManager.handle("BROKER_DISCONNECT", "stale", {
+      user_id: userId,
+      account_id: targetId,
+      source_id: activity.last_sync_source || sourceIdsLabel(activity.source_ids),
+      source_type: "account",
+      event: "BROKER_STATUS",
+      status: "warning",
+      type: "warning",
+      message: `${account.name || targetId} DISCONNECTED`,
+      notification: true,
+    });
+    notified += 1;
+  }
+  return { checked: accounts.length, notified };
+}
+
+async function checkMt5BridgeDisconnectOnce() {
+  if (!CFG.mt5Enabled || !CFG.mt5PythonBridgeEnabled) return;
+  const status = await checkMt5PythonBridgeHealth().catch((error) => ({
+    enabled: true,
+    configured: true,
+    reachable: false,
+    status: "error",
+    service: "mt5-python-bridge",
+    error: error instanceof Error ? error.message : String(error),
+  }));
+  if (!status?.configured) return;
+
+  const healthy = status.reachable === true;
+  const key = "__mt5BridgeDisconnectState";
+  const prev =
+    global[key] && typeof global[key] === "object" ? global[key] : null;
+  const nowIso = mt5NowIso();
+  global[key] = {
+    healthy,
+    checked_at: nowIso,
+    last_error: healthy ? "" : String(status.error || status.status || "unreachable"),
+  };
+
+  if (healthy) return;
+  if (prev?.healthy === false) return;
+
+  notificationManager.handle("MT5_BRIDGE_DISCONNECT", "health_check_failed", {
+    user_id: CFG.mt5DefaultUserId,
+    account_id: "mt5-python-bridge",
+    source_id: "mt5-python-bridge",
+    source_type: "service",
+    status: "warning",
+    type: "warning",
+    message: `MT5 Python bridge disconnected: host=${status.host || CFG.mt5PythonBridgeHost}:${status.port || CFG.mt5PythonBridgePort}; detail=${String(status.error || status.status || "not reachable").trim() || "not reachable"}`,
+    notification: true,
+  });
+}
+
+function sourceIdsLabel(sourceIds = []) {
+  return (Array.isArray(sourceIds) ? sourceIds : [])
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .join(",");
 }
 
 function collectAccountIdentityAliases(account = {}) {
@@ -16319,6 +16955,28 @@ async function _mt5InitBackendInternal(source = null) {
   // Initialize NotificationManager (loads notification_config from user_settings)
   await notificationManager.init(pool);
   global.__notificationManager = notificationManager;
+  if (!global.__brokerDisconnectMonitorStarted) {
+    global.__brokerDisconnectMonitorStarted = true;
+    setInterval(() => {
+      checkBrokerDisconnectsOnce().catch((error) => {
+        console.warn(
+          "[broker-disconnect-monitor] check failed:",
+          error instanceof Error ? error.message : String(error),
+        );
+      });
+    }, BROKER_DISCONNECT_CHECK_INTERVAL_MS);
+  }
+  if (!global.__mt5BridgeDisconnectMonitorStarted) {
+    global.__mt5BridgeDisconnectMonitorStarted = true;
+    setInterval(() => {
+      checkMt5BridgeDisconnectOnce().catch((error) => {
+        console.warn(
+          "[mt5-bridge-disconnect-monitor] check failed:",
+          error instanceof Error ? error.message : String(error),
+        );
+      });
+    }, MT5_BRIDGE_DISCONNECT_CHECK_INTERVAL_MS);
+  }
 
   const storage = "postgres";
 
@@ -16684,6 +17342,11 @@ async function _mt5InitBackendInternal(source = null) {
         updated_at: now,
       });
       await StateRepo.del("USER_ACCOUNTS", uid);
+      await markBrokerAccountActivity(aid, payload, {
+        account: merged || existing,
+        touchType: "heartbeat",
+        touchSource: payload.source_id || "unknown",
+      }).catch(() => null);
 
       await this.log(
         aid,
@@ -22732,8 +23395,8 @@ function mt5BuildBrokerSyncItems(payload = {}) {
           Boolean(closeReason),
       });
       const channel = String(
-        raw.source_id ??
-          raw.source ??
+        raw.source ??
+          raw.source_id ??
           raw.channel ??
           raw.Channel ??
           raw.channel_name ??
@@ -22781,9 +23444,9 @@ function mt5BuildBrokerSyncItems(payload = {}) {
         sl,
         tp,
         tp1:
-          tp !== null && !Number.isFinite(Number(raw.tp1))
+          tp !== null && !(Number.isFinite(Number(raw.tp1)) && Number(raw.tp1) > 0)
             ? tp
-            : Number.isFinite(Number(raw.tp1))
+            : Number.isFinite(Number(raw.tp1)) && Number(raw.tp1) > 0
               ? Number(raw.tp1)
               : null,
         tp2: Number.isFinite(Number(raw.tp2)) ? Number(raw.tp2) : null,
@@ -23641,6 +24304,11 @@ async function mt5BrokerSyncSqlite(accountId, payload = {}) {
 
   const totalDurationMs = Date.now() - syncStartedAtMs;
   const repoDurationMs = repoCompletedAtMs - syncStartedAtMs;
+  await markBrokerAccountActivity(aid, payload, {
+    account: existingAccount || { account_id: aid, user_id: uid, metadata: nextMeta },
+    touchType: "sync",
+    touchSource: payload.source_id || "unknown",
+  }).catch(() => null);
   if (totalDurationMs >= 4000) {
     console.warn("[v2/broker/sync] slow sync", {
       account_id: aid,
@@ -23706,6 +24374,7 @@ async function mt5TradesBrokerSync(accountId, payload = {}, userId = null) {
           .toUpperCase()
           .replace(/\s+/g, "_") || "BROKER",
       generateSid: mt5GenerateTimeSid,
+      allowHistoricalDiscovery: payload.history_import === true,
     },
   );
   return {
@@ -23722,11 +24391,34 @@ async function mt5TradesBrokerSync(accountId, payload = {}, userId = null) {
 }
 
 async function mt5BrokerSyncV2(accountId, payload) {
-  return mt5TradesBrokerSync(
+  const result = await mt5TradesBrokerSync(
     accountId,
     payload,
     payload?.user_id || null,
   );
+  const userId = await mt5ResolveBrokerUserId(accountId, payload?.user_id || null);
+  const queueResult = await tradesService().syncStrategyQueueActions(
+    userId,
+    accountId,
+    Array.isArray(payload?.queue_actions) ? payload.queue_actions : [],
+    {
+      snapshotComplete:
+        payload?.queue_snapshot_complete === true &&
+        payload?.queue_snapshot_hydrated === true,
+    },
+  );
+  return {
+    ...result,
+    queue_actions: queueResult.items,
+    queue_terminal_action_ids: queueResult.terminalActionIds,
+    queue_snapshot_complete: true,
+    queue_summary: {
+      received: Array.isArray(payload?.queue_actions) ? payload.queue_actions.length : 0,
+      accepted: queueResult.accepted,
+      removed: queueResult.removed,
+      waiting: queueResult.items.length,
+    },
+  };
 }
 
 async function mt5CreateBrokerTradeV2(accountId, payload) {
@@ -23751,6 +24443,47 @@ async function mt5UpdateAccountV2(accountId, patch = {}) {
   const b = await mt5Backend();
   if (!b.updateAccountV2) return { ok: false, error: "not supported" };
   return b.updateAccountV2(accountId, patch);
+}
+
+function mt5HistoryImportJobFromAccount(account = {}) {
+  const value =
+    account?.history_import || account?.metadata?.history_import || null;
+  return value && typeof value === "object" ? value : null;
+}
+
+async function mt5SetHistoryImportJob(accountId, updater) {
+  const account = await findUnifiedUserAccountById(accountId);
+  if (!account) return null;
+  const userId =
+    String(account.user_id || CFG.mt5DefaultUserId).trim() ||
+    CFG.mt5DefaultUserId;
+  const currentDynamic = await getDynamicUserAccountRecord(
+    userId,
+    account.account_id,
+  );
+  const currentJob =
+    currentDynamic?.metadata?.history_import ||
+    mt5HistoryImportJobFromAccount(account);
+  const nextJob =
+    typeof updater === "function" ? updater(currentJob || null, account) : updater;
+  if (!nextJob || typeof nextJob !== "object") return null;
+  const nextMetadata = {
+    ...(currentDynamic?.metadata || {}),
+    history_import: nextJob,
+  };
+  await getUserAccountObjectStore().upsertDynamicObject(
+    userId,
+    "user_accounts",
+    account.account_id,
+    nextMetadata,
+    currentDynamic?.status || account.status || "ACTIVE",
+    {
+      created_at: currentDynamic?.created_at || account.created_at || mt5NowIso(),
+      updated_at: mt5NowIso(),
+    },
+  );
+  await StateRepo.del("USER_ACCOUNTS", userId).catch(() => {});
+  return nextJob;
 }
 
 async function mt5ArchiveAccountV2(accountId) {
@@ -28641,7 +29374,13 @@ const appHandler = async (req, res) => {
       ctraderEnabled: CFG.ctraderEnabled,
       ctraderMode: CFG.ctraderMode || null,
       mt5Enabled: CFG.mt5Enabled,
-      postgres: postgresOk ? "ok" : "error",
+      database: postgresOk ? "ok" : "error",
+      postgres:
+        storageBackend === "postgres"
+          ? postgresOk
+            ? "ok"
+            : "error"
+          : "inactive",
       storage: storageBackend,
       active_db: activeDbSource
         ? {
@@ -30917,6 +31656,8 @@ const appHandler = async (req, res) => {
           balance: r.balance || null,
           status: r.status || null,
           broker: r.broker || null,
+          provider_code: r.provider_code || r.metadata?.provider_code || null,
+          broker_activity: r.broker_activity || deriveBrokerAccountActivity(r),
           broker_has_password:
             r.broker_has_password !== undefined
               ? r.broker_has_password
@@ -30996,6 +31737,77 @@ const appHandler = async (req, res) => {
           notification: true,
         },
       });
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    ["GET", "POST"].includes(req.method) &&
+    /^\/v2\/accounts\/[^/]+\/history-import$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    let payload = {};
+    if (req.method === "POST") {
+      try {
+        payload = await readJson(req);
+      } catch {}
+    }
+    if (!requireAdminKey(req, res, url, payload)) return;
+    try {
+      const match = url.pathname.match(
+        /^\/v2\/accounts\/([^/]+)\/history-import$/,
+      );
+      const accountId = String(
+        match?.[1] ? decodeURIComponent(match[1]) : "",
+      ).trim();
+      const account = await findUnifiedUserAccountById(accountId);
+      if (!account)
+        return json(res, 404, { ok: false, error: "account not found" });
+      const brokerType = String(
+        account?.broker?.Type || account?.metadata?.provider_code || "MT5",
+      ).toUpperCase();
+      if (req.method === "POST" && brokerType.includes("CTRADER")) {
+        return json(res, 400, {
+          ok: false,
+          error: "This importer currently supports MT5 accounts only",
+        });
+      }
+      if (req.method === "GET") {
+        return json(res, 200, {
+          ok: true,
+          account_id: accountId,
+          job: mt5HistoryImportJobFromAccount(account),
+        });
+      }
+      const current = mt5HistoryImportJobFromAccount(account);
+      if (["REQUESTED", "RUNNING"].includes(String(current?.status || ""))) {
+        return json(res, 409, {
+          ok: false,
+          error: "A history import is already running for this account",
+          job: current,
+        });
+      }
+      const now = mt5NowIso();
+      const job = await mt5SetHistoryImportJob(accountId, {
+        id: `hist_${crypto.randomBytes(10).toString("hex")}`,
+        status: "REQUESTED",
+        requested_at: now,
+        started_at: null,
+        completed_at: null,
+        updated_at: now,
+        total: 0,
+        processed: 0,
+        created: 0,
+        updated: 0,
+        unchanged: 0,
+        error: null,
+      });
+      return json(res, 202, { ok: true, account_id: accountId, job });
+    } catch (error) {
       return json(res, 400, {
         ok: false,
         error: error instanceof Error ? error.message : String(error),
@@ -37745,6 +38557,10 @@ const appHandler = async (req, res) => {
             console_log: payload.settings.console_log === true,
             ticker: payload.settings.ticker === true,
             db_log: payload.settings.db_log !== false,
+            telegram: payload.settings.telegram === true,
+            telegram_channel: String(
+              payload.settings.telegram_channel || "",
+            ).trim(),
             sound: payload.settings.sound || null,
           }
         : null;
@@ -37768,7 +38584,11 @@ const appHandler = async (req, res) => {
         nPayload._force_ticker = true;
         nPayload._force_sound = true;
         nPayload._force_db_log = true;
+        nPayload._force_telegram = true;
         nPayload.sound = payload.sound || null;
+        nPayload.telegram_channel = String(
+          payload.telegram_channel || "",
+        ).trim();
         nPayload.notification = payload.notification !== false;
       }
 
@@ -37798,12 +38618,21 @@ const appHandler = async (req, res) => {
   ) {
     if (!requireAuthForUi(req, res)) return;
     try {
-      const notificationsManager = global.__notificationManager;
+      const targetUserId = resolveNotificationConfigUserId(req);
+      const rawRows = await settingsStore.listUserSettingsByType(
+        targetUserId,
+        "notification_config",
+      );
+      const overrides = new Map(
+        (rawRows || []).map((row) => [
+          String(row?.name || "").trim(),
+          row?.data && typeof row.data === "object" ? row.data : {},
+        ]),
+      );
       // Return all event types with merged settings (defaults + DB overrides)
       const events = Object.entries(DEFAULT_NOTIFICATION_SETTINGS).map(
         ([event, defaults]) => {
-          const dbSettings =
-            notificationsManager?.settingsCache?.get(event) || {};
+          const dbSettings = overrides.get(event) || {};
           return {
             event,
             label: event
@@ -37821,6 +38650,14 @@ const appHandler = async (req, res) => {
               dbSettings.ticker !== undefined
                 ? dbSettings.ticker
                 : defaults.ticker,
+            telegram:
+              dbSettings.telegram !== undefined
+                ? dbSettings.telegram
+                : defaults.telegram === true,
+            telegram_channel:
+              dbSettings.telegram_channel !== undefined
+                ? String(dbSettings.telegram_channel || "").trim()
+                : "",
             sound:
               dbSettings.sound !== undefined
                 ? dbSettings.sound
@@ -37849,10 +38686,10 @@ const appHandler = async (req, res) => {
   ) {
     if (!requireAuthForUi(req, res)) return;
     try {
-      const sess = getUiSessionFromReq(req);
+      const targetUserId = resolveNotificationConfigUserId(req);
       let data = {};
       const setting = await settingsStore.getUserSetting(
-        sess.user_id,
+        targetUserId,
         "notification_config",
         "preferences",
       );
@@ -37865,6 +38702,32 @@ const appHandler = async (req, res) => {
   }
 
   if (
+    req.method === "GET" &&
+    (url.pathname === "/v2/notifications/channels" ||
+      url.pathname === "/api/notifications/channels")
+  ) {
+    if (!requireAuthForUi(req, res)) return;
+    try {
+      const targetUserId = resolveNotificationConfigUserId(req);
+      const rows = await settingsStore.listUserSettingsByType(
+        targetUserId,
+        "notification_channel_config",
+      );
+      const channels = (rows || [])
+        .map((row) =>
+          sanitizeNotificationChannelConfig({
+            id: row?.name,
+            ...(row?.data && typeof row.data === "object" ? row.data : {}),
+          }),
+        )
+        .filter(Boolean);
+      return json(res, 200, { ok: true, channels });
+    } catch (e) {
+      return json(res, 400, { ok: false, error: e.message });
+    }
+  }
+
+  if (
     req.method === "POST" &&
     (url.pathname === "/v2/notifications/settings" ||
       url.pathname === "/api/notifications/settings")
@@ -37872,7 +38735,7 @@ const appHandler = async (req, res) => {
     if (!requireAuthForUi(req, res)) return;
     try {
       const payload = await readJson(req);
-      const sess = getUiSessionFromReq(req);
+      const targetUserId = resolveNotificationConfigUserId(req);
       const settings = payload.settings || payload;
       // Persist notification_config through the DAL; the store keeps it as one
       // merged document while preserving per-event reads for the UI cache.
@@ -37882,7 +38745,7 @@ const appHandler = async (req, res) => {
           .replace(/[^A-Z_]/g, "");
         if (!eventKey) continue;
         await settingsStore.upsertUserSetting(
-          sess.user_id,
+          targetUserId,
           "notification_config",
           eventKey,
           config,
@@ -37890,6 +38753,52 @@ const appHandler = async (req, res) => {
         );
       }
       // Reload NotificationManager cache
+      if (global.__notificationManager) {
+        await global.__notificationManager.reloadSettings();
+      }
+      return json(res, 200, { ok: true });
+    } catch (e) {
+      return json(res, 400, { ok: false, error: e.message });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    (url.pathname === "/v2/notifications/channels" ||
+      url.pathname === "/api/notifications/channels")
+  ) {
+    if (!requireAuthForUi(req, res)) return;
+    try {
+      const targetUserId = resolveNotificationConfigUserId(req);
+      const payload = await readJson(req);
+      const channels = Array.isArray(payload?.channels) ? payload.channels : [];
+      const nextIds = new Set();
+      for (const raw of channels) {
+        const channel = sanitizeNotificationChannelConfig(raw);
+        if (!channel?.id) continue;
+        nextIds.add(channel.id);
+        await settingsStore.upsertUserSetting(
+          targetUserId,
+          "notification_channel_config",
+          channel.id,
+          channel,
+          channel.is_enabled ? "ACTIVE" : "INACTIVE",
+        );
+      }
+      const existing = await settingsStore.listUserSettingsByType(
+        targetUserId,
+        "notification_channel_config",
+      );
+      for (const row of existing || []) {
+        const id = String(row?.name || "").trim();
+        if (id && !nextIds.has(id)) {
+          await settingsStore.deleteUserSetting(
+            targetUserId,
+            "notification_channel_config",
+            id,
+          );
+        }
+      }
       if (global.__notificationManager) {
         await global.__notificationManager.reloadSettings();
       }
@@ -38454,6 +39363,53 @@ const appHandler = async (req, res) => {
       return json(res, 400, {
         ok: false,
         error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  const sharedCatalogMatch = url.pathname.match(
+    /^\/(?:v2|api)\/shared-catalog\/(rules?|events?|strategies?)(?:\/([a-zA-Z0-9._-]+))?$/,
+  );
+  if (sharedCatalogMatch) {
+    const sess = getUiSessionFromReq(req);
+    if (!sess.ok) return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    const kind = sharedCatalogMatch[1];
+    const itemId = sharedCatalogMatch[2] || "";
+    try {
+      if (req.method === "GET" && itemId) {
+        const item = await sharedCatalogService.get(kind, itemId);
+        return item
+          ? json(res, 200, { ok: true, item })
+          : json(res, 404, { ok: false, error: "CATALOG_ITEM_NOT_FOUND" });
+      }
+      if (req.method === "GET") {
+        const items = await sharedCatalogService.list(kind);
+        return json(res, 200, { ok: true, kind, items });
+      }
+      if (req.method === "POST" || req.method === "PUT") {
+        const body = await readJson(req);
+        const item = await sharedCatalogService.save(kind, {
+          ...(body || {}),
+          ...(itemId ? { id: itemId } : {}),
+        });
+        await invalidateAvailableStrategiesCache(
+          uiEffectiveUserId(req, url, body) || CFG.mt5DefaultUserId,
+        );
+        return json(res, 200, { ok: true, item });
+      }
+      if (req.method === "DELETE" && itemId) {
+        const item = await sharedCatalogService.remove(kind, itemId);
+        await invalidateAvailableStrategiesCache(
+          uiEffectiveUserId(req, url, null) || CFG.mt5DefaultUserId,
+        );
+        return json(res, 200, { ok: true, item });
+      }
+      return json(res, 405, { ok: false, error: "METHOD_NOT_ALLOWED" });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        validation_errors: error?.validation_errors || [],
       });
     }
   }
@@ -39512,6 +40468,57 @@ const appHandler = async (req, res) => {
 
   if (
     req.method === "GET" &&
+    (url.pathname === "/api/trades/queue" || url.pathname === "/v2/trades/queue")
+  ) {
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const userId = uiEffectiveUserId(req, url) || CFG.mt5DefaultUserId;
+      const accountId = String(url.searchParams.get("account_id") || "").trim();
+      const items = await tradesService().listStrategyQueueActions(userId, accountId);
+      return json(res, 200, { ok: true, items, count: items.length });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    (req.method === "PUT" || req.method === "DELETE") &&
+    /^\/(?:api|v2)\/trades\/queue\/[^/]+$/.test(url.pathname)
+  ) {
+    let payload = {};
+    try {
+      payload = await readJson(req);
+    } catch {}
+    if (!requireAdminKey(req, res, url, payload)) return;
+    try {
+      const actionId = decodeURIComponent(url.pathname.split("/").pop() || "").trim();
+      const userId = uiEffectiveUserId(req, url, payload) || CFG.mt5DefaultUserId;
+      const accountId = String(
+        payload.account_id || url.searchParams.get("account_id") || "",
+      ).trim();
+      const result = req.method === "DELETE"
+        ? await tradesService().removeStrategyQueueAction(userId, actionId, accountId)
+        : await tradesService().updateStrategyQueueAction(
+            userId,
+            actionId,
+            payload,
+            accountId,
+          );
+      return json(res, 200, result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return json(res, message.includes("not found") ? 404 : 400, {
+        ok: false,
+        error: message,
+      });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
     (url.pathname === "/api/trades/dashboard" ||
       url.pathname === "/v2/trades/dashboard" ||
       url.pathname === "/api/v2/trades2/dashboard" ||
@@ -39667,6 +40674,91 @@ const appHandler = async (req, res) => {
   }
 
   if (
+    req.method === "POST" &&
+    ["/api/trades/ea/history-import", "/v2/trades/ea/history-import"].includes(
+      url.pathname,
+    )
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    try {
+      const payload = await readJson(req);
+      const account = await requireV2BrokerAccount(req, res, url, payload);
+      if (!account) return;
+      const accountId = String(account.account_id || "").trim();
+      const currentAccount = await findUnifiedUserAccountById(accountId);
+      const currentJob = mt5HistoryImportJobFromAccount(currentAccount || account);
+      const jobId = String(payload.job_id || "").trim();
+      if (!jobId || jobId !== String(currentJob?.id || "")) {
+        return json(res, 409, { ok: false, error: "history import job is stale" });
+      }
+      if (!["REQUESTED", "RUNNING"].includes(String(currentJob?.status || ""))) {
+        return json(res, 409, {
+          ok: false,
+          error: "history import job is not active",
+          job: currentJob,
+        });
+      }
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      if (items.length > 200) {
+        return json(res, 400, {
+          ok: false,
+          error: "history import batches are limited to 200 positions",
+        });
+      }
+      const result = items.length
+        ? await mt5TradesBrokerSync(
+            accountId,
+            {
+              broker_name: payload.broker_name || "MT5_HISTORY",
+              provider_code: "mt5",
+              closed: items,
+              history_import: true,
+            },
+            account.user_id || account.userId || null,
+          )
+        : { ok: true, results: [], synced: 0 };
+      const statuses = Array.isArray(result?.results) ? result.results : [];
+      const batchCreated = statuses.filter(
+        (item) => String(item?.status || "").toUpperCase() === "ADDED",
+      ).length;
+      const batchUnchanged = statuses.filter(
+        (item) => String(item?.status || "").toUpperCase() === "NOCHANGE",
+      ).length;
+      const batchUpdated = statuses.filter(
+        (item) => String(item?.status || "").toUpperCase() === "OK",
+      ).length;
+      const now = mt5NowIso();
+      const completed = payload.complete === true;
+      const job = await mt5SetHistoryImportJob(accountId, (previous) => {
+        if (String(previous?.id || "") !== jobId) return previous;
+        return {
+          ...previous,
+          status: completed ? "COMPLETED" : "RUNNING",
+          started_at: previous.started_at || now,
+          completed_at: completed ? now : null,
+          updated_at: now,
+          total: Math.max(0, Number(payload.total || previous.total || 0)),
+          processed: Math.max(
+            Number(previous.processed || 0),
+            Number(payload.processed || 0),
+          ),
+          created: Number(previous.created || 0) + batchCreated,
+          updated: Number(previous.updated || 0) + batchUpdated,
+          unchanged: Number(previous.unchanged || 0) + batchUnchanged,
+          error: null,
+        };
+      });
+      return json(res, 200, { ok: true, job, result });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
     (req.method === "POST" || req.method === "GET") &&
     /^\/api\/trades\/(broker\/pull|ea\/pull)$/.test(url.pathname)
   ) {
@@ -39678,7 +40770,18 @@ const appHandler = async (req, res) => {
         error: "v2026.05.09 19:31 - 728f356",
       });
     try {
-      const payload = req.method === "POST" ? await readJson(req) : null;
+      const payload =
+        req.method === "POST"
+          ? await readJson(req)
+          : {
+              account_id:
+                url.searchParams.get("account_id") ||
+                url.searchParams.get("account") ||
+                "",
+              source_id: url.searchParams.get("source_id") || "",
+              client_id: url.searchParams.get("client_id") || "",
+              platform: url.searchParams.get("platform") || "",
+            };
       const account = await requireV2BrokerAccount(req, res, url, payload);
       if (!account) return;
       const maxItemsRaw = Number(
@@ -39719,8 +40822,16 @@ const appHandler = async (req, res) => {
         sourceId,
         account.user_id || account.userId || null,
       );
+      const historyImport = mt5HistoryImportJobFromAccount(account);
       return json(res, 200, {
         ok: true,
+        history_import_id:
+          ["REQUESTED", "RUNNING"].includes(
+            String(historyImport?.status || ""),
+          )
+            ? historyImport.id || null
+            : null,
+        history_import_status: historyImport?.status || null,
         items: (items || []).map((t) => ({
           sid: t.sid,
           type: syncGuards.brokerTaskTypeForTrade(t),
@@ -41829,6 +42940,15 @@ const appHandler = async (req, res) => {
         symbols: trackedSymbols.symbols.length,
         strategies: strategyTags.length,
       };
+      resp.queue_actions = await tradesService().listStrategyQueueActions(
+        uid,
+        account.account_id,
+      );
+      resp.queue_terminal_action_ids = await tradesService().listStrategyQueueTerminalActionIds(
+        uid,
+        account.account_id,
+      );
+      resp.pull_summary.queue_actions = resp.queue_actions.length;
       resp.strategies = strategyTags;
       resp.watchlist_symbols = [...new Set(watchlistSymbols)].sort();
       resp.symbols = trackedSymbols.symbols;
@@ -41892,6 +43012,11 @@ const appHandler = async (req, res) => {
           ok: false,
           error: result?.error || "ack failed",
         });
+      await markBrokerAccountActivity(account.account_id, payload || {}, {
+        account,
+        touchType: "ack",
+        touchSource: payload?.source_id || payload?.client_id || "unknown",
+      }).catch(() => null);
       return json(res, 200, {
         ok: true,
         duplicate: Boolean(result.duplicate),
@@ -42291,6 +43416,11 @@ const appHandler = async (req, res) => {
           symbols: storedSymbols,
         });
       }
+      await markBrokerAccountActivity(account.account_id, payload || {}, {
+        account,
+        touchType: "prices",
+        touchSource: payload?.source_id || payload?.client_id || "unknown",
+      }).catch(() => null);
       return json(res, 200, {
         ok: true,
         stored,
@@ -42324,7 +43454,12 @@ const appHandler = async (req, res) => {
       const account = await requireV2BrokerAccount(req, res, url, payload);
       if (!account) return;
       const items = Array.isArray(payload.items) ? payload.items : [];
-      if (!items.length)
+      if (!items.length) {
+        await markBrokerAccountActivity(account.account_id, payload || {}, {
+          account,
+          touchType: "prices_sync",
+          touchSource: payload?.source_id || "unknown",
+        }).catch(() => null);
         return json(res, 200, {
           ok: true,
           sync_id: genTraceId("sync_"),
@@ -42337,6 +43472,7 @@ const appHandler = async (req, res) => {
           },
           results: [],
         });
+      }
 
       const syncId = genTraceId("sync_");
       let totalReceived = 0,
@@ -42446,6 +43582,11 @@ const appHandler = async (req, res) => {
           account.user_id || CFG.mt5DefaultUserId,
         );
       }
+      await markBrokerAccountActivity(account.account_id, payload || {}, {
+        account,
+        touchType: "prices_sync",
+        touchSource: payload?.source_id || "unknown",
+      }).catch(() => null);
 
       return json(res, 200, {
         ok: true,
@@ -42484,6 +43625,10 @@ const appHandler = async (req, res) => {
       const payload = await readJson(req);
       if (!(await requireEaKey(req, res, url, payload))) return;
       const { inserted } = await ingestBrokerBarsPayload(payload);
+      await markBrokerAccountActivity(payload.account_id, payload, {
+        touchType: "bars",
+        touchSource: payload?.source_id || payload?.client_id || "unknown",
+      }).catch(() => null);
       return json(res, 200, { ok: true, inserted });
     } catch (error) {
       console.error(
@@ -42762,6 +43907,11 @@ const appHandler = async (req, res) => {
       } catch (e) {
         console.error("[broker/prices] metadata update failed:", e);
       }
+      await markBrokerAccountActivity(account.account_id, payload || {}, {
+        account,
+        touchType: "prices",
+        touchSource: payload?.source_id || "unknown",
+      }).catch(() => null);
 
       return json(res, 200, {
         ok: true,
@@ -43125,6 +44275,10 @@ const appHandler = async (req, res) => {
       if (ENABLE_BROKER_DEBUG_LOGS) {
         console.log(`[EA LOG] [${accountId}] [${level}] ${message}`);
       }
+      await markBrokerAccountActivity(accountId, payload, {
+        touchType: "log",
+        touchSource: payload?.source_id || payload?.client_id || "unknown",
+      }).catch(() => null);
       return json(res, 200, { ok: true });
     } catch (err) {
       return json(res, 500, { ok: false, error: err.message });
@@ -43138,6 +44292,28 @@ const appHandler = async (req, res) => {
 
     const signalId = String(url.searchParams.get("signal_id") || "").trim();
     const account = String(url.searchParams.get("account") || "");
+    const accountRow = await findUnifiedUserAccountById(account);
+    const pullIdentity = {
+      account_id: account,
+      source_id: url.searchParams.get("source_id") || "",
+      client_id: url.searchParams.get("client_id") || "",
+      platform: url.searchParams.get("platform") || "mt5",
+    };
+    await markBrokerAccountActivity(account, pullIdentity, {
+      account: accountRow || undefined,
+      touchType: "pull",
+      touchSource:
+        pullIdentity.source_id || pullIdentity.client_id || "mt5_legacy_pull",
+    }).catch(() => null);
+    const historyImport = mt5HistoryImportJobFromAccount(accountRow || {});
+    const historyImportFields = {
+      history_import_id: ["REQUESTED", "RUNNING"].includes(
+        String(historyImport?.status || ""),
+      )
+        ? historyImport.id || null
+        : null,
+      history_import_status: historyImport?.status || null,
+    };
     const resolvedUserId = await mt5ResolveBrokerUserId(account, null);
     const repo = await mt5TradeRepo(resolvedUserId);
     const task = await repo.pullAndLockNextTask(account, {
@@ -43147,7 +44323,13 @@ const appHandler = async (req, res) => {
       generateLeaseToken: mt5GenerateTimeSid,
     });
     if (!task) {
-      return json(res, 200, { ok: true, task: null, signal: null });
+      return json(res, 200, {
+        ok: true,
+        ...historyImportFields,
+        items: [],
+        task: null,
+        signal: null,
+      });
     }
     const taskId = task.task_id || task.sid;
     await mt5AppendSignalEvent(taskId, "TASK_FETCH", {
@@ -43158,6 +44340,7 @@ const appHandler = async (req, res) => {
     // Flatten task for EA compatibility (top-level fields)
     return json(res, 200, {
       ok: true,
+      ...historyImportFields,
       ...task,
       // Backward compatibility
       signal: task.type === "OPEN" ? task : null,
@@ -43953,7 +45136,10 @@ function initMarketDataQueue() {
     async (job) => {
       return marketDataFetchJob(job.data || {});
     },
-    { connection, concurrency: CFG.marketDataCronConcurrency },
+    // lockDuration: downloads (Twelve Data fetches) regularly exceed BullMQ's default
+    // 30s job lock; losing the lock caused recurring "Missing lock" churn that also
+    // stalled /health. 300s matches the cron's own per-task timeout.
+    { connection, concurrency: CFG.marketDataCronConcurrency, lockDuration: 300000 },
   );
   MARKET_DATA_WORKER.on("failed", (job, err) => {
     console.error(
@@ -43989,7 +45175,7 @@ function initSnapshotsCronQueue() {
   SNAPSHOTS_CRON_WORKER = new BullWorker(
     "snapshots-cron",
     async () => mt5RunSnapshotsCronInline(),
-    { connection, concurrency },
+    { connection, concurrency, lockDuration: 300000 },
   );
   SNAPSHOTS_CRON_WORKER.on("failed", (job, err) => {
     console.error(
@@ -44025,7 +45211,7 @@ function initAiAnalysisCronQueue() {
   AI_ANALYSIS_CRON_WORKER = new BullWorker(
     "ai-analysis-cron",
     async () => mt5RunAiAnalysisCronInline(),
-    { connection, concurrency },
+    { connection, concurrency, lockDuration: 300000 },
   );
   AI_ANALYSIS_CRON_WORKER.on("failed", (job, err) => {
     console.error(
@@ -44520,6 +45706,11 @@ async function mt5CronLoop(runtime) {
     };
 
     const cronTasks = [
+      runOne(
+        "brokerDisconnect",
+        checkBrokerDisconnectsOnce,
+        () => "checked",
+      ),
       runOne(
         "marketData",
         mt5RunMarketDataCron,

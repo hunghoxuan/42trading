@@ -1,0 +1,13 @@
+{
+  "id": "ema_bullish_cross",
+  "name": "EMA Bullish Cross",
+  "kind": "custom",
+  "implementation": {
+    "type": "expression"
+  },
+  "when": "ema9 crosses_above ema20",
+  "outputs": {
+    "bias": "bullish",
+    "marker": "arrow_up"
+  }
+}

@@ -352,6 +352,130 @@ function resolveSvgMarkerShape(shape, placement = "belowBar") {
     : "up";
 }
 
+function normalizeChartTf(tf = "") {
+  const value = String(tf || "").trim().toLowerCase();
+  if (!value) return "";
+  if (["1", "1m", "m1"].includes(value)) return "1m";
+  if (["5", "5m", "m5"].includes(value)) return "5m";
+  if (["15", "15m", "m15"].includes(value)) return "15m";
+  if (["30", "30m", "m30"].includes(value)) return "30m";
+  if (["60", "1h", "h1"].includes(value)) return "1h";
+  if (["240", "4h", "h4"].includes(value)) return "4h";
+  if (["1440", "1d", "d", "d1", "day", "daily"].includes(value)) return "1d";
+  if (["10080", "1w", "w", "w1", "week", "weekly"].includes(value)) return "1w";
+  return value;
+}
+
+function chartTfToSeconds(tf = "") {
+  const normalized = normalizeChartTf(tf);
+  if (normalized === "1m") return 60;
+  if (normalized === "5m") return 300;
+  if (normalized === "15m") return 900;
+  if (normalized === "30m") return 1800;
+  if (normalized === "1h") return 3600;
+  if (normalized === "4h") return 14400;
+  if (normalized === "1d") return 86400;
+  if (normalized === "1w") return 604800;
+  return 0;
+}
+
+function chartTfPrefix(tf = "") {
+  const normalized = normalizeChartTf(tf);
+  if (normalized === "1m") return "m1";
+  if (normalized === "5m") return "m5";
+  if (normalized === "15m") return "m15";
+  if (normalized === "30m") return "m30";
+  if (normalized === "1h") return "h1";
+  if (normalized === "4h") return "h4";
+  if (normalized === "1d") return "d1";
+  if (normalized === "1w") return "w1";
+  return normalized;
+}
+
+function candlePatternShortCode(typeRaw = "") {
+  const type = String(typeRaw || "").trim().toLowerCase();
+  if (!type) return "";
+  if (type.includes("harami")) return "har";
+  if (type.includes("pin_bar")) return "pin";
+  if (type.includes("engulfing")) return "eng";
+  if (type === "inside_bar") return "ins";
+  if (type === "outside_bar") return "out";
+  if (type.includes("morning_star")) return "ms";
+  if (type.includes("evening_star")) return "es";
+  if (type.includes("shooting_star")) return "ss";
+  if (type.includes("inverted_hammer")) return "ih";
+  if (type.includes("hammer")) return "ham";
+  if (type.includes("piercing_line")) return "pl";
+  if (type.includes("dark_cloud_cover")) return "dcc";
+  if (type.includes("three_white_soldiers")) return "3ws";
+  if (type.includes("three_black_crows")) return "3bc";
+  return type
+    .replace(/^(bullish|bearish)_/, "")
+    .replace(/_bar$/, "")
+    .split("_")
+    .map((part) => part.slice(0, 3))
+    .join(".");
+}
+
+function candlePatternDisplayName(typeRaw = "") {
+  const type = String(typeRaw || "").trim().toLowerCase();
+  if (!type) return "";
+  if (type.includes("pin_bar")) return "pin bar";
+  if (type.includes("inside_bar")) return "inside bar";
+  if (type.includes("outside_bar")) return "outside bar";
+  if (type.includes("shooting_star")) return "shooting star";
+  if (type.includes("inverted_hammer")) return "inverted hammer";
+  if (type.includes("morning_star")) return "morning star";
+  if (type.includes("evening_star")) return "evening star";
+  if (type.includes("piercing_line")) return "piercing line";
+  if (type.includes("dark_cloud_cover")) return "dark cloud cover";
+  if (type.includes("three_white_soldiers")) return "three white soldiers";
+  if (type.includes("three_black_crows")) return "three black crows";
+  return type
+    .replace(/^(bullish|bearish)_/, "")
+    .replaceAll("_", " ")
+    .trim();
+}
+
+function isCandlePatternEvent(item = {}) {
+  const family = String(item?.artifact_family || item?.family || "").trim().toLowerCase();
+  const type = String(item?.artifact_type || item?.type || "").trim().toLowerCase();
+  return family === "pattern" || type.includes("harami") || type.includes("engulfing") || type.includes("bar");
+}
+
+function resolveCandleEventMarkerText(item = {}, chartTimeframe = "") {
+  if (!isCandlePatternEvent(item)) {
+    return String(item?.marker_text || item?.label || item?.type || "").trim();
+  }
+  const customCode = [
+    item?.marker_text,
+    item?.event_key,
+    item?.artifact_payload?.marker_text,
+    item?.artifact_payload?.event_key,
+    item?.artifact_payload?.label,
+    item?.label,
+  ]
+    .map((value) => String(value || "").trim())
+    .find((value) => value && value.includes(".") && value.toLowerCase() === value);
+  const type = String(item?.artifact_type || item?.type || item?.artifact_payload?.type || "")
+    .trim()
+    .toLowerCase();
+  const base = customCode || candlePatternShortCode(type);
+  const sourceTf = normalizeChartTf(
+    item?.source_tf || item?.tf || item?.timeframe || item?.artifact_payload?.timeframe || "",
+  );
+  const activeTf = normalizeChartTf(chartTimeframe);
+  const sourceSeconds = chartTfToSeconds(sourceTf);
+  const activeSeconds = chartTfToSeconds(activeTf);
+  if (base && sourceSeconds > 0 && activeSeconds > 0 && sourceSeconds > activeSeconds) {
+    const prefix = chartTfPrefix(sourceTf);
+    return prefix ? `${prefix}.${base}` : base;
+  }
+  const patternName = candlePatternDisplayName(type);
+  if (base && patternName) return `${base} ${patternName}`;
+  return base || patternName;
+}
+
 function resolveClosedTradeLine(trade = null, fallback = {}, barBounds = null) {
   const source = trade && typeof trade === "object" ? trade : fallback;
   const hasClosedEvent = Boolean(
@@ -393,6 +517,7 @@ export default function ChartSVG({
   showIndicators = false,
   indicatorVisibilityConfig = null,
   sharedObjects = [],
+  chartTimeframe = "",
   className = "",
   style = null,
 }) {
@@ -1250,6 +1375,7 @@ export default function ChartSVG({
         const y = yForObjectPrice(price);
         if (!Number.isFinite(timeSec) || !Number.isFinite(y)) return;
         const placement = String(item?.marker_position || "belowBar");
+        const markerLabel = resolveCandleEventMarkerText(item, chartTimeframe);
         overlays.points.push({
           key: String(item?.id || `shared-point-${index}`),
           x: clampX(chartModel.xForTime(timeSec)),
@@ -1259,7 +1385,7 @@ export default function ChartSVG({
             item?.text_color || item?.color,
             item?.text_color || BACKTEST_CHART_THEME.badgeText,
           ),
-          label: String(item?.marker_text || label || "").trim(),
+          label: String(markerLabel || item?.marker_text || label || "").trim(),
           placement: placement.toLowerCase().includes("above")
             ? "above"
             : "below",
@@ -1268,7 +1394,7 @@ export default function ChartSVG({
       }
     });
     return overlays;
-  }, [chartModel, plottedBars, visibleSharedObjects, width]);
+  }, [chartModel, plottedBars, visibleSharedObjects, width, chartTimeframe]);
 
   const tradeBoxes = effectiveTrades
     .map((trade) => {

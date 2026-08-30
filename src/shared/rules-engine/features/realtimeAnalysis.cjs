@@ -488,11 +488,19 @@ function inferPatternAt(bars = [], index = 0) {
   if (prevStats.bullish && barStats.bearish && barStats.open > prevStats.close && barStats.close < (prevStats.open + prevStats.close) * 0.5 && barStats.close > prevStats.open && preCurrentPressure === "up") {
     out.push("bearish_dark_cloud_cover");
   }
-  if (prevStats.bearish && prevStats.bodyRatio >= 0.5 && barStats.bullish && barStats.bodyHigh <= prevStats.bodyHigh && barStats.bodyLow >= prevStats.bodyLow && barStats.body <= prevStats.body * 0.75 && preCurrentPressure === "down") {
+  const isHaramiGeometry = prevStats.bodyRatio >= 0.5 && barStats.bodyHigh <= prevStats.bodyHigh && barStats.bodyLow >= prevStats.bodyLow && barStats.body <= prevStats.body * 0.75;
+  const haramiCrossBody = barStats.body <= barStats.range * 0.1;
+  if (isHaramiGeometry && preStarPressure === "down" && prevStats.bearish && barStats.bullish) {
     out.push("bullish_harami");
   }
-  if (prevStats.bullish && prevStats.bodyRatio >= 0.5 && barStats.bearish && barStats.bodyHigh <= prevStats.bodyHigh && barStats.bodyLow >= prevStats.bodyLow && barStats.body <= prevStats.body * 0.75 && preCurrentPressure === "up") {
+  if (isHaramiGeometry && preStarPressure === "up" && prevStats.bullish && barStats.bearish) {
     out.push("bearish_harami");
+  }
+  if (isHaramiGeometry && haramiCrossBody && preStarPressure === "down" && prevStats.bearish) {
+    out.push("bullish_harami_cross");
+  }
+  if (isHaramiGeometry && haramiCrossBody && preStarPressure === "up" && prevStats.bullish) {
+    out.push("bearish_harami_cross");
   }
   if (prev2Stats && prev2Stats.bearish && prev2Stats.bodyRatio >= 0.45 && prevStats.body <= prev2Stats.body * 0.6 && prevStats.bodyRatio <= 0.35 && barStats.bullish && barStats.bodyRatio >= 0.45 && barStats.close >= prev2Stats.bodyLow + prev2Stats.body * 0.5 && preStarPressure === "down") {
     out.push("bullish_morning_star");

@@ -1,6 +1,7 @@
 "use strict";
 
 import * as strategyEventFunctions from "./features/strategyEventFunctions.js";
+import { expressionFromDefinition } from "./textExpression.js";
 
 function valueAtPath(source, pathName = "") {
   const parts = String(pathName || "")
@@ -193,6 +194,9 @@ const RULE_FUNCTION_NAMES = [
   "price_action_tp",
   "suggested_trade_sl",
   "suggested_trade_tp",
+  "three_candles_signal",
+  "three_candles_sl",
+  "three_candles_tp",
   "get_artifacts",
   "is_true",
   "draw",
@@ -321,18 +325,27 @@ function evaluateRuleExpression(node, ctx = {}) {
 
 function normalizeRuleDefinition(rule = {}, index = 0) {
   const id = String(rule?.id || `rule_${index + 1}`).trim() || `rule_${index + 1}`;
+  let condition = null;
+  try {
+    condition = expressionFromDefinition(rule);
+  } catch {
+    condition = null;
+  }
   return {
     id,
     abbr: String(rule?.abbr || rule?.short_name || id).trim() || id,
     name: String(rule?.name || rule?.label || id).trim() || id,
     icon: String(rule?.icon || "activity").trim() || "activity",
     family: String(rule?.family || "custom").trim() || "custom",
-    condition:
-      rule?.condition && typeof rule.condition === "object"
+    condition,
+    expression_text:
+      typeof rule?.condition === "string"
         ? rule.condition
-        : rule?.when && typeof rule.when === "object"
+        : typeof rule?.when === "string"
           ? rule.when
-          : null,
+          : typeof rule?.expression === "string"
+            ? rule.expression
+            : "",
     params: rule?.params && typeof rule.params === "object" ? { ...rule.params } : {},
     outputs: rule?.outputs && typeof rule.outputs === "object" ? { ...rule.outputs } : {},
   };

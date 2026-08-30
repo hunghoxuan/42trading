@@ -25,13 +25,19 @@ var rules_engine_exports = {};
 __export(rules_engine_exports, {
   PREDEFINED_RULES: () => PREDEFINED_RULES,
   RuleEngine: () => RuleEngine,
+  RuleTextSyntaxError: () => RuleTextSyntaxError,
+  compileRuleExpression: () => compileRuleExpression,
   evaluateRuleDefinition: () => evaluateRuleDefinition,
   evaluateRuleExpression: () => evaluateRuleExpression,
   evaluateRules: () => evaluateRules,
+  expressionFromDefinition: () => expressionFromDefinition,
   findPredefinedRule: () => findPredefinedRule,
   listPredefinedRules: () => listPredefinedRules,
   normalizeRuleDefinition: () => normalizeRuleDefinition,
   normalizeRuleEvent: () => normalizeRuleEvent,
+  normalizeVariableAlias: () => normalizeVariableAlias,
+  parseRuleText: () => parseRuleText,
+  tokenizeRuleText: () => tokenizeRuleText,
   valueAtPath: () => valueAtPath
 });
 module.exports = __toCommonJS(rules_engine_exports);
@@ -494,11 +500,19 @@ function inferPatternAt(bars = [], index = 0) {
   if (prevStats.bullish && barStats.bearish && barStats.open > prevStats.close && barStats.close < (prevStats.open + prevStats.close) * 0.5 && barStats.close > prevStats.open && preCurrentPressure === "up") {
     out.push("bearish_dark_cloud_cover");
   }
-  if (prevStats.bearish && prevStats.bodyRatio >= 0.5 && barStats.bullish && barStats.bodyHigh <= prevStats.bodyHigh && barStats.bodyLow >= prevStats.bodyLow && barStats.body <= prevStats.body * 0.75 && preCurrentPressure === "down") {
+  const isHaramiGeometry = prevStats.bodyRatio >= 0.5 && barStats.bodyHigh <= prevStats.bodyHigh && barStats.bodyLow >= prevStats.bodyLow && barStats.body <= prevStats.body * 0.75;
+  const haramiCrossBody = barStats.body <= barStats.range * 0.1;
+  if (isHaramiGeometry && preStarPressure === "down" && prevStats.bearish && barStats.bullish) {
     out.push("bullish_harami");
   }
-  if (prevStats.bullish && prevStats.bodyRatio >= 0.5 && barStats.bearish && barStats.bodyHigh <= prevStats.bodyHigh && barStats.bodyLow >= prevStats.bodyLow && barStats.body <= prevStats.body * 0.75 && preCurrentPressure === "up") {
+  if (isHaramiGeometry && preStarPressure === "up" && prevStats.bullish && barStats.bearish) {
     out.push("bearish_harami");
+  }
+  if (isHaramiGeometry && haramiCrossBody && preStarPressure === "down" && prevStats.bearish) {
+    out.push("bullish_harami_cross");
+  }
+  if (isHaramiGeometry && haramiCrossBody && preStarPressure === "up" && prevStats.bullish) {
+    out.push("bearish_harami_cross");
   }
   if (prev2Stats && prev2Stats.bearish && prev2Stats.bodyRatio >= 0.45 && prevStats.body <= prev2Stats.body * 0.6 && prevStats.bodyRatio <= 0.35 && barStats.bullish && barStats.bodyRatio >= 0.45 && barStats.close >= prev2Stats.bodyLow + prev2Stats.body * 0.5 && preStarPressure === "down") {
     out.push("bullish_morning_star");
@@ -4173,6 +4187,261 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
   return evaluateForTimeframe();
 }
 
+// src/shared/rules-engine/textExpression.js
+var CONTEXT_ROOTS = /* @__PURE__ */ new Set([
+  "bar",
+  "prev",
+  "bars",
+  "indicators",
+  "prev_indicators",
+  "levels",
+  "market",
+  "params",
+  "strategy",
+  "multiTf"
+]);
+var INFIX_OPERATORS = /* @__PURE__ */ new Set([
+  "crosses_above",
+  "crosses_below",
+  "touches",
+  "retest",
+  "rejected",
+  "holds_above",
+  "holds_below",
+  "sweeps_above",
+  "sweeps_below"
+]);
+var RuleTextSyntaxError = class extends Error {
+  constructor(message, position = null) {
+    super(position === null ? message : `${message} at position ${position + 1}`);
+    this.name = "RuleTextSyntaxError";
+    this.position = position;
+  }
+};
+function normalizeVariableAlias(value = "", aliases = {}) {
+  const raw = String(value || "").trim();
+  if (!raw) return raw;
+  if (Object.prototype.hasOwnProperty.call(aliases, raw)) {
+    return String(aliases[raw] || raw).trim() || raw;
+  }
+  if (raw.includes(".")) return raw;
+  if (["open", "high", "low", "close", "volume", "price"].includes(raw)) {
+    return `bar.${raw === "price" ? "close" : raw}`;
+  }
+  const emaMatch = raw.match(/^ema_?(\d+)$/i);
+  if (emaMatch) return `indicators.ema_${emaMatch[1]}`;
+  const smaMatch = raw.match(/^sma_?(\d+)$/i);
+  if (smaMatch) return `indicators.sma_${smaMatch[1]}`;
+  if (CONTEXT_ROOTS.has(raw)) return raw;
+  return `indicators.${raw}`;
+}
+function tokenizeRuleText(source = "") {
+  const text = String(source || "");
+  const tokens = [];
+  let index = 0;
+  while (index < text.length) {
+    const char = text[index];
+    if (/\s/.test(char)) {
+      index += 1;
+      continue;
+    }
+    const start = index;
+    const two = text.slice(index, index + 2);
+    if ([">=", "<=", "==", "!=", "&&", "||"].includes(two)) {
+      tokens.push({ type: "operator", value: two, position: start });
+      index += 2;
+      continue;
+    }
+    if ([">", "<", "+", "-", "*", "/", "!"].includes(char)) {
+      tokens.push({ type: "operator", value: char, position: start });
+      index += 1;
+      continue;
+    }
+    if (["(", ")", ","].includes(char)) {
+      tokens.push({ type: char, value: char, position: start });
+      index += 1;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      const quote = char;
+      index += 1;
+      let value = "";
+      let closed = false;
+      while (index < text.length) {
+        const current = text[index];
+        if (current === "\\" && index + 1 < text.length) {
+          value += text[index + 1];
+          index += 2;
+          continue;
+        }
+        if (current === quote) {
+          closed = true;
+          index += 1;
+          break;
+        }
+        value += current;
+        index += 1;
+      }
+      if (!closed) throw new RuleTextSyntaxError("Unterminated string", start);
+      tokens.push({ type: "string", value, position: start });
+      continue;
+    }
+    const numberMatch = text.slice(index).match(/^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/);
+    if (numberMatch) {
+      tokens.push({ type: "number", value: Number(numberMatch[0]), position: start });
+      index += numberMatch[0].length;
+      continue;
+    }
+    const identifierMatch = text.slice(index).match(/^[a-zA-Z_][a-zA-Z0-9_.]*/);
+    if (identifierMatch) {
+      tokens.push({ type: "identifier", value: identifierMatch[0], position: start });
+      index += identifierMatch[0].length;
+      continue;
+    }
+    throw new RuleTextSyntaxError(`Unexpected character "${char}"`, start);
+  }
+  tokens.push({ type: "eof", value: "", position: text.length });
+  return tokens;
+}
+var RuleTextParser = class {
+  constructor(source, options = {}) {
+    this.tokens = tokenizeRuleText(source);
+    this.index = 0;
+    this.aliases = options.aliases && typeof options.aliases === "object" ? options.aliases : {};
+  }
+  current() {
+    return this.tokens[this.index];
+  }
+  consume() {
+    const token = this.current();
+    this.index += 1;
+    return token;
+  }
+  matches(value) {
+    const token = this.current();
+    return token?.value === value || String(token?.value || "").toLowerCase() === value;
+  }
+  accept(value) {
+    if (!this.matches(value)) return false;
+    this.consume();
+    return true;
+  }
+  expect(value) {
+    if (!this.accept(value)) {
+      throw new RuleTextSyntaxError(`Expected "${value}"`, this.current()?.position ?? null);
+    }
+  }
+  parse() {
+    const expression = this.parseOr();
+    if (this.current().type !== "eof") {
+      throw new RuleTextSyntaxError(
+        `Unexpected token "${this.current().value}"`,
+        this.current().position
+      );
+    }
+    return expression;
+  }
+  parseOr() {
+    const nodes = [this.parseAnd()];
+    while (this.accept("or") || this.accept("||")) nodes.push(this.parseAnd());
+    return nodes.length === 1 ? nodes[0] : { or: nodes };
+  }
+  parseAnd() {
+    const nodes = [this.parseNot()];
+    while (this.accept("and") || this.accept("&&")) nodes.push(this.parseNot());
+    return nodes.length === 1 ? nodes[0] : { and: nodes };
+  }
+  parseNot() {
+    if (this.accept("not") || this.accept("!")) return { not: this.parseNot() };
+    return this.parseComparison();
+  }
+  parseComparison() {
+    const left = this.parseAdditive();
+    const token = this.current();
+    const normalized = String(token?.value || "").toLowerCase();
+    const operator = [">=", "<=", "==", "!=", ">", "<"].includes(normalized) || INFIX_OPERATORS.has(normalized) ? normalized : "";
+    if (!operator) return left;
+    this.consume();
+    return { [operator]: [left, this.parseAdditive()] };
+  }
+  parseAdditive() {
+    let node = this.parseMultiplicative();
+    while (this.matches("+") || this.matches("-")) {
+      const operator = this.consume().value;
+      node = { [operator]: [node, this.parseMultiplicative()] };
+    }
+    return node;
+  }
+  parseMultiplicative() {
+    let node = this.parseUnary();
+    while (this.matches("*") || this.matches("/")) {
+      const operator = this.consume().value;
+      node = { [operator]: [node, this.parseUnary()] };
+    }
+    return node;
+  }
+  parseUnary() {
+    if (this.accept("-")) return { "-": [this.parseUnary()] };
+    if (this.accept("+")) return this.parseUnary();
+    return this.parsePrimary();
+  }
+  parsePrimary() {
+    const token = this.current();
+    if (this.accept("(")) {
+      const node = this.parseOr();
+      this.expect(")");
+      return node;
+    }
+    if (token.type === "number" || token.type === "string") {
+      this.consume();
+      return token.value;
+    }
+    if (token.type !== "identifier") {
+      throw new RuleTextSyntaxError("Expected a value", token.position);
+    }
+    this.consume();
+    const name = String(token.value || "");
+    const lowerName = name.toLowerCase();
+    if (lowerName === "true") return true;
+    if (lowerName === "false") return false;
+    if (lowerName === "null") return null;
+    if (this.accept("(")) {
+      const args = [];
+      if (!this.accept(")")) {
+        do {
+          args.push(this.parseOr());
+        } while (this.accept(","));
+        this.expect(")");
+      }
+      return { fn: name, args };
+    }
+    return { var: normalizeVariableAlias(name, this.aliases) };
+  }
+};
+function parseRuleText(source = "", options = {}) {
+  const text = String(source || "").trim();
+  if (!text) throw new RuleTextSyntaxError("Expression is empty", 0);
+  return new RuleTextParser(text, options).parse();
+}
+function compileRuleExpression(value, options = {}) {
+  if (value && typeof value === "object") return value;
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  if (!text) return null;
+  if (text.startsWith("{") || text.startsWith("[")) {
+    try {
+      return JSON.parse(text);
+    } catch (error) {
+      throw new RuleTextSyntaxError(`Invalid JSON expression: ${error.message}`);
+    }
+  }
+  return parseRuleText(text, options);
+}
+function expressionFromDefinition(definition = {}, options = {}) {
+  const source = definition?.condition ?? definition?.when ?? definition?.expression ?? definition?.text ?? null;
+  return compileRuleExpression(source, options);
+}
+
 // src/shared/rules-engine/ruleEngine.js
 function valueAtPath(source, pathName = "") {
   const parts = String(pathName || "").split(".").map((part) => part.trim()).filter(Boolean);
@@ -4327,6 +4596,9 @@ var RULE_FUNCTION_NAMES = [
   "price_action_tp",
   "suggested_trade_sl",
   "suggested_trade_tp",
+  "three_candles_signal",
+  "three_candles_sl",
+  "three_candles_tp",
   "get_artifacts",
   "is_true",
   "draw"
@@ -4426,13 +4698,20 @@ function evaluateRuleExpression(node, ctx = {}) {
 }
 function normalizeRuleDefinition(rule = {}, index = 0) {
   const id = String(rule?.id || `rule_${index + 1}`).trim() || `rule_${index + 1}`;
+  let condition = null;
+  try {
+    condition = expressionFromDefinition(rule);
+  } catch {
+    condition = null;
+  }
   return {
     id,
     abbr: String(rule?.abbr || rule?.short_name || id).trim() || id,
     name: String(rule?.name || rule?.label || id).trim() || id,
     icon: String(rule?.icon || "activity").trim() || "activity",
     family: String(rule?.family || "custom").trim() || "custom",
-    condition: rule?.condition && typeof rule.condition === "object" ? rule.condition : rule?.when && typeof rule.when === "object" ? rule.when : null,
+    condition,
+    expression_text: typeof rule?.condition === "string" ? rule.condition : typeof rule?.when === "string" ? rule.when : typeof rule?.expression === "string" ? rule.expression : "",
     params: rule?.params && typeof rule.params === "object" ? { ...rule.params } : {},
     outputs: rule?.outputs && typeof rule.outputs === "object" ? { ...rule.outputs } : {}
   };
@@ -4519,8 +4798,8 @@ var RuleEngine = class {
 var PREDEFINED_RULES = [
   {
     id: "price_crosses_ema",
-    abbr: "PX_EMA",
-    name: "Price Crosses EMA",
+    abbr: "ema.x",
+    name: "EMA Price.x",
     icon: "crosshair",
     family: "moving_average",
     params: { side: "above", source: "close", ema_length: 20 },
@@ -4531,8 +4810,8 @@ var PREDEFINED_RULES = [
   },
   {
     id: "price_crosses_below_ema",
-    abbr: "PX_EMA_DN",
-    name: "Price Crosses Below EMA",
+    abbr: "ema.x",
+    name: "EMA Price.x Down",
     icon: "crosshair",
     family: "moving_average",
     params: { side: "below", source: "close", ema_length: 20 },
@@ -4543,8 +4822,8 @@ var PREDEFINED_RULES = [
   },
   {
     id: "ema_fast_crosses_ema_slow",
-    abbr: "EMA_X",
-    name: "Fast EMA Crosses Slow EMA",
+    abbr: "ema.x",
+    name: "EMA Fast/Slow.x",
     icon: "git-compare-arrows",
     family: "moving_average",
     params: { side: "above", fast_length: 9, slow_length: 21 },
@@ -4555,8 +4834,8 @@ var PREDEFINED_RULES = [
   },
   {
     id: "ema_fast_crosses_below_ema_slow",
-    abbr: "EMA_X_DN",
-    name: "Fast EMA Crosses Below Slow EMA",
+    abbr: "ema.x",
+    name: "EMA Fast/Slow.x Down",
     icon: "git-compare-arrows",
     family: "moving_average",
     params: { side: "below", fast_length: 9, slow_length: 21 },
@@ -4567,8 +4846,8 @@ var PREDEFINED_RULES = [
   },
   {
     id: "price_rejected_ema",
-    abbr: "RJ_EMA",
-    name: "Price Rejected EMA",
+    abbr: "ema.r",
+    name: "EMA.r",
     icon: "undo-2",
     family: "moving_average",
     params: { ema_length: 20 },
@@ -4579,8 +4858,8 @@ var PREDEFINED_RULES = [
   },
   {
     id: "price_rejected_vwap",
-    abbr: "RJ_VWAP",
-    name: "Price Rejected VWAP",
+    abbr: "vwap.r",
+    name: "VWAP.r",
     icon: "waves",
     family: "vwap",
     params: {},
@@ -4591,8 +4870,8 @@ var PREDEFINED_RULES = [
   },
   {
     id: "price_crosses_vwap",
-    abbr: "PX_VWAP",
-    name: "Price Crosses VWAP",
+    abbr: "vwap.x",
+    name: "VWAP.x",
     icon: "waves",
     family: "vwap",
     params: { side: "above" },
@@ -4603,8 +4882,8 @@ var PREDEFINED_RULES = [
   },
   {
     id: "price_crosses_below_vwap",
-    abbr: "PX_VWAP_DN",
-    name: "Price Crosses Below VWAP",
+    abbr: "vwap.x",
+    name: "VWAP.x Down",
     icon: "waves",
     family: "vwap",
     params: { side: "below" },
@@ -4615,8 +4894,8 @@ var PREDEFINED_RULES = [
   },
   {
     id: "price_rejected_key_level",
-    abbr: "REJ",
-    name: "Price Rejected Key Level",
+    abbr: "level.r",
+    name: "Key Level.r",
     icon: "minus",
     family: "key_level",
     params: { level: "levels.key" },
@@ -4627,7 +4906,7 @@ var PREDEFINED_RULES = [
   },
   {
     id: "price_breaks_key_level",
-    abbr: "BRK",
+    abbr: "breakout.x",
     name: "Price Breaks Key Level",
     icon: "move-up-right",
     family: "key_level",
@@ -4639,7 +4918,7 @@ var PREDEFINED_RULES = [
   },
   {
     id: "price_breaks_below_key_level",
-    abbr: "BRK_DN",
+    abbr: "breakout.x",
     name: "Price Breaks Below Key Level",
     icon: "move-down-right",
     family: "key_level",
@@ -4651,7 +4930,7 @@ var PREDEFINED_RULES = [
   },
   {
     id: "price_retests_key_level",
-    abbr: "RT_LVL",
+    abbr: "retest.pb",
     name: "Price Retests Key Level",
     icon: "rotate-ccw",
     family: "key_level",
@@ -4663,8 +4942,8 @@ var PREDEFINED_RULES = [
   },
   {
     id: "price_rejected_bollinger_band",
-    abbr: "RJ_BB",
-    name: "Price Rejected Bollinger Band",
+    abbr: "bollinger.r",
+    name: "Bollinger.r",
     icon: "brackets",
     family: "volatility",
     params: { band: "lower" },
@@ -4675,8 +4954,8 @@ var PREDEFINED_RULES = [
   },
   {
     id: "price_crosses_bollinger_mid",
-    abbr: "PX_BB_MID",
-    name: "Price Crosses Bollinger Mid",
+    abbr: "bollinger.x",
+    name: "Bollinger Mid.x",
     icon: "brackets",
     family: "volatility",
     params: { side: "above" },
@@ -4687,8 +4966,8 @@ var PREDEFINED_RULES = [
   },
   {
     id: "price_crosses_below_bollinger_mid",
-    abbr: "PX_BB_MID_DN",
-    name: "Price Crosses Below Bollinger Mid",
+    abbr: "bollinger.x",
+    name: "Bollinger Mid.x Down",
     icon: "brackets",
     family: "volatility",
     params: { side: "below" },
@@ -4699,8 +4978,8 @@ var PREDEFINED_RULES = [
   },
   {
     id: "macd_cross",
-    abbr: "MACD_X",
-    name: "MACD Cross",
+    abbr: "macd.x",
+    name: "MACD.x",
     icon: "chart-no-axes-combined",
     family: "momentum",
     params: { side: "above" },
@@ -4711,8 +4990,8 @@ var PREDEFINED_RULES = [
   },
   {
     id: "macd_cross_down",
-    abbr: "MACD_X_DN",
-    name: "MACD Cross Down",
+    abbr: "macd.x",
+    name: "MACD.x Down",
     icon: "chart-no-axes-combined",
     family: "momentum",
     params: { side: "below" },
@@ -4743,8 +5022,8 @@ var PREDEFINED_RULES = [
   },
   {
     id: "rsi_crosses_above_50",
-    abbr: "RSI_50_UP",
-    name: "RSI Crosses Above 50",
+    abbr: "rsi.x",
+    name: "RSI 50.x Up",
     icon: "gauge",
     family: "momentum",
     params: { threshold: 50 },
@@ -4753,8 +5032,8 @@ var PREDEFINED_RULES = [
   },
   {
     id: "rsi_crosses_below_50",
-    abbr: "RSI_50_DN",
-    name: "RSI Crosses Below 50",
+    abbr: "rsi.x",
+    name: "RSI 50.x Down",
     icon: "gauge",
     family: "momentum",
     params: { threshold: 50 },
@@ -4763,8 +5042,8 @@ var PREDEFINED_RULES = [
   },
   {
     id: "stochastic_cross_up",
-    abbr: "STO_X",
-    name: "Stochastic K Crosses Above D",
+    abbr: "stoch.x",
+    name: "Stoch.x Up",
     icon: "activity",
     family: "momentum",
     params: { side: "above" },
@@ -4773,8 +5052,8 @@ var PREDEFINED_RULES = [
   },
   {
     id: "stochastic_cross_down",
-    abbr: "STO_X_DN",
-    name: "Stochastic K Crosses Below D",
+    abbr: "stoch.x",
+    name: "Stoch.x Down",
     icon: "activity",
     family: "momentum",
     params: { side: "below" },
@@ -4803,8 +5082,8 @@ var PREDEFINED_RULES = [
   },
   {
     id: "macd_crosses_above_zero",
-    abbr: "MACD_0_UP",
-    name: "MACD Crosses Above Zero",
+    abbr: "macd.x",
+    name: "MACD Zero.x Up",
     icon: "chart-no-axes-combined",
     family: "momentum",
     params: { side: "above" },
@@ -4813,8 +5092,8 @@ var PREDEFINED_RULES = [
   },
   {
     id: "macd_crosses_below_zero",
-    abbr: "MACD_0_DN",
-    name: "MACD Crosses Below Zero",
+    abbr: "macd.x",
+    name: "MACD Zero.x Down",
     icon: "chart-no-axes-combined",
     family: "momentum",
     params: { side: "below" },
@@ -4853,8 +5132,8 @@ var PREDEFINED_RULES = [
   },
   {
     id: "pin_bar",
-    abbr: "PIN",
-    name: "Pin Bar",
+    abbr: "pin",
+    name: "Pin",
     icon: "candlestick-chart",
     family: "candle_pattern",
     params: { bias: "" },
@@ -4973,7 +5252,7 @@ var PREDEFINED_RULES = [
   },
   {
     id: "order_block_rejection",
-    abbr: "RJ_OB",
+    abbr: "ob.r",
     name: "Order Block Rejection",
     icon: "box",
     family: "order_block",
@@ -4983,7 +5262,7 @@ var PREDEFINED_RULES = [
   },
   {
     id: "fvg_rejection",
-    abbr: "RJ_FVG",
+    abbr: "fvg.r",
     name: "FVG Rejection",
     icon: "gap",
     family: "fair_value_gap",
@@ -5023,7 +5302,7 @@ var PREDEFINED_RULES = [
   },
   {
     id: "phase_pullback",
-    abbr: "PULLBACK",
+    abbr: "pullback.pb",
     name: "Pullback Phase",
     icon: "undo-2",
     family: "regime",
@@ -5048,12 +5327,18 @@ function findPredefinedRule(id = "") {
 0 && (module.exports = {
   PREDEFINED_RULES,
   RuleEngine,
+  RuleTextSyntaxError,
+  compileRuleExpression,
   evaluateRuleDefinition,
   evaluateRuleExpression,
   evaluateRules,
+  expressionFromDefinition,
   findPredefinedRule,
   listPredefinedRules,
   normalizeRuleDefinition,
   normalizeRuleEvent,
+  normalizeVariableAlias,
+  parseRuleText,
+  tokenizeRuleText,
   valueAtPath
 });

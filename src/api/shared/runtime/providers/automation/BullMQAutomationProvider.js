@@ -57,7 +57,10 @@ export class BullMQAutomationProvider {
     const worker = new this.WorkerClass(
       queueName,
       async (job) => handler(job?.data),
-      { connection: this.connection, concurrency: 1 },
+      // lockDuration: the master cron handler runs all cron tasks (market data, download
+      // bars, AI, snapshots) which can exceed BullMQ's default 30s job lock. A longer lock
+      // prevents "Missing lock" storms on repeatable jobs that also stalled /health.
+      { connection: this.connection, concurrency: 1, lockDuration: 300000 },
     );
     this.workers.set(queueName, worker);
     return worker;

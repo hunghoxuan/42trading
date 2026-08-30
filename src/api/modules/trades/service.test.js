@@ -99,6 +99,153 @@ test("trades service exposes broker sync operations", async () => {
   assert.equal(loaded.trade.broker_trade_id, "7001");
 });
 
+test("trades service persists and terminates strategy queue actions", async () => {
+  const service = createTradesService({
+    sqlitePath: tempSqlitePath("strategy-actions"),
+    objectStore: { provider: "sqlite" },
+    sourceStorageBackend: "sqlite",
+  });
+  const waiting = {
+    action_id: "ENTRYBAR|custom_trade|BTCUSD|h4|Buy|1",
+    status: "WAITING",
+    symbol: "BTCUSD",
+    side: "BUY",
+    tf: "h4",
+    trigger_time: "2026-08-14T04:00:00.000Z",
+    trade_chain_slot: 2,
+    trade_chain_mode: "Wait_confirm",
+    entry_bar_mode: "First_bar_same_trend",
+  };
+
+  const firstSync = await service.syncStrategyQueueActions(
+    "user",
+    "acc-1",
+    [waiting],
+  );
+  const restored = await service.listStrategyQueueActions("user", "acc-1");
+  const terminalSync = await service.syncStrategyQueueActions(
+    "user",
+    "acc-1",
+    [{ action_id: waiting.action_id, status: "RELEASED" }],
+  );
+
+  assert.equal(firstSync.accepted, 1);
+  assert.equal(firstSync.items.length, 1);
+  assert.equal(restored[0].action_id, waiting.action_id);
+  assert.equal(restored[0].trade_chain_slot, 2);
+  assert.equal(restored[0].trade_chain_mode, "Wait_confirm");
+  assert.equal(restored[0].entry_bar_mode, "First_bar_same_trend");
+  assert.equal(terminalSync.accepted, 1);
+  assert.equal(terminalSync.items.length, 0);
+});
+
+test("trades service edits and cancels queue actions without broker resurrection", async () => {
+  const service = createTradesService({
+    sqlitePath: tempSqlitePath("strategy-actions-admin"),
+    objectStore: { provider: "sqlite" },
+    sourceStorageBackend: "sqlite",
+  });
+  const waiting = {
+    action_id: "ENTRYBAR|custom_trade|BTCUSD|h4|Buy|2",
+    status: "WAITING",
+    symbol: "BTCUSD",
+    side: "BUY",
+    tf: "h4",
+    account_id: "acc-1",
+    trigger_time: "2026-08-14T08:00:00.000Z",
+    entry: 65000,
+    sl: 64000,
+    tp: 67000,
+  };
+
+  await service.syncStrategyQueueActions("user", "acc-1", [waiting]);
+  const updated = await service.updateStrategyQueueAction(
+    "user",
+    waiting.action_id,
+    { entry: 65100, note: "edited in queue" },
+    "acc-1",
+  );
+  const allAccounts = await service.listStrategyQueueActions("user");
+  await service.syncStrategyQueueActions("user", "acc-1", [waiting]);
+  const afterStaleBrokerSync = await service.listStrategyQueueActions("user", "acc-1");
+  await service.removeStrategyQueueAction("user", waiting.action_id, "acc-1");
+  const resurrect = await service.syncStrategyQueueActions("user", "acc-1", [waiting]);
+
+  assert.equal(updated.item.entry, 65100);
+  assert.equal(updated.item.note, "edited in queue");
+  assert.equal(allAccounts.length, 1);
+  assert.equal(afterStaleBrokerSync[0].entry, 65100);
+  assert.equal(afterStaleBrokerSync[0].note, "edited in queue");
+  assert.equal(resurrect.accepted, 0);
+  assert.equal(resurrect.items.length, 0);
+});
+
+test("trades service removes waiting actions missing from a complete queue snapshot", async () => {
+  const service = createTradesService({
+    sqlitePath: tempSqlitePath("strategy-actions-snapshot"),
+    objectStore: { provider: "sqlite" },
+    sourceStorageBackend: "sqlite",
+  });
+  const first = {
+    action_id: "ENTRYBAR|BTCUSD|m5|1",
+    status: "WAITING",
+    symbol: "BTCUSD",
+    side: "BUY",
+    tf: "m5",
+  };
+  const second = {
+    action_id: "POSITION|42|exit",
+    action_type: "position.close",
+    status: "WAITING",
+    symbol: "ETHUSD",
+    side: "SELL",
+    tf: "m5",
+  };
+
+  await service.syncStrategyQueueActions("user", "acc-1", [first, second]);
+  const result = await service.syncStrategyQueueActions(
+    "user",
+    "acc-1",
+    [first],
+    { snapshotComplete: true },
+  );
+  const staleReplay = await service.syncStrategyQueueActions("user", "acc-1", [second]);
+
+  assert.equal(result.removed, 1);
+  assert.deepEqual(result.items.map((item) => item.action_id), [first.action_id]);
+  assert.ok(result.terminalActionIds.includes(second.action_id));
+  assert.equal(staleReplay.accepted, 0);
+  assert.equal(staleReplay.items.length, 1);
+});
+
+test("trades service preserves waiting actions before broker queue hydration", async () => {
+  const service = createTradesService({
+    sqlitePath: tempSqlitePath("strategy-actions-pre-hydration"),
+    objectStore: { provider: "sqlite" },
+    sourceStorageBackend: "sqlite",
+  });
+  const waiting = {
+    action_id: "ENTRYBAR|custom_trade|BTCUSD|h1|Buy|3",
+    status: "WAITING",
+    symbol: "BTCUSD",
+    side: "BUY",
+    tf: "h1",
+    account_id: "acc-1",
+    trigger_time: "2026-08-14T09:00:00.000Z",
+  };
+
+  await service.syncStrategyQueueActions("user", "acc-1", [waiting]);
+  const preHydration = await service.syncStrategyQueueActions(
+    "user",
+    "acc-1",
+    [],
+    { snapshotComplete: false },
+  );
+
+  assert.equal(preHydration.removed, 0);
+  assert.deepEqual(preHydration.items.map((item) => item.action_id), [waiting.action_id]);
+});
+
 test("trades service filters plural execution statuses and deletes by sid", async () => {
   const service = createTradesService({
     sqlitePath: tempSqlitePath("service-delete"),

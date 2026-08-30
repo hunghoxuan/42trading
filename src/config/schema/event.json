@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "42trade.event.v1",
+  "title": "42trade Event",
+  "type": "object",
+  "required": ["id", "name", "implementation"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9._-]{3,80}$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["builtin", "custom"]
+    },
+    "implementation": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["builtin", "expression"]
+        },
+        "handler": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "when": {
+      "type": ["object", "string"]
+    },
+    "outputs": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "actions": {
+      "type": "array",
+      "items": { "type": "object" }
+    }
+  },
+  "additionalProperties": true
+}

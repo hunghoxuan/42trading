@@ -84,7 +84,10 @@ export default function Pay42OffersPage({ authUser }) {
       setError("");
       const [offersOut, productsOut] = await Promise.all([
         api.pay42Offers(),
-        api.pay42Products(),
+        // The buyer-facing version of this page is labelled "Points". Buyers can read
+        // active offers, but deliberately do not have products.read permission; requesting
+        // that seller/admin resource is masked by the API as a 404 "Not found".
+        canManage ? api.pay42Products() : Promise.resolve({ items: [] }),
       ]);
       setOffers(Array.isArray(offersOut?.items) ? offersOut.items : []);
       setProducts(Array.isArray(productsOut?.items) ? productsOut.items : []);
@@ -97,7 +100,7 @@ export default function Pay42OffersPage({ authUser }) {
 
   useEffect(() => {
     load();
-  }, []);
+  }, [canManage]);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -209,6 +212,35 @@ export default function Pay42OffersPage({ authUser }) {
         accessorKey: "end_at",
         header: "VALID UNTIL",
         cell: ({ row }) => showDateTime(row.original.end_at),
+      },
+      {
+        accessorKey: "actions",
+        header: "",
+        cell: ({ row }) => (
+          <div className="pay42-row-actions">
+            <button
+              type="button"
+              className="secondary-button icon-button"
+              title="Edit offer"
+              aria-label={`Edit offer ${row.original.sid || ""}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                selectOffer(row.original);
+              }}
+            >
+              ✏
+            </button>
+            <Link
+              className="secondary-button icon-button pay42-row-action-link"
+              title="Payment QR"
+              aria-label={`Payment QR for offer ${row.original.sid || ""}`}
+              to={`/admin/42pay/offers/${encodeURIComponent(row.original.sid || "")}/payment`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              💳
+            </Link>
+          </div>
+        ),
       },
     ],
     [],
@@ -454,7 +486,7 @@ export default function Pay42OffersPage({ authUser }) {
 
   return (
     <Pay42PageShell>
-      <PageHeader className="trades-page-header" title="Offers" />
+      <PageHeader className="trades-page-header" title={canManage ? "Offers" : "Points"} />
 
       {error ? <div className="error">{error}</div> : null}
 
@@ -572,6 +604,7 @@ export default function Pay42OffersPage({ authUser }) {
           detail={{
             title: form.sid ? "Edit Offer" : "Create Offer",
             subtitle: form.sid ? form.sid : "Seller pricing",
+            panelClassName: "pay42-offer-detail",
             children: offerFormPanel,
           }}
         />

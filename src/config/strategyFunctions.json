@@ -16,7 +16,7 @@
     { "value": "crosses_below", "label": "Crosses Below", "category": "comparator", "arity": 2, "family": "momentum" },
     { "value": "touches", "label": "Touches", "category": "comparator", "arity": 2, "family": "price_action" },
     { "value": "retest", "label": "Retest", "category": "comparator", "arity": 2, "family": "price_action" },
-    { "value": "rejected", "label": "Rejected", "category": "comparator", "arity": 2, "family": "price_action" },
+    { "value": "rejected", "label": "Reversed .r", "category": "comparator", "arity": 2, "family": "price_action" },
     { "value": "holds_above", "label": "Holds Above", "category": "comparator", "arity": 2, "family": "price_action" },
     { "value": "holds_below", "label": "Holds Below", "category": "comparator", "arity": 2, "family": "price_action" },
     { "value": "sweeps_above", "label": "Sweeps Above", "category": "comparator", "arity": 2, "family": "ict" },
@@ -46,7 +46,7 @@
     },
     {
       "value": "rejected",
-      "label": "Rejected",
+      "label": "Reversed .r",
       "kind": "predicate",
       "family": "price_action",
       "args": [{ "key": "level", "label": "Level" }]
@@ -101,7 +101,7 @@
     },
     {
       "value": "pin_bar",
-      "label": "Pin Bar",
+      "label": "Pin",
       "kind": "predicate",
       "family": "patterns",
       "args": [

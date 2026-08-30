@@ -245,10 +245,13 @@ function normalizeTradeRow(row) {
     signalId: tradeId,
     sourceId: row.source_id ?? null,
     channel:
+      metadata.source ??
       metadata.channel ??
       metadata.ctrader_channel ??
+      brokerData.source ??
       brokerData.channel ??
       brokerData.source_id ??
+      rawJson?.source ??
       rawJson?.channel ??
       rawJson?.source_id ??
       null,
@@ -378,6 +381,14 @@ function brokerSyncSourceId(item = {}, options = {}) {
 
 function brokerSyncStrategy(item = {}) {
   return String(item.strategy || "").trim() || "manual";
+}
+
+function brokerSyncTp1(item = {}, fallback = null) {
+  const explicit = Number(item.tp1);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  const fb = Number(fallback);
+  if (Number.isFinite(fb) && fb > 0) return fb;
+  return null;
 }
 
 function normalizeBrokerSnapshotExecutionStatus(snapshot = {}) {
@@ -1864,7 +1875,7 @@ function createSqliteRepository(options = {}) {
 
         const labelText = normalizeNullableText(it.label);
         const commentText = normalizeNullableText(it.comment);
-        const channelText = normalizeNullableText(it.channel);
+        const channelText = normalizeNullableText(it.source || it.channel || it.source_id);
         const syncMeta = {
           order_type: it.order_type || null,
           channel: channelText,
@@ -1972,7 +1983,7 @@ function createSqliteRepository(options = {}) {
             consumeLease ? null : existing.leaseExpiresAt,
             it.sl ?? null,
             it.tp ?? null,
-            it.tp1 ?? null,
+            brokerSyncTp1(it, it.tp),
             it.tp2 ?? null,
             it.tp3 ?? null,
             nowIso,
@@ -2064,7 +2075,7 @@ function createSqliteRepository(options = {}) {
           it.entry || 0,
           it.sl ?? null,
           it.tp ?? null,
-          it.tp1 ?? null,
+          brokerSyncTp1(it, it.tp),
           it.tp2 ?? null,
           it.tp3 ?? null,
           it.note || "",
@@ -3062,7 +3073,7 @@ function createPostgresRepository(options = {}) {
 
         const labelText = normalizeNullableText(it.label);
         const commentText = normalizeNullableText(it.comment);
-        const channelText = normalizeNullableText(it.channel);
+        const channelText = normalizeNullableText(it.source || it.channel || it.source_id);
         const syncMeta = {
           order_type: it.order_type || null,
           channel: channelText,
@@ -3171,7 +3182,7 @@ function createPostgresRepository(options = {}) {
               consumeLease ? null : existing.leaseExpiresAt,
               it.sl ?? null,
               it.tp ?? null,
-              it.tp1 ?? null,
+              brokerSyncTp1(it, it.tp),
               it.tp2 ?? null,
               it.tp3 ?? null,
               nowIso,
@@ -3302,7 +3313,7 @@ function createPostgresRepository(options = {}) {
             it.entry || 0,
             it.sl ?? null,
             it.tp ?? null,
-            it.tp1 ?? null,
+            brokerSyncTp1(it, it.tp),
             it.tp2 ?? null,
             it.tp3 ?? null,
             it.note || "",

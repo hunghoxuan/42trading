@@ -14,6 +14,10 @@ const {
   validateRulePayload,
 } = require("./ruleConfigService");
 const { createConfigStore } = require("../../../shared/config/configStore");
+const {
+  compileRuleExpression,
+  evaluateRuleExpression,
+} = require("../../../../shared/rules-engine/index.cjs");
 
 test("rule config service merges predefined JS rules with custom JSON rules", async () => {
   const rules = await listRules();
@@ -66,4 +70,47 @@ test("rule config service saves custom JSON rule files", async () => {
   assert.equal(item.kind, "custom");
   assert.equal(saved.id, "custom_breakout_test");
   assert.equal(saved.abbr, "BRK_T");
+});
+
+test("shared rule compiler accepts readable text with aliases and boolean logic", () => {
+  const expression = compileRuleExpression("ema20 > ema9 and rsi < 70");
+  assert.deepEqual(expression, {
+    and: [
+      { ">": [{ var: "indicators.ema_20" }, { var: "indicators.ema_9" }] },
+      { "<": [{ var: "indicators.rsi" }, 70] },
+    ],
+  });
+  assert.equal(
+    evaluateRuleExpression(expression, {
+      indicators: { ema_20: 120, ema_9: 110, rsi: 60 },
+    }),
+    true,
+  );
+});
+
+test("rule config service preserves text expressions in shared files", async () => {
+  const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), "42trade-rule-text-"));
+  await fs.mkdir(path.join(projectRoot, "src", "config", "rules"), { recursive: true });
+  const service = createRuleConfigService({
+    configStore: createConfigStore({
+      projectRoot,
+      repo: {
+        getObjectData: async () => null,
+        upsertObject: async () => null,
+      },
+    }),
+  });
+  await service.saveRule({
+    id: "custom_text_rule",
+    abbr: "TXT",
+    name: "Custom Text Rule",
+    condition: "ema20 > ema9 and rsi < 70",
+  });
+  const saved = JSON.parse(
+    await fs.readFile(
+      path.join(projectRoot, "src", "config", "rules", "custom_text_rule.json"),
+      "utf8",
+    ),
+  );
+  assert.equal(saved.condition, "ema20 > ema9 and rsi < 70");
 });

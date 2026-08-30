@@ -12,10 +12,12 @@ import DashboardPage from "../modules/42trade/pages/DashboardPage";
 import ChartSnapshotsPage from "../modules/42trade/pages/ai/ChartSnapshotsPage";
 import AiNewsPage from "../modules/42trade/pages/ai/AiNewsPage";
 import TradesPage from "../modules/42trade/pages/trades/TradesPage";
+import TradeQueuePage from "../modules/42trade/pages/trades/TradeQueuePage";
 import MarketDataPage from "../modules/42trade/pages/trades/MarketDataPage";
 import TempTradesPage from "../modules/42trade/pages/trades/TempTradesPage";
 import BacktestsPage from "../modules/42trade/pages/BacktestsPage";
 import ReplayArtifactsTestPage from "../modules/42trade/pages/ReplayArtifactsTestPage";
+import SharedCatalogPage from "../modules/42trade/pages/SharedCatalogPage";
 import SettingsPage from "../modules/system/pages/SettingsPage";
 import ProfilePage from "../modules/system/pages/ProfilePage";
 import CronPage from "../modules/system/pages/CronPage";
@@ -31,6 +33,7 @@ import DbManagerPage from "../modules/system/pages/DbManagerPage";
 import Pay42DashboardPage from "../modules/42pay/pages/Pay42DashboardPage";
 import Pay42ProductsPage from "../modules/42pay/pages/Pay42ProductsPage";
 import Pay42OffersPage from "../modules/42pay/pages/Pay42OffersPage";
+import Pay42OfferPaymentPage from "../modules/42pay/pages/Pay42OfferPaymentPage";
 import Pay42OrdersPage from "../modules/42pay/pages/Pay42OrdersPage";
 import Pay42AdminUsersPage from "../modules/42pay/pages/Pay42AdminUsersPage";
 import Pay42ScanPage from "../modules/42pay/pages/Pay42ScanPage";
@@ -152,8 +155,8 @@ class RouteLoadBoundary extends Component {
 }
 
 function resolveHomePath(user) {
-  if (canAccessPage(user, "pages.42pay.dashboard")) return "/admin/42pay/dashboard";
   if (canAccessPage(user, "pages.dashboard")) return "/trades/dashboard";
+  if (canAccessPage(user, "pages.42pay.dashboard")) return "/admin/42pay/dashboard";
   if (canAccessPage(user, "pages.ai.analyze")) return "/trades/analyze";
   if (canAccessPage(user, "pages.trades")) return "/trades/filled";
   if (canAccessPage(user, "pages.backtests")) return "/trades/backtests";
@@ -414,7 +417,9 @@ export default function App() {
     { to: `${prefix}/dashboard`, label: "Dashboard", permission: "pages.dashboard" },
     { to: `${prefix}/analyze`, label: "Analyze", permission: "pages.ai.analyze" },
     { to: `${prefix}/backtests`, label: "Backtests", permission: "pages.backtests" },
+    { to: `${prefix}/engine-catalog`, label: "Engine Catalog", permission: "pages.backtests" },
     { to: `${prefix}/market_data`, label: "Market Data" },
+    { to: `${prefix}/queue`, label: "Queue", permission: "pages.trades" },
     { to: `${prefix}/filled`, label: `Positions${countBadge("FILLED", source)}` },
     { to: `${prefix}/pending`, label: `Orders${countBadge("PENDING", source)}` },
     { to: `${prefix}/closed`, label: `Closed${countBadge("CLOSED", source)}` },
@@ -1222,6 +1227,10 @@ export default function App() {
                 element={guardPageElement("pages.42pay.offers", <Pay42OffersPage authUser={authUser} />)}
               />
               <Route
+                path="/admin/42pay/offers/:sid/payment"
+                element={guardPageElement("pages.42pay.offers", <Pay42OfferPaymentPage />)}
+              />
+              <Route
                 path="/admin/42pay/scan"
                 element={guardPageElement("pages.42pay.scan", <Pay42ScanPage authUser={authUser} />)}
               />
@@ -1442,6 +1451,10 @@ export default function App() {
                 element={guardPageElement("pages.backtests", <BacktestsPage />)}
               />
               <Route
+                path="/trades/engine-catalog"
+                element={guardPageElement("pages.backtests", <SharedCatalogPage />)}
+              />
+              <Route
                 path="/trades0/backtests/:runId"
                 element={<LegacyTradesRedirect />}
               />
@@ -1460,6 +1473,10 @@ export default function App() {
               <Route
                 path="/trades/market_data"
                 element={guardPageElement("pages.trades", <MarketDataPage />)}
+              />
+              <Route
+                path="/trades/queue"
+                element={guardPageElement("pages.trades", <TradeQueuePage />)}
               />
               <Route
                 path="/trades/:status"

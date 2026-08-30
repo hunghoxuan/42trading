@@ -225,3 +225,81 @@ test("shared artifact detector matches server detector output", () => {
 
   assert.deepEqual(serverItems, sharedItems);
 });
+
+test("shared artifact delta replaces a forming marker without duplicating it", () => {
+  const dataRoot = makeTempDataRoot();
+  const symbol = `TEST_${path.basename(dataRoot).replace(/[^a-z0-9]/gi, "")}`;
+  chartArtifactService.clearMarketArtifactStore();
+
+  const first = chartArtifactService.mergeMarketArtifactDelta({
+    symbol,
+    timeframe: "5m",
+    items: [
+      {
+        id: "fvg-100",
+        family: "zone",
+        type: "fvg",
+        subtype: "bullish",
+        timeframe: "5",
+        price_low: 100,
+        price_high: 102,
+        anchor_time: 100,
+        status: "active",
+      },
+    ],
+  });
+  chartArtifactService.writeMarketArtifacts(symbol, "5", first, { dataRoot });
+  chartArtifactService.flushMarketArtifactStore();
+
+  chartArtifactService.clearMarketArtifactStore();
+  const existing = chartArtifactService.readMarketArtifacts(symbol, "5", { dataRoot });
+  const second = chartArtifactService.mergeMarketArtifactDelta({
+    symbol,
+    timeframe: "5m",
+    existing,
+    items: [
+      {
+        id: "fvg-100",
+        family: "zone",
+        type: "fvg",
+        subtype: "bullish",
+        timeframe: "5",
+        price_low: 101,
+        price_high: 103,
+        anchor_time: 100,
+        status: "mitigated",
+      },
+    ],
+  });
+
+  assert.equal(second.items.length, 1);
+  assert.equal(second.items[0].price_low, 101);
+  assert.equal(second.items[0].status, "mitigated");
+});
+
+test("shared artifact deltas keep identical IDs separate by timeframe", () => {
+  const symbol = "TEST_SHARED_TF";
+  const item = {
+    id: "key-100",
+    family: "level",
+    type: "key_level",
+    label: "Key",
+    price: 100,
+    anchor_time: 100,
+  };
+  const fiveMinute = chartArtifactService.mergeMarketArtifactDelta({
+    symbol,
+    timeframe: "5",
+    items: [{ ...item, timeframe: "5" }],
+  });
+  const hourly = chartArtifactService.mergeMarketArtifactDelta({
+    symbol,
+    timeframe: "60",
+    items: [{ ...item, timeframe: "60" }],
+  });
+
+  assert.equal(fiveMinute.items.length, 1);
+  assert.equal(hourly.items.length, 1);
+  assert.equal(fiveMinute.items[0].timeframe, "5");
+  assert.equal(hourly.items[0].timeframe, "60");
+});

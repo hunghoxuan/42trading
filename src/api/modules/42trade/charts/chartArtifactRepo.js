@@ -9,6 +9,7 @@ const ARTIFACTS_FILENAME = "artifacts.json";
 const LATEST_FILENAME = "latest.json";
 const CANONICAL_EVENTS_CACHE_FILENAME = "canonical_events.tsv";
 const CANONICAL_EVENTS_CACHE_VERSION = "1";
+const DEFAULT_MARKET_ARTIFACT_MAX_BARS = 5000;
 
 function safePathPart(value, fallback = "default") {
   const raw = String(value || "").trim() || fallback;
@@ -37,11 +38,40 @@ function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
 }
 
+function acquireFileLock(lockPath) {
+  const waitBuffer = new Int32Array(new SharedArrayBuffer(4));
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    try {
+      const fd = fs.openSync(lockPath, "wx");
+      fs.writeFileSync(fd, `${process.pid}\n`);
+      return fd;
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      try {
+        const ageMs = Date.now() - fs.statSync(lockPath).mtimeMs;
+        if (ageMs > 30000) fs.unlinkSync(lockPath);
+      } catch {}
+      Atomics.wait(waitBuffer, 0, 0, 10);
+    }
+  }
+  throw new Error(`Timed out acquiring artifact lock: ${lockPath}`);
+}
+
 function writeJsonAtomic(filePath, value) {
   ensureDir(path.dirname(filePath));
+  const lockPath = `${filePath}.lock`;
+  const lockFd = acquireFileLock(lockPath);
   const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`);
-  fs.renameSync(tmp, filePath);
+  try {
+    fs.writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`);
+    const fileFd = fs.openSync(tmp, "r");
+    try { fs.fsyncSync(fileFd); } finally { fs.closeSync(fileFd); }
+    fs.renameSync(tmp, filePath);
+  } finally {
+    try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch {}
+    try { fs.closeSync(lockFd); } catch {}
+    try { fs.unlinkSync(lockPath); } catch {}
+  }
 }
 
 function readJson(filePath, fallback = null) {
@@ -53,10 +83,86 @@ function readJson(filePath, fallback = null) {
 }
 
 function buildMarketArtifactFileName(startTime = null, endTime = null) {
-  const start = normalizeUnixTime(startTime);
-  const end = normalizeUnixTime(endTime);
-  if (start && end) return `${start}_${end}.json`;
   return LATEST_FILENAME;
+}
+
+function getMarketArtifactMaxBars(options = {}) {
+  const value = Number(
+    options.maxBars ??
+      options.max_bars ??
+      process.env.CHART_ARTIFACT_MAX_BARS,
+  );
+  return Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : DEFAULT_MARKET_ARTIFACT_MAX_BARS;
+}
+
+function inferTimeframeSeconds(timeframe) {
+  const tf = normalizeTf(timeframe);
+  const minutes = Number(tf);
+  if (Number.isFinite(minutes) && minutes > 0) return Math.floor(minutes * 60);
+  return 60;
+}
+
+function itemTime(item = {}) {
+  return normalizeUnixTime(
+    item.anchor_time ??
+      item.bar_start ??
+      item.bar_end ??
+      item.time ??
+      item.payload?.bar?.time,
+  );
+}
+
+function mergeArtifactItems(existingItems = [], incomingItems = []) {
+  const byId = new Map();
+  for (const item of [...existingItems, ...incomingItems]) {
+    if (!item || typeof item !== "object") continue;
+    const id = String(item.id || "").trim();
+    if (id) byId.set(id, item);
+  }
+  return [...byId.values()];
+}
+
+function trimMarketArtifactEnvelope(envelope, timeframe, options = {}) {
+  if (!envelope || typeof envelope !== "object") return envelope;
+  const maxBars = getMarketArtifactMaxBars(options);
+  const lastBarTime = normalizeUnixTime(envelope?.bars_ref?.last_bar_time);
+  if (!lastBarTime || !maxBars) return envelope;
+
+  const cutoff = lastBarTime - (maxBars - 1) * inferTimeframeSeconds(timeframe);
+  const items = Array.isArray(envelope.items)
+    ? envelope.items.filter((item) => {
+        const time = itemTime(item);
+        return !time || time >= cutoff;
+      })
+    : [];
+
+  return {
+    ...envelope,
+    bars_ref: {
+      ...(envelope.bars_ref || {}),
+      first_bar_time: Math.max(
+        normalizeUnixTime(envelope?.bars_ref?.first_bar_time) || cutoff,
+        cutoff,
+      ),
+      retained_max_bars: maxBars,
+    },
+    items,
+  };
+}
+
+function pruneLegacyMarketArtifactRangeFiles(symbol, timeframe, options = {}) {
+  const latestPath = resolveMarketArtifactPath(symbol, timeframe, {
+    dataRoot: options.dataRoot,
+  });
+  const dir = path.dirname(latestPath);
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      if (!/^\d+_\d+\.json$/u.test(name)) continue;
+      try { fs.unlinkSync(path.join(dir, name)); } catch {}
+    }
+  } catch {}
 }
 
 function resolveMarketArtifactPath(symbol, timeframe, options = {}) {
@@ -101,27 +207,61 @@ function readMarketArtifactEnvelope(symbol, timeframe, options = {}) {
   const hasExplicitRange =
     normalizeUnixTime(options.startTime ?? options.start_time) ||
     normalizeUnixTime(options.endTime ?? options.end_time);
-  if (!envelope && !hasExplicitRange) {
-    envelope = readJson(
-      resolveMarketArtifactPath(symbol, timeframe, {
-        dataRoot: options.dataRoot,
-      }),
-      null,
-    );
+  const latestEnvelope = readJson(
+    resolveMarketArtifactPath(symbol, timeframe, {
+      dataRoot: options.dataRoot,
+    }),
+    null,
+  );
+  if (!envelope && latestEnvelope) {
+    envelope = latestEnvelope;
+  } else if (envelope && latestEnvelope && hasExplicitRange) {
+    // Range files may predate the shared cTrader writer. Carry the latest cTrader
+    // artifacts into the range response without reintroducing derived 42trade items.
+    const latestShared = Array.isArray(latestEnvelope.items)
+      ? latestEnvelope.items.filter(
+          (item) => String(item?.source || "").trim().toLowerCase() === "ctrader",
+        )
+      : [];
+    if (latestShared.length) {
+      const seen = new Set(
+        (Array.isArray(envelope.items) ? envelope.items : [])
+          .map((item) => String(item?.id || "").trim())
+          .filter(Boolean),
+      );
+      const sharedToAdd = latestShared.filter((item) => {
+        const id = String(item?.id || "").trim();
+        if (!id || seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      });
+      if (sharedToAdd.length) {
+        envelope = { ...envelope, items: [...(envelope.items || []), ...sharedToAdd] };
+      }
+    }
   }
   return envelope;
 }
 
 function writeMarketArtifactEnvelope(symbol, timeframe, envelope, options = {}) {
   const filePath = resolveMarketArtifactPath(symbol, timeframe, options);
-  writeJsonAtomic(filePath, envelope);
-  const latestPath = resolveMarketArtifactPath(symbol, timeframe, {
-    dataRoot: options.dataRoot,
-  });
-  if (latestPath !== filePath) {
-    writeJsonAtomic(latestPath, envelope);
-  }
-  return envelope;
+  const existing = readJson(filePath, null);
+  const merged =
+    existing && typeof existing === "object" && Number(existing.version) === Number(envelope?.version)
+      ? {
+          ...existing,
+          ...envelope,
+          items: mergeArtifactItems(existing.items, envelope.items),
+          meta: {
+            ...(existing.meta && typeof existing.meta === "object" ? existing.meta : {}),
+            ...(envelope.meta && typeof envelope.meta === "object" ? envelope.meta : {}),
+          },
+        }
+      : envelope;
+  const trimmed = trimMarketArtifactEnvelope(merged, timeframe, options);
+  writeJsonAtomic(filePath, trimmed);
+  pruneLegacyMarketArtifactRangeFiles(symbol, timeframe, options);
+  return trimmed;
 }
 
 function readTradeArtifactEnvelope(tradeDir) {

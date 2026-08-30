@@ -16,6 +16,7 @@ import ComboButtonMenu from "../../../shared/components/ComboButtonMenu";
 import GroupButtons from "../../../shared/components/GroupButtons";
 import PageHeader from "../../../shared/components/PageHeader";
 import ResponsivePanel from "../../../shared/components/ResponsivePanel";
+import { StatusDisplay } from "../../../shared/components/StatusBadge";
 
 const RANGE_OPTIONS = [
   { val: "all", lab: "ALL TIMES" },
@@ -61,6 +62,23 @@ const PERIOD_DISPLAY = [
 ];
 
 const DASHBOARD_CALENDAR_CACHE_KEY = "tvbridge_dashboard_calendar_master_v1";
+
+function formatStaleAge(staleMs) {
+  if (!Number.isFinite(staleMs) || staleMs < 0) return "never";
+  const seconds = Math.floor(staleMs / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+function brokerActivityTone(activity = {}) {
+  if (activity?.status === "DISCONNECTED") return "ERROR";
+  if (activity?.status === "CONNECTED") return "ONLINE";
+  return "WARNING";
+}
 
 function trades2Text(value, fallback = "") {
   const out = String(value ?? "").trim();
@@ -1046,6 +1064,7 @@ export default function DashboardPage() {
     new Date().getFullYear(),
   );
   const [calendarData, setCalendarData] = useState(null);
+  const [brokerAccounts, setBrokerAccounts] = useState([]);
   const [filters, setFilters] = useState({
     account_id: "",
     symbol: "",
@@ -1066,10 +1085,14 @@ export default function DashboardPage() {
     if (inFlightRef.current) return;
     inFlightRef.current = true;
     try {
-      const resp = isTrades2Route
-        ? await loadTrades2DashboardFromList(api, filters)
-        : await api.dashboardAdvanced(filters);
+      const [resp, accountsResp] = await Promise.all([
+        isTrades2Route
+          ? loadTrades2DashboardFromList(api, filters)
+          : api.dashboardAdvanced(filters),
+        api.v2Accounts().catch(() => ({ items: [] })),
+      ]);
       setData(resp);
+      setBrokerAccounts(Array.isArray(accountsResp?.items) ? accountsResp.items : []);
       const userKey = calendarScopeKey(filters, resp?.filters?.user_id || "");
       const dailyMap = buildDailyPnlMap(resp?.pnl_series || []);
       const merged = mergeDailyPnlMap(
@@ -1242,6 +1265,31 @@ export default function DashboardPage() {
     }
   }
 
+  const brokerSyncAccounts = useMemo(
+    () =>
+      [...(Array.isArray(brokerAccounts) ? brokerAccounts : [])]
+        .filter(
+          (account) =>
+            String(account?.status || "").toUpperCase() !== "ARCHIVED" &&
+            account?.broker_activity?.trackable !== false,
+        )
+        .map((account) => ({
+          ...account,
+          brokerActivity: account?.broker_activity || {},
+        }))
+        .sort((left, right) => {
+          const leftConnected = left?.brokerActivity?.disconnected ? 0 : 1;
+          const rightConnected = right?.brokerActivity?.disconnected ? 0 : 1;
+          if (leftConnected !== rightConnected) {
+            return rightConnected - leftConnected;
+          }
+          const leftStale = Number(left?.brokerActivity?.stale_ms || 0);
+          const rightStale = Number(right?.brokerActivity?.stale_ms || 0);
+          return leftConnected ? leftStale - rightStale : rightStale - leftStale;
+        }),
+    [brokerAccounts],
+  );
+
   if (error) return <div className="error">{error}</div>;
   if (!data) return <div className="loading">Loading dashboard...</div>;
 
@@ -1411,7 +1459,7 @@ export default function DashboardPage() {
   return (
     <section className="stack-layout fadeIn">
       <PageHeader
-        title={isTrades2Route ? "Trades2 Dashboard" : "Dashboard"}
+        title={isTrades2Route ? "Trades2 Dashboard" : "Trade Dashboard"}
         actions={
           <CronRunLauncher
             value={selectedCronName}
@@ -1443,7 +1491,38 @@ export default function DashboardPage() {
         className="dashboard-main-grid"
       >
         <div className="stack-layout" style={{ gap: 18 }}>
-          {/* Heartbeat cards removed per request, info moved to Accounts table */}
+          {brokerSyncAccounts.length > 0 ? (
+            <div className="panel card-dense dashboard-broker-grid">
+              {brokerSyncAccounts.map((account) => {
+                  const activity = account?.brokerActivity || {};
+                  const status = activity?.status || "UNKNOWN";
+                  const source = activity?.last_sync_source || "";
+                  const age = activity?.last_sync_at
+                    ? formatStaleAge(activity?.stale_ms)
+                    : "";
+                  return (
+                    <div
+                      key={account.account_id}
+                      className="dashboard-broker-cell"
+                      title={[status, source, age].filter(Boolean).join(" · ")}
+                    >
+                      <StatusDisplay
+                        status={brokerActivityTone(activity)}
+                        tooltipContent={[status, source, age]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      />
+                      <span className="dashboard-broker-cell__name">
+                        {account.name || account.account_id}
+                      </span>
+                      {age ? (
+                        <span className="dashboard-broker-cell__age">{age}</span>
+                      ) : null}
+                    </div>
+                  );
+                })}
+            </div>
+          ) : null}
 
           <div className="toolbar-panel dashboard-overview-toolbar">
             <div

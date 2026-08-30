@@ -198,6 +198,8 @@ function extractServerArtifacts(source = {}, tf = "", bars = []) {
     ? source.artifacts
     : Array.isArray(source?.artifact_items)
       ? source.artifact_items
+      : Array.isArray(source?.items)
+        ? source.items
       : [];
   return normalizeHybridArtifacts(
     rawItems,
@@ -781,7 +783,29 @@ export function useSymbolChartData({
                       ? `anchored<=${Number(endTimeSec)}`
                       : "",
               };
-              tfData.server_artifacts = extractServerArtifacts(out, tf, tfData.bars);
+              // Candles and shared artifacts are separate API resources. Load the
+              // cTrader snapshot here so SymbolChart can render the canonical events.
+              let sharedArtifacts = null;
+              try {
+                sharedArtifacts = await api.loadMarketChartArtifacts(
+                  sym,
+                  tf,
+                  tfData.bar_start,
+                  tfData.bar_end,
+                );
+              } catch {
+                sharedArtifacts = null;
+              }
+              const sharedArtifactEnvelope =
+                sharedArtifacts?.artifacts &&
+                typeof sharedArtifacts.artifacts === "object"
+                  ? sharedArtifacts.artifacts
+                  : null;
+              tfData.server_artifacts = extractServerArtifacts(
+                sharedArtifactEnvelope || out,
+                tf,
+                tfData.bars,
+              );
               if (!tfData.server_artifacts.length) {
                 tfData.server_artifacts = extractServerArtifacts(snap, tf, tfData.bars);
               }

@@ -20,6 +20,7 @@ function matchesEventSearch(event, searchText) {
     event?.ticker === true ? "ticker" : "",
     event?.db_log !== false ? "log" : "",
     event?.hub !== false ? "hub" : "",
+    event?.telegram === true ? "telegram" : "",
   ]
     .filter(Boolean)
     .join(" ")
@@ -39,6 +40,8 @@ function matchesEventFilter(event, filterValue) {
       return event?.db_log !== false;
     case "hub_on":
       return event?.hub !== false;
+    case "telegram_on":
+      return event?.telegram === true;
     case "sound_on":
       return Boolean(String(event?.sound || "").trim());
     case "muted":
@@ -56,6 +59,7 @@ const EVENT_FILTERS = [
   { value: "ticker_on", label: "Ticker on" },
   { value: "log_on", label: "Log on" },
   { value: "hub_on", label: "Hub on" },
+  { value: "telegram_on", label: "Telegram on" },
   { value: "sound_on", label: "Sound set" },
   { value: "muted", label: "Muted" },
 ];

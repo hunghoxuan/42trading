@@ -1,0 +1,1027 @@
+//@version=6
+// Visual-only port of TVBridge_CTrader.cs. No orders, broker calls, risk or webhooks.
+indicator("42Trade - TVBridge CTrader Visuals", shorttitle="42TV Visuals", overlay=true, max_bars_back=5000, max_labels_count=500, max_lines_count=500, max_boxes_count=500, dynamic_requests=true)
+
+gVisual = "Chart Visuals"
+gStructure = "Structure Events"
+gZones = "SMC Zones"
+gCandle = "Candles"
+gTech = "Momentum Technical"
+gStrategy = "Strategies (Visual Only)"
+gSession = "Sessions"
+
+enabled = input.bool(true, "Enable Chart Visuals", group=gVisual)
+lookback = input.int(180, "Lookback", minval=50, maxval=2000, group=gVisual)
+projectionBars = math.min(lookback, 400)
+labelsOn = input.bool(true, "Label", group=gVisual)
+boxesOn = input.bool(true, "Pattern boxes", group=gVisual)
+trendlinesOn = input.bool(true, "Trendline", group=gVisual)
+dashboardOn = input.bool(true, "Dashboard", group=gVisual)
+htfMiniOn = input.bool(true, "HTF Mini", group=gVisual)
+miniCandleCount = input.int(5, "HTF Mini bars", minval=2, maxval=5, group=gVisual)
+miniOffsetBars = input.int(20, "HTF Mini offset", minval=8, maxval=100, group=gVisual)
+miniSlotGapBars = input.int(6, "HTF Mini gap", minval=2, maxval=20, group=gVisual)
+eventLabelTransparency = input.int(86, "Event label transparency", minval=0, maxval=100, group=gVisual)
+htf1 = input.timeframe("60", "HTF 1", group=gVisual)
+htf2 = input.timeframe("240", "HTF 2", group=gVisual)
+
+chochMode = input.string("Yes", "Choch - Change of Character", options=["No", "Yes", "Yes_c", "Yes_r"], group=gStructure)
+mssMode = input.string("No", "Mss - Market Structure Shift", options=["No", "Yes", "Yes_c", "Yes_r"], group=gStructure)
+bosMode = input.string("Yes", "Bos - Break of Structure", options=["No", "Yes", "Yes_c", "Yes_r"], group=gStructure)
+sweepMode = input.string("Yes", "Swp - Sweep", options=["No", "Yes", "Yes_c", "Yes_r"], group=gStructure)
+rejectionMode = input.string("Yes", "Rj - Rejection", options=["No", "Yes", "Yes_c", "Yes_r"], group=gStructure)
+impulseMode = input.string("Yes", "Im - Impulse", options=["No", "Yes", "Yes_c", "Yes_r"], group=gStructure)
+pullbackMode = input.string("Yes", "Pb - Pullback", options=["No", "Yes", "Yes_c", "Yes_r"], group=gStructure)
+continuationMode = input.string("Yes", "Ct - Continuation", options=["No", "Yes", "Yes_c", "Yes_r"], group=gStructure)
+pivotLen = input.int(5, "Pivot length", minval=2, maxval=30, group=gStructure)
+
+obOn = input.bool(true, "OB", group=gZones)
+fvgOn = input.bool(true, "FVG", group=gZones)
+keyLevelsOn = input.bool(true, "Key Levels", group=gZones)
+previousPeriodLevelsOn = input.bool(true, "Previous day/week levels", group=gZones)
+sessionLevelsOn = input.bool(true, "Completed session levels", group=gZones)
+supplyDemandOn = input.bool(true, "S/D Zones", group=gZones)
+liquidityOn = input.bool(true, "Liquidity EQH/EQL", group=gZones)
+liquidityLabelsOn = input.bool(true, "Liquidity labels", group=gZones)
+zoneCap = input.int(24, "Max Zones", minval=3, maxval=80, group=gZones)
+scoredZoneLookback = input.int(180, "S/D score lookback", minval=40, maxval=500, group=gZones)
+fvgDisplacementRatio = input.float(1.15, "FVG displacement", minval=0, maxval=3, step=0.05, group=gZones)
+fvgBodyRatio = input.float(0.55, "FVG body ratio", minval=0, maxval=1, step=0.05, group=gZones)
+fvgGapRatio = input.float(0.18, "FVG gap ratio", minval=0, maxval=1, step=0.05, group=gZones)
+obOriginLookback = input.int(5, "OB origin lookback", minval=1, maxval=20, group=gZones)
+obBodyRatio = input.float(0.55, "OB confirmation body", minval=0.1, maxval=1, step=0.05, group=gZones)
+zoneVolumeSurge = input.float(1.0, "Zone volume surge", minval=1, maxval=10, step=0.05, group=gZones)
+
+confluence = input.string("All_near", "Confluence with", options=["None", "All_near", "All_touch", "KeyLevels", "OB", "FVG", "Support", "Demand", "EQHL"], group=gCandle)
+pinMode = input.string("Yes", "Pin - Pin Bar", options=["No", "Yes", "Yes_c", "Yes_r"], group=gCandle)
+engMode = input.string("Yes", "Eng - Engulfing", options=["No", "Yes", "Yes_c", "Yes_r"], group=gCandle)
+bigMode = input.string("Yes", "Big - Big Candle", options=["No", "Yes", "Yes_c", "Yes_r"], group=gCandle)
+morMode = input.string("Yes", "Mor - Morning Star", options=["No", "Yes", "Yes_c", "Yes_r"], group=gCandle)
+eveMode = input.string("Yes", "Eve - Evening Star", options=["No", "Yes", "Yes_c", "Yes_r"], group=gCandle)
+hamMode = input.string("Yes", "Ham - Hammer", options=["No", "Yes", "Yes_c", "Yes_r"], group=gCandle)
+hgmMode = input.string("Yes", "Hgm - Hanging Man", options=["No", "Yes", "Yes_c", "Yes_r"], group=gCandle)
+sstMode = input.string("Yes", "Sst - Shooting Star", options=["No", "Yes", "Yes_c", "Yes_r"], group=gCandle)
+ihmMode = input.string("Yes", "Ihm - Inverted Hammer", options=["No", "Yes", "Yes_c", "Yes_r"], group=gCandle)
+prcMode = input.string("Yes", "Prc - Piercing Line", options=["No", "Yes", "Yes_c", "Yes_r"], group=gCandle)
+dccMode = input.string("Yes", "Dcc - Dark Cloud Cover", options=["No", "Yes", "Yes_c", "Yes_r"], group=gCandle)
+twsMode = input.string("Yes", "Tws - Three White Soldiers", options=["No", "Yes", "Yes_c", "Yes_r"], group=gCandle)
+tbcMode = input.string("Yes", "Tbc - Three Black Crows", options=["No", "Yes", "Yes_c", "Yes_r"], group=gCandle)
+harMode = input.string("Yes", "Har - Harami", options=["No", "Yes", "Yes_c", "Yes_r"], group=gCandle)
+
+emaOn = input.bool(true, "EMA", group=gTech)
+vwapOn = input.bool(true, "VWAP", group=gTech)
+bbOn = input.bool(false, "Bollinger", group=gTech)
+rsiOn = input.bool(false, "RSI panel events", group=gTech)
+stochOn = input.bool(false, "Stoch evt", group=gTech)
+ichimokuOn = input.bool(false, "Ichimoku", group=gTech)
+divergenceOn = input.bool(false, "Divergence", group=gTech)
+rsiEvtOn = input.bool(false, "RSI evt", group=gTech)
+macdEvtOn = input.bool(false, "MACD evt", group=gTech)
+emaFastLen = input.int(9, "EMA fast", minval=1, group=gTech)
+emaMidLen = input.int(50, "EMA mid", minval=1, group=gTech)
+emaSlowLen = input.int(200, "EMA slow", minval=1, group=gTech)
+rsiLen = input.int(14, "RSI length", minval=2, group=gTech)
+stochLen = input.int(14, "Stoch length", minval=2, group=gTech)
+
+strategyVisuals = input.bool(true, "Strategy detection", group=gStrategy)
+trigger = input.string("Any candle", "Trigger", options=["Any candle", "Pin", "Eng", "Har", "BOS", "CHOCH", "MSS", "Sweep", "Rejection", "Impulse"], group=gStrategy)
+ltfConfluence = input.bool(false, "LTF_Confluence", group=gStrategy)
+htfConfluence = input.bool(false, "HTF_Confluence", group=gStrategy)
+techConfluence = input.bool(false, "Technical_Confluence", group=gStrategy)
+
+sessionsOn = input.bool(true, "Killer Zones", group=gSession)
+sessionVisualMode = input.string("All_KZs", "Session display", options=["No", "All_KZs", "All_sessions"], group=gSession)
+asiaFull = input.session("0900-1800", "Asia session", group=gSession)
+londonFull = input.session("0900-1800", "London session", group=gSession)
+nyFull = input.session("0900-1800", "New York session", group=gSession)
+asiaKz = input.session("0900-1200", "Asia KZ", group=gSession)
+londonKz = input.session("0900-1200", "London KZ", group=gSession)
+nyKz = input.session("0900-1200", "New York KZ", group=gSession)
+
+clrBull = color.rgb(0, 181, 137)
+clrBear = color.rgb(239, 83, 80)
+clrNeutral = color.rgb(158, 158, 158)
+clrHtf1 = color.rgb(41, 182, 246)
+clrHtf2 = color.rgb(171, 71, 188)
+atr = ta.atr(14)
+body = math.abs(close - open)
+rng = math.max(high - low, syminfo.mintick)
+uw = high - math.max(open, close)
+lw = math.min(open, close) - low
+bull = close > open
+bear = close < open
+emaFast = ta.ema(close, emaFastLen)
+emaMid = ta.ema(close, emaMidLen)
+emaSlow = ta.ema(close, emaSlowLen)
+vwap = ta.vwap(hlc3)
+rsi = ta.rsi(close, rsiLen)
+stochK = ta.stoch(close, high, low, stochLen)
+stochD = ta.sma(stochK, 3)
+tenkan = math.avg(ta.highest(high, 9), ta.lowest(low, 9))
+kijun = math.avg(ta.highest(high, 26), ta.lowest(low, 26))
+spanA = math.avg(tenkan, kijun)
+spanB = math.avg(ta.highest(high, 52), ta.lowest(low, 52))
+[bbMid, bbUp, bbDn] = ta.bb(close, 20, 2.0)
+[macd, macdSig, _] = ta.macd(close, 12, 26, 9)
+
+f_tf(string tf) =>
+    sec = timeframe.in_seconds(tf)
+    sec >= 86400 ? "D" : sec >= 3600 ? "h" + str.tostring(int(sec / 3600)) : "m" + str.tostring(int(sec / 60))
+
+f_trim_boxes(array<box> xs, int cap) =>
+    while array.size(xs) > cap
+        box.delete(array.shift(xs))
+
+f_trim_lines(array<line> xs, int cap) =>
+    while array.size(xs) > cap
+        line.delete(array.shift(xs))
+
+f_trim_labels(array<label> xs, int cap) =>
+    while array.size(xs) > cap
+        label.delete(array.shift(xs))
+
+var array<box> zones = array.new_box()
+var array<float> zoneLows = array.new_float()
+var array<float> zoneHighs = array.new_float()
+var array<string> zoneKinds = array.new_string()
+var array<bool> zoneBullish = array.new_bool()
+var array<int> zoneTfSeconds = array.new_int()
+var array<string> zoneCaptions = array.new_string()
+var array<int> zoneCreatedBars = array.new_int()
+var array<int> zoneVisits = array.new_int()
+var array<bool> zoneInside = array.new_bool()
+var array<bool> zoneInvalidated = array.new_bool()
+var array<bool> zoneConverted = array.new_bool()
+var array<box> patterns = array.new_box()
+var array<line> levels = array.new_line()
+var array<float> keyPrices = array.new_float()
+var array<bool> keyHighs = array.new_bool()
+var array<int> keyCreatedBars = array.new_int()
+var array<label> marks = array.new_label()
+var array<label> liquidityLabels = array.new_label()
+var float swingHigh = na
+var float swingLow = na
+var int swingHighBar = na
+var int swingLowBar = na
+var int bias = 0
+var line highTrend = na
+var line lowTrend = na
+
+f_mark(string caption, bool up, float price) =>
+    if enabled and labelsOn
+        y = up ? price - atr * 0.12 : price + atr * 0.12
+        mark = label.new(bar_index, y, caption, style=up ? label.style_label_up : label.style_label_down, color=color.new(up ? clrBull : clrBear, eventLabelTransparency), textcolor=color.new(color.white, 8), size=size.tiny)
+        array.push(marks, mark)
+        f_trim_labels(marks, 180)
+
+f_zone(float top, float bottom, int left, color bg, string caption) =>
+    if enabled and not na(top) and not na(bottom)
+        // All price artifacts use one quiet neutral treatment so zones support price
+        // reading instead of competing with directional event markers.
+        zoneBg = color.new(color.silver, 93)
+        item = box.new(left, math.max(top, bottom), bar_index + projectionBars, math.min(top, bottom), bgcolor=zoneBg, border_color=na, text=labelsOn ? caption : "", text_color=color.silver, text_size=size.tiny, text_halign=text.align_right)
+        array.push(zones, item)
+        array.push(zoneLows, math.min(top, bottom))
+        array.push(zoneHighs, math.max(top, bottom))
+        array.push(zoneKinds, str.contains(caption, "fvg") ? "FVG" : str.contains(caption, ".ob") or str.contains(caption, ".bb") ? "OB" : str.contains(caption, "supply") ? "Supply" : str.contains(caption, ".dem") ? "Demand" : "Zone")
+        array.push(zoneBullish, str.contains(caption, ".up") or str.contains(caption, ".dem"))
+        array.push(zoneTfSeconds, str.startswith(caption, f_tf(htf2)) ? timeframe.in_seconds(htf2) : str.startswith(caption, f_tf(htf1)) ? timeframe.in_seconds(htf1) : timeframe.in_seconds(timeframe.period))
+        array.push(zoneCaptions, caption)
+        array.push(zoneCreatedBars, bar_index)
+        array.push(zoneVisits, 0)
+        array.push(zoneInside, false)
+        array.push(zoneInvalidated, false)
+        array.push(zoneConverted, false)
+        while array.size(zones) > zoneCap
+            box.delete(array.shift(zones))
+            array.shift(zoneLows)
+            array.shift(zoneHighs)
+            array.shift(zoneKinds)
+            array.shift(zoneBullish)
+            array.shift(zoneTfSeconds)
+            array.shift(zoneCaptions)
+            array.shift(zoneCreatedBars)
+            array.shift(zoneVisits)
+            array.shift(zoneInside)
+            array.shift(zoneInvalidated)
+            array.shift(zoneConverted)
+
+// Mirrors cTrader artifact visibility: untouched/first-touch zones project forward;
+// a repeat visit or invalidation ends at the last interaction plus three bars.
+f_update_zone_lifecycle() =>
+    lastIndex = array.size(zones) - 1
+    if lastIndex >= 0
+        for i = 0 to lastIndex
+            kind = array.get(zoneKinds, i)
+            isScoredZone = kind == "Demand" or kind == "Supply"
+            if not isScoredZone and not array.get(zoneInvalidated, i) and bar_index > array.get(zoneCreatedBars, i)
+                zoneLow = array.get(zoneLows, i)
+                zoneHigh = array.get(zoneHighs, i)
+                inside = high >= zoneLow and low <= zoneHigh
+                wasInside = array.get(zoneInside, i)
+                visits = array.get(zoneVisits, i)
+                if inside and not wasInside
+                    visits += 1
+                    array.set(zoneVisits, i, visits)
+                array.set(zoneInside, i, inside)
+                invalidated = array.get(zoneBullish, i) ? close < zoneLow : close > zoneHigh
+                if invalidated
+                    array.set(zoneInvalidated, i, true)
+                    box.set_right(array.get(zones, i), bar_index + 3)
+                    if not array.get(zoneConverted, i)
+                        caption = array.get(zoneCaptions, i)
+                        kind = array.get(zoneKinds, i)
+                        isOriginalFvg = kind == "FVG" and not str.contains(caption, "ifvg")
+                        isOriginalOb = kind == "OB" and not str.contains(caption, ".bb")
+                        if isOriginalFvg or isOriginalOb
+                            tf = array.get(str.split(caption, "."), 0)
+                            inverseCaption = tf + (isOriginalFvg ? ".ifvg." : ".bb.") + (array.get(zoneBullish, i) ? "dn" : "up")
+                            f_zone(zoneHigh, zoneLow, bar_index, color.new(clrNeutral, 93), inverseCaption)
+                            array.set(zoneConverted, i, true)
+                else if visits > 1
+                    box.set_right(array.get(zones, i), bar_index + 3)
+
+f_key(float price, bool isHigh, int left) =>
+    if enabled and not na(price)
+        level = line.new(left, price, bar_index + projectionBars, price, color=color.new(isHigh ? clrBear : clrBull, 55), style=line.style_dotted, width=1)
+        array.push(levels, level)
+        array.push(keyPrices, price)
+        array.push(keyHighs, isHigh)
+        array.push(keyCreatedBars, bar_index)
+        while array.size(levels) > 80
+            line.delete(array.shift(levels))
+            array.shift(keyPrices)
+            array.shift(keyHighs)
+            array.shift(keyCreatedBars)
+
+// cTrader keeps liquidity separate from generic key-level labels: the line is
+// a quiet dotted guide while only BSL/SSL/EQH/EQL receive compact text.
+f_liquidity(float price, bool isHigh, int left, string caption, color levelColor) =>
+    if enabled and not na(price)
+        level = line.new(left, price, bar_index + projectionBars, price, color=color.new(levelColor, 55), style=line.style_dotted, width=1)
+        array.push(levels, level)
+        array.push(keyPrices, price)
+        array.push(keyHighs, isHigh)
+        array.push(keyCreatedBars, left)
+        while array.size(levels) > 80
+            line.delete(array.shift(levels))
+            array.shift(keyPrices)
+            array.shift(keyHighs)
+            array.shift(keyCreatedBars)
+        if labelsOn and liquidityLabelsOn and caption != ""
+            labelY = isHigh ? price + math.max(atr * 0.03, syminfo.mintick * 4) : price - math.max(atr * 0.03, syminfo.mintick * 4)
+            item = label.new(left, labelY, caption, style=label.style_none, color=na, textcolor=levelColor, size=size.tiny)
+            array.push(liquidityLabels, item)
+            f_trim_labels(liquidityLabels, 30)
+
+// Direct port of DetectScoredPriceZones. It scores ATR-scaled price bins from
+// closes, wick rejections, confirmed swings and post-rejection follow-through.
+// The chart receives only the two nearest support and resistance candidates,
+// matching DrawScoredPriceZones rather than flooding every scored bin.
+f_draw_scored_price_zones() =>
+    window = scoredZoneLookback
+    if supplyDemandOn and bar_index >= window - 1 and barstate.islast and barstate.isconfirmed
+        rangeLow = ta.lowest(low, window)
+        rangeHigh = ta.highest(high, window)
+        atrPrice = math.max(atr, syminfo.mintick * 20)
+        binSize = math.max(syminfo.mintick * 8, atrPrice * 0.20)
+        rawBins = int(math.ceil((rangeHigh - rangeLow) / binSize)) + 1
+        binCount = math.max(3, math.min(rawBins, 80))
+        binSize := rawBins > 80 ? (rangeHigh - rangeLow) / 80.0 : binSize
+        closeHits = array.new_int(binCount, 0)
+        lowTouches = array.new_int(binCount, 0)
+        highTouches = array.new_int(binCount, 0)
+        bullRejections = array.new_int(binCount, 0)
+        bearRejections = array.new_int(binCount, 0)
+        swingLows = array.new_int(binCount, 0)
+        swingHighs = array.new_int(binCount, 0)
+        for offset = 0 to window - 1
+            o = open[offset]
+            h = high[offset]
+            l = low[offset]
+            c = close[offset]
+            candleBody = math.abs(c - o)
+            lowerWick = math.max(0.0, math.min(o, c) - l)
+            upperWick = math.max(0.0, h - math.max(o, c))
+            closeBin = math.max(0, math.min(binCount - 1, int(math.floor((c - rangeLow) / binSize))))
+            lowBin = math.max(0, math.min(binCount - 1, int(math.floor((l - rangeLow) / binSize))))
+            highBin = math.max(0, math.min(binCount - 1, int(math.floor((h - rangeLow) / binSize))))
+            array.set(closeHits, closeBin, array.get(closeHits, closeBin) + 3)
+            array.set(lowTouches, lowBin, array.get(lowTouches, lowBin) + 1)
+            array.set(highTouches, highBin, array.get(highTouches, highBin) + 1)
+            if c > o and lowerWick > candleBody * 1.2 and lowerWick > upperWick
+                bonus = 3
+                bounce = 0.0
+                for future = 1 to math.min(3, offset)
+                    bounce := math.max(bounce, close[offset - future] - l)
+                if bounce >= atrPrice * 0.5
+                    bonus += 2
+                array.set(bullRejections, lowBin, array.get(bullRejections, lowBin) + bonus)
+            if c < o and upperWick > candleBody * 1.2 and upperWick > lowerWick
+                bonus = 3
+                drop = 0.0
+                for future = 1 to math.min(3, offset)
+                    drop := math.max(drop, h - close[offset - future])
+                if drop >= atrPrice * 0.5
+                    bonus += 2
+                array.set(bearRejections, highBin, array.get(bearRejections, highBin) + bonus)
+            if offset >= pivotLen and offset + pivotLen < window
+                isSwingLow = true
+                isSwingHigh = true
+                for pivotOffset = 1 to pivotLen
+                    isSwingLow := isSwingLow and l < low[offset - pivotOffset] and l < low[offset + pivotOffset]
+                    isSwingHigh := isSwingHigh and h > high[offset - pivotOffset] and h > high[offset + pivotOffset]
+                if isSwingLow
+                    array.set(swingLows, lowBin, array.get(swingLows, lowBin) + 3)
+                if isSwingHigh
+                    array.set(swingHighs, highBin, array.get(swingHighs, highBin) + 3)
+        demandScores = array.new_int(binCount, 0)
+        supplyScores = array.new_int(binCount, 0)
+        candidateLows = array.new_float()
+        candidateHighs = array.new_float()
+        candidateStarts = array.new_int()
+        candidateLastTouches = array.new_int()
+        candidateVisits = array.new_int()
+        for bin = 0 to binCount - 1
+            demandScore = array.get(lowTouches, bin) * 2 + array.get(bullRejections, bin) + array.get(swingLows, bin) + int(math.floor(array.get(closeHits, bin) / 2))
+            supplyScore = array.get(highTouches, bin) * 2 + array.get(bearRejections, bin) + array.get(swingHighs, bin) + int(math.floor(array.get(closeHits, bin) / 2))
+            array.set(demandScores, bin, demandScore)
+            array.set(supplyScores, bin, supplyScore)
+        minScore = math.max(8, int(math.floor(window / 5)))
+        lowerLimit = math.max(1, int(math.ceil(binCount * 0.60)))
+        // C# ranks the lower 60% as demand and the upper 40% as supply.
+        for side = 0 to 1
+            fromBin = side == 0 ? 0 : lowerLimit
+            toBin = side == 0 ? lowerLimit - 1 : binCount - 1
+            selected = array.new_int()
+            for slot = 0 to 2
+                bestBin = -1
+                bestScore = minScore - 1
+                for bin = fromBin to toBin
+                    candidate = side == 0 ? array.get(demandScores, bin) : array.get(supplyScores, bin)
+                    adjacent = false
+                    if array.size(selected) > 0
+                        for pick = 0 to array.size(selected) - 1
+                            adjacent := adjacent or math.abs(bin - array.get(selected, pick)) <= 1
+                    if not adjacent and candidate > bestScore
+                        bestBin := bin
+                        bestScore := candidate
+                if bestBin >= 0
+                    array.push(selected, bestBin)
+            if array.size(selected) > 0
+                for pick = 0 to array.size(selected) - 1
+                    bin = array.get(selected, pick)
+                    zoneLow = rangeLow + bin * binSize
+                    zoneHigh = zoneLow + binSize
+                    isSupportSide = zoneHigh < close
+                    isResistanceSide = zoneLow > close
+                    if isSupportSide or isResistanceSide
+                        firstTouchOffset = -1
+                        lastTouchOffset = -1
+                        visitCount = 0
+                        wasInside = false
+                        // Pine loop steps must be positive. Map a forward counter to
+                        // history offsets so this still scans oldest -> newest.
+                        for chronologicalIndex = 0 to window - 1
+                            offset = window - 1 - chronologicalIndex
+                            touched = side == 0 ? low[offset] >= zoneLow and low[offset] <= zoneHigh : high[offset] >= zoneLow and high[offset] <= zoneHigh
+                            if touched and firstTouchOffset < 0
+                                firstTouchOffset := offset
+                            if touched
+                                lastTouchOffset := offset
+                            if touched and not wasInside
+                                visitCount += 1
+                            wasInside := touched
+                        if firstTouchOffset >= 0
+                            array.push(candidateLows, zoneLow)
+                            array.push(candidateHighs, zoneHigh)
+                            array.push(candidateStarts, bar_index - firstTouchOffset)
+                            array.push(candidateLastTouches, bar_index - lastTouchOffset)
+                            array.push(candidateVisits, visitCount)
+        // Draw exactly the two nearest support zones below price and the two
+        // nearest resistance zones above it, as DrawScoredPriceZones does.
+        drawn = array.new_bool(array.size(candidateLows), false)
+        if array.size(candidateLows) > 0
+            for side = 0 to 1
+                for slot = 0 to 1
+                    bestIndex = -1
+                    bestPrice = side == 0 ? -1e100 : 1e100
+                    for candidateIndex = 0 to array.size(candidateLows) - 1
+                        zoneLow = array.get(candidateLows, candidateIndex)
+                        zoneHigh = array.get(candidateHighs, candidateIndex)
+                        eligible = not array.get(drawn, candidateIndex) and (side == 0 ? zoneHigh < close : zoneLow > close)
+                        rankingPrice = side == 0 ? zoneHigh : zoneLow
+                        better = side == 0 ? rankingPrice > bestPrice : rankingPrice < bestPrice
+                        if eligible and better
+                            bestIndex := candidateIndex
+                            bestPrice := rankingPrice
+                    if bestIndex >= 0
+                        array.set(drawn, bestIndex, true)
+                        zoneLow = array.get(candidateLows, bestIndex)
+                        zoneHigh = array.get(candidateHighs, bestIndex)
+                        startBar = array.get(candidateStarts, bestIndex)
+                        lastTouchBar = array.get(candidateLastTouches, bestIndex)
+                        visits = array.get(candidateVisits, bestIndex)
+                        role = side == 0 ? "dem" : "supply"
+                        f_zone(zoneHigh, zoneLow, startBar, color.new(clrNeutral, 93), f_tf(timeframe.period) + "." + role)
+                        zoneIndex = array.size(zoneCreatedBars) - 1
+                        array.set(zoneCreatedBars, zoneIndex, startBar)
+                        array.set(zoneVisits, zoneIndex, visits)
+                        if visits > 1
+                            box.set_right(array.get(zones, zoneIndex), lastTouchBar + 3)
+
+// Matches cTrader IsQualifiedFvg + HasVolumeSurge. Security calls evaluate this
+// in their own timeframe, so the middle candle is always the displacement bar.
+f_zone_volume_surge(int index) =>
+    zoneVolumeSurge <= 1 or (not na(volume[index]) and not na(volume[index + 1]) and volume[index] > 0 and volume[index + 1] > 0 and volume[index] > volume[index + 1] * zoneVolumeSurge)
+
+f_qualified_fvg(bool bullish) =>
+    leftRange = math.max(high[2] - low[2], syminfo.mintick)
+    middleRange = math.max(high[1] - low[1], syminfo.mintick)
+    rightRange = math.max(high - low, syminfo.mintick)
+    middleBody = math.abs(close[1] - open[1])
+    dominant = (fvgDisplacementRatio <= 0 or (middleRange >= leftRange * fvgDisplacementRatio and middleRange >= rightRange * fvgDisplacementRatio and middleBody >= math.abs(close[2] - open[2]) * fvgDisplacementRatio and middleBody >= math.abs(close - open) * fvgDisplacementRatio)) and (fvgBodyRatio <= 0 or middleBody / middleRange >= fvgBodyRatio)
+    gap = bullish ? low - high[2] : low[2] - high
+    directional = bullish ? close[1] > open[1] : close[1] < open[1]
+    directional and dominant and gap >= middleRange * fvgGapRatio and f_zone_volume_surge(1)
+
+// Confirmed MTF artifacts. No lookahead: HTF zones appear only after their bar closes.
+f_fvg_up_top() => f_qualified_fvg(true) ? low : na
+f_fvg_up_bottom() => f_qualified_fvg(true) ? high[2] : na
+f_fvg_down_top() => f_qualified_fvg(false) ? low[2] : na
+f_fvg_down_bottom() => f_qualified_fvg(false) ? high : na
+// The HTF OB helper follows the same condition as the current-TF port: a
+// directional BOS/CHOCH confirmation, then the nearest opposite origin candle.
+f_htf_ob(bool bullish) =>
+    var float latestHigh = na
+    var float latestLow = na
+    pHighLocal = ta.pivothigh(high, pivotLen, pivotLen)
+    pLowLocal = ta.pivotlow(low, pivotLen, pivotLen)
+    if not na(pHighLocal)
+        latestHigh := pHighLocal
+    if not na(pLowLocal)
+        latestLow := pLowLocal
+    breakUp = not na(latestHigh) and ta.crossover(close, latestHigh)
+    breakDn = not na(latestLow) and ta.crossunder(close, latestLow)
+    confirmation = bullish ? breakUp and close > open : breakDn and close < open
+    opposite = bullish ? close < open : close > open
+    originBarsAgo = ta.barssince(opposite)
+    valid = confirmation and math.abs(close - open) / math.max(high - low, syminfo.mintick) >= obBodyRatio and f_zone_volume_surge(0) and not na(originBarsAgo) and originBarsAgo <= obOriginLookback
+    [valid ? ta.valuewhen(opposite, high, 0) : na, valid ? ta.valuewhen(opposite, low, 0) : na]
+
+[h1UpFvgTop, h1UpFvgBottom, h1DnFvgTop, h1DnFvgBottom, h1Close, h1Fast, h1Slow, h1Vwap, h1Rsi] = request.security(syminfo.tickerid, htf1, [f_fvg_up_top(), f_fvg_up_bottom(), f_fvg_down_top(), f_fvg_down_bottom(), close, ta.ema(close, emaFastLen), ta.ema(close, emaSlowLen), ta.vwap(hlc3), ta.rsi(close, rsiLen)], lookahead=barmerge.lookahead_off)
+[h1UpObTop, h1UpObBottom] = request.security(syminfo.tickerid, htf1, f_htf_ob(true), lookahead=barmerge.lookahead_off)
+[h1DnObTop, h1DnObBottom] = request.security(syminfo.tickerid, htf1, f_htf_ob(false), lookahead=barmerge.lookahead_off)
+[h2UpFvgTop, h2UpFvgBottom, h2DnFvgTop, h2DnFvgBottom] = request.security(syminfo.tickerid, htf2, [f_fvg_up_top(), f_fvg_up_bottom(), f_fvg_down_top(), f_fvg_down_bottom()], lookahead=barmerge.lookahead_off)
+[h2UpObTop, h2UpObBottom] = request.security(syminfo.tickerid, htf2, f_htf_ob(true), lookahead=barmerge.lookahead_off)
+[h2DnObTop, h2DnObBottom] = request.security(syminfo.tickerid, htf2, f_htf_ob(false), lookahead=barmerge.lookahead_off)
+// The strip collects completed HTF buckets from these series, mirroring the
+// Hung Core mini-panel instead of rendering a few unrelated snapshot candles.
+[miniH1O, miniH1H, miniH1L, miniH1C] = request.security(syminfo.tickerid, htf1, [open, high, low, close], lookahead=barmerge.lookahead_off)
+[miniH2O, miniH2H, miniH2L, miniH2C] = request.security(syminfo.tickerid, htf2, [open, high, low, close], lookahead=barmerge.lookahead_off)
+previousH1High = request.security(syminfo.tickerid, "60", high[1], lookahead=barmerge.lookahead_off)
+previousH1Low = request.security(syminfo.tickerid, "60", low[1], lookahead=barmerge.lookahead_off)
+previousH4High = request.security(syminfo.tickerid, "240", high[1], lookahead=barmerge.lookahead_off)
+previousH4Low = request.security(syminfo.tickerid, "240", low[1], lookahead=barmerge.lookahead_off)
+previousDayHigh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_off)
+previousDayLow = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_off)
+previousWeekHigh = request.security(syminfo.tickerid, "W", high[1], lookahead=barmerge.lookahead_off)
+previousWeekLow = request.security(syminfo.tickerid, "W", low[1], lookahead=barmerge.lookahead_off)
+if fvgOn and not na(h1UpFvgTop) and na(h1UpFvgTop[1])
+    f_zone(h1UpFvgTop, h1UpFvgBottom, bar_index, color.new(clrHtf1, 89), f_tf(htf1) + ".fvg.up")
+if fvgOn and not na(h1DnFvgTop) and na(h1DnFvgTop[1])
+    f_zone(h1DnFvgTop, h1DnFvgBottom, bar_index, color.new(clrHtf1, 89), f_tf(htf1) + ".fvg.dn")
+if fvgOn and not na(h2UpFvgTop) and na(h2UpFvgTop[1])
+    f_zone(h2UpFvgTop, h2UpFvgBottom, bar_index, color.new(clrHtf2, 90), f_tf(htf2) + ".fvg.up")
+if fvgOn and not na(h2DnFvgTop) and na(h2DnFvgTop[1])
+    f_zone(h2DnFvgTop, h2DnFvgBottom, bar_index, color.new(clrHtf2, 90), f_tf(htf2) + ".fvg.dn")
+if obOn and not na(h1UpObTop) and na(h1UpObTop[1])
+    f_zone(h1UpObTop, h1UpObBottom, bar_index, color.new(clrHtf1, 91), f_tf(htf1) + ".ob.up")
+if obOn and not na(h1DnObTop) and na(h1DnObTop[1])
+    f_zone(h1DnObTop, h1DnObBottom, bar_index, color.new(clrHtf1, 91), f_tf(htf1) + ".ob.dn")
+if obOn and not na(h2UpObTop) and na(h2UpObTop[1])
+    f_zone(h2UpObTop, h2UpObBottom, bar_index, color.new(clrHtf2, 92), f_tf(htf2) + ".ob.up")
+if obOn and not na(h2DnObTop) and na(h2DnObTop[1])
+    f_zone(h2DnObTop, h2DnObBottom, bar_index, color.new(clrHtf2, 92), f_tf(htf2) + ".ob.dn")
+
+// Structure, liquidity, key levels and current-TF zones.
+// cTrader evaluates session windows in their market timezone, including DST.
+// Pine's timezone argument provides the same local-clock interpretation.
+inAsiaSession = not na(time(timeframe.period, asiaFull, "Asia/Tokyo"))
+inLondonSession = not na(time(timeframe.period, londonFull, "Europe/London"))
+inNySession = not na(time(timeframe.period, nyFull, "America/New_York"))
+inAsiaKz = not na(time(timeframe.period, asiaKz, "Asia/Tokyo"))
+inLondonKz = not na(time(timeframe.period, londonKz, "Europe/London"))
+inNyKz = not na(time(timeframe.period, nyKz, "America/New_York"))
+inAsia = sessionVisualMode == "All_sessions" ? inAsiaSession : inAsiaKz
+inLondon = sessionVisualMode == "All_sessions" ? inLondonSession : inLondonKz
+inNy = sessionVisualMode == "All_sessions" ? inNySession : inNyKz
+var float asiaSessionHigh = na
+var float asiaSessionLow = na
+var float londonSessionHigh = na
+var float londonSessionLow = na
+var float nySessionHigh = na
+var float nySessionLow = na
+chartTfSeconds = timeframe.in_seconds(timeframe.period)
+if previousPeriodLevelsOn and chartTfSeconds < 3600 and ta.change(time("60")) != 0 and keyLevelsOn
+    f_key(previousH1High, true, bar_index)
+    f_key(previousH1Low, false, bar_index)
+if previousPeriodLevelsOn and chartTfSeconds < 14400 and ta.change(time("240")) != 0
+    if keyLevelsOn
+        f_key(previousH4High, true, bar_index)
+        f_key(previousH4Low, false, bar_index)
+    else if liquidityOn
+        f_liquidity(previousH4High, true, bar_index, "h4", clrHtf2)
+        f_liquidity(previousH4Low, false, bar_index, "h4", clrHtf2)
+if previousPeriodLevelsOn and chartTfSeconds < 86400 and ta.change(time("D")) != 0
+    if keyLevelsOn
+        f_key(previousDayHigh, true, bar_index)
+        f_key(previousDayLow, false, bar_index)
+    else if liquidityOn
+        f_liquidity(previousDayHigh, true, bar_index, "d1", clrNeutral)
+        f_liquidity(previousDayLow, false, bar_index, "d1", clrNeutral)
+if previousPeriodLevelsOn and chartTfSeconds < 604800 and ta.change(time("W")) != 0
+    if keyLevelsOn
+        f_key(previousWeekHigh, true, bar_index)
+        f_key(previousWeekLow, false, bar_index)
+    else if liquidityOn
+        f_liquidity(previousWeekHigh, true, bar_index, "w1", clrNeutral)
+        f_liquidity(previousWeekLow, false, bar_index, "w1", clrNeutral)
+if inAsiaSession
+    asiaSessionHigh := na(asiaSessionHigh) ? high : math.max(asiaSessionHigh, high)
+    asiaSessionLow := na(asiaSessionLow) ? low : math.min(asiaSessionLow, low)
+else if inAsiaSession[1]
+    if keyLevelsOn and sessionLevelsOn
+        f_key(asiaSessionHigh, true, bar_index - 1)
+        f_key(asiaSessionLow, false, bar_index - 1)
+    asiaSessionHigh := na
+    asiaSessionLow := na
+if inLondonSession
+    londonSessionHigh := na(londonSessionHigh) ? high : math.max(londonSessionHigh, high)
+    londonSessionLow := na(londonSessionLow) ? low : math.min(londonSessionLow, low)
+else if inLondonSession[1]
+    if keyLevelsOn and sessionLevelsOn
+        f_key(londonSessionHigh, true, bar_index - 1)
+        f_key(londonSessionLow, false, bar_index - 1)
+    londonSessionHigh := na
+    londonSessionLow := na
+if inNySession
+    nySessionHigh := na(nySessionHigh) ? high : math.max(nySessionHigh, high)
+    nySessionLow := na(nySessionLow) ? low : math.min(nySessionLow, low)
+else if inNySession[1]
+    if keyLevelsOn and sessionLevelsOn
+        f_key(nySessionHigh, true, bar_index - 1)
+        f_key(nySessionLow, false, bar_index - 1)
+    nySessionHigh := na
+    nySessionLow := na
+pHigh = ta.pivothigh(high, pivotLen, pivotLen)
+pLow = ta.pivotlow(low, pivotLen, pivotLen)
+prevHigh = swingHigh
+prevLow = swingLow
+prevHighBar = swingHighBar
+prevLowBar = swingLowBar
+if not na(pHigh)
+    swingHigh := pHigh
+    swingHighBar := bar_index - pivotLen
+    if keyLevelsOn or liquidityOn
+        f_liquidity(pHigh, true, swingHighBar, liquidityOn ? "BSL" : "", clrBear)
+    if supplyDemandOn
+        f_zone(pHigh + atr * 0.10, pHigh - atr * 0.20, swingHighBar, color.new(clrBear, 90), f_tf(timeframe.period) + ".supply")
+    if liquidityOn and not na(prevHigh) and math.abs(pHigh - prevHigh) <= atr * 0.12
+        f_liquidity((pHigh + prevHigh) * 0.5, true, prevHighBar, "EQH", clrBear)
+if not na(pLow)
+    swingLow := pLow
+    swingLowBar := bar_index - pivotLen
+    if keyLevelsOn or liquidityOn
+        f_liquidity(pLow, false, swingLowBar, liquidityOn ? "SSL" : "", clrBull)
+    if supplyDemandOn
+        f_zone(pLow + atr * 0.20, pLow - atr * 0.10, swingLowBar, color.new(clrBull, 90), f_tf(timeframe.period) + ".dem")
+    if liquidityOn and not na(prevLow) and math.abs(pLow - prevLow) <= atr * 0.12
+        f_liquidity((pLow + prevLow) * 0.5, false, prevLowBar, "EQL", clrBull)
+
+bosUp = not na(swingHigh) and ta.crossover(close, swingHigh)
+bosDn = not na(swingLow) and ta.crossunder(close, swingLow)
+chochUp = bosUp and bias < 0
+chochDn = bosDn and bias > 0
+mssUp = chochUp and body >= atr * 0.55
+mssDn = chochDn and body >= atr * 0.55
+if bosUp
+    bias := 1
+if bosDn
+    bias := -1
+sweepUp = not na(swingLow) and low < swingLow and close > swingLow
+sweepDn = not na(swingHigh) and high > swingHigh and close < swingHigh
+// Rejection is evaluated below, after the shared candle patterns are known.
+// A wick alone is not a cTrader rejection event.
+impulseUp = bull and body >= atr * 1.35
+impulseDn = bear and body >= atr * 1.35
+
+// Canonical pullback/continuation events use the active structural direction.
+pullbackUp = bias == 1 and low < emaMid and close > emaMid and bull
+pullbackDn = bias == -1 and high > emaMid and close < emaMid and bear
+continueUp = bias == 1 and bull and close > high[1] and close > emaFast
+continueDn = bias == -1 and bear and close < low[1] and close < emaFast
+
+fvgUp = f_qualified_fvg(true)
+fvgDn = f_qualified_fvg(false)
+if fvgOn and fvgUp
+    f_zone(low, high[2], bar_index - 2, color.new(clrBull, 87), f_tf(timeframe.period) + ".fvg.up")
+if fvgOn and fvgDn
+    f_zone(low[2], high, bar_index - 2, color.new(clrBear, 87), f_tf(timeframe.period) + ".fvg.dn")
+// cTrader anchors an OB to the nearest opposite candle before a confirmed BOS.
+bullObBarsAgo = ta.barssince(bear)
+bearObBarsAgo = ta.barssince(bull)
+bullOb = bosUp and bull and body / rng >= obBodyRatio and f_zone_volume_surge(0) and not na(bullObBarsAgo) and bullObBarsAgo <= obOriginLookback
+bearOb = bosDn and bear and body / rng >= obBodyRatio and f_zone_volume_surge(0) and not na(bearObBarsAgo) and bearObBarsAgo <= obOriginLookback
+if obOn and bullOb
+    f_zone(ta.valuewhen(bear, high, 0), ta.valuewhen(bear, low, 0), bar_index - bullObBarsAgo, color.new(clrBull, 84), f_tf(timeframe.period) + ".ob.up")
+if obOn and bearOb
+    f_zone(ta.valuewhen(bull, high, 0), ta.valuewhen(bull, low, 0), bar_index - bearObBarsAgo, color.new(clrBear, 84), f_tf(timeframe.period) + ".ob.dn")
+
+f_draw_scored_price_zones()
+f_update_zone_lifecycle()
+
+if trendlinesOn and not na(pHigh) and not na(prevHighBar)
+    line.delete(highTrend)
+    highTrend := line.new(prevHighBar, prevHigh, swingHighBar, swingHigh, extend=extend.right, style=line.style_dashed, color=color.new(clrBear, 50))
+if trendlinesOn and not na(pLow) and not na(prevLowBar)
+    line.delete(lowTrend)
+    lowTrend := line.new(prevLowBar, prevLow, swingLowBar, swingLow, extend=extend.right, style=line.style_dashed, color=color.new(clrBull, 50))
+
+bodyRatio = body / rng
+prevBody = math.abs(close[1] - open[1])
+prevRange = math.max(high[1] - low[1], syminfo.mintick)
+prevBodyRatio = prevBody / prevRange
+prev2Body = math.abs(close[2] - open[2])
+prev2Range = math.max(high[2] - low[2], syminfo.mintick)
+prev2BodyRatio = prev2Body / prev2Range
+priorBullCount = (bull[1] ? 1 : 0) + (bull[2] ? 1 : 0) + (bull[3] ? 1 : 0) + (bull[4] ? 1 : 0) + (bull[5] ? 1 : 0)
+priorBearCount = (bear[1] ? 1 : 0) + (bear[2] ? 1 : 0) + (bear[3] ? 1 : 0) + (bear[4] ? 1 : 0) + (bear[5] ? 1 : 0)
+priorDown = close[1] < close[5] and priorBearCount >= priorBullCount + 1
+priorUp = close[1] > close[5] and priorBullCount >= priorBearCount + 1
+priorStarBullCount = (bull[2] ? 1 : 0) + (bull[3] ? 1 : 0) + (bull[4] ? 1 : 0) + (bull[5] ? 1 : 0) + (bull[6] ? 1 : 0)
+priorStarBearCount = (bear[2] ? 1 : 0) + (bear[3] ? 1 : 0) + (bear[4] ? 1 : 0) + (bear[5] ? 1 : 0) + (bear[6] ? 1 : 0)
+priorStarDown = close[2] < close[6] and priorStarBearCount >= priorStarBullCount + 1
+priorStarUp = close[2] > close[6] and priorStarBullCount >= priorStarBearCount + 1
+priorSequenceBullCount = (bull[3] ? 1 : 0) + (bull[4] ? 1 : 0) + (bull[5] ? 1 : 0) + (bull[6] ? 1 : 0) + (bull[7] ? 1 : 0)
+priorSequenceBearCount = (bear[3] ? 1 : 0) + (bear[4] ? 1 : 0) + (bear[5] ? 1 : 0) + (bear[6] ? 1 : 0) + (bear[7] ? 1 : 0)
+priorSequenceDown = close[3] < close[7] and priorSequenceBearCount >= priorSequenceBullCount + 1
+priorSequenceUp = close[3] > close[7] and priorSequenceBullCount >= priorSequenceBearCount + 1
+lowerShadowShape = body > 0 and bodyRatio <= 0.30 and lw >= body * 2.0 and uw <= body * 0.5 and math.min(open, close) >= low + rng * 0.55
+upperShadowShape = body > 0 and bodyRatio <= 0.30 and uw >= body * 2.0 and lw <= body * 0.5 and math.max(open, close) <= low + rng * 0.45
+pinUp = body > 0 and bodyRatio <= 0.35 and lw >= body * 2.0 and lw / rng >= 0.50 and uw <= lw * 0.30 and math.min(open, close) >= low + rng * 0.50 and not (lowerShadowShape and (priorDown or priorUp))
+pinDn = body > 0 and bodyRatio <= 0.35 and uw >= body * 2.0 and uw / rng >= 0.50 and lw <= uw * 0.30 and math.max(open, close) <= low + rng * 0.50 and not (upperShadowShape and priorUp)
+engUp = bear[1] and bull and prevBodyRatio >= 0.45 and bodyRatio >= 0.55 and body >= prevBody * 1.05 and open <= close[1] and close >= open[1]
+engDn = bull[1] and bear and prevBodyRatio >= 0.45 and bodyRatio >= 0.55 and body >= prevBody * 1.05 and open >= close[1] and close <= open[1]
+bigTolerance = math.max(syminfo.mintick * 0.5, 0.0000001)
+bigUp = bull and bodyRatio >= 0.95 and math.abs(close - high) <= bigTolerance
+bigDn = bear and bodyRatio >= 0.95 and math.abs(close - low) <= bigTolerance
+hamUp = lowerShadowShape and priorDown
+hgmDn = lowerShadowShape and priorUp
+sstDn = upperShadowShape and priorUp
+ihmUp = upperShadowShape and priorDown
+harGeometry = prevBodyRatio >= 0.55 and bodyRatio <= 0.40 and math.max(open, close) <= math.max(open[1], close[1]) and math.min(open, close) >= math.min(open[1], close[1]) and body <= prevBody * 0.60
+harUp = harGeometry and (bull or (not bull and not bear and (lw > uw or (lw == uw and close >= (open[1] + close[1]) * 0.5))))
+harDn = harGeometry and (bear or (not bull and not bear and (uw > lw or (lw == uw and close < (open[1] + close[1]) * 0.5))))
+prcUp = bear[1] and prevBodyRatio >= 0.5 and bull and bodyRatio >= 0.5 and open <= close[1] and close > (open[1] + close[1]) * 0.5 and close < open[1] and priorDown
+dccDn = bull[1] and prevBodyRatio >= 0.5 and bear and bodyRatio >= 0.5 and open >= close[1] and close < (open[1] + close[1]) * 0.5 and close > open[1] and priorUp
+morUp = bear[2] and prev2BodyRatio >= 0.60 and prevBody <= prev2Body * 0.45 and prevBodyRatio <= 0.25 and bull and bodyRatio >= 0.60 and close >= math.min(open[2], close[2]) + prev2Body * 0.60 and priorStarDown
+eveDn = bull[2] and prev2BodyRatio >= 0.60 and prevBody <= prev2Body * 0.45 and prevBodyRatio <= 0.25 and bear and bodyRatio >= 0.60 and close <= math.min(open[2], close[2]) + prev2Body * 0.40 and priorStarUp
+twsUp = bull[2] and bull[1] and bull and close[1] > close[2] and close > close[1] and open[1] >= math.min(open[2], close[2]) and open[1] <= math.max(open[2], close[2]) and open >= math.min(open[1], close[1]) and open <= math.max(open[1], close[1]) and prev2BodyRatio >= 0.30 and prevBodyRatio >= 0.30 and bodyRatio >= 0.30 and (high[2] - math.max(open[2], close[2])) / prev2Range <= 0.15 and (high[1] - math.max(open[1], close[1])) / prevRange <= 0.15 and uw / rng <= 0.15 and priorSequenceDown
+tbcDn = bear[2] and bear[1] and bear and close[1] < close[2] and close < close[1] and open[1] >= math.min(open[2], close[2]) and open[1] <= math.max(open[2], close[2]) and open >= math.min(open[1], close[1]) and open <= math.max(open[1], close[1]) and prev2BodyRatio >= 0.30 and prevBodyRatio >= 0.30 and bodyRatio >= 0.30 and (math.min(open[2], close[2]) - low[2]) / prev2Range <= 0.15 and (math.min(open[1], close[1]) - low[1]) / prevRange <= 0.15 and lw / rng <= 0.15 and priorSequenceUp
+
+// Mirrors cTrader's strict level-reaction rule: a rejection must penetrate a
+// directional structural reference, close back through it, reverse candle
+// colour, and carry a recognised reversal pattern.
+f_strict_level_rejection(bool bullish, bool patternConfirmed) =>
+    matched = false
+    tolerance = math.max(syminfo.mintick * 2, 0.0000001)
+    minPenetration = math.max(tolerance * 0.35, rng * 0.18)
+    if patternConfirmed and array.size(keyPrices) > 0
+        for i = 0 to array.size(keyPrices) - 1
+            levelPrice = array.get(keyPrices, i)
+            directionalLevel = bullish ? not array.get(keyHighs, i) : array.get(keyHighs, i)
+            penetration = bullish ? levelPrice - low : high - levelPrice
+            crossed = bullish ? high >= levelPrice : low <= levelPrice
+            closeRecovered = bullish ? close > levelPrice + tolerance * 0.15 : close < levelPrice - tolerance * 0.15
+            bodyRecovered = bullish ? (open + close) * 0.5 >= levelPrice + tolerance * 0.05 : (open + close) * 0.5 <= levelPrice - tolerance * 0.05
+            reversalColour = bullish ? bull and bear[1] : bear and bull[1]
+            if directionalLevel and penetration >= minPenetration and crossed and closeRecovered and bodyRecovered and reversalColour
+                matched := true
+    if patternConfirmed and not matched and array.size(zoneLows) > 0
+        for i = 0 to array.size(zoneLows) - 1
+            directionalZone = bullish ? array.get(zoneBullish, i) : not array.get(zoneBullish, i)
+            zoneLevel = bullish ? array.get(zoneHighs, i) : array.get(zoneLows, i)
+            penetration = bullish ? zoneLevel - low : high - zoneLevel
+            crossed = bullish ? high >= zoneLevel : low <= zoneLevel
+            closeRecovered = bullish ? close > zoneLevel + tolerance * 0.15 : close < zoneLevel - tolerance * 0.15
+            bodyRecovered = bullish ? (open + close) * 0.5 >= zoneLevel + tolerance * 0.05 : (open + close) * 0.5 <= zoneLevel - tolerance * 0.05
+            reversalColour = bullish ? bull and bear[1] : bear and bull[1]
+            if not array.get(zoneInvalidated, i) and directionalZone and penetration >= minPenetration and crossed and closeRecovered and bodyRecovered and reversalColour
+                matched := true
+    matched
+
+bullishRejectionPattern = pinUp or hamUp or ihmUp or engUp or harUp or morUp or prcUp
+bearishRejectionPattern = pinDn or sstDn or hgmDn or engDn or harDn or eveDn or dccDn
+rejUp = f_strict_level_rejection(true, bullishRejectionPattern)
+rejDn = f_strict_level_rejection(false, bearishRejectionPattern)
+
+// cTrader's shared marker follow-up for all structure-event toggles.
+f_structure_event(bool matched, bool directionUp, string code, string mode) =>
+    usesFollowUp = mode == "Yes_c" or mode == "Yes_r"
+    sourceMatched = usesFollowUp ? matched[1] : matched
+    sourceUp = usesFollowUp ? directionUp[1] : directionUp
+    continuation = sourceUp ? bull and bodyRatio >= 0.35 and (close > close[1] or close > high[1] or close >= high - rng * 0.25) : bear and bodyRatio >= 0.35 and (close < close[1] or close < low[1] or close <= low + rng * 0.25)
+    rejection = sourceUp ? bigDn or engDn or (bear and bodyRatio >= 0.50 and close < (open[1] + close[1]) * 0.5) : bigUp or engUp or (bull and bodyRatio >= 0.50 and close > (open[1] + close[1]) * 0.5)
+    accepted = mode != "No" and sourceMatched and (mode == "Yes" or (mode == "Yes_c" and continuation) or (mode == "Yes_r" and rejection))
+    if accepted and enabled
+        suffix = mode == "Yes_c" ? ".c" : mode == "Yes_r" ? ".r" : ""
+        f_mark(f_tf(timeframe.period) + "." + code + suffix + "." + (sourceUp ? "up" : "dn"), sourceUp, sourceUp ? low : high)
+    accepted
+
+// cTrader confluence evaluates the original pattern candle. For .c/.r, the
+// current bar only confirms or reverses that prior pattern; it is not the bar
+// that must touch the artifact.
+f_best_confluence(bool bullish, int sourceOffset) =>
+    if confluence == "None"
+        [true, ""]
+    else
+        sourceHigh = high[sourceOffset]
+        sourceLow = low[sourceOffset]
+        anchor = bullish ? sourceLow : sourceHigh
+        tolerance = math.max(syminfo.mintick * 6, rng[sourceOffset] * 0.25)
+        sourceBar = bar_index - sourceOffset
+        requireTouch = confluence == "All_touch"
+        includeAll = confluence == "All_near" or requireTouch
+        bestScore = -1.0
+        bestKind = ""
+        if array.size(zoneLows) > 0
+            for i = 0 to array.size(zoneLows) - 1
+                zoneLow = array.get(zoneLows, i)
+                zoneHigh = array.get(zoneHighs, i)
+                kind = array.get(zoneKinds, i)
+                zoneIsBullish = array.get(zoneBullish, i)
+                kindAllowed = includeAll or (confluence == "OB" and kind == "OB") or (confluence == "FVG" and kind == "FVG") or (confluence == "Demand" and kind == "Demand") or (confluence == "Support" and kind == "Support")
+                directionAllowed = bullish ? zoneIsBullish : not zoneIsBullish
+                touched = sourceHigh >= zoneLow and sourceLow <= zoneHigh
+                near = anchor >= zoneLow - tolerance and anchor <= zoneHigh + tolerance
+                existedAtPattern = array.get(zoneCreatedBars, i) <= sourceBar
+                if existedAtPattern and not array.get(zoneInvalidated, i) and kindAllowed and directionAllowed and (requireTouch ? touched : near)
+                    importance = kind == "OB" or kind == "Demand" or kind == "Supply" ? 400 : kind == "FVG" ? 300 : 0
+                    distance = anchor < zoneLow ? zoneLow - anchor : anchor > zoneHigh ? anchor - zoneHigh : 0.0
+                    score = (touched ? 1000000 : 0) + importance * 1000 + array.get(zoneTfSeconds, i) - distance / syminfo.mintick
+                    if score > bestScore
+                        bestScore := score
+                        bestKind := kind
+        if (includeAll or confluence == "KeyLevels" or confluence == "Support") and array.size(keyPrices) > 0
+            for i = 0 to array.size(keyPrices) - 1
+                price = array.get(keyPrices, i)
+                isHigh = array.get(keyHighs, i)
+                directionAllowed = bullish ? not isHigh : isHigh
+                touched = sourceHigh >= price and sourceLow <= price
+                near = math.abs(anchor - price) <= tolerance
+                existedAtPattern = array.get(keyCreatedBars, i) <= sourceBar
+                if existedAtPattern and directionAllowed and (requireTouch ? touched : near)
+                    score = (touched ? 1000000 : 0) + 600000 - math.abs(anchor - price) / syminfo.mintick
+                    if score > bestScore
+                        bestScore := score
+                        bestKind := isHigh ? "Key High" : "Key Low"
+        [bestScore >= 0, bestKind]
+
+// Exact cTrader visual follow-up: any draws the pattern bar; .c and .r wait for
+// the immediately following completed candle and place the marker on that bar.
+f_pattern(string code, bool matched, bool directionUp, int span, string mode) =>
+    usesFollowUp = mode == "Yes_c" or mode == "Yes_r"
+    sourceMatched = usesFollowUp ? matched[1] : matched
+    sourceUp = usesFollowUp ? directionUp[1] : directionUp
+    sourceWickOk = usesFollowUp ? (sourceUp ? lw[1] / rng[1] >= 0.30 : uw[1] / rng[1] >= 0.30) : (sourceUp ? lw / rng >= 0.30 : uw / rng >= 0.30)
+    continuation = sourceUp ? bull and bodyRatio >= 0.35 and (close > close[1] or close > high[1] or close >= high - rng * 0.25) : bear and bodyRatio >= 0.35 and (close < close[1] or close < low[1] or close <= low + rng * 0.25)
+    rejection = sourceUp ? bigDn or engDn or (bear and bodyRatio >= 0.50 and close < (open[1] + close[1]) * 0.5) : bigUp or engUp or (bull and bodyRatio >= 0.50 and close > (open[1] + close[1]) * 0.5)
+    [confluenceOk, confluenceKind] = f_best_confluence(sourceUp, usesFollowUp ? 1 : 0)
+    accepted = mode != "No" and sourceMatched and sourceWickOk and confluenceOk and (mode == "Yes" or (mode == "Yes_c" and continuation) or (mode == "Yes_r" and rejection))
+    if accepted and enabled
+        suffix = mode == "Yes_c" ? ".c" : mode == "Yes_r" ? ".r" : ""
+        if boxesOn
+            patternTop = math.max(open, close)
+            patternBottom = math.min(open, close)
+            padding = math.max((patternTop - patternBottom) * 0.12, syminfo.mintick * 4)
+            item = box.new(bar_index - span + 1, patternTop + padding, bar_index + 1, patternBottom - padding, bgcolor=color.new(sourceUp ? clrBull : clrBear, 94), border_color=color.new(sourceUp ? clrBull : clrBear, 68), border_width=1)
+            array.push(patterns, item)
+            f_trim_boxes(patterns, 140)
+        f_mark(f_tf(timeframe.period) + "." + code + suffix + (confluenceKind == "" ? "" : "." + str.lower(confluenceKind)) + "." + (sourceUp ? "up" : "dn"), sourceUp, sourceUp ? ta.lowest(low, span) : ta.highest(high, span))
+    accepted
+
+var string latestPattern = ""
+var int latestPatternDir = 0
+latestPatternDir := 0
+pinDrawn = f_pattern("pin", pinUp or pinDn, pinUp, 1, pinMode)
+engDrawn = f_pattern("eng", engUp or engDn, engUp, 2, engMode)
+bigDrawn = f_pattern("big", bigUp or bigDn, bigUp, 1, bigMode)
+hamDrawn = f_pattern("ham", hamUp, true, 1, hamMode)
+hgmDrawn = f_pattern("hgm", hgmDn, false, 1, hgmMode)
+sstDrawn = f_pattern("sst", sstDn, false, 1, sstMode)
+ihmDrawn = f_pattern("ihm", ihmUp, true, 1, ihmMode)
+harDrawn = f_pattern("har", harUp or harDn, harUp, 2, harMode)
+prcDrawn = f_pattern("prc", prcUp, true, 2, prcMode)
+dccDrawn = f_pattern("dcc", dccDn, false, 2, dccMode)
+morDrawn = f_pattern("mor", morUp, true, 3, morMode)
+eveDrawn = f_pattern("eve", eveDn, false, 3, eveMode)
+twsDrawn = f_pattern("tws", twsUp, true, 3, twsMode)
+tbcDrawn = f_pattern("tbc", tbcDn, false, 3, tbcMode)
+// A CHOCH is not also rendered as BOS in cTrader; each family owns its event.
+chochDrawn = f_structure_event(chochUp or chochDn, chochUp, "choch", chochMode)
+mssDrawn = f_structure_event(mssUp or mssDn, mssUp, "mss", mssMode)
+bosDrawn = f_structure_event((bosUp and not chochUp) or (bosDn and not chochDn), bosUp and not chochUp, "bos", bosMode)
+sweepDrawn = f_structure_event(sweepUp or sweepDn, sweepUp, "swp", sweepMode)
+rejectionDrawn = f_structure_event(rejUp or rejDn, rejUp, "rj", rejectionMode)
+impulseDrawn = f_structure_event(impulseUp or impulseDn, impulseUp, "im", impulseMode)
+pullbackDrawn = f_structure_event(pullbackUp or pullbackDn, pullbackUp, "pb.ema", pullbackMode)
+continuationDrawn = f_structure_event(continueUp or continueDn, continueUp, "ct.vwap", continuationMode)
+if pinDrawn
+    latestPattern := "pin"
+    latestPatternDir := (pinMode == "Yes" ? pinUp : pinUp[1]) ? 1 : -1
+if engDrawn
+    latestPattern := "eng"
+    latestPatternDir := (engMode == "Yes" ? engUp : engUp[1]) ? 1 : -1
+if bigDrawn
+    latestPattern := "big"
+    latestPatternDir := (bigMode == "Yes" ? bigUp : bigUp[1]) ? 1 : -1
+if hamDrawn or ihmDrawn or prcDrawn or morDrawn or twsDrawn
+    latestPattern := hamDrawn ? "ham" : ihmDrawn ? "ihm" : prcDrawn ? "prc" : morDrawn ? "mor" : "tws"
+    latestPatternDir := 1
+if hgmDrawn or sstDrawn or dccDrawn or eveDrawn or tbcDrawn
+    latestPattern := hgmDrawn ? "hgm" : sstDrawn ? "sst" : dccDrawn ? "dcc" : eveDrawn ? "eve" : "tbc"
+    latestPatternDir := -1
+if harDrawn
+    latestPattern := "har"
+    latestPatternDir := (harMode == "Yes" ? harUp : harUp[1]) ? 1 : -1
+
+// Visual-only strategy detector. It creates labels and alert conditions only.
+ltfBias = emaFast > emaSlow and close > vwap and rsi > 50 ? 1 : emaFast < emaSlow and close < vwap and rsi < 50 ? -1 : 0
+htfBias = h1Fast > h1Slow and h1Close > h1Vwap and h1Rsi > 50 ? 1 : h1Fast < h1Slow and h1Close < h1Vwap and h1Rsi < 50 ? -1 : 0
+pinSignalUp = pinDrawn and (pinMode == "Yes" ? pinUp : pinUp[1])
+engSignalUp = engDrawn and (engMode == "Yes" ? engUp : engUp[1])
+harSignalUp = harDrawn and (harMode == "Yes" ? harUp : harUp[1])
+bigSignalUp = bigDrawn and (bigMode == "Yes" ? bigUp : bigUp[1])
+pinSignalDn = pinDrawn and not pinSignalUp
+engSignalDn = engDrawn and not engSignalUp
+harSignalDn = harDrawn and not harSignalUp
+bigSignalDn = bigDrawn and not bigSignalUp
+triggerUp = trigger == "Any candle" ? latestPatternDir == 1 : trigger == "Pin" ? pinSignalUp : trigger == "Eng" ? engSignalUp : trigger == "Har" ? harSignalUp : trigger == "BOS" ? bosUp : trigger == "CHOCH" ? chochUp : trigger == "MSS" ? mssUp : trigger == "Sweep" ? sweepUp : trigger == "Rejection" ? rejUp : bigSignalUp
+triggerDn = trigger == "Any candle" ? latestPatternDir == -1 : trigger == "Pin" ? pinSignalDn : trigger == "Eng" ? engSignalDn : trigger == "Har" ? harSignalDn : trigger == "BOS" ? bosDn : trigger == "CHOCH" ? chochDn : trigger == "MSS" ? mssDn : trigger == "Sweep" ? sweepDn : trigger == "Rejection" ? rejDn : bigSignalDn
+techUp = emaFast > emaSlow and close > vwap and rsi > 50
+techDn = emaFast < emaSlow and close < vwap and rsi < 50
+signalUp = strategyVisuals and triggerUp and (not ltfConfluence or ltfBias == 1) and (not htfConfluence or htfBias == 1) and (not techConfluence or techUp)
+signalDn = strategyVisuals and triggerDn and (not ltfConfluence or ltfBias == -1) and (not htfConfluence or htfBias == -1) and (not techConfluence or techDn)
+if signalUp
+    f_mark(f_tf(timeframe.period) + ".sig.up", true, low)
+if signalDn
+    f_mark(f_tf(timeframe.period) + ".sig.dn", false, high)
+alertcondition(signalUp, "42Trade visual buy signal", "42Trade visual-only buy signal")
+alertcondition(signalDn, "42Trade visual sell signal", "42Trade visual-only sell signal")
+
+plot(enabled and emaOn ? emaFast : na, "EMA fast", color=color.lime)
+plot(enabled and emaOn ? emaMid : na, "EMA mid", color=color.orange)
+plot(enabled and emaOn ? emaSlow : na, "EMA slow", color=color.aqua)
+plot(enabled and vwapOn ? vwap : na, "VWAP", color=color.yellow, linewidth=2)
+plot(enabled and bbOn ? bbUp : na, "BB upper", color=color.new(clrNeutral, 40))
+plot(enabled and bbOn ? bbMid : na, "BB mid", color=color.new(clrNeutral, 10))
+plot(enabled and bbOn ? bbDn : na, "BB lower", color=color.new(clrNeutral, 40))
+plot(enabled and ichimokuOn ? tenkan : na, "Ichimoku conversion", color=color.new(color.blue, 0))
+plot(enabled and ichimokuOn ? kijun : na, "Ichimoku base", color=color.new(color.red, 0))
+ichiA = plot(enabled and ichimokuOn ? spanA : na, "Ichimoku span A", offset=26, color=color.new(clrBull, 45))
+ichiB = plot(enabled and ichimokuOn ? spanB : na, "Ichimoku span B", offset=26, color=color.new(clrBear, 45))
+fill(ichiA, ichiB, color=enabled and ichimokuOn ? color.new(spanA >= spanB ? clrBull : clrBear, 88) : na, title="Ichimoku cloud")
+if rsiEvtOn and ta.crossover(rsi, 50)
+    f_mark(f_tf(timeframe.period) + ".rsi" + str.tostring(rsiLen) + ".x>50", true, low)
+if rsiEvtOn and ta.crossunder(rsi, 50)
+    f_mark(f_tf(timeframe.period) + ".rsi" + str.tostring(rsiLen) + ".x<50", false, high)
+if macdEvtOn and ta.crossover(macd, macdSig)
+    f_mark(f_tf(timeframe.period) + ".macd.x>sig", true, low)
+if macdEvtOn and ta.crossunder(macd, macdSig)
+    f_mark(f_tf(timeframe.period) + ".macd.x<sig", false, high)
+if stochOn and ta.crossover(stochK, stochD) and stochK < 30
+    f_mark(f_tf(timeframe.period) + ".stoch.x>" + str.tostring(stochLen), true, low)
+if stochOn and ta.crossunder(stochK, stochD) and stochK > 70
+    f_mark(f_tf(timeframe.period) + ".stoch.x<" + str.tostring(stochLen), false, high)
+
+// RSI divergence from confirmed pivots; only the latest confirmed relationship is drawn.
+divPriceLow = ta.pivotlow(low, pivotLen, pivotLen)
+divPriceHigh = ta.pivothigh(high, pivotLen, pivotLen)
+var float divPrevLowPrice = na
+var float divPrevLowRsi = na
+var int divPrevLowBar = na
+var float divPrevHighPrice = na
+var float divPrevHighRsi = na
+var int divPrevHighBar = na
+if divergenceOn and not na(divPriceLow)
+    thisRsi = rsi[pivotLen]
+    if not na(divPrevLowPrice) and divPriceLow < divPrevLowPrice and thisRsi > divPrevLowRsi
+        line.new(divPrevLowBar, divPrevLowPrice, bar_index - pivotLen, divPriceLow, color=clrBull, style=line.style_dotted, width=2)
+        f_mark(f_tf(timeframe.period) + ".div.rsi" + str.tostring(rsiLen) + ".up", true, divPriceLow)
+    divPrevLowPrice := divPriceLow
+    divPrevLowRsi := thisRsi
+    divPrevLowBar := bar_index - pivotLen
+if divergenceOn and not na(divPriceHigh)
+    thisRsi = rsi[pivotLen]
+    if not na(divPrevHighPrice) and divPriceHigh > divPrevHighPrice and thisRsi < divPrevHighRsi
+        line.new(divPrevHighBar, divPrevHighPrice, bar_index - pivotLen, divPriceHigh, color=clrBear, style=line.style_dotted, width=2)
+        f_mark(f_tf(timeframe.period) + ".div.rsi" + str.tostring(rsiLen) + ".dn", false, divPriceHigh)
+    divPrevHighPrice := divPriceHigh
+    divPrevHighRsi := thisRsi
+    divPrevHighBar := bar_index - pivotLen
+
+bgcolor(enabled and sessionsOn and sessionVisualMode != "No" and inAsia ? color.new(color.rgb(0, 224, 255), 94) : na, title="Asia KZ")
+bgcolor(enabled and sessionsOn and sessionVisualMode != "No" and inLondon ? color.new(color.rgb(110, 255, 120), 94) : na, title="London KZ")
+bgcolor(enabled and sessionsOn and sessionVisualMode != "No" and inNy ? color.new(color.rgb(255, 196, 64), 94) : na, title="New York KZ")
+
+// Compact confirmed HTF candle strips at the right edge; they are visual context only.
+var array<box> miniBodies = array.new_box()
+var array<line> miniWicks = array.new_line()
+var array<line> miniDividers = array.new_line()
+var array<label> miniLabels = array.new_label()
+f_clear_mini() =>
+    while array.size(miniBodies) > 0
+        box.delete(array.pop(miniBodies))
+    while array.size(miniWicks) > 0
+        line.delete(array.pop(miniWicks))
+    while array.size(miniDividers) > 0
+        line.delete(array.pop(miniDividers))
+    while array.size(miniLabels) > 0
+        label.delete(array.pop(miniLabels))
+
+f_draw_mini_candle(int x, float candleOpen, float candleHigh, float candleLow, float candleClose, color candleColor) =>
+    if not na(candleOpen) and not na(candleHigh) and not na(candleLow) and not na(candleClose)
+        bodyTop = math.max(candleOpen, candleClose)
+        bodyBottom = math.min(candleOpen, candleClose)
+        bodyBottom := bodyTop == bodyBottom ? bodyBottom - syminfo.mintick * 2 : bodyBottom
+        // cTrader uses four chart bars per slot. Keep the Hung no-border body
+        // treatment, but give each HTF candle enough horizontal separation.
+        wickHigh = line.new(x + 2, bodyTop, x + 2, candleHigh, color=color.new(candleColor, 60), width=1)
+        wickLow = line.new(x + 2, bodyBottom, x + 2, candleLow, color=color.new(candleColor, 60), width=1)
+        bodyBox = box.new(x, bodyTop, x + 3, bodyBottom, bgcolor=color.new(candleColor, 60), border_color=na)
+        array.push(miniWicks, wickHigh)
+        array.push(miniWicks, wickLow)
+        array.push(miniBodies, bodyBox)
+
+f_draw_mini_strip(float openSeries, float highSeries, float lowSeries, float closeSeries, int offset, string caption, color tfColor) =>
+    openHistory = array.new_float()
+    highHistory = array.new_float()
+    lowHistory = array.new_float()
+    closeHistory = array.new_float()
+    float previousBucketOpen = na
+    maxScan = math.min(bar_index, 5000)
+    for j = 0 to maxScan
+        candleOpen = openSeries[j]
+        if na(candleOpen)
+            break
+        if na(previousBucketOpen) or candleOpen != previousBucketOpen
+            array.push(openHistory, candleOpen)
+            array.push(highHistory, highSeries[j])
+            array.push(lowHistory, lowSeries[j])
+            array.push(closeHistory, closeSeries[j])
+            previousBucketOpen := candleOpen
+            if array.size(openHistory) >= miniCandleCount
+                break
+    available = array.size(openHistory)
+    if available > 0
+        for i = 0 to available - 1
+            sourceIndex = available - 1 - i
+            candleOpen = array.get(openHistory, sourceIndex)
+            candleClose = array.get(closeHistory, sourceIndex)
+            candleColor = candleClose >= candleOpen ? clrBull : clrBear
+            f_draw_mini_candle(bar_index + offset + i * 4, candleOpen, array.get(highHistory, sourceIndex), array.get(lowHistory, sourceIndex), candleClose, candleColor)
+        stripHigh = array.max(highHistory)
+        stripLow = array.min(lowHistory)
+        labelX = bar_index + offset + int(math.floor((available - 1) * 4 / 2)) + 2
+        [stripHigh, stripLow, labelX]
+    else
+        [na, na, bar_index + offset]
+
+if barstate.islast and enabled and htfMiniOn
+    f_clear_mini()
+    h1Span = miniCandleCount * 4
+    [h1MiniHigh, h1MiniLow, h1LabelX] = f_draw_mini_strip(miniH1O, miniH1H, miniH1L, miniH1C, miniOffsetBars, f_tf(htf1), clrHtf1)
+    [h2MiniHigh, h2MiniLow, h2LabelX] = f_draw_mini_strip(miniH2O, miniH2H, miniH2L, miniH2C, miniOffsetBars + h1Span + miniSlotGapBars, f_tf(htf2), clrHtf2)
+    sharedMiniHigh = na(h1MiniHigh) ? h2MiniHigh : na(h2MiniHigh) ? h1MiniHigh : math.max(h1MiniHigh, h2MiniHigh)
+    sharedMiniLow = na(h1MiniLow) ? h2MiniLow : na(h2MiniLow) ? h1MiniLow : math.min(h1MiniLow, h2MiniLow)
+    if not na(sharedMiniHigh) and not na(sharedMiniLow)
+        miniLabelY = sharedMiniLow - math.max((sharedMiniHigh - sharedMiniLow) * 0.10, syminfo.mintick * 15)
+        array.push(miniLabels, label.new(h1LabelX, miniLabelY, f_tf(htf1), style=label.style_none, textcolor=clrHtf1, color=na, size=size.tiny))
+        array.push(miniLabels, label.new(h2LabelX, miniLabelY, f_tf(htf2), style=label.style_none, textcolor=clrHtf2, color=na, size=size.tiny))
+        dividerX = bar_index + miniOffsetBars + h1Span + int(math.floor(miniSlotGapBars / 2))
+        array.push(miniDividers, line.new(dividerX, sharedMiniHigh, dividerX, sharedMiniLow, color=color.new(color.white, 78), style=line.style_dotted, width=1))
+
+f_arrow(int n) => n > 0 ? "up" : n < 0 ? "dn" : "="
+var table dash = table.new(position.top_left, 2, 5, bgcolor=color.new(color.black, 25), frame_color=color.new(color.gray, 80), frame_width=1)
+if barstate.islast and enabled and dashboardOn
+    table.cell(dash, 0, 0, "42TV", text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 1, 0, f_tf(timeframe.period), text_color=clrNeutral, text_size=size.tiny)
+    table.cell(dash, 0, 1, "LTF", text_color=color.silver, text_size=size.tiny)
+    table.cell(dash, 1, 1, f_arrow(ltfBias), text_color=ltfBias > 0 ? clrBull : ltfBias < 0 ? clrBear : clrNeutral, text_size=size.tiny)
+    table.cell(dash, 0, 2, "HTF", text_color=color.silver, text_size=size.tiny)
+    table.cell(dash, 1, 2, f_tf(htf1) + " " + f_arrow(htfBias), text_color=htfBias > 0 ? clrBull : htfBias < 0 ? clrBear : clrNeutral, text_size=size.tiny)
+    table.cell(dash, 0, 3, "Tech", text_color=color.silver, text_size=size.tiny)
+    table.cell(dash, 1, 3, "E" + f_arrow(h1Fast > h1Slow ? 1 : -1) + " V" + f_arrow(h1Close > h1Vwap ? 1 : -1) + " R" + f_arrow(h1Rsi > 50 ? 1 : -1), text_color=color.white, text_size=size.tiny)
+    table.cell(dash, 0, 4, "Event", text_color=color.silver, text_size=size.tiny)
+    table.cell(dash, 1, 4, latestPattern == "" ? "-" : latestPattern + "." + f_arrow(latestPatternDir), text_color=latestPatternDir > 0 ? clrBull : latestPatternDir < 0 ? clrBear : clrNeutral, text_size=size.tiny)

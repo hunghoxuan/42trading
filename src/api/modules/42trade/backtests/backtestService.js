@@ -13,6 +13,7 @@ const {
   createStrategyScanEngine,
 } = require("../../../../shared/utils/strategyScanEngine.cjs");
 const {
+  compileRuleExpression,
   evaluateRuleExpression,
 } = require("../../../../shared/rules-engine/index.cjs");
 const {
@@ -93,10 +94,55 @@ function sha1Hex(value) {
   return crypto.createHash("sha1").update(String(value || "")).digest("hex");
 }
 
+function hydrateStrategyCatalogReferences(strategy = {}, ruleIndex = new Map(), eventIndex = new Map()) {
+  function hydrate(definition = {}) {
+    const ruleId = String(definition?.rule_id || "").trim();
+    const eventId = String(definition?.event_id || "").trim();
+    const referenced = (ruleId && ruleIndex.get(ruleId)) || (eventId && eventIndex.get(eventId));
+    if (!referenced) return definition;
+    return {
+      ...referenced,
+      ...definition,
+      id: String(definition?.id || referenced?.id || ruleId || eventId).trim(),
+      when:
+        definition?.when ??
+        definition?.condition ??
+        referenced?.when ??
+        referenced?.condition ??
+        null,
+      actions: Array.isArray(definition?.actions)
+        ? definition.actions
+        : Array.isArray(referenced?.actions)
+          ? referenced.actions
+          : [],
+    };
+  }
+  return {
+    ...strategy,
+    rules: Array.isArray(strategy?.rules) ? strategy.rules.map(hydrate) : strategy?.rules,
+    events: Array.isArray(strategy?.events) ? strategy.events.map(hydrate) : strategy?.events,
+  };
+}
+
+async function loadSharedDefinitionIndexes() {
+  const [rules, events] = await Promise.all([
+    configStore.listRules({ refresh: true }).catch(() => []),
+    configStore.listEvents({ refresh: true }).catch(() => []),
+  ]);
+  return {
+    ruleIndex: new Map(rules.map((item) => [String(item?.id || "").trim(), item])),
+    eventIndex: new Map(events.map((item) => [String(item?.id || "").trim(), item])),
+  };
+}
+
 async function loadBuiltInStrategies() {
-  const rows = await configStore.listStrategies();
+  const [rows, indexes] = await Promise.all([
+    configStore.listStrategies(),
+    loadSharedDefinitionIndexes(),
+  ]);
   return rows
     .filter((item) => item && typeof item === "object")
+    .map((item) => hydrateStrategyCatalogReferences(item, indexes.ruleIndex, indexes.eventIndex))
     .map((parsed) => ({
       kind: "preset",
       ...parsed,
@@ -315,10 +361,17 @@ function summarizeStrategyBacktestRecords(records = []) {
 }
 
 async function listAvailableStrategies(userId, options = {}) {
-  const customStrategies = await strategyConfigService.listStrategies(userId).catch(
-    () => [],
-  );
-  const customRows = customStrategies.map((strategy) => ({
+  const [customStrategies, indexes] = await Promise.all([
+    strategyConfigService.listStrategies(userId).catch(() => []),
+    loadSharedDefinitionIndexes(),
+  ]);
+  const customRows = customStrategies.map((rawStrategy) => {
+    const strategy = hydrateStrategyCatalogReferences(
+      rawStrategy,
+      indexes.ruleIndex,
+      indexes.eventIndex,
+    );
+    return ({
     key: strategy.id,
     id: strategy.id,
     name: strategy.name,
@@ -333,8 +386,9 @@ async function listAvailableStrategies(userId, options = {}) {
       ? strategy.events
       : normalizeStrategyEventsForSimulation(strategy),
     rules: Array.isArray(strategy.rules) ? strategy.rules : strategy.rules || [],
-    risk: strategy.risk || {},
-  }));
+      risk: strategy.risk || {},
+    });
+  });
   const records = Array.isArray(options.records)
     ? options.records
     : await listPersistedBacktestRecords(userId);
@@ -2737,8 +2791,12 @@ function normalizeStrategyEventsForSimulation(strategy = {}) {
       .map((rule, index) => {
         const ruleId =
           String(rule?.id || `rule_${index + 1}`).trim() || `rule_${index + 1}`;
-        const when =
-          rule?.when && typeof rule.when === "object" ? rule.when : null;
+        let when = null;
+        try {
+          when = compileRuleExpression(rule?.when);
+        } catch {
+          when = null;
+        }
         const actions = (Array.isArray(rule?.actions) ? rule.actions : [])
           .map((action, actionIndex) => {
             const actionKind = resolveStrategyActionKind(action);
@@ -2779,8 +2837,12 @@ function normalizeStrategyEventsForSimulation(strategy = {}) {
       .map((event, index) => {
         const eventId =
           String(event?.id || `event_${index + 1}`).trim() || `event_${index + 1}`;
-        const when =
-          event?.when && typeof event.when === "object" ? event.when : null;
+        let when = null;
+        try {
+          when = compileRuleExpression(event?.when);
+        } catch {
+          when = null;
+        }
         const actions = (Array.isArray(event?.actions) ? event.actions : [])
           .map((action, actionIndex) => {
             const actionKind = resolveStrategyActionKind(action);
@@ -2828,7 +2890,13 @@ function normalizeStrategyEventsForSimulation(strategy = {}) {
       id,
       name,
       direction,
-      when: ruleKeys.map((key) => rules[key]).find(Boolean) || null,
+      when: (() => {
+        try {
+          return compileRuleExpression(ruleKeys.map((key) => rules[key]).find(Boolean) || null);
+        } catch {
+          return null;
+        }
+      })(),
     }))
     .filter((event) => event.when)
     .map((event) => ({
@@ -2893,6 +2961,19 @@ function groupStrategySignalsByEventId(signals = []) {
 
 function applyEventActionToSignalState(signalState, action = {}) {
   const actionKind = resolveStrategyActionKind(action);
+  if (actionKind === "trade.close" || actionKind === "position.close") {
+    signalState.exit_long = true;
+    signalState.exit_short = true;
+    return;
+  }
+  if (actionKind === "trade.close.long" || actionKind === "position.close.long") {
+    signalState.exit_long = true;
+    return;
+  }
+  if (actionKind === "trade.close.short" || actionKind === "position.close.short") {
+    signalState.exit_short = true;
+    return;
+  }
   if (actionKind !== "trade") return;
   const tradePlan = normalizeStrategyTradePlan(action?.trade_plan, "buy");
   if (tradePlan.direction === "sell") {
@@ -3116,12 +3197,10 @@ function simulateRuleBasedStrategy(bars, strategy, options = {}) {
                   : "buy",
               )
             : null;
-          if (eventTradePlan) {
-            applyEventActionToSignalState(signalState, {
-              ...action,
-              trade_plan: eventTradePlan,
-            });
-          }
+          applyEventActionToSignalState(signalState, {
+            ...action,
+            ...(eventTradePlan ? { trade_plan: eventTradePlan } : {}),
+          });
           eventLog.push({
             event_id: hit?.eventId || "",
             event_name: hit?.eventName || "",

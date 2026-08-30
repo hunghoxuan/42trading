@@ -12,6 +12,7 @@ This folder is the current documentation hub for the 42Trade codebase.
 | [runtime-realtime.md](./runtime-realtime.md) | Runtime providers, realtime topics, Socket.IO, SSE, and bars updates | Read before touching live delivery |
 | [trading-backtests.md](./trading-backtests.md) | Trading flow, strategy system, multi-timeframe logic, and backtests | Read before touching trading or simulation |
 | [integrations-storage.md](./integrations-storage.md) | Remote APIs, MT5 bridge, object storage, cache, and JSON/config readers | Read before touching integrations or persistence seams |
+| [ctrader-bridge.md](./ctrader-bridge.md) | cTrader bot: trade-trigger events/short codes, Chart Visuals combos, SMC presets, panels, splitter grid | Read before editing `src/mt5-bridge/clients/TVBridge_CTrader.cs` |
 | [api-domain-architecture.md](./api-domain-architecture.md) | Canonical `src/api` domain split target | Read when refactoring API boundaries |
 
 ## Coverage Map

@@ -718,6 +718,14 @@ function computeIndicatorSeries(bars, indicator = {}) {
   }
 }
 
+function compileStrategyExpression(value) {
+  try {
+    return sharedRulesEngine.compileRuleExpression(value);
+  } catch {
+    return null;
+  }
+}
+
 function normalizeStrategyEvents(strategy = {}) {
   const normalizeEventAction = (action = {}, fallbackDirection = "buy") => {
     const actionType = String(action?.action || action?.type || "").trim();
@@ -755,7 +763,7 @@ function normalizeStrategyEvents(strategy = {}) {
         family: String(rule?.family || "").trim(),
         priority: String(rule?.priority || "").trim(),
         bias: String(rule?.bias || "").trim().toLowerCase(),
-        when: rule?.when && typeof rule.when === "object" ? rule.when : null,
+        when: compileStrategyExpression(rule?.when),
         actions: Array.isArray(rule?.actions)
           ? rule.actions.map((action) =>
               normalizeEventAction(
@@ -781,7 +789,7 @@ function normalizeStrategyEvents(strategy = {}) {
         family: String(event?.family || "").trim(),
         priority: String(event?.priority || "").trim(),
         bias: String(event?.bias || "").trim().toLowerCase(),
-        when: event?.when && typeof event.when === "object" ? event.when : null,
+        when: compileStrategyExpression(event?.when),
         actions: Array.isArray(event?.actions)
           ? event.actions.map((action) =>
               normalizeEventAction(
@@ -805,7 +813,9 @@ function normalizeStrategyEvents(strategy = {}) {
         id,
         name,
         bias: id,
-        when: ruleKeys.map((key) => strategy.rules[key]).find(Boolean) || null,
+        when: compileStrategyExpression(
+          ruleKeys.map((key) => strategy.rules[key]).find(Boolean) || null,
+        ),
         actions: [
           {
             id: `${id}_action`,
@@ -1767,8 +1777,7 @@ export function evaluateChartStrategies({
               "",
           ).trim(),
           eventPriority: String(event.priority || "").trim(),
-          ruleDefinition:
-            event?.when && typeof event.when === "object" ? event.when : null,
+          ruleDefinition: event?.when || null,
           ruleEvent,
           actions: Array.isArray(event.actions) ? event.actions : [],
           barIndex: index,

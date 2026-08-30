@@ -365,6 +365,9 @@ export function mergeHybridArtifactItemsForTf({
   clientItems = [],
   serverCoverage = null,
 } = {}) {
+  // Temporary compatibility gate while cTrader becomes the canonical artifact producer.
+  // Do not display the parallel 42trade detector output during this migration.
+  const CTRADER_SHARED_ARTIFACTS_ONLY = true;
   const normalizedTf = normalizeTfKey(timeframe);
   const normalizedBars = normalizeBars(bars);
   const fallbackCoverage =
@@ -380,34 +383,37 @@ export function mergeHybridArtifactItemsForTf({
     normalizedTf,
     barsCoverageWindow(normalizedBars, normalizedTf),
   );
-  const clientPreferredGroups = new Set(["fvg", "ifvg", "ob", "bb"]);
-  const isClientPreferredEventItem = (item = {}) => item?.is_event === true;
-  const preferredClientItems = normalizedClientItems.filter((item) =>
-    clientPreferredGroups.has(artifactGroupKeyForItem(item)) || isClientPreferredEventItem(item),
+  const cTraderItems = normalizedServerItems.filter(
+    (item) => String(item?.source || "").trim().toLowerCase() === "ctrader" ||
+      String(item?.payload?.source || "").trim().toLowerCase() === "ctrader",
   );
-  const filteredServerItems = normalizedServerItems.filter(
-    (item) =>
-      !clientPreferredGroups.has(artifactGroupKeyForItem(item)) &&
-      !isClientPreferredEventItem(item),
-  );
-  const serverHasArtifacts = filteredServerItems.length > 0;
+  // Shared cTrader/server artifacts are authoritative. Client-side detection is only a
+  // fallback when no shared snapshot exists; otherwise it can replace cTrader's names,
+  // prices, and bar anchors with a second implementation.
+  const serverHasArtifacts = CTRADER_SHARED_ARTIFACTS_ONLY
+    ? cTraderItems.length > 0
+    : normalizedServerItems.length > 0;
+  const authoritativeItems = serverHasArtifacts
+    ? CTRADER_SHARED_ARTIFACTS_ONLY
+      ? cTraderItems
+      : normalizedServerItems
+    : CTRADER_SHARED_ARTIFACTS_ONLY
+      ? []
+      : normalizedClientItems;
   const serverWindows = [];
   if (isCoverageComplete(fallbackCoverage)) {
     serverWindows.push(fallbackCoverage);
   }
-  for (const item of filteredServerItems) {
+  for (const item of authoritativeItems) {
     const itemWindow = itemCoverageWindow(item, normalizedTf);
     if (isCoverageComplete(itemWindow)) serverWindows.push(itemWindow);
   }
-  const uncoveredClientItems = serverHasArtifacts
-    ? normalizedClientItems.filter(
-        (item) => !isItemCoveredByWindows(item, serverWindows, normalizedTf),
-      )
+  const uncoveredClientItems = serverHasArtifacts || CTRADER_SHARED_ARTIFACTS_ONLY
+    ? []
     : normalizedClientItems;
   const mergedItems = artifactDetection.limitArtifactsNearLastBarByType(
     dedupeArtifacts([
-      ...filteredServerItems,
-      ...preferredClientItems,
+      ...authoritativeItems,
       ...uncoveredClientItems,
     ]),
     normalizedBars,
@@ -429,10 +435,11 @@ export function mergeHybridArtifactItemsForTf({
     },
     meta: {
       server_item_count: normalizedServerItems.length,
-      server_item_count_after_filter: filteredServerItems.length,
+      server_item_count_after_filter: authoritativeItems.length,
+      ctrader_item_count: cTraderItems.length,
       client_item_count: normalizedClientItems.length,
-      preferred_client_item_count: preferredClientItems.length,
       merged_item_count: mergedItems.length,
+      authority: serverHasArtifacts ? "ctrader_shared_snapshot" : "ctrader_shared_snapshot_waiting",
     },
   };
 }

@@ -464,6 +464,86 @@ test("trades broker sync creates discovered trades and snapshot-closes missing t
   );
 });
 
+test("MT5 history discovery updates known positions and creates unknown closed positions once", async () => {
+  const sqlitePath = path.join(tempRoot("history-import"), "trades.sqlite");
+  const repo = createTradesRepo({
+    sqlitePath,
+    objectStore: { provider: "sqlite" },
+    sourceStorageBackend: "sqlite",
+  });
+
+  await repo.upsertTrade(
+    seedRow({
+      sid: "TRD_EXISTING_HISTORY",
+      trade_id: "TRD_EXISTING_HISTORY",
+      broker_trade_id: "70001",
+      execution_status: "FILLED",
+      dispatch_status: "CONSUMED",
+      metadata: {
+        broker_data: { ticket_candidates: ["70001", "80001"] },
+      },
+    }),
+    { appendJournal: false },
+  );
+
+  const historyItems = [
+    {
+      ticket: "70001",
+      ticket_candidates: ["70001", "80001"],
+      symbol: "BTCUSD",
+      action: "BUY",
+      execution_status: "CLOSED",
+      lots: 0.2,
+      pnl: 125.5,
+      opened_at: "2026-06-01T10:00:00.000Z",
+      closed_at: "2026-06-01T12:00:00.000Z",
+      close_reason: "TP",
+    },
+    {
+      ticket: "70002",
+      ticket_candidates: ["70002", "80002", "90002"],
+      symbol: "ETHUSD",
+      action: "SELL",
+      execution_status: "CLOSED",
+      lots: 0.1,
+      pnl: -32.25,
+      opened_at: "2026-06-02T10:00:00.000Z",
+      closed_at: "2026-06-02T11:00:00.000Z",
+      close_reason: "SL",
+    },
+  ];
+  const options = {
+    now: "2026-07-10T10:30:00.000Z",
+    snapshotComplete: false,
+    brokerName: "MT5_HISTORY",
+    providerCode: "mt5",
+    sourceId: "MT5_HISTORY",
+    allowHistoricalDiscovery: true,
+  };
+
+  const guarded = await repo.brokerSyncTrades(
+    "user",
+    "acc-1",
+    [historyItems[1]],
+    { ...options, allowHistoricalDiscovery: false },
+  );
+  const first = await repo.brokerSyncTrades("user", "acc-1", historyItems, options);
+  const second = await repo.brokerSyncTrades("user", "acc-1", historyItems, options);
+  const listed = await repo.listTrades({ user_id: "user", page: 1, pageSize: 20 });
+  const existing = await repo.getTrade({ sid: "TRD_EXISTING_HISTORY", user_id: "user" });
+  const imported = await repo.getTrade({ sid: "H_acc-1_70002", user_id: "user" });
+
+  assert.equal(guarded.results.some((item) => item.status === "Added"), false);
+  assert.equal(first.results.filter((item) => item.status === "Added").length, 1);
+  assert.equal(second.results.filter((item) => item.status === "Added").length, 0);
+  assert.equal(listed.items.length, 2);
+  assert.equal(existing.trade.execution_status, "CLOSED");
+  assert.equal(existing.trade.pnl_realized, 125.5);
+  assert.equal(imported.trade.execution_status, "CLOSED");
+  assert.equal(imported.trade.pnl_realized, -32.25);
+  assert.equal(imported.trade.broker_trade_id, "70002");
+});
+
 test("trades broker sync treats broker comment note suffix as non-identity", async () => {
   const sqlitePath = path.join(tempRoot("sync-comment-sid"), "trades.sqlite");
   const repo = createTradesRepo({

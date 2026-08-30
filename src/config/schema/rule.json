@@ -33,7 +33,9 @@
         "type": ["number", "string", "boolean", "array", "object", "null"]
       }
     },
-    "condition": {},
+    "condition": {
+      "type": ["object", "string"]
+    },
     "outputs": {
       "type": "object",
       "properties": {

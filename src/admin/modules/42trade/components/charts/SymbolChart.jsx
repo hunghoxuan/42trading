@@ -249,6 +249,9 @@ const EVENT_PANEL_CATALOG = mergeEventPanelCatalog([
   ...PREDEFINED_RULE_EVENT_CATALOG,
   { eventKey: "CH", direction: "sell" },
   { eventKey: "SW", direction: "sell" },
+  { eventKey: "IMP", direction: "neutral" },
+  { eventKey: "REJ", direction: "neutral" },
+  { eventKey: "BRK", direction: "neutral" },
   { eventKey: "SH", direction: "sell" },
   { eventKey: "SL", direction: "buy" },
   { eventKey: "DIV", direction: "neutral" },
@@ -2351,6 +2354,8 @@ function artifactTypeAbbr(typeRaw = "") {
   }
   if (type === "swing_low") return "SL";
   if (type === "swing_high") return "SH";
+  if (type === "eqh") return "EQH";
+  if (type === "eql") return "EQL";
   if (type === "liquidity_low") return "SSL";
   if (type === "liquidity_high") return "BSL";
   if (type === "support") return "SUP";
@@ -2554,6 +2559,13 @@ function artifactMarkerText(item = {}) {
   if (eventKey === "reject") return "REJ";
   if (eventKey === "breakout") return "BRK";
   const type = artifactDisplayTypeKey(item);
+  if (type === "sweepreclaim") return "SW";
+  if (type === "impulse") return "IMP";
+  if (type === "rejection") return "REJ";
+  if (type === "breakout") return "BRK";
+  if (type.includes("pin_bar")) return "PIN";
+  if (type.includes("engulfing")) return "ENG";
+  if (type.includes("hammer") || type.includes("shooting_star")) return "CANDLE";
   if (type === "bos") return "BOS";
   if (type === "choch") return "CH";
   if (type === "sweep_high" || type === "sweep_low") return "SW";
@@ -2573,7 +2585,9 @@ function artifactMarkerText(item = {}) {
 }
 
 function isTrueSignalEventItem(item = {}) {
-  if (!item || typeof item !== "object" || item?.is_event !== true) return false;
+  if (!item || typeof item !== "object") return false;
+  const family = String(item?.family || item?.artifact_family || "").trim().toLowerCase();
+  if (item?.is_event !== true && family !== "event") return false;
   const type = artifactDisplayTypeKey(item);
   const groupKey = artifactGroupKeyForItem(item);
   if (
@@ -2593,18 +2607,19 @@ function isTrueSignalEventItem(item = {}) {
   return true;
 }
 
-const DEFAULT_HIDDEN_SIGNAL_EVENT_KEYS = new Set(["INSI", "OUTS", "SH", "SL"]);
+const DEFAULT_HIDDEN_SIGNAL_EVENT_KEYS = new Set();
 const DEFAULT_VISIBLE_SIGNAL_EVENT_KEYS = new Set([
   "SW",
   "BOS",
   "CH",
+  "IMP",
   "ENG",
   "PIN",
   "REJ",
   "BRK",
   "DIV",
 ]);
-const DEFAULT_HIDDEN_ARTIFACT_GROUP_KEYS = new Set(["swings", "patterns"]);
+const DEFAULT_HIDDEN_ARTIFACT_GROUP_KEYS = new Set();
 
 function resolveArtifactEventDirection(item = {}, bars = [], timeframe = "") {
   const normalizedType = artifactDisplayTypeKey(item);
@@ -2680,12 +2695,7 @@ function markerPositionForConfirmedDirection(direction = "neutral") {
 
 function defaultArtifactEventVisible(item = {}) {
   if (!isTrueSignalEventItem(item)) return true;
-  const eventKey = artifactMarkerText(item);
-  if (!eventKey) return false;
-  if (eventKey.startsWith("BRK ") || eventKey.startsWith("REJ ")) return true;
-  if (DEFAULT_VISIBLE_SIGNAL_EVENT_KEYS.has(eventKey)) return true;
-  if (DEFAULT_HIDDEN_SIGNAL_EVENT_KEYS.has(eventKey)) return false;
-  return resolveArtifactEventDirection(item) !== "neutral";
+  return true;
 }
 
 function isSignalArtifactPanelItem(item = {}) {
@@ -3247,6 +3257,7 @@ function artifactGroupKeyForItem(item = {}) {
   if (type.includes("fvg") || label.includes("fvg")) return "fvg";
   if (type.includes("ob") || /\border block\b/.test(text)) return "ob";
   if (type.includes("liquidity") || label.includes("liquidity")) return "liquidity";
+  if (type === "eqh" || type === "eql" || label === "eqh" || label === "eql") return "eqhl";
   if (type === "hh" || type === "hl" || type === "lh" || type === "ll") return "swings";
   if (
     type === "hh_level" ||
@@ -3289,6 +3300,7 @@ function artifactGroupLabel(groupKey = "") {
   if (key === "bb") return "BB";
   if (key === "ob") return "OB";
   if (key === "liquidity") return "LIQ";
+  if (key === "eqhl") return "EQH/L";
   if (key === "bos") return "BOS";
   if (key === "choch") return "CHOCH";
   if (key === "sweep") return "SW";
@@ -3452,6 +3464,8 @@ function artifactItemToChartObject(item = {}, fallbackTf = "", barsByTf = null) 
   const price = Number(item.price);
   const priceLow = Number(item.price_low);
   const priceHigh = Number(item.price_high);
+  const isCanonicalEvent =
+    family === "event" || item?.is_event === true;
 
   if (groupKey === "swings") {
     if (!Number.isFinite(price) || !Number.isFinite(timeSec)) return null;
@@ -3743,14 +3757,14 @@ function artifactItemToChartObject(item = {}, fallbackTf = "", barsByTf = null) 
     return zoneObject;
   }
 
-  if (family === "pattern" || family === "structure") {
+  if (family === "pattern" || family === "structure" || isCanonicalEvent) {
     if (!Number.isFinite(price) || !Number.isFinite(timeSec)) return null;
     const direction = resolveArtifactEventDirection(item, barsForTf, tf);
     const isEvent = item?.is_event !== false;
     const pointColor = isEvent ? signalEventColorFromDirection(direction) : color;
     const markerText = artifactMarkerText(item);
     const isStructureSegmentSignal =
-      family === "structure" &&
+      (family === "structure" || isCanonicalEvent) &&
       (type === "bos" ||
         type === "choch" ||
         type === "sweep_high" ||
@@ -3795,6 +3809,78 @@ function artifactItemToChartObject(item = {}, fallbackTf = "", barsByTf = null) 
       event_key: item?.event_key || "",
       event_time: Number(item?.event_time) || null,
     };
+    const interactionPayload =
+      item?.payload && typeof item.payload === "object"
+        ? item.payload
+        : item?.artifact_payload?.payload && typeof item.artifact_payload.payload === "object"
+          ? item.artifact_payload.payload
+          : {};
+    const interactionLow = Number(interactionPayload?.interaction_low);
+    const interactionHigh = Number(interactionPayload?.interaction_high);
+    const interactionTimeframe = String(
+      interactionPayload?.interaction_timeframe || tf,
+    ).trim();
+    const interactionKind = String(interactionPayload?.interaction_kind || "")
+      .trim()
+      .toLowerCase();
+    const interactionOperand = {
+      "key low": "l",
+      "key high": "h",
+      support: "sup",
+      resistance: "res",
+      eqh: "eqh",
+      eql: "eql",
+      swing: "swg",
+      fvg: "fvg",
+      ob: "ob",
+      demand: "dem",
+      supply: "sply",
+    }[interactionKind] || interactionKind.replace(/\s+/g, "_");
+    const hasInteraction =
+      interactionKind &&
+      Number.isFinite(interactionLow) &&
+      Number.isFinite(interactionHigh) &&
+      Number.isFinite(timeSec);
+    const interactionColor = hasInteraction
+      ? artifactColorForItem({
+          ...item,
+          type: interactionKind,
+          label: interactionOperand,
+          timeframe: interactionTimeframe,
+        })
+      : color;
+    const interactionTop = Math.max(interactionLow, interactionHigh);
+    const interactionBottom = Math.min(interactionLow, interactionHigh);
+    const interactionLabel = hasInteraction
+      ? `${interactionTimeframe}.${interactionOperand}`
+      : "";
+    const interactionObject = hasInteraction
+      ? {
+          id: `${String(item.id || `${family}-${type}-${timeSec}`)}:interaction`,
+          kind: interactionTop > interactionBottom ? "zone" : "line",
+          type: interactionOperand.toUpperCase(),
+          label: interactionLabel,
+          visible: true,
+          tf: interactionTimeframe,
+          color: interactionColor,
+          price_top: interactionTop,
+          price_bottom: interactionBottom,
+          price: interactionBottom,
+          time: timeSec,
+          anchorTimeMs: timeSec * 1000,
+          anchorTimeMs2: null,
+          anchorPrice: interactionTop,
+          anchorPrice2: interactionBottom,
+          line_style: "dot",
+          line_width: 0.75,
+          line_scope: "segment_to_scale",
+          artifact_family: "interaction",
+          artifact_type: interactionKind,
+          artifact_group: "patterns",
+          source_tf: interactionTimeframe,
+          artifact_payload: item,
+        }
+      : null;
     if (
       isStructureSegmentSignal &&
       Number.isFinite(structureFromTimeSec) &&
@@ -3828,7 +3914,7 @@ function artifactItemToChartObject(item = {}, fallbackTf = "", barsByTf = null) 
         basePoint,
       ];
     }
-    return basePoint;
+    return interactionObject ? [interactionObject, basePoint] : basePoint;
   }
 
   if (Number.isFinite(price)) {
@@ -10303,6 +10389,8 @@ export default function SymbolChart({
     setSharedEngineAnalysisByTf({});
     setSharedArtifactItemsByTf({});
     setSharedTradePlansByTf({});
+    setArtifactGroupVisibility({});
+    setArtifactTfVisibility({});
     setArtifactEventVisibility({});
   }, [cleanSym]);
 
@@ -10401,9 +10489,7 @@ export default function SymbolChart({
         direction,
         count: 0,
         visible: false,
-        defaultVisible:
-          DEFAULT_VISIBLE_SIGNAL_EVENT_KEYS.has(eventKey) &&
-          !DEFAULT_HIDDEN_SIGNAL_EVENT_KEYS.has(eventKey),
+        defaultVisible: true,
       });
     }
     for (const items of Object.values(sharedArtifactItemsByTf || {})) {
@@ -12854,6 +12940,7 @@ export default function SymbolChart({
                           showIndicators={true}
                           indicatorVisibilityConfig={indicatorVisibility}
                           sharedObjects={sharedChartObjects}
+                          chartTimeframe={tf}
                         />
                           );
                         })()}

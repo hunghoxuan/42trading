@@ -9,6 +9,7 @@ import {
   findPredefinedRule,
   listPredefinedRules,
 } from "../src/shared/rules-engine/index.js";
+import { inferPatternAt } from "../src/shared/rules-engine/features/detectArtifacts.js";
 
 const require = createRequire(import.meta.url);
 const cjsRuleEngine = require("../src/shared/rules-engine/index.cjs");
@@ -124,4 +125,79 @@ test("predefined stochastic cross rule evaluates with shared indicator context",
   assert.equal(result.events.length, 1);
   assert.equal(result.events[0].rule_id, "stochastic_cross_up");
   assert.equal(result.events[0].bias, "bullish");
+});
+
+test("harami direction follows the second contained candle", () => {
+  const bar = (time, open, high, low, close) => ({ time, open, high, low, close, volume: 10 });
+  const neutralBeforeImpulse = [
+    bar(1, 102, 103, 100, 101),
+    bar(2, 100, 102, 99, 101),
+    bar(3, 102, 103, 99, 100),
+    bar(4, 100, 102, 99, 101),
+    bar(5, 100, 111, 99, 110),
+    bar(6, 108, 110, 105, 106),
+  ];
+  assert.equal(inferPatternAt(neutralBeforeImpulse, 5).includes("bearish_harami"), true);
+  assert.equal(inferPatternAt(neutralBeforeImpulse, 5).includes("bullish_harami"), false);
+
+  const establishedUptrend = [
+    bar(1, 100, 102, 99, 101),
+    bar(2, 101, 103, 100, 102),
+    bar(3, 102, 103, 101, 101.5),
+    bar(4, 101.5, 104, 101, 103),
+    bar(5, 103, 111, 102, 110),
+    bar(6, 108, 110, 105, 106),
+  ];
+  assert.equal(inferPatternAt(establishedUptrend, 5).includes("bearish_harami"), true);
+
+  const bullishSecondCandle = establishedUptrend.slice(0, 5).concat([
+    bar(6, 106, 109, 105, 108),
+  ]);
+  assert.equal(inferPatternAt(bullishSecondCandle, 5).includes("bullish_harami"), true);
+  assert.equal(inferPatternAt(bullishSecondCandle, 5).includes("bearish_harami"), false);
+
+  const lowerWickDoji = establishedUptrend.slice(0, 5).concat([
+    bar(6, 107, 108, 104, 107),
+  ]);
+  assert.equal(inferPatternAt(lowerWickDoji, 5).includes("bullish_harami"), true);
+  assert.equal(inferPatternAt(lowerWickDoji, 5).includes("bearish_harami"), false);
+
+  // New priority rules:
+  // 1) 2x wick imbalance on the 2nd candle overrides its own red body.
+  const redWithBigBottomWick = establishedUptrend.slice(0, 5).concat([
+    bar(6, 108, 109, 102, 106),
+  ]);
+  assert.equal(inferPatternAt(redWithBigBottomWick, 5).includes("bullish_harami"), true);
+  assert.equal(inferPatternAt(redWithBigBottomWick, 5).includes("bearish_harami"), false);
+
+  // 1b) A 2.5x bottom wick already trips the 2x threshold (would not at 3x).
+  const twoAndHalfWick = establishedUptrend.slice(0, 5).concat([
+    bar(6, 108, 109, 103.5, 106),
+  ]);
+  assert.equal(inferPatternAt(twoAndHalfWick, 5).includes("bullish_harami"), true);
+  assert.equal(inferPatternAt(twoAndHalfWick, 5).includes("bearish_harami"), false);
+
+  // 2) Tiny body + balanced wicks: the 2nd candle is reluctant and follows the mother.
+  const reluctantFollowsRedMother = [
+    bar(1, 100, 102, 99, 101),
+    bar(2, 101, 103, 100, 102),
+    bar(3, 102, 103, 101, 101.5),
+    bar(4, 101.5, 104, 101, 103),
+    bar(5, 110, 111, 102, 103),
+    bar(6, 106, 108, 104, 105.5),
+  ];
+  assert.equal(inferPatternAt(reluctantFollowsRedMother, 5).includes("bearish_harami"), true);
+  assert.equal(inferPatternAt(reluctantFollowsRedMother, 5).includes("bullish_harami"), false);
+
+  // 2b) Same tiny-body shape but a green mother flips it bullish.
+  const reluctantFollowsGreenMother = [
+    bar(1, 100, 102, 99, 101),
+    bar(2, 101, 103, 100, 102),
+    bar(3, 102, 103, 101, 101.5),
+    bar(4, 101.5, 104, 101, 103),
+    bar(5, 100, 109, 99, 108),
+    bar(6, 106, 108, 104, 105.5),
+  ];
+  assert.equal(inferPatternAt(reluctantFollowsGreenMother, 5).includes("bullish_harami"), true);
+  assert.equal(inferPatternAt(reluctantFollowsGreenMother, 5).includes("bearish_harami"), false);
 });

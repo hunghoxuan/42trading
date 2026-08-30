@@ -2,6 +2,7 @@
 
 const { createConfigStore } = require("../../../shared/config/configStore");
 const objectStore = require("../../../shared/objects/objectStoreRepo");
+const { compileRuleExpression } = require("../../../../shared/rules-engine/index.cjs");
 const defaultConfigStore = createConfigStore();
 
 const SUPPORTED_INDICATORS = new Set([
@@ -332,7 +333,9 @@ function normalizeStrategyRule(rule = {}, index = 0) {
           : normalizeRuleBias(rule?.bias),
     priority: normalizeRulePriority(rule?.priority),
     when:
-      rule?.when && typeof rule.when === "object" && !Array.isArray(rule.when)
+      typeof rule?.when === "string"
+        ? rule.when
+        : rule?.when && typeof rule.when === "object" && !Array.isArray(rule.when)
         ? rule.when
         : { and: [] },
     actions: normalizedActions,
@@ -366,7 +369,9 @@ function normalizeRulesFromStrategy(strategy = {}) {
         ),
         priority: normalizeRulePriority(event?.priority),
         when:
-          event?.when && typeof event.when === "object" && !Array.isArray(event.when)
+          typeof event?.when === "string"
+            ? event.when
+            : event?.when && typeof event.when === "object" && !Array.isArray(event.when)
             ? event.when
             : { and: [] },
         actions: normalizedActions,
@@ -378,7 +383,9 @@ function normalizeRulesFromStrategy(strategy = {}) {
       ? strategy.rules
       : {};
   return Object.entries(legacyRules)
-    .filter(([, when]) => when && typeof when === "object" && !Array.isArray(when))
+    .filter(([, when]) =>
+      typeof when === "string" || (when && typeof when === "object" && !Array.isArray(when)),
+    )
     .map(([key, when], index) => {
       const lowerKey = String(key || "").trim().toLowerCase();
       const bullish = ["bullish", "entry_long"].includes(lowerKey);
@@ -466,10 +473,16 @@ async function validateStrategyPayload(
     errors.push("events must be an array when provided");
   }
   for (const [index, rule] of normalizedRules.entries()) {
-    if (!rule.when || typeof rule.when !== "object" || Array.isArray(rule.when)) {
+    let compiledWhen = null;
+    try {
+      compiledWhen = compileRuleExpression(rule.when);
+    } catch (error) {
+      errors.push(`rules[${index}].when: ${error.message}`);
+    }
+    if (!compiledWhen || typeof compiledWhen !== "object" || Array.isArray(compiledWhen)) {
       errors.push(`rules[${index}].when is required`);
     } else {
-      validateExpression(rule.when, errors, `rules[${index}].when`, {
+      validateExpression(compiledWhen, errors, `rules[${index}].when`, {
         supportedOperators,
         supportedFunctions,
       });
