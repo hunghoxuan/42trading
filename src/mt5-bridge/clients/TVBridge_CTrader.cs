@@ -28908,14 +28908,14 @@ namespace cAlgo.Robots
                 symbol, signal.TradeType, entryPrice, stopLoss, targetRewardRisk, multiplier);
         }
 
-        private string BuildStrategyOrderComment(Symbol symbol, string sid, int legNumber, string symbolName, TimeFrame sourceTimeFrame, string eventName, double entryPrice = 0, double takeProfit = 0, double stopLoss = 0, string riskComment = "", string entryMode = "", bool isLimitOrder = false, int patternToEntryBars = 1, DateTime triggerBarTime = default(DateTime), string protectionComment = "", bool includeConfluence = true)
+        private string BuildStrategyOrderComment(Symbol symbol, string sid, int legNumber, string symbolName, TimeFrame sourceTimeFrame, string eventName, double entryPrice = 0, double takeProfit = 0, double stopLoss = 0, string riskComment = "", string entryMode = "", bool isLimitOrder = false, int patternToEntryBars = 1, DateTime triggerBarTime = default(DateTime), string protectionComment = "", bool includeConfluence = true, BacktestStrategySignal signal = default(BacktestStrategySignal))
         {
             if (sourceTimeFrame == null)
                 return "";
 
             var sb = new StringBuilder();
-            // Keep broker comments compact and readable in cTrader:
-            // m5.pin.r.h|Now.1-1|l:rs31%(16.31$) 1r|cf:...
+            // Keep broker comments compact and explain the actual route:
+            // m5.pin|Now_Event.1-1|entry:m5.pin->TP:rr1 4450$/SL:m5.pin 4430$ 1r 35$|c:+3/5,ltf:+4,htf:+1,62|39
             // Internal chain matching lives in the order Label, not in a visible tr:* comment token.
             var eventLabel = string.IsNullOrWhiteSpace(eventName) ? "event" : eventName.Trim();
             eventLabel = eventLabel
@@ -28928,22 +28928,143 @@ namespace cAlgo.Robots
             sb.Append(eventLabel)
                 .Append('|')
                 .Append(CTraderStrategyEngine.FormatEntryModeLeg(entryMode, legNumber, patternToEntryBars));
-            var routeDetails = new List<string>();
-            if (!string.IsNullOrWhiteSpace(riskComment))
-                routeDetails.Add(riskComment.Trim());
             var rewardRiskComment = BuildStrategyRewardRiskComment(entryPrice, takeProfit, stopLoss);
+            var protectionCodes = (protectionComment ?? "").Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+            var tpSourceCode = protectionCodes.Length > 0 ? protectionCodes[0] : signal.TakeProfitSourceCode;
+            var slSourceCode = protectionCodes.Length > 1 ? protectionCodes[1] : signal.StopLossSourceCode;
+            var entryArtifact = ResolveStrategyEntryArtifactLabel(symbol, symbolName, sourceTimeFrame, entryPrice, entryMode, eventLabel);
+            var tpArtifact = ResolveStrategyProtectionArtifactLabel(symbol, symbolName, sourceTimeFrame, signal, takeProfit, tpSourceCode, false, eventLabel, rewardRiskComment);
+            var slArtifact = ResolveStrategyProtectionArtifactLabel(symbol, symbolName, sourceTimeFrame, signal, stopLoss, slSourceCode, true, eventLabel, rewardRiskComment);
+            sb.Append("|entry:").Append(entryArtifact)
+                .Append("->TP:").Append(tpArtifact).Append(' ').Append(FormatPriceShort(takeProfit)).Append('$')
+                .Append("/SL:").Append(slArtifact).Append(' ').Append(FormatPriceShort(stopLoss)).Append('$');
             if (!string.IsNullOrWhiteSpace(rewardRiskComment))
-                routeDetails.Add(rewardRiskComment);
-            if (routeDetails.Count > 0)
-                sb.Append(isLimitOrder ? "|l:" : "|m:").Append(string.Join(" ", routeDetails));
-            if (includeConfluence)
-            {
-                var confluenceRoute = BuildStrategyOrderConfluenceComment(symbolName, sourceTimeFrame, entryPrice, stopLoss);
-                if (!string.IsNullOrWhiteSpace(confluenceRoute) && confluenceRoute != "-")
-                    sb.Append("|cf:").Append(confluenceRoute);
-            }
-            sb.Append('|').Append(BuildStrategyOrderContextComment(symbolName, sourceTimeFrame, entryPrice, stopLoss));
+                sb.Append(' ').Append(rewardRiskComment);
+            if (!string.IsNullOrWhiteSpace(riskComment))
+                sb.Append(' ').Append(riskComment.Trim());
+
+            var ltfBias = GetSymbolTrendBiasForTimeFrame(symbolName, sourceTimeFrame);
+            var htfBias = AggregateStrategyTrendBiasScore(symbolName, GetBacktestStrategyHigherTimeFrames(sourceTimeFrame));
+            var directionalDashboard = BuildDirectionalDashboardTexts(symbolName, sourceTimeFrame);
+            var buyCount = CountDirectionalDashboardTextItems(directionalDashboard.Item1);
+            var sellCount = CountDirectionalDashboardTextItems(directionalDashboard.Item2);
+            var confluenceText = signal.ConfluenceCount > 0
+                ? FormatSignedBias(signal.ConfluenceScore) + "/" + signal.ConfluenceCount.ToString(CultureInfo.InvariantCulture)
+                : "0";
+            sb.Append("|c:").Append(confluenceText)
+                .Append(",ltf:").Append(FormatSignedBias(ltfBias))
+                .Append(",htf:").Append(FormatSignedBias(htfBias))
+                .Append(',').Append(buyCount.ToString(CultureInfo.InvariantCulture))
+                .Append('|').Append(sellCount.ToString(CultureInfo.InvariantCulture));
             return sb.ToString();
+        }
+
+        private string ResolveStrategyEntryArtifactLabel(Symbol symbol, string symbolName, TimeFrame sourceTimeFrame, double entryPrice, string entryMode, string eventLabel)
+        {
+            var mode = entryMode ?? "";
+            if (mode.IndexOf("Event", StringComparison.OrdinalIgnoreCase) >= 0)
+                return NormalizeStrategyArtifactLabel(eventLabel, sourceTimeFrame, "event");
+            if (mode.IndexOf("Structure", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                mode.IndexOf("Key_levels", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                var matched = ResolveNearestStrategyLevelArtifact(symbol, symbolName, entryPrice,
+                    GetStrategyLtfProtectionFrames(new BacktestStrategySignal { SourceTimeFrame = sourceTimeFrame })
+                        .Concat(GetStrategyHtfProtectionFrames(new BacktestStrategySignal { SourceTimeFrame = sourceTimeFrame })));
+                if (!string.IsNullOrWhiteSpace(matched))
+                    return matched;
+            }
+            if (mode.IndexOf("FVG", StringComparison.OrdinalIgnoreCase) >= 0) return GetMiniChartLabel(sourceTimeFrame) + ".fvg";
+            if (mode.IndexOf("OB", StringComparison.OrdinalIgnoreCase) >= 0) return GetMiniChartLabel(sourceTimeFrame) + ".ob";
+            if (mode.IndexOf("candle", StringComparison.OrdinalIgnoreCase) >= 0) return GetMiniChartLabel(sourceTimeFrame) + ".candle";
+            return isLimitOrderLabel(mode) ? "price.limit" : "price.market";
+        }
+
+        private bool isLimitOrderLabel(string mode)
+        {
+            return !string.IsNullOrWhiteSpace(mode) &&
+                (mode.IndexOf("limit", StringComparison.OrdinalIgnoreCase) >= 0 || mode.IndexOf("L0", StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        private string ResolveStrategyProtectionArtifactLabel(Symbol symbol, string symbolName, TimeFrame sourceTimeFrame, BacktestStrategySignal signal, double price, string sourceCode, bool isStopLoss, string eventLabel, string rewardRiskComment)
+        {
+            var code = NormalizeStrategyProtectionSourceCode(sourceCode);
+            var tf = GetMiniChartLabel(sourceTimeFrame);
+            switch (code)
+            {
+                case "EV": return NormalizeStrategyArtifactLabel(eventLabel, sourceTimeFrame, "event");
+                case "ST": return tf + "." + (signal.TradeType == TradeType.Buy ? (isStopLoss ? "sl" : "sh") : (isStopLoss ? "sh" : "sl"));
+                case "RR":
+                    return string.IsNullOrWhiteSpace(rewardRiskComment) ? "rr" : "rr" + rewardRiskComment.TrimEnd('r');
+                case "LK": return ResolveNearestStrategyLevelArtifact(symbol, symbolName, price, GetStrategyLtfProtectionFrames(signal)) ?? (tf + ".key");
+                case "HK": return ResolveNearestStrategyLevelArtifact(symbol, symbolName, price, GetStrategyHtfProtectionFrames(signal)) ?? "htf.key";
+                case "OB": return tf + ".ob";
+                case "FG": return tf + ".fvg";
+                case "SH": return "session";
+                case "LQ": return "liquidity";
+                case "VWAP": return tf + ".vwap";
+                case "EMA": return tf + ".ema";
+                case "PT": return NormalizeStrategyArtifactLabel(eventLabel, sourceTimeFrame, "pattern");
+                case "CW":
+                case "CW15":
+                case "CW2": return tf + ".wick";
+                case "MIN":
+                case "MS": return "broker.min";
+                case "ATR1":
+                case "ATR2":
+                case "ATR3": return code.ToLowerInvariant();
+                default:
+                    var matched = ResolveNearestStrategyLevelArtifact(symbol, symbolName, price, new[] { sourceTimeFrame });
+                    return string.IsNullOrWhiteSpace(matched) ? (string.IsNullOrWhiteSpace(code) ? "price" : code.ToLowerInvariant()) : matched;
+            }
+        }
+
+        private string ResolveNearestStrategyLevelArtifact(Symbol symbol, string symbolName, double price, IEnumerable<TimeFrame> timeFrames)
+        {
+            if (symbol == null || !(price > 0) || timeFrames == null)
+                return null;
+            var matches = new List<Tuple<string, double, int>>();
+            foreach (var timeFrame in timeFrames.Where(item => item != null).Distinct())
+            {
+                Bars sourceBars;
+                try { sourceBars = GetBarsForCurrentMasterTimer(timeFrame, symbolName); }
+                catch { sourceBars = null; }
+                if (sourceBars == null)
+                    continue;
+                foreach (var level in CollectTimeFrameStructuralLevelCandidates(symbol, sourceBars, timeFrame))
+                {
+                    var distance = Math.Abs(level.Price - price);
+                    if (distance > Math.Max(symbol.PipSize * 3.0, symbol.TickSize * 3.0))
+                        continue;
+                    matches.Add(Tuple.Create(GetMiniChartLabel(timeFrame) + "." + GetCanonicalMarketLevelDisplayOperand(level.Kind), distance, level.Weight));
+                }
+            }
+            var selected = matches.OrderBy(item => item.Item2).ThenByDescending(item => item.Item3).FirstOrDefault();
+            return selected != null ? selected.Item1 : null;
+        }
+
+        private string NormalizeStrategyArtifactLabel(string value, TimeFrame sourceTimeFrame, string fallback)
+        {
+            var clean = string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+            clean = clean.Replace("↑", "").Replace("↓", "").Replace("!", "").Trim().ToLowerInvariant();
+            return clean.IndexOf('.') >= 0 ? clean : GetMiniChartLabel(sourceTimeFrame) + "." + clean;
+        }
+
+        private int CountDirectionalDashboardTextItems(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text) || string.Equals(text.Trim(), "none", StringComparison.OrdinalIgnoreCase))
+                return 0;
+            var count = 0;
+            foreach (Match match in Regex.Matches(text, @"\[([^\]]*)\]"))
+            {
+                var content = match.Groups[1].Value;
+                if (!string.IsNullOrWhiteSpace(content))
+                    count += content.Split(new[] { " | " }, StringSplitOptions.RemoveEmptyEntries).Length;
+            }
+            var hidden = Regex.Match(text, @"\s\+(\d+)\s*$");
+            int hiddenCount;
+            if (hidden.Success && int.TryParse(hidden.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out hiddenCount))
+                count += Math.Max(0, hiddenCount);
+            return count;
         }
 
         private string BuildStrategyRewardRiskComment(double entryPrice, double takeProfit, double stopLoss)
@@ -29105,13 +29226,9 @@ namespace cAlgo.Robots
 
         private string FormatStrategyRiskLegComment(int legNumber, double approvedRiskMoney, double baseRiskMoney)
         {
-            var percentage = baseRiskMoney > 0
-                ? Math.Max(0, approvedRiskMoney) / baseRiskMoney * 100.0
-                : 0.0;
             return string.Format(
                 CultureInfo.InvariantCulture,
-                "rs:{0:0}%({1:0.##}$)",
-                percentage,
+                "{0:0.##}$",
                 Math.Max(0, approvedRiskMoney));
         }
 
@@ -31329,7 +31446,8 @@ namespace cAlgo.Robots
                 signal.PatternToEntryBars,
                 signal.SignalTime,
                 protectionSourceComment,
-                ResolveSignalConfluenceRules(signal).Count > 0);
+                ResolveSignalConfluenceRules(signal).Count > 0,
+                signal);
             var result = AutoExecuteTrade(new AutoTradeRequest
             {
                 Type = effectiveUseLimitOrder
@@ -31613,7 +31731,8 @@ namespace cAlgo.Robots
                             signal.PatternToEntryBars,
                             signal.SignalTime,
                             extraProtectionSourceComment,
-                            ResolveSignalConfluenceRules(signal).Count > 0),
+                            ResolveSignalConfluenceRules(signal).Count > 0,
+                            signal),
                         EntryMode = tradePreset.EntryMode,
                         StopLossMode = tradePreset.StopLossMode,
                         TakeProfitMode = tradePreset.TakeProfitMode,
@@ -38366,7 +38485,8 @@ namespace cAlgo.Robots
                     signal.PatternToEntryBars,
                     signal.SignalTime,
                     BuildStrategyProtectionSourceComment(signal, sl, tp),
-                    false);
+                    false,
+                    signal);
             }
             catch
             {
