@@ -17958,6 +17958,39 @@ namespace cAlgo.Robots
             if (high <= low)
                 return objectIndex;
 
+            // Combined Session mode deliberately shows both time contexts:
+            // - upper line: the corresponding ICT KZ high across the exact KZ window;
+            // - lower line: the full-session low across the exact session window.
+            // KZ-only mode keeps the conventional KZ high/low pair.
+            var topStartUtc = startUtc;
+            var topEndUtc = endUtc;
+            var topHigh = high;
+            if (useFullSession)
+            {
+                DateTime killerZoneStartUtc;
+                DateTime killerZoneEndUtc;
+                // The Asian KZ begins on the prior New York calendar date while its
+                // corresponding Tokyo session belongs to the following market date.
+                var killerZoneDate = NormalizeSessionAlias(sessionName) == "Asia"
+                    ? date.Date.AddDays(-1)
+                    : date.Date;
+                if (TryGetKillerZoneUtcRange(sessionName, killerZoneDate, out killerZoneStartUtc, out killerZoneEndUtc))
+                {
+                    double killerZoneHigh;
+                    double killerZoneLow;
+                    DateTime killerZoneHighTime;
+                    DateTime killerZoneLowTime;
+                    if (TryGetRangeHighLow(Bars, killerZoneStartUtc, killerZoneEndUtc, out killerZoneHigh, out killerZoneLow, out killerZoneHighTime, out killerZoneLowTime))
+                    {
+                        topStartUtc = killerZoneStartUtc;
+                        topEndUtc = killerZoneEndUtc;
+                        topHigh = killerZoneHigh;
+                    }
+                }
+            }
+            if (topHigh <= low)
+                return objectIndex;
+
             // Session and KZ ranges use their session accent (Asia cyan, London green,
             // New York amber) at a readable opacity. The old 100/255 alpha made even a
             // completed range look blurred against a dark chart.
@@ -17972,17 +18005,14 @@ namespace cAlgo.Robots
             var isNearCurrent = isCompleted && hasProjection && projectionEndUtc >= nowUtc;
             var temporalAlpha = isFuture ? 90 : isCurrent ? 235 : isNearCurrent ? 220 : 200;
             var temporalColor = WithAlpha(kzColor, temporalAlpha);
-            var lineEndUtc = isCompleted
-                ? endUtc
-                : (nowUtc < startUtc ? endUtc : nowUtc);
             var style = isCompleted ? "Solid" : "Dots";
             var id = objectIndex.ToString(CultureInfo.InvariantCulture);
-            var topLine = Chart.DrawTrendLine("KZ_TOP_" + (isCompleted ? "DONE_" : "LIVE_") + id, startUtc, high, lineEndUtc, high, temporalColor);
+            var topLine = Chart.DrawTrendLine("KZ_TOP_" + (isCompleted ? "DONE_" : "LIVE_") + id, topStartUtc, topHigh, topEndUtc, topHigh, temporalColor);
             TrySetPropertyValue(topLine, "Thickness", 1);
             TrySetEnumPropertyValue(topLine, "LineStyle", style);
             TrySetChartObjectBackground(topLine);
 
-            var bottomLine = Chart.DrawTrendLine("KZ_BOT_" + (isCompleted ? "DONE_" : "LIVE_") + id, startUtc, low, lineEndUtc, low, temporalColor);
+            var bottomLine = Chart.DrawTrendLine("KZ_BOT_" + (isCompleted ? "DONE_" : "LIVE_") + id, startUtc, low, endUtc, low, temporalColor);
             TrySetPropertyValue(bottomLine, "Thickness", 1);
             TrySetEnumPropertyValue(bottomLine, "LineStyle", style);
             TrySetChartObjectBackground(bottomLine);
@@ -17994,12 +18024,12 @@ namespace cAlgo.Robots
             // identical. A sub-pixel time offset keeps the edge visually vertical while giving
             // the renderer a non-zero segment to paint.
             var boundaryRenderOffset = TimeSpan.FromSeconds(Math.Max(1.0, TimeFrameToMinutes(Chart.TimeFrame) * 0.5));
-            var startBoundary = Chart.DrawTrendLine("KZ_START_" + id, startUtc, high, startUtc.Add(boundaryRenderOffset), low, boundaryColor);
+            var startBoundary = Chart.DrawTrendLine("KZ_START_" + id, startUtc, topHigh, startUtc.Add(boundaryRenderOffset), low, boundaryColor);
             TrySetPropertyValue(startBoundary, "Thickness", 1);
             TrySetPropertyValue(startBoundary, "Color", boundaryColor);
             TrySetEnumPropertyValue(startBoundary, "LineStyle", "Dots");
             TrySetPropertyValue(startBoundary, "ZIndex", 6);
-            var endBoundary = Chart.DrawTrendLine("KZ_END_" + id, endUtc, high, endUtc.Add(boundaryRenderOffset), low, boundaryColor);
+            var endBoundary = Chart.DrawTrendLine("KZ_END_" + id, endUtc, topHigh, endUtc.Add(boundaryRenderOffset), low, boundaryColor);
             TrySetPropertyValue(endBoundary, "Thickness", 1);
             TrySetPropertyValue(endBoundary, "Color", boundaryColor);
             TrySetEnumPropertyValue(endBoundary, "LineStyle", "Dots");
@@ -18010,7 +18040,7 @@ namespace cAlgo.Robots
             if (hasProjection)
             {
                 var projectionColor = WithAlpha(kzColor, 30);
-                var topProjection = Chart.DrawTrendLine("KZ_TOP_PROJ_" + id, endUtc, high, projectionEndUtc, high, projectionColor);
+                var topProjection = Chart.DrawTrendLine("KZ_TOP_PROJ_" + id, topEndUtc, topHigh, projectionEndUtc, topHigh, projectionColor);
                 TrySetPropertyValue(topProjection, "Thickness", 1);
                 TrySetEnumPropertyValue(topProjection, "LineStyle", "Dots");
                 TrySetChartObjectBackground(topProjection);
@@ -18020,9 +18050,11 @@ namespace cAlgo.Robots
                 TrySetChartObjectBackground(bottomProjection);
             }
 
-            var textX = startUtc;
-            var topTextY = high + (Math.Max(high - low, Symbol.PipSize * 20) * 0.08);
+            var textX = topStartUtc;
+            var topTextY = topHigh + (Math.Max(topHigh - low, Symbol.PipSize * 20) * 0.08);
             var sessionLabel = string.IsNullOrWhiteSpace(displayLabel) ? "SESSION" : displayLabel.Trim().ToUpperInvariant();
+            if (useFullSession)
+                sessionLabel = sessionLabel.Replace(" SESSION", " KZ HIGH / SESSION LOW");
             var text = Chart.DrawText("KZ_TXT_" + objectIndex.ToString(CultureInfo.InvariantCulture), sessionLabel, textX, topTextY, temporalColor);
             TryStyleChartText(text, GetNormalChartLabelFontSize(), "Courier New", true);
             return objectIndex + 1;
