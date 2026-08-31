@@ -74,6 +74,7 @@ namespace cAlgo.Robots
         private StackPanel _chartSummaryPanel;
         private string _chartSummaryLayoutKey = "";
         private string _chartSummaryRenderKey = "";
+        private int _chartSummaryTopRightQueueLineCount = -1;
         private readonly Dictionary<string, ChartSummaryRowControls> _chartSummaryRowControls = new Dictionary<string, ChartSummaryRowControls>(StringComparer.OrdinalIgnoreCase);
         private ChartSummaryRowControls _chartSummaryAllRowControls;
         private bool _legacyDashboardObjectsCleaned = false;
@@ -5850,17 +5851,6 @@ namespace cAlgo.Robots
                     PadCell(label, metricWidth),
                     PadCell(string.Format(CultureInfo.InvariantCulture, "{0}%", FormatDashboardPercent(currentValue)), currentWidth, true),
                     PadCell(string.IsNullOrWhiteSpace(limitText) ? "-" : limitText.Trim(), limitWidth, true));
-            Func<string, string, string, string> buildInfoRow = (label, currentValue, limitValue) =>
-                BuildTextTableRow(
-                    PadCell(label, metricWidth),
-                    PadCell(string.IsNullOrWhiteSpace(currentValue) ? "-" : currentValue.Trim(), currentWidth, true),
-                    PadCell(string.IsNullOrWhiteSpace(limitValue) ? "-" : limitValue.Trim(), limitWidth, true));
-            Func<string, string> buildSectionRow = label =>
-                BuildTextTableRow(
-                    PadCell(label, metricWidth),
-                    PadCell("", currentWidth, true),
-                    PadCell("", limitWidth, true));
-
             Func<RiskTemplate, List<string>> buildTemplateSection = template =>
             {
                 var lines = new List<string>
@@ -5872,15 +5862,10 @@ namespace cAlgo.Robots
                 };
                 if (template != RiskTemplate.Custom)
                 {
-                    var configuredTradeRiskLimit = GetRiskLimitPresetLabel(MaxRiskPreset);
                     var configuredOpenRiskLimit = GetRiskLimitPresetLabel(MaxTotalOpenRiskPreset);
                     lines.Add(buildRiskRow("Day Loss", riskState.DailyLossPercent, GetEffectiveMaxDailyLossPercent(template)));
                     lines.Add(buildRiskRowWithLimitText("Day Win", riskState.DailyNetWinPercent, GetRiskLimitPresetLabel(MaxDailyWinPreset)));
                     lines.Add(buildRiskRow("Drawdown", riskState.EquityDrawdownPercent, GetEffectiveMaxEquityDrawdownPercent(template)));
-                    lines.Add(buildInfoRow("DD Mode", GetRiskDrawdownModeLabel(template), GetRiskDrawdownModeLabel(template)));
-                    lines.Add(buildSectionRow("--- Trade Config ---"));
-                    lines.Add(buildRiskRowWithLimitText("M. cBot Risk", riskState.MaxSingleOpenRiskPercent, configuredTradeRiskLimit));
-                    lines.Add(buildInfoRow("M. Manual Risk", GetRiskLimitPresetLabel(MaxManualRiskPreset), GetRiskLimitPresetLabel(MaxManualRiskPreset)));
                     lines.Add(buildRiskRowWithLimitText("M. Total Risk", riskState.TotalOpenRiskPercent, configuredOpenRiskLimit));
                     lines.Add(buildRiskRowWithLimitText("Same idea Risk", GetCurrentSymbolDirectionalRiskPercent(), GetRiskSameDirectionLimitLabel(RiskTemplate.Custom)));
                     return lines;
@@ -5889,10 +5874,6 @@ namespace cAlgo.Robots
                 lines.Add(buildRiskRowWithLimitText("Day Loss", riskState.DailyNetLossPercent, GetRiskLimitPresetLabel(MaxDailyLossPreset)));
                 lines.Add(buildRiskRowWithLimitText("Day Win", riskState.DailyNetWinPercent, GetRiskLimitPresetLabel(MaxDailyWinPreset)));
                 lines.Add(buildRiskRowWithLimitText("Drawdown", riskState.EquityDrawdownPercent, GetRiskLimitPresetLabel(MaxEquityDrawdownPreset)));
-                lines.Add(buildInfoRow("DD Mode", GetRiskDrawdownModeLabel(template), GetRiskDrawdownModeLabel(template)));
-                lines.Add(buildSectionRow("--- Trade Config ---"));
-                lines.Add(buildRiskRowWithLimitText("M. cBot Risk", riskState.MaxSingleOpenRiskPercent, GetRiskLimitPresetLabel(MaxRiskPreset)));
-                lines.Add(buildInfoRow("M. Manual Risk", GetRiskLimitPresetLabel(MaxManualRiskPreset), GetRiskLimitPresetLabel(MaxManualRiskPreset)));
                 lines.Add(buildRiskRowWithLimitText("M. Total Risk", riskState.TotalOpenRiskPercent, GetRiskLimitPresetLabel(MaxTotalOpenRiskPreset)));
                 lines.Add(buildRiskRowWithLimitText("Same idea Risk", GetCurrentSymbolDirectionalRiskPercent(), GetRiskSameDirectionLimitLabel(RiskTemplate.Custom)));
                 return lines;
@@ -34698,6 +34679,7 @@ namespace cAlgo.Robots
                 _chartSummaryPanel = null;
                 _chartSummaryLayoutKey = "";
                 _chartSummaryRenderKey = "";
+                _chartSummaryTopRightQueueLineCount = -1;
                 _chartSummaryRowControls.Clear();
                 _chartSummaryAllRowControls = null;
                 return;
@@ -34720,6 +34702,7 @@ namespace cAlgo.Robots
                     _chartSummaryPanel = null;
                     _chartSummaryLayoutKey = "";
                     _chartSummaryRenderKey = "";
+                    _chartSummaryTopRightQueueLineCount = -1;
                     _chartSummaryRowControls.Clear();
                     _chartSummaryAllRowControls = null;
                     return;
@@ -34861,6 +34844,15 @@ namespace cAlgo.Robots
 
                 var layoutKey = layoutKeyBuilder.ToString();
                 var renderKey = renderKeyBuilder.ToString();
+                var queueLineCount = Math.Max(0, CountTextLines(_lastDrawnQueuePanelText));
+                var summaryTopMargin = 18 + (queueLineCount * 12);
+                var summaryMargin = string.Format(CultureInfo.InvariantCulture, "0 {0} 6 0", summaryTopMargin);
+                if (_chartSummaryPanel != null && _chartSummaryTopRightQueueLineCount != queueLineCount)
+                {
+                    _chartSummaryPanel.HorizontalAlignment = HorizontalAlignment.Right;
+                    _chartSummaryPanel.Margin = summaryMargin;
+                    _chartSummaryTopRightQueueLineCount = queueLineCount;
+                }
                 var canUpdateExisting = _chartSummaryPanel != null &&
                     string.Equals(_chartSummaryLayoutKey, layoutKey, StringComparison.Ordinal) &&
                     _chartSummaryAllRowControls != null;
@@ -34910,11 +34902,12 @@ namespace cAlgo.Robots
                 _chartSummaryPanel = new StackPanel
                 {
                     Orientation = Orientation.Vertical,
-                    HorizontalAlignment = HorizontalAlignment.Left,
+                    HorizontalAlignment = HorizontalAlignment.Right,
                     VerticalAlignment = VerticalAlignment.Top,
-                    Margin = "6 18 0 0",
+                    Margin = summaryMargin,
                     Opacity = 0.90
                 };
+                _chartSummaryTopRightQueueLineCount = queueLineCount;
 
                 var headerRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = "0 0 0 1" };
                 headerRow.AddChild(BuildChartSummaryLabel("", Color.White, symbolWidth, "Left"));
