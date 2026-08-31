@@ -8736,11 +8736,9 @@ namespace cAlgo.Robots
             switch (NormalizeSessionAlias(sessionName))
             {
                 case "Asia":
-                    return Color.FromArgb(235, 0, 224, 255);
                 case "London":
-                    return Color.FromArgb(235, 110, 255, 120);
                 case "NewYork":
-                    return Color.FromArgb(235, 255, 196, 64);
+                    return Color.FromArgb(235, 0, 224, 255);
                 default:
                     return Color.FromArgb(235, 180, 180, 180);
             }
