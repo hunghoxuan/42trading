@@ -17902,19 +17902,19 @@ namespace cAlgo.Robots
                         objectIndex = DrawSessionContextBox(objectIndex, "Asia", date, false, "Asia KZ");
                         break;
                     case KillerZoneVisualMode.Asia_Session:
-                        objectIndex = DrawSessionContextBox(objectIndex, "Asia", date, true, "Asia Session");
+                        objectIndex = DrawSessionContextBox(objectIndex, "Asia", date, true, "Asia");
                         break;
                     case KillerZoneVisualMode.LD_KZ:
                         objectIndex = DrawSessionContextBox(objectIndex, "London", date, false, "LD KZ");
                         break;
                     case KillerZoneVisualMode.LD_Session:
-                        objectIndex = DrawSessionContextBox(objectIndex, "London", date, true, "LD Session");
+                        objectIndex = DrawSessionContextBox(objectIndex, "London", date, true, "LD");
                         break;
                     case KillerZoneVisualMode.NY_KZ:
                         objectIndex = DrawSessionContextBox(objectIndex, "NewYork", date, false, "NY KZ");
                         break;
                     case KillerZoneVisualMode.NY_Session:
-                        objectIndex = DrawSessionContextBox(objectIndex, "NewYork", date, true, "NY Session");
+                        objectIndex = DrawSessionContextBox(objectIndex, "NewYork", date, true, "NY");
                         break;
                     case KillerZoneVisualMode.All_KZs:
                         objectIndex = DrawSessionContextBox(objectIndex, "Asia", date, false, "Asia KZ");
@@ -17923,9 +17923,9 @@ namespace cAlgo.Robots
                         break;
                     case KillerZoneVisualMode.All_Sessions:
                     default:
-                        objectIndex = DrawSessionContextBox(objectIndex, "Asia", date, true, "Asia Session");
-                        objectIndex = DrawSessionContextBox(objectIndex, "London", date, true, "LD Session");
-                        objectIndex = DrawSessionContextBox(objectIndex, "NewYork", date, true, "NY Session");
+                        objectIndex = DrawSessionContextBox(objectIndex, "Asia", date, true, "Asia");
+                        objectIndex = DrawSessionContextBox(objectIndex, "London", date, true, "LD");
+                        objectIndex = DrawSessionContextBox(objectIndex, "NewYork", date, true, "NY");
                         break;
                 }
             }
@@ -18053,8 +18053,6 @@ namespace cAlgo.Robots
             var textX = topStartUtc;
             var topTextY = topHigh + (Math.Max(topHigh - low, Symbol.PipSize * 20) * 0.08);
             var sessionLabel = string.IsNullOrWhiteSpace(displayLabel) ? "SESSION" : displayLabel.Trim().ToUpperInvariant();
-            if (useFullSession)
-                sessionLabel = sessionLabel.Replace(" SESSION", " KZ HIGH / SESSION LOW");
             var text = Chart.DrawText("KZ_TXT_" + objectIndex.ToString(CultureInfo.InvariantCulture), sessionLabel, textX, topTextY, temporalColor);
             TryStyleChartText(text, GetNormalChartLabelFontSize(), "Courier New", true);
             return objectIndex + 1;
