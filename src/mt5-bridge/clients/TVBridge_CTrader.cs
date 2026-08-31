@@ -28951,7 +28951,7 @@ namespace cAlgo.Robots
 
             var sb = new StringBuilder();
             // Keep broker comments compact and explain the actual route:
-            // m5.pin|Now_Event.1-1|entry:m5.pin->TP:rr1 4450$/SL:m5.pin 4430$ 1r 35$|c:+3/5,ltf:+4,htf:+1,62|39
+            // m5.pin|Now_Event.1-1|e:m5.pin->TP:rr1 4450.00/SL:m5.pin 4430.00 1r 35$|c:+3/5,ltf:+4,htf:+1,62|39
             // Internal chain matching lives in the order Label, not in a visible tr:* comment token.
             var eventLabel = string.IsNullOrWhiteSpace(eventName) ? "event" : eventName.Trim();
             eventLabel = eventLabel
@@ -28971,9 +28971,9 @@ namespace cAlgo.Robots
             var entryArtifact = ResolveStrategyEntryArtifactLabel(symbol, symbolName, sourceTimeFrame, entryPrice, entryMode, eventLabel);
             var tpArtifact = ResolveStrategyProtectionArtifactLabel(symbol, symbolName, sourceTimeFrame, signal, takeProfit, tpSourceCode, false, eventLabel, rewardRiskComment);
             var slArtifact = ResolveStrategyProtectionArtifactLabel(symbol, symbolName, sourceTimeFrame, signal, stopLoss, slSourceCode, true, eventLabel, rewardRiskComment);
-            sb.Append("|entry:").Append(entryArtifact)
-                .Append("->TP:").Append(tpArtifact).Append(' ').Append(FormatPriceShort(takeProfit)).Append('$')
-                .Append("/SL:").Append(slArtifact).Append(' ').Append(FormatPriceShort(stopLoss)).Append('$');
+            sb.Append("|e:").Append(entryArtifact)
+                .Append("->TP:").Append(tpArtifact).Append(' ').Append(FormatStrategyCommentPrice(symbol, takeProfit))
+                .Append("/SL:").Append(slArtifact).Append(' ').Append(FormatStrategyCommentPrice(symbol, stopLoss));
             if (!string.IsNullOrWhiteSpace(rewardRiskComment))
                 sb.Append(' ').Append(rewardRiskComment);
             if (!string.IsNullOrWhiteSpace(riskComment))
@@ -29044,7 +29044,7 @@ namespace cAlgo.Robots
                 case "CW15":
                 case "CW2": return tf + ".wick";
                 case "MIN":
-                case "MS": return "broker.min";
+                case "MS": return "min";
                 case "ATR1":
                 case "ATR2":
                 case "ATR3": return code.ToLowerInvariant();
@@ -29570,6 +29570,14 @@ namespace cAlgo.Robots
             if (!IsFiniteNumber(price) || price <= 0)
                 return "0";
             return price.ToString("0.##", CultureInfo.InvariantCulture);
+        }
+
+        private string FormatStrategyCommentPrice(Symbol symbol, double price)
+        {
+            if (!IsFiniteNumber(price) || price <= 0)
+                return "0";
+            var digits = symbol != null ? Math.Max(0, Math.Min(15, symbol.Digits)) : 2;
+            return price.ToString("F" + digits.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
         }
 
         private DateTime ResolveStrategyTradeGroupBarTime(string symbolName, BacktestStrategySignal signal)
