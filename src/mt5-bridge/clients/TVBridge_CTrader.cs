@@ -2092,23 +2092,24 @@ namespace cAlgo.Robots
 
         private string GetBottomRightSessionContextText()
         {
-            var utcNow = DateTime.UtcNow;
+            var utcNow = NormalizeBotTimeToUtc(Server.Time);
             var localNow = TimeZoneInfo.ConvertTimeFromUtc(utcNow, TimeZoneInfo.Local);
             if (localNow.DayOfWeek == DayOfWeek.Saturday || localNow.DayOfWeek == DayOfWeek.Sunday)
                 return "Weekend";
 
-            if (!IsStrategyTradingTimeAllowed(Server.Time))
-                return "No trade time";
+            var useFullSession = !IsKillerZoneVisualSelection();
+            var contextLabel = useFullSession ? "Session" : "KZ";
+            var orderedSessions = GetDisplayedSessionContextNames();
+            if (orderedSessions.Length == 0)
+                return contextLabel + ": off";
 
-            var orderedSessions = new[] { "Asia", "London", "NewYork" };
             foreach (var sessionName in orderedSessions)
             {
                 DateTime startUtc;
                 DateTime endUtc;
-                if (!TryGetSessionUtcRangeAtUtc(sessionName, utcNow, out startUtc, out endUtc))
+                if (!TryGetContextUtcRangeAtUtc(sessionName, utcNow, useFullSession, out startUtc, out endUtc))
                     continue;
 
-                var minutesToEnd = Math.Max(0, (int)Math.Round((endUtc - utcNow).TotalMinutes));
                 var displayStartTime = TimeZoneInfo.ConvertTimeFromUtc(startUtc, TimeZoneInfo.Local);
                 var displayEndTime = TimeZoneInfo.ConvertTimeFromUtc(endUtc, TimeZoneInfo.Local);
                 SessionWindowDefinition definition;
@@ -2119,30 +2120,18 @@ namespace cAlgo.Robots
                 string upcomingSessionLabel = "";
                 foreach (var candidateSessionName in orderedSessions)
                 {
-                    SessionWindowDefinition candidateDefinition;
-                    if (!TryGetSessionWindowDefinition(candidateSessionName, out candidateDefinition))
+                    DateTime candidateStartUtc;
+                    DateTime candidateEndUtc;
+                    if (!TryGetNextContextUtcRange(candidateSessionName, utcNow, useFullSession, out candidateStartUtc, out candidateEndUtc))
                         continue;
 
-                    TimeZoneInfo candidateTimeZone;
-                    if (!TryGetSessionTimeZone(candidateDefinition, out candidateTimeZone))
-                        continue;
-
-                    var candidateMarketNow = TimeZoneInfo.ConvertTimeFromUtc(utcNow, candidateTimeZone);
-                    for (var dayOffset = 0; dayOffset <= 2; dayOffset++)
+                    if (upcomingStartUtc == DateTime.MinValue || candidateStartUtc < upcomingStartUtc)
                     {
-                        DateTime candidateSessionStartUtc;
-                        DateTime candidateSessionEndUtc;
-                        if (!TryGetSessionUtcRangeForMarketDate(candidateSessionName, candidateMarketNow.Date.AddDays(dayOffset), out candidateSessionStartUtc, out candidateSessionEndUtc))
-                            continue;
-
-                        if (candidateSessionStartUtc <= utcNow)
-                            continue;
-
-                        if (upcomingStartUtc == DateTime.MinValue || candidateSessionStartUtc < upcomingStartUtc)
-                        {
-                            upcomingStartUtc = candidateSessionStartUtc;
-                            upcomingSessionLabel = candidateDefinition.Label;
-                        }
+                        upcomingStartUtc = candidateStartUtc;
+                        SessionWindowDefinition candidateDefinition;
+                        upcomingSessionLabel = TryGetSessionWindowDefinition(candidateSessionName, out candidateDefinition)
+                            ? candidateDefinition.Label
+                            : candidateSessionName;
                     }
                 }
 
@@ -2159,7 +2148,8 @@ namespace cAlgo.Robots
 
                 return string.Format(
                     CultureInfo.InvariantCulture,
-                    "KZ: {0} {1}-{2}{3}",
+                    "{0}: {1} {2}-{3}{4}",
+                    contextLabel,
                     definition.Label,
                     displayStartTime.ToString("HH:mm", CultureInfo.InvariantCulture),
                     displayEndTime.ToString("HH:mm", CultureInfo.InvariantCulture),
@@ -2170,30 +2160,18 @@ namespace cAlgo.Robots
             string nextSessionLabel = "";
             foreach (var sessionName in orderedSessions)
             {
-                SessionWindowDefinition definition;
-                if (!TryGetSessionWindowDefinition(sessionName, out definition))
+                DateTime candidateStartUtc;
+                DateTime candidateEndUtc;
+                if (!TryGetNextContextUtcRange(sessionName, utcNow, useFullSession, out candidateStartUtc, out candidateEndUtc))
                     continue;
 
-                TimeZoneInfo timeZone;
-                if (!TryGetSessionTimeZone(definition, out timeZone))
-                    continue;
-
-                var marketNow = TimeZoneInfo.ConvertTimeFromUtc(utcNow, timeZone);
-                for (var dayOffset = 0; dayOffset <= 2; dayOffset++)
+                if (nextStartUtc == DateTime.MinValue || candidateStartUtc < nextStartUtc)
                 {
-                    DateTime candidateStartUtc;
-                    DateTime candidateEndUtc;
-                    if (!TryGetSessionUtcRangeForMarketDate(sessionName, marketNow.Date.AddDays(dayOffset), out candidateStartUtc, out candidateEndUtc))
-                        continue;
-
-                    if (candidateStartUtc <= utcNow)
-                        continue;
-
-                    if (nextStartUtc == DateTime.MinValue || candidateStartUtc < nextStartUtc)
-                    {
-                        nextStartUtc = candidateStartUtc;
-                        nextSessionLabel = definition.Label;
-                    }
+                    nextStartUtc = candidateStartUtc;
+                    SessionWindowDefinition definition;
+                    nextSessionLabel = TryGetSessionWindowDefinition(sessionName, out definition)
+                        ? definition.Label
+                        : sessionName;
                 }
             }
 
@@ -2203,12 +2181,42 @@ namespace cAlgo.Robots
                 var displayStartTime = TimeZoneInfo.ConvertTimeFromUtc(nextStartUtc, TimeZoneInfo.Local);
                 return string.Format(
                     CultureInfo.InvariantCulture,
-                    "KZ: {0} {1}",
+                    "{0}: {1} {2}",
+                    contextLabel,
                     nextSessionLabel,
                     FormatClockWithRelative(displayStartTime, minutesToStart));
             }
 
-            return "KZ: none";
+            return contextLabel + ": none";
+        }
+
+        private bool IsKillerZoneVisualSelection()
+        {
+            return DrawKillerZones == KillerZoneVisualMode.Asia_KZ ||
+                DrawKillerZones == KillerZoneVisualMode.LD_KZ ||
+                DrawKillerZones == KillerZoneVisualMode.NY_KZ ||
+                DrawKillerZones == KillerZoneVisualMode.All_KZs;
+        }
+
+        private string[] GetDisplayedSessionContextNames()
+        {
+            switch (DrawKillerZones)
+            {
+                case KillerZoneVisualMode.Asia_KZ:
+                case KillerZoneVisualMode.Asia_Session:
+                    return new[] { "Asia" };
+                case KillerZoneVisualMode.LD_KZ:
+                case KillerZoneVisualMode.LD_Session:
+                    return new[] { "London" };
+                case KillerZoneVisualMode.NY_KZ:
+                case KillerZoneVisualMode.NY_Session:
+                    return new[] { "NewYork" };
+                case KillerZoneVisualMode.All_KZs:
+                case KillerZoneVisualMode.All_Sessions:
+                    return new[] { "Asia", "London", "NewYork" };
+                default:
+                    return new string[0];
+            }
         }
 
         private string GetBottomRightNewsContextText(DateTime now)
@@ -2612,6 +2620,74 @@ namespace cAlgo.Robots
             return false;
         }
 
+        private bool TryGetContextUtcRangeAtUtc(string sessionName, DateTime utcReference, bool useFullSession, out DateTime startUtc, out DateTime endUtc)
+        {
+            if (useFullSession)
+                return TryGetSessionUtcRangeAtUtc(sessionName, utcReference, out startUtc, out endUtc);
+
+            startUtc = DateTime.MinValue;
+            endUtc = DateTime.MinValue;
+            SessionWindowDefinition definition;
+            if (!TryGetKillerZoneWindowDefinition(sessionName, out definition))
+                return false;
+
+            TimeZoneInfo timeZone;
+            if (!TryGetSessionTimeZone(definition, out timeZone))
+                return false;
+
+            var normalizedUtc = NormalizeBotTimeToUtc(utcReference);
+            var newYorkDate = TimeZoneInfo.ConvertTimeFromUtc(normalizedUtc, timeZone).Date;
+            for (var dayOffset = 0; dayOffset >= -1; dayOffset--)
+            {
+                DateTime candidateStartUtc;
+                DateTime candidateEndUtc;
+                if (TryGetKillerZoneUtcRange(sessionName, newYorkDate.AddDays(dayOffset), out candidateStartUtc, out candidateEndUtc) &&
+                    normalizedUtc >= candidateStartUtc && normalizedUtc < candidateEndUtc)
+                {
+                    startUtc = candidateStartUtc;
+                    endUtc = candidateEndUtc;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool TryGetNextContextUtcRange(string sessionName, DateTime utcReference, bool useFullSession, out DateTime startUtc, out DateTime endUtc)
+        {
+            startUtc = DateTime.MinValue;
+            endUtc = DateTime.MinValue;
+
+            SessionWindowDefinition definition;
+            if (!(useFullSession
+                ? TryGetSessionWindowDefinition(sessionName, out definition)
+                : TryGetKillerZoneWindowDefinition(sessionName, out definition)))
+                return false;
+
+            TimeZoneInfo timeZone;
+            if (!TryGetSessionTimeZone(definition, out timeZone))
+                return false;
+
+            var normalizedUtc = NormalizeBotTimeToUtc(utcReference);
+            var contextDate = TimeZoneInfo.ConvertTimeFromUtc(normalizedUtc, timeZone).Date;
+            for (var dayOffset = 0; dayOffset <= 2; dayOffset++)
+            {
+                DateTime candidateStartUtc;
+                DateTime candidateEndUtc;
+                var resolved = useFullSession
+                    ? TryGetSessionUtcRangeForMarketDate(sessionName, contextDate.AddDays(dayOffset), out candidateStartUtc, out candidateEndUtc)
+                    : TryGetKillerZoneUtcRange(sessionName, contextDate.AddDays(dayOffset), out candidateStartUtc, out candidateEndUtc);
+                if (!resolved || candidateStartUtc <= normalizedUtc)
+                    continue;
+
+                startUtc = candidateStartUtc;
+                endUtc = candidateEndUtc;
+                return true;
+            }
+
+            return false;
+        }
+
         private bool TryGetSessionWindowDefinition(string sessionName, out SessionWindowDefinition definition)
         {
             definition = default(SessionWindowDefinition);
@@ -2689,6 +2765,51 @@ namespace cAlgo.Robots
                         LocalStart = new TimeSpan(18, 0, 0),
                         LocalEnd = new TimeSpan(0, 0, 0),
                         TimeZoneIds = new[] { "Europe/Prague", "Europe/Berlin", "Central Europe Standard Time", "W. Europe Standard Time" }
+                    };
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private bool TryGetKillerZoneWindowDefinition(string sessionName, out SessionWindowDefinition definition)
+        {
+            definition = default(SessionWindowDefinition);
+            var normalized = NormalizeSessionAlias(sessionName);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return false;
+
+            var newYorkTimeZoneIds = new[] { "America/New_York", "Eastern Standard Time" };
+            switch (normalized)
+            {
+                case "Asia":
+                    definition = new SessionWindowDefinition
+                    {
+                        Name = "Asia",
+                        Label = "Asia",
+                        LocalStart = new TimeSpan(20, 0, 0),
+                        LocalEnd = new TimeSpan(0, 0, 0),
+                        TimeZoneIds = newYorkTimeZoneIds
+                    };
+                    return true;
+                case "London":
+                    definition = new SessionWindowDefinition
+                    {
+                        Name = "London",
+                        Label = "LD",
+                        LocalStart = new TimeSpan(2, 0, 0),
+                        LocalEnd = new TimeSpan(5, 0, 0),
+                        TimeZoneIds = newYorkTimeZoneIds
+                    };
+                    return true;
+                case "NewYork":
+                    definition = new SessionWindowDefinition
+                    {
+                        Name = "NewYork",
+                        Label = "NY",
+                        LocalStart = new TimeSpan(7, 0, 0),
+                        LocalEnd = new TimeSpan(10, 0, 0),
+                        TimeZoneIds = newYorkTimeZoneIds
                     };
                     return true;
                 default:
@@ -2852,7 +2973,7 @@ namespace cAlgo.Robots
         private bool IsTimeWithinKillerZoneAtUtc(string sessionName, DateTime utcTime)
         {
             SessionWindowDefinition definition;
-            if (!TryGetSessionWindowDefinition(sessionName, out definition))
+            if (!TryGetKillerZoneWindowDefinition(sessionName, out definition))
                 return false;
 
             TimeZoneInfo timeZone;
@@ -8638,9 +8759,12 @@ namespace cAlgo.Robots
             if (string.IsNullOrWhiteSpace(nextSession))
                 return false;
 
-            // NY hands off to the following Asia session; Asia and London use the same
-            // reference market date. The time-zone-aware range resolver handles DST.
-            var nextDate = normalized == "NewYork" ? date.Date.AddDays(1) : date.Date;
+            // Full sessions run Asia -> London -> New York -> next Asia. ICT Kill Zones
+            // are New-York anchored and run London -> New York -> Asia -> next London.
+            // The time-zone-aware range resolver handles DST for both schedules.
+            var nextDate = useFullSession
+                ? (normalized == "NewYork" ? date.Date.AddDays(1) : date.Date)
+                : (normalized == "Asia" ? date.Date.AddDays(1) : date.Date);
             DateTime nextStartUtc;
             DateTime nextEndUtc;
             if (!TryGetContextUtcRange(nextSession, nextDate, useFullSession, out nextStartUtc, out nextEndUtc))
@@ -8658,7 +8782,7 @@ namespace cAlgo.Robots
             endUtc = DateTime.MinValue;
 
             SessionWindowDefinition definition;
-            if (!TryGetSessionWindowDefinition(sessionName, out definition))
+            if (!TryGetKillerZoneWindowDefinition(sessionName, out definition))
                 return false;
 
             TimeZoneInfo timeZone;
@@ -8666,11 +8790,10 @@ namespace cAlgo.Robots
                 return false;
 
             var localDate = referenceDate.Date;
-            var localStart = DateTime.SpecifyKind(localDate.Add(definition.LocalStart), DateTimeKind.Unspecified);
-            var localEnd = localStart.AddHours(3);
-            var fullLocalEnd = DateTime.SpecifyKind(localDate.Add(definition.LocalEnd), DateTimeKind.Unspecified);
-            if (localEnd > fullLocalEnd)
-                localEnd = fullLocalEnd;
+            var localStart = BuildSessionLocalDateTime(localDate, definition.LocalStart);
+            var localEnd = BuildSessionLocalDateTime(localDate, definition.LocalEnd);
+            if (localEnd <= localStart)
+                localEnd = localEnd.AddDays(1);
 
             startUtc = TimeZoneInfo.ConvertTimeToUtc(localStart, timeZone);
             endUtc = TimeZoneInfo.ConvertTimeToUtc(localEnd, timeZone);
@@ -17776,33 +17899,33 @@ namespace cAlgo.Robots
                     case KillerZoneVisualMode.No:
                         return objectIndex;
                     case KillerZoneVisualMode.Asia_KZ:
-                        objectIndex = DrawSessionContextBox(objectIndex, "Asia", date, false, "Asia");
+                        objectIndex = DrawSessionContextBox(objectIndex, "Asia", date, false, "Asia KZ");
                         break;
                     case KillerZoneVisualMode.Asia_Session:
-                        objectIndex = DrawSessionContextBox(objectIndex, "Asia", date, true, "Asia");
+                        objectIndex = DrawSessionContextBox(objectIndex, "Asia", date, true, "Asia Session");
                         break;
                     case KillerZoneVisualMode.LD_KZ:
-                        objectIndex = DrawSessionContextBox(objectIndex, "London", date, false, "LD");
+                        objectIndex = DrawSessionContextBox(objectIndex, "London", date, false, "LD KZ");
                         break;
                     case KillerZoneVisualMode.LD_Session:
-                        objectIndex = DrawSessionContextBox(objectIndex, "London", date, true, "LD");
+                        objectIndex = DrawSessionContextBox(objectIndex, "London", date, true, "LD Session");
                         break;
                     case KillerZoneVisualMode.NY_KZ:
-                        objectIndex = DrawSessionContextBox(objectIndex, "NewYork", date, false, "NY");
+                        objectIndex = DrawSessionContextBox(objectIndex, "NewYork", date, false, "NY KZ");
                         break;
                     case KillerZoneVisualMode.NY_Session:
-                        objectIndex = DrawSessionContextBox(objectIndex, "NewYork", date, true, "NY");
+                        objectIndex = DrawSessionContextBox(objectIndex, "NewYork", date, true, "NY Session");
                         break;
                     case KillerZoneVisualMode.All_KZs:
-                        objectIndex = DrawSessionContextBox(objectIndex, "Asia", date, false, "Asia");
-                        objectIndex = DrawSessionContextBox(objectIndex, "London", date, false, "LD");
-                        objectIndex = DrawSessionContextBox(objectIndex, "NewYork", date, false, "NY");
+                        objectIndex = DrawSessionContextBox(objectIndex, "Asia", date, false, "Asia KZ");
+                        objectIndex = DrawSessionContextBox(objectIndex, "London", date, false, "LD KZ");
+                        objectIndex = DrawSessionContextBox(objectIndex, "NewYork", date, false, "NY KZ");
                         break;
                     case KillerZoneVisualMode.All_Sessions:
                     default:
-                        objectIndex = DrawSessionContextBox(objectIndex, "Asia", date, true, "Asia");
-                        objectIndex = DrawSessionContextBox(objectIndex, "London", date, true, "LD");
-                        objectIndex = DrawSessionContextBox(objectIndex, "NewYork", date, true, "NY");
+                        objectIndex = DrawSessionContextBox(objectIndex, "Asia", date, true, "Asia Session");
+                        objectIndex = DrawSessionContextBox(objectIndex, "London", date, true, "LD Session");
+                        objectIndex = DrawSessionContextBox(objectIndex, "NewYork", date, true, "NY Session");
                         break;
                 }
             }
@@ -23779,7 +23902,7 @@ namespace cAlgo.Robots
         // encoded in the first event token of the strategy order comment (for example m5.pin↑).
         // Run this only when that timeframe closes a new bar, so the age is measured in real
         // closed bars rather than timer ticks or wall-clock minutes.
-        private void CloseInvalidatedOrders(string symbolName, TimeFrame sourceTimeFrame)
+        private void CancelInvalidateOrders(string symbolName, TimeFrame sourceTimeFrame)
         {
             if (PendingOrders == null || string.IsNullOrWhiteSpace(symbolName) || sourceTimeFrame == null)
                 return;
@@ -23817,8 +23940,6 @@ namespace cAlgo.Robots
                 if (elapsedClosedBars <= maxWaitBars)
                     continue;
 
-                var cancelResult = CancelPendingOrder(order);
-                var status = cancelResult != null && cancelResult.IsSuccessful ? "CANCELLED" : "FAILED";
                 var reason = string.Format(
                     CultureInfo.InvariantCulture,
                     "pending_expired bars={0}>{1} opened={2:yyyy-MM-dd HH:mm} tf={3}",
@@ -23827,7 +23948,15 @@ namespace cAlgo.Robots
                     openedAt,
                     GetTimeFrameShortLabel(sourceTimeFrame));
                 SafePrint(
-                    "[CloseInvalidatedOrders] {0} #{1} {2} {3}: {4}",
+                    "[CancelInvalidateOrders] ACTION cancel_pending #{0} {1} {2}: {3}",
+                    order.Id,
+                    symbolName,
+                    order.TradeType,
+                    reason);
+                var cancelResult = CancelPendingOrder(order);
+                var status = cancelResult != null && cancelResult.IsSuccessful ? "CANCELLED" : "FAILED";
+                SafePrint(
+                    "[CancelInvalidateOrders] {0} #{1} {2} {3}: {4}",
                     status,
                     order.Id,
                     symbolName,
@@ -23835,7 +23964,7 @@ namespace cAlgo.Robots
                     reason);
                 if (cancelResult == null || !cancelResult.IsSuccessful)
                     SafePrint(
-                        "[CloseInvalidatedOrders] cancel failure #{0}: {1}",
+                        "[CancelInvalidateOrders] FAILURE cancel_pending #{0}: {1}",
                         order.Id,
                         cancelResult != null ? Convert.ToString(cancelResult.Error, CultureInfo.InvariantCulture) : "null_result");
             }
@@ -32235,7 +32364,7 @@ namespace cAlgo.Robots
 
                     try
                     {
-                    CloseInvalidatedOrders(target.SymbolName, target.TimeFrame);
+                    CancelInvalidateOrders(target.SymbolName, target.TimeFrame);
                     SafePrint(
                         "[StrategyProcess] start at={0:yyyy-MM-dd HH:mm:ss} symbol={1} tf={2} closed={3:yyyy-MM-dd HH:mm:ss}",
                         Server != null ? Server.Time : DateTime.UtcNow,
