@@ -16821,16 +16821,18 @@ namespace cAlgo.Robots
             // Bearish surrounding boxes use a brighter red while retaining the same alpha.
             var patternBoxColor = GetSurroundingBoxColor(isBullish);
             var markerColor = GetDirectionalEventColor(isBullish);
-            // Every detected directional event uses the same surround convention. The flag is
-            // retained for call-site compatibility, but a directional event is always boxed.
-            DrawPatternRangeBox(visualPrefix + "_" + GetMiniChartLabel(sourceTimeFrame) + "_" + objectIndex.ToString(CultureInfo.InvariantCulture), sourceBars, sourceTimeFrame, barIndex, patternSpan, patternBoxColor, 8);
+            var normalizedLabel = string.IsNullOrWhiteSpace(combinedLabel)
+                ? ResolveMarkerPatternFallbackLabel(sourceBars, sourceTimeFrame, barIndex)
+                : combinedLabel.Trim().ToLowerInvariant();
+            // Enforce box => event label + resolved direction. When labels are disabled, keep
+            // the optional direction icon but do not leave an unexplained surrounding box.
+            if (ShowMarkerLabel == ChartLabelVisibilityMode.Yes && !string.IsNullOrWhiteSpace(normalizedLabel))
+                DrawPatternRangeBox(visualPrefix + "_" + GetMiniChartLabel(sourceTimeFrame) + "_" + objectIndex.ToString(CultureInfo.InvariantCulture), sourceBars, sourceTimeFrame, barIndex, patternSpan, patternBoxColor, 8);
+
             // Keep the marker as one text object so icon/label spacing stays stable at every zoom.
             var markerTime = ResolveLabelHorizontalTime(sourceBars.OpenTimes[barIndex], sourceTimeFrame);
             var iconPrice = ResolveDirectionalLabelPrice(isBullish, wickAnchorPrice, barRange, slotIndex);
             var iconText = GetConfluenceGatedDirectionalTriangleIcon(sourceBars, sourceTimeFrame, barIndex, isBullish);
-            var normalizedLabel = string.IsNullOrWhiteSpace(combinedLabel)
-                ? ResolveMarkerPatternFallbackLabel(sourceBars, sourceTimeFrame, barIndex)
-                : combinedLabel.Trim().ToLowerInvariant();
             var markerText = ShowMarkerLabel == ChartLabelVisibilityMode.Yes
                 ? iconText + normalizedLabel
                 : iconText.TrimEnd();
