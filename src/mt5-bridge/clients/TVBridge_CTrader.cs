@@ -52,6 +52,13 @@ namespace cAlgo.Robots
         private const double LABEL_HORIZONTAL_DISTANCE = 0.50;
         private const string SharedPatternContextCacheKey = "__ctrader_detected_patterns";
         private const int MinimumMasterTimerSeconds = 5;
+        // Wait-confirm controls are deliberately fixed. They are safety defaults, not
+        // per-instance tuning parameters: confirm without pullback, allow <=1R chase,
+        // allow <=1x original risk, and do not invalidate solely on a close.
+        private const bool WaitConfirmRequiresPullback = false;
+        private const double WaitConfirmMaximumChaseR = 1.0;
+        private const double WaitConfirmMaximumRiskMultiplier = 1.0;
+        private const bool WaitConfirmInvalidatesOnClose = false;
         private const int DefaultKillerZoneDays = 7;
         private const int DefaultHtf1BackgroundBars = 24;
         private const int DefaultHtf2BackgroundBars = 7;
@@ -793,18 +800,6 @@ namespace cAlgo.Robots
 
         [Parameter("Pending order expiry bars", Group = "Trade Config", DefaultValue = 10, MinValue = 1, MaxValue = 50, Step = 1)]
         public int WaitConfirmMaxBars { get; set; }
-
-        [Parameter("Wait pullback", Group = "Trade Config", DefaultValue = YesNoMode.No)]
-        public YesNoMode WaitConfirmRequirePullback { get; set; }
-
-        [Parameter("Wait chase max R", Group = "Trade Config", DefaultValue = 1.0, MinValue = 0.0, MaxValue = 3.0, Step = 0.05)]
-        public double WaitConfirmMaxChaseR { get; set; }
-
-        [Parameter("Wait risk max x", Group = "Trade Config", DefaultValue = 1.0, MinValue = 1.0, MaxValue = 5.0, Step = 0.05)]
-        public double WaitConfirmMaxRiskMultiplier { get; set; }
-
-        [Parameter("Wait invalidate", Group = "Trade Config", DefaultValue = YesNoMode.No)]
-        public YesNoMode WaitConfirmInvalidateOnClose { get; set; }
 
         [Parameter("n.Trades", Group = "Trade Config", DefaultValue = StrategyOrderCountMode.Auto)]
         public StrategyOrderCountMode StrategyOrderCount { get; set; }
@@ -8671,7 +8666,7 @@ namespace cAlgo.Robots
             TrySetEnumPropertyValue(lowLine, "LineStyle", "Solid");
             TrySetPropertyValue(lowLine, "ZIndex", 3);
 
-            var liveEndTime = GetHtfMiniChartEndTime();
+            var liveEndTime = ResolveLiveArtifactEndTime(sourceTimeFrame, true);
             if (liveEndTime > completedVisualEndTime)
             {
                 var highProjection = Chart.DrawTrendLine(objectPrefix + "_H_LIVE_" + objId, completedVisualEndTime, high, liveEndTime, high, liveColor);
@@ -10103,6 +10098,44 @@ namespace cAlgo.Robots
             }
         }
 
+        // Each higher timeframe owns one compact mini-chart slot. Its artifacts must end at
+        // that slot's right edge, not at the end of the entire HTF strip (which may include a
+        // second, unrelated timeframe). Unknown HTFs retain the full-strip fallback.
+        private DateTime GetHtfMiniChartSlotEndTime(TimeFrame sourceTimeFrame)
+        {
+            var chartEndTime = GetCurrentChartEndTime();
+            if (sourceTimeFrame == null || !ShouldDrawHtfMiniChart())
+                return GetHtfMiniChartEndTime();
+
+            try
+            {
+                var chartTimeFrame = Chart != null ? Chart.TimeFrame : TimeFrame.Minute;
+                var chartTfMinutes = Math.Max(1, TimeFrameToMinutes(chartTimeFrame));
+                var miniFrames = GetEnabledAutoHigherTimeframes(chartTimeFrame)
+                    .Where(tf => tf != null && TimeFrameToMinutes(tf) > chartTfMinutes)
+                    .OrderBy(tf => TimeFrameToMinutes(tf))
+                    .Take(2)
+                    .ToList();
+                var slotIndex = miniFrames.FindIndex(tf => tf == sourceTimeFrame);
+                if (slotIndex < 0)
+                    return GetHtfMiniChartEndTime();
+
+                var endOffsetBars = GetMiniChartLeadGapBars(chartTfMinutes);
+                for (var index = 0; index <= slotIndex; index++)
+                {
+                    var frame = miniFrames[index];
+                    endOffsetBars += GetMiniChartSlotWidthBars(frame, GetMiniChartBarsForTimeFrame(frame));
+                    if (index < slotIndex)
+                        endOffsetBars += MiniChartSlotSpacingBars;
+                }
+                return chartEndTime.AddMinutes(chartTfMinutes * endOffsetBars);
+            }
+            catch
+            {
+                return GetHtfMiniChartEndTime();
+            }
+        }
+
         // One extension contract for every live line/level/zone:
         // current-TF artifacts stop three chart bars beyond the latest bar, while HTF
         // context reaches the end of the HTF mini-chart strip.
@@ -10115,7 +10148,7 @@ namespace cAlgo.Robots
                 ? Math.Max(1, TimeFrameToMinutes(sourceTimeFrame))
                 : chartTfMinutes;
             if (forceHigherTimeFrame || sourceTfMinutes > chartTfMinutes)
-                return GetHtfMiniChartEndTime();
+                return GetHtfMiniChartSlotEndTime(sourceTimeFrame);
             return currentEndTime.AddMinutes(chartTfMinutes * TrendlineFutureProjectionBars);
         }
 
@@ -12170,7 +12203,7 @@ namespace cAlgo.Robots
             TrySetPropertyValue(completed, "Thickness", 1);
             TrySetEnumPropertyValue(completed, "LineStyle", "Solid");
 
-            var projectionEnd = GetHtfMiniChartEndTime();
+            var projectionEnd = ResolveLiveArtifactEndTime(sourceTimeFrame);
             if (projectionEnd > periodEnd)
             {
                 var projectionColor = WithAlpha(baseColor, 30);
@@ -28696,8 +28729,9 @@ namespace cAlgo.Robots
             }
         }
 
-        private bool ApplySharedStrategyEntryType(Symbol symbol, string symbolName, BacktestStrategySignal signal, StrategyEntryType entryMode, TradeType tradeType, double executionPrice, ref bool useLimitOrder, ref bool useStopOrder, ref double entryPrice, ref double stopLoss, ref double takeProfit, out string rejectReason)
+        private bool ApplySharedStrategyEntryType(Symbol symbol, string symbolName, BacktestStrategySignal signal, StrategyEntryType entryMode, TradeType tradeType, double executionPrice, ref bool useLimitOrder, ref bool useStopOrder, ref double entryPrice, ref double stopLoss, ref double takeProfit, out double protectionBuffer, out string rejectReason)
         {
+            protectionBuffer = 0;
             var currentEntry = entryPrice;
             var currentStopLoss = stopLoss;
             var currentTakeProfit = takeProfit;
@@ -28729,6 +28763,8 @@ namespace cAlgo.Robots
                 useLimitOrder = resolvedUseLimit;
                 useStopOrder = resolvedUseStop;
                 entryPrice = resolvedEntry;
+                if (resolvedUseLimit && CTraderStrategyEngine.IsBufferedLimitEntryType(entryMode))
+                    protectionBuffer = Math.Abs(resolvedEntry - currentEntry);
             }
             return passed;
         }
@@ -30397,10 +30433,10 @@ namespace cAlgo.Robots
                 signal.OriginalRiskDistance,
                 signal.OriginalInvalidationPrice,
                 maxBars,
-                WaitConfirmRequirePullback == YesNoMode.Yes,
-                WaitConfirmMaxChaseR,
-                WaitConfirmMaxRiskMultiplier,
-                WaitConfirmInvalidateOnClose == YesNoMode.Yes);
+                WaitConfirmRequiresPullback,
+                WaitConfirmMaximumChaseR,
+                WaitConfirmMaximumRiskMultiplier,
+                WaitConfirmInvalidatesOnClose);
             return decision != null;
         }
 
@@ -30485,8 +30521,8 @@ namespace cAlgo.Robots
                 signal.OriginalRiskDistance,
                 finalEntry,
                 finalStopLoss,
-                WaitConfirmMaxChaseR,
-                WaitConfirmMaxRiskMultiplier);
+                WaitConfirmMaximumChaseR,
+                WaitConfirmMaximumRiskMultiplier);
             if (decision.Kind == CTraderWaitConfirmDecisionKind.Cancel)
             {
                 reason = string.Format(
@@ -30494,9 +30530,9 @@ namespace cAlgo.Robots
                     "wait_confirm_final_{0} chase_r={1:0.###}/{2:0.###} risk_x={3:0.###}/{4:0.###}",
                     decision.Reason,
                     decision.ChaseR,
-                    WaitConfirmMaxChaseR,
+                    WaitConfirmMaximumChaseR,
                     decision.RiskMultiplier,
-                    WaitConfirmMaxRiskMultiplier);
+                    WaitConfirmMaximumRiskMultiplier);
                 return false;
             }
             return true;
@@ -30562,9 +30598,9 @@ namespace cAlgo.Robots
                         detectedAt,
                         GetMiniChartLabel(signal.SourceTimeFrame),
                         WaitConfirmMaxBars,
-                        WaitConfirmRequirePullback,
-                        WaitConfirmMaxChaseR,
-                        WaitConfirmMaxRiskMultiplier);
+                        WaitConfirmRequiresPullback,
+                        WaitConfirmMaximumChaseR,
+                        WaitConfirmMaximumRiskMultiplier);
                 }
                 return false;
             }
@@ -30584,9 +30620,9 @@ namespace cAlgo.Robots
                     decision.Reason,
                     decision.PullbackSeen,
                     decision.ChaseR,
-                    WaitConfirmMaxChaseR,
+                    WaitConfirmMaximumChaseR,
                     decision.RiskMultiplier,
-                    WaitConfirmMaxRiskMultiplier);
+                    WaitConfirmMaximumRiskMultiplier);
                 return false;
             }
 
@@ -30946,7 +30982,7 @@ namespace cAlgo.Robots
 
             string stopLossSourceCode;
             string takeProfitSourceCode;
-            ApplyStrategyProtectionModes(symbol, symbolName, signal, referencePrice, profileRaw, tradePreset.StopLossMode, tradePreset.TakeProfitMode, ref sl, ref tp, out stopLossSourceCode, out takeProfitSourceCode);
+            ApplyStrategyProtectionModes(symbol, symbolName, signal, referencePrice, profileRaw, tradePreset.StopLossMode, tradePreset.TakeProfitMode, 0, ref sl, ref tp, out stopLossSourceCode, out takeProfitSourceCode);
             signal.StopLossSourceCode = stopLossSourceCode;
             signal.TakeProfitSourceCode = takeProfitSourceCode;
             if (!(sl > 0))
@@ -30971,8 +31007,9 @@ namespace cAlgo.Robots
             var effectiveUseLimitOrder = signal.UseLimitOrder;
             var effectiveUseStopOrder = false;
             var effectiveEntryPrice = referencePrice;
+            double entryProtectionBuffer;
             string entryModeRejectReason;
-            if (!ApplySharedStrategyEntryType(symbol, symbolName, signal, tradePreset.EntryMode, signal.TradeType, executionPrice, ref effectiveUseLimitOrder, ref effectiveUseStopOrder, ref effectiveEntryPrice, ref sl, ref tp, out entryModeRejectReason))
+            if (!ApplySharedStrategyEntryType(symbol, symbolName, signal, tradePreset.EntryMode, signal.TradeType, executionPrice, ref effectiveUseLimitOrder, ref effectiveUseStopOrder, ref effectiveEntryPrice, ref sl, ref tp, out entryProtectionBuffer, out entryModeRejectReason))
             {
                 if (waitConfirmAddOnReleased)
                     LogWaitConfirmAddOnStage(signal, symbolName, "BLOCKED", "reason=" + entryModeRejectReason);
@@ -30984,7 +31021,7 @@ namespace cAlgo.Robots
                 signal.EntryConfirmationTime != DateTime.MinValue &&
                 signal.EntryConfirmationTime != signal.SignalTime)
                 RebuildConfirmedEntryProtection(symbol, symbolName, signal, effectiveEntryPrice, ref sl, ref tp);
-            ApplyStrategyProtectionModes(symbol, symbolName, signal, effectiveEntryPrice, profileRaw, tradePreset.StopLossMode, tradePreset.TakeProfitMode, ref sl, ref tp, out stopLossSourceCode, out takeProfitSourceCode);
+            ApplyStrategyProtectionModes(symbol, symbolName, signal, effectiveEntryPrice, profileRaw, tradePreset.StopLossMode, tradePreset.TakeProfitMode, entryProtectionBuffer, ref sl, ref tp, out stopLossSourceCode, out takeProfitSourceCode);
             signal.StopLossSourceCode = stopLossSourceCode;
             signal.TakeProfitSourceCode = takeProfitSourceCode;
             ApplyStrategySignalRewardRisk(symbol, signal, effectiveEntryPrice, sl, tradePreset.TakeProfitMode, ref tp);
@@ -35567,6 +35604,7 @@ namespace cAlgo.Robots
             string profileRaw,
             StrategyStopLossMode stopLossMode,
             StrategyTakeProfitMode takeProfitMode,
+            double entryProtectionBuffer,
             ref double stopLoss,
             ref double takeProfit,
             out string stopLossSourceCode,
@@ -35859,6 +35897,18 @@ namespace cAlgo.Robots
                         }
                         break;
                     }
+            }
+
+            // Numeric limit entries move both entry and invalidation adversely by the
+            // same price buffer. This preserves the raw risk distance while allowing
+            // the requested retracement (minimum 0.1R) to fill first.
+            if (stopLoss > 0 && entryProtectionBuffer > 0)
+            {
+                stopLoss = NormalizePriceToSymbol(
+                    symbol,
+                    signal.TradeType == TradeType.Buy
+                        ? stopLoss - entryProtectionBuffer
+                        : stopLoss + entryProtectionBuffer);
             }
 
             switch (takeProfitMode)
@@ -36227,6 +36277,13 @@ namespace cAlgo.Robots
             if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || entryPrice <= 0)
                 return false;
 
+            // In an Auto preset the global RR parameter is a minimum acceptable target,
+            // not an instruction to discard market structure. If the global TP is not an
+            // RR mode, retain the historical 2R Auto fallback.
+            var minimumRewardRisk = CTraderStrategyEngine.IsRewardRiskMode(SelectedStrategyTakeProfitMode)
+                ? Math.Max(0.1, CTraderStrategyEngine.ResolveRewardRisk(SelectedStrategyTakeProfitMode))
+                : 2.0;
+
             for (var priorityIndex = 0; priorityIndex < CTraderStrategyEngine.AutoTakeProfitSourceCount; priorityIndex++)
             {
                 double resolved;
@@ -36256,7 +36313,7 @@ namespace cAlgo.Robots
                     case CTraderStrategyTargetSource.RewardRisk2:
                         addBuffer = false;
                         resolved = CTraderStrategyEngine.ResolveDistanceTarget(
-                            symbol, signal.TradeType, entryPrice, false, Math.Abs(entryPrice - stopLoss) * 2.0);
+                            symbol, signal.TradeType, entryPrice, false, Math.Abs(entryPrice - stopLoss) * minimumRewardRisk);
                         found = resolved > 0;
                         break;
                     default:
@@ -36265,9 +36322,13 @@ namespace cAlgo.Robots
                 }
                 if (found)
                 {
-                    takeProfit = addBuffer
+                    var candidate = addBuffer
                         ? AddStrategyProtectionBuffer(symbol, signal.TradeType, resolved, false, buffer)
                         : resolved;
+                    if (!CTraderStrategyEngine.HasMinimumRewardRisk(
+                        signal.TradeType, entryPrice, stopLoss, candidate, minimumRewardRisk))
+                        continue;
+                    takeProfit = candidate;
                     sourceCode = GetStrategyTargetSourceCode(source);
                     return takeProfit > 0;
                 }
@@ -37019,6 +37080,18 @@ namespace cAlgo.Robots
                 CTraderStrategyEngine.IsSpecialEntryType(StrategyEntryType._0_market))
             {
                 throw new InvalidOperationException("Strategy special-entry contract failed.");
+            }
+            if (!CTraderStrategyEngine.IsBufferedLimitEntryType(StrategyEntryType._0_limit0) ||
+                !CTraderStrategyEngine.IsBufferedLimitEntryType(StrategyEntryType.limit_0_3) ||
+                CTraderStrategyEngine.IsBufferedLimitEntryType(StrategyEntryType._0_market))
+            {
+                throw new InvalidOperationException("Strategy buffered-limit contract failed.");
+            }
+            if (!CTraderStrategyEngine.HasMinimumRewardRisk(TradeType.Buy, 100, 90, 110, 1.0) ||
+                CTraderStrategyEngine.HasMinimumRewardRisk(TradeType.Buy, 100, 90, 109, 1.0) ||
+                !CTraderStrategyEngine.HasMinimumRewardRisk(TradeType.Sell, 100, 110, 80, 2.0))
+            {
+                throw new InvalidOperationException("Strategy Auto-TP minimum-RR contract failed.");
             }
 
             TradeType direction;
@@ -38446,14 +38519,15 @@ namespace cAlgo.Robots
 
                 string slSource;
                 string tpSource;
-                ApplyStrategyProtectionModes(symbol, symbolName, signal, entry, profileRaw, tradePreset.StopLossMode, tradePreset.TakeProfitMode, ref sl, ref tp, out slSource, out tpSource);
+                ApplyStrategyProtectionModes(symbol, symbolName, signal, entry, profileRaw, tradePreset.StopLossMode, tradePreset.TakeProfitMode, 0, ref sl, ref tp, out slSource, out tpSource);
                 signal.StopLossSourceCode = slSource;
                 signal.TakeProfitSourceCode = tpSource;
                 var useLimit = signal.UseLimitOrder;
                 var useStop = false;
+                double entryProtectionBuffer;
                 string entryRejectReason;
-                ApplySharedStrategyEntryType(symbol, symbolName, signal, tradePreset.EntryMode, signal.TradeType, executionPrice, ref useLimit, ref useStop, ref entry, ref sl, ref tp, out entryRejectReason);
-                ApplyStrategyProtectionModes(symbol, symbolName, signal, entry, profileRaw, tradePreset.StopLossMode, tradePreset.TakeProfitMode, ref sl, ref tp, out slSource, out tpSource);
+                ApplySharedStrategyEntryType(symbol, symbolName, signal, tradePreset.EntryMode, signal.TradeType, executionPrice, ref useLimit, ref useStop, ref entry, ref sl, ref tp, out entryProtectionBuffer, out entryRejectReason);
+                ApplyStrategyProtectionModes(symbol, symbolName, signal, entry, profileRaw, tradePreset.StopLossMode, tradePreset.TakeProfitMode, entryProtectionBuffer, ref sl, ref tp, out slSource, out tpSource);
                 signal.StopLossSourceCode = slSource;
                 signal.TakeProfitSourceCode = tpSource;
                 ApplyStrategySignalRewardRisk(symbol, signal, entry, sl, tradePreset.TakeProfitMode, ref tp);
@@ -45944,19 +46018,19 @@ namespace cAlgo.Robots
                 entryType == TVBridgeCBot.StrategyEntryType._0_limit0)
             {
                 useLimitOrder = true;
-                var tinyBuffer = Math.Max(symbol.PipSize, symbol.TickSize);
-                if (!(tinyBuffer > 0))
+                var entryBuffer = riskDistance * Math.Max(0.1, ResolveEntryBufferMultiplier(entryType));
+                if (!(entryBuffer > 0))
                 {
-                    rejectReason = "entry_mode_invalid_tick_size";
+                    rejectReason = "entry_mode_invalid_retracement";
                     return false;
                 }
                 entryPrice = CTraderRiskEngine.NormalizePrice(
                     symbol,
-                    tradeType == TradeType.Buy ? currentEntry - tinyBuffer : currentEntry + tinyBuffer);
+                    tradeType == TradeType.Buy ? currentEntry - entryBuffer : currentEntry + entryBuffer);
                 if (tradeType == TradeType.Buy && entryPrice >= executionPrice)
-                    entryPrice = CTraderRiskEngine.NormalizePrice(symbol, executionPrice - tinyBuffer);
+                    entryPrice = CTraderRiskEngine.NormalizePrice(symbol, executionPrice - entryBuffer);
                 else if (tradeType == TradeType.Sell && entryPrice <= executionPrice)
-                    entryPrice = CTraderRiskEngine.NormalizePrice(symbol, executionPrice + tinyBuffer);
+                    entryPrice = CTraderRiskEngine.NormalizePrice(symbol, executionPrice + entryBuffer);
                 return true;
             }
             var stopMultiplier = ResolveStopEntryBufferMultiplier(entryType);
@@ -45983,6 +46057,30 @@ namespace cAlgo.Robots
                 symbol,
                 tradeType == TradeType.Buy ? currentEntry - buffer : currentEntry + buffer);
             return true;
+        }
+
+        public static bool IsBufferedLimitEntryType(TVBridgeCBot.StrategyEntryType entryType)
+        {
+            return entryType == TVBridgeCBot.StrategyEntryType._0_limit ||
+                entryType == TVBridgeCBot.StrategyEntryType._0_limit0 ||
+                ResolveEntryBufferMultiplier(entryType) > 0;
+        }
+
+        public static bool HasMinimumRewardRisk(
+            TradeType tradeType,
+            double entryPrice,
+            double stopLoss,
+            double takeProfit,
+            double minimumRewardRisk)
+        {
+            var riskDistance = Math.Abs(entryPrice - stopLoss);
+            if (!(riskDistance > 0) || !(takeProfit > 0))
+                return false;
+            var rewardDistance = tradeType == TradeType.Buy
+                ? takeProfit - entryPrice
+                : entryPrice - takeProfit;
+            return rewardDistance > 0 &&
+                rewardDistance + 0.0000001 >= riskDistance * Math.Max(0.1, minimumRewardRisk);
         }
 
         public static bool TrySelectEntryLevel(
