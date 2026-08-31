@@ -9702,23 +9702,12 @@ namespace cAlgo.Robots
             {
                 var spanStartIndex = Math.Max(0, barIndex - Math.Max(1, patternSpan) + 1);
                 var patternHigh = double.MinValue;
-                var patternLow = double.MaxValue;
                 for (var i = spanStartIndex; i <= barIndex; i++)
                 {
                     patternHigh = Math.Max(patternHigh, sourceBars.HighPrices[i]);
-                    patternLow = Math.Min(patternLow, sourceBars.LowPrices[i]);
                 }
-                var slotWidthBars = Math.Max(1, rightBarIndex - leftBarIndex);
-                var boxLeftBarIndex = leftBarIndex - (slotWidthBars * Math.Max(0, patternSpan - 1));
-                var box = Chart.DrawRectangle(
-                    "MINI_PAT_BOX_" + objectIndex.ToString(CultureInfo.InvariantCulture),
-                    boxLeftBarIndex,
-                    patternHigh,
-                    rightBarIndex,
-                    patternLow,
-                    WithAlpha(patternBoxColor, ResolveBackgroundVisualAlpha(sourceTimeFrame, barIndex >= sourceBars.Count - 2)));
-                var neutralBoxAlpha = ResolveBackgroundVisualAlpha(sourceTimeFrame, barIndex >= sourceBars.Count - 2);
-                ApplySurroundingBoxStyle(box, patternBoxColor, 12, neutralBoxAlpha, 70);
+                // A neutral candle shape may still be labelled, but it must not claim a
+                // bullish/bearish range until direction has actually been resolved.
                 anchorPrice = patternHigh;
                 textY = patternHigh + Math.Max(Symbol.PipSize * 2.0, barRange * 0.03);
             }
@@ -9785,16 +9774,19 @@ namespace cAlgo.Robots
 
             var anchorPrice = evt.IsBullish ? sourceBars.LowPrices[sourceIndex] : sourceBars.HighPrices[sourceIndex];
             var barRange = Math.Max(sourceBars.HighPrices[sourceIndex] - sourceBars.LowPrices[sourceIndex], Symbol.PipSize * 8.0);
-            var eventBoxColor = GetSurroundingBoxColor(evt.IsBullish);
-            var eventBox = Chart.DrawRectangle(
-                "MINI_EVT_BOX_" + objectIndex.ToString(CultureInfo.InvariantCulture),
-                leftBarIndex,
-                sourceBars.HighPrices[sourceIndex],
-                rightBarIndex,
-                sourceBars.LowPrices[sourceIndex],
-                WithAlpha(eventBoxColor, ResolveBackgroundVisualAlpha(sourceTimeFrame, sourceIndex >= sourceBars.Count - 2)));
-            var miniEventAlpha = ResolveBackgroundVisualAlpha(sourceTimeFrame, sourceIndex >= sourceBars.Count - 2);
-            ApplySurroundingBoxStyle(eventBox, eventBoxColor, 8, miniEventAlpha, 210);
+            if (HasClearDirectionalAction(evt))
+            {
+                var eventBoxColor = GetSurroundingBoxColor(evt.IsBullish);
+                var eventBox = Chart.DrawRectangle(
+                    "MINI_EVT_BOX_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                    leftBarIndex,
+                    sourceBars.HighPrices[sourceIndex],
+                    rightBarIndex,
+                    sourceBars.LowPrices[sourceIndex],
+                    WithAlpha(eventBoxColor, ResolveBackgroundVisualAlpha(sourceTimeFrame, sourceIndex >= sourceBars.Count - 2)));
+                var miniEventAlpha = ResolveBackgroundVisualAlpha(sourceTimeFrame, sourceIndex >= sourceBars.Count - 2);
+                ApplySurroundingBoxStyle(eventBox, eventBoxColor, 8, miniEventAlpha, 210);
+            }
             var textY = ResolveDirectionalLabelPrice(evt.IsBullish, anchorPrice, barRange, 0, priceRange);
             var textBarIndex = leftBarIndex + Math.Max(0, (rightBarIndex - leftBarIndex) / 3);
             var icon = Chart.DrawIcon(
@@ -9879,16 +9871,19 @@ namespace cAlgo.Robots
 
                 var anchorPrice = evt.IsBullish ? sourceBars.LowPrices[sourceIndex] : sourceBars.HighPrices[sourceIndex];
                 var verticalPad = Math.Max(Symbol.PipSize * 7.0, priceRange * 0.03);
-                var eventBoxColor = GetSurroundingBoxColor(evt.IsBullish);
-                var eventBox = Chart.DrawRectangle(
-                    "MINI_EVT_BOX_" + objectIndex.ToString(CultureInfo.InvariantCulture),
-                    leftTime,
-                    sourceBars.HighPrices[sourceIndex],
-                    rightTime,
-                    sourceBars.LowPrices[sourceIndex],
-                    WithAlpha(eventBoxColor, ResolveBackgroundVisualAlpha(sourceTimeFrame, sourceIndex >= sourceBars.Count - 2)));
-                var miniEventAlpha = ResolveBackgroundVisualAlpha(sourceTimeFrame, sourceIndex >= sourceBars.Count - 2);
-                ApplySurroundingBoxStyle(eventBox, eventBoxColor, 8, miniEventAlpha, 210);
+                if (HasClearDirectionalAction(evt))
+                {
+                    var eventBoxColor = GetSurroundingBoxColor(evt.IsBullish);
+                    var eventBox = Chart.DrawRectangle(
+                        "MINI_EVT_BOX_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                        leftTime,
+                        sourceBars.HighPrices[sourceIndex],
+                        rightTime,
+                        sourceBars.LowPrices[sourceIndex],
+                        WithAlpha(eventBoxColor, ResolveBackgroundVisualAlpha(sourceTimeFrame, sourceIndex >= sourceBars.Count - 2)));
+                    var miniEventAlpha = ResolveBackgroundVisualAlpha(sourceTimeFrame, sourceIndex >= sourceBars.Count - 2);
+                    ApplySurroundingBoxStyle(eventBox, eventBoxColor, 8, miniEventAlpha, 210);
+                }
                 var textY = evt.IsBullish ? anchorPrice - verticalPad : anchorPrice + verticalPad;
                 var textTime = leftTime.AddMinutes(Math.Max(0.2, (rightTime - leftTime).TotalMinutes * 0.18));
                 var text = Chart.DrawText(
@@ -12630,6 +12625,12 @@ namespace cAlgo.Robots
             Skip
         }
 
+        private static bool HasClearDirectionalAction(CanonicalMarketEvent evt)
+        {
+            return (evt.Action == CanonicalEventAction.Buy && evt.IsBullish) ||
+                   (evt.Action == CanonicalEventAction.Sell && !evt.IsBullish);
+        }
+
         private struct CanonicalMarketEvent
         {
             public string EventKey;
@@ -14228,15 +14229,18 @@ namespace cAlgo.Robots
                         var eventBarRange = Symbol.PipSize * 8.0;
                         if (sourceBars != null && markerSourceBarIndex >= 0 && markerSourceBarIndex < sourceBars.Count)
                         {
-                            var eventBoxColor = GetSurroundingBoxColor(evt.IsBullish);
-                            DrawPatternRangeBox(
-                                prefix + "_" + GetMiniChartLabel(sourceTimeFrame) + "_" + objectIndex.ToString(CultureInfo.InvariantCulture),
-                                sourceBars,
-                                sourceTimeFrame,
-                                markerSourceBarIndex,
-                                1,
-                                eventBoxColor,
-                                8);
+                            if (HasClearDirectionalAction(evt))
+                            {
+                                var eventBoxColor = GetSurroundingBoxColor(evt.IsBullish);
+                                DrawPatternRangeBox(
+                                    prefix + "_" + GetMiniChartLabel(sourceTimeFrame) + "_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                                    sourceBars,
+                                    sourceTimeFrame,
+                                    markerSourceBarIndex,
+                                    1,
+                                    eventBoxColor,
+                                    8);
+                            }
                             anchorPrice = evt.IsBullish
                                 ? sourceBars.LowPrices[markerSourceBarIndex]
                                 : sourceBars.HighPrices[markerSourceBarIndex];
@@ -16851,20 +16855,11 @@ namespace cAlgo.Robots
             if (sourceBars == null || Symbol == null || barIndex < 0 || barIndex >= sourceBars.Count)
                 return objectIndex;
 
-            // Directionless patterns use a soft light-gray background until a direction is
-            // resolved; timeframe colors are reserved for timeframe structure visuals.
+            // A directionless pattern may be labelled, but never gets a bullish/bearish
+            // surrounding box. Boxes are reserved for patterns with resolved direction.
             var color = Color.LightGray;
-            var rangeBox = ResolvePatternRangeBox(sourceBars, sourceTimeFrame, barIndex, patternSpan);
-            DrawPatternRangeBox(
-                "PAT_" + GetMiniChartLabel(sourceTimeFrame) + "_" + objectIndex.ToString(CultureInfo.InvariantCulture),
-                sourceBars,
-                sourceTimeFrame,
-                barIndex,
-                patternSpan,
-                color,
-                8);
 
-            if (ShowMarkerLabel == ChartLabelVisibilityMode.Yes && rangeBox != null)
+            if (ShowMarkerLabel == ChartLabelVisibilityMode.Yes)
             {
                 var labelTime = ResolveLabelHorizontalTime(sourceBars.OpenTimes[barIndex], sourceTimeFrame);
                 var barRange = Math.Max(sourceBars.HighPrices[barIndex] - sourceBars.LowPrices[barIndex], Symbol.PipSize * 8.0);
