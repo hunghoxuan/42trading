@@ -74,7 +74,6 @@ namespace cAlgo.Robots
         private StackPanel _chartSummaryPanel;
         private string _chartSummaryLayoutKey = "";
         private string _chartSummaryRenderKey = "";
-        private int _chartSummaryTopRightQueueLineCount = -1;
         private readonly Dictionary<string, ChartSummaryRowControls> _chartSummaryRowControls = new Dictionary<string, ChartSummaryRowControls>(StringComparer.OrdinalIgnoreCase);
         private ChartSummaryRowControls _chartSummaryAllRowControls;
         private bool _legacyDashboardObjectsCleaned = false;
@@ -247,7 +246,6 @@ namespace cAlgo.Robots
         private string _lastDrawnDebugPanelText = "";
         private string _lastDrawnDebugPanelColorKey = "";
         private string _lastDrawnMetricPanelText = "";
-        private string _lastDrawnQueuePanelText = "";
         private string _lastStrategyRiskDashboardText = "waiting for signal";
         private ManualTradeStatusContext _activeManualTradeStatus;
         private DateTime _lastStrategyScanDashboardAt = DateTime.MinValue;
@@ -8025,7 +8023,6 @@ namespace cAlgo.Robots
                 _lastDrawnDebugPanelText = "";
                 _lastDrawnDebugPanelColorKey = "";
                 _lastDrawnMetricPanelText = "";
-                _lastDrawnQueuePanelText = "";
 
                 ForceRefreshChartVisuals();
                 SafePrint("[Refresh] cache files, runtime analysis, and visual state rebuilt");
@@ -34211,8 +34208,8 @@ namespace cAlgo.Robots
             TrySetPropertyValue(label, "Width", width);
             TrySetPropertyValue(label, "MinWidth", width);
             TrySetPropertyValue(label, "MaxWidth", width);
-            TrySetPropertyValue(label, "Height", 14);
-            TrySetPropertyValue(label, "FontSize", 8);
+            TrySetPropertyValue(label, "Height", 12);
+            TrySetPropertyValue(label, "FontSize", 9);
             TrySetPropertyValue(label, "FontFamily", "Courier New");
             // Match the middle-top table: labels left; every data cell right. Explicit content
             // alignment avoids cTrader's style-dependent default and keeps digits stable.
@@ -34679,7 +34676,6 @@ namespace cAlgo.Robots
                 _chartSummaryPanel = null;
                 _chartSummaryLayoutKey = "";
                 _chartSummaryRenderKey = "";
-                _chartSummaryTopRightQueueLineCount = -1;
                 _chartSummaryRowControls.Clear();
                 _chartSummaryAllRowControls = null;
                 return;
@@ -34702,7 +34698,6 @@ namespace cAlgo.Robots
                     _chartSummaryPanel = null;
                     _chartSummaryLayoutKey = "";
                     _chartSummaryRenderKey = "";
-                    _chartSummaryTopRightQueueLineCount = -1;
                     _chartSummaryRowControls.Clear();
                     _chartSummaryAllRowControls = null;
                     return;
@@ -34844,15 +34839,6 @@ namespace cAlgo.Robots
 
                 var layoutKey = layoutKeyBuilder.ToString();
                 var renderKey = renderKeyBuilder.ToString();
-                var queueLineCount = Math.Max(0, CountTextLines(_lastDrawnQueuePanelText));
-                var summaryTopMargin = 18 + (queueLineCount * 12);
-                var summaryMargin = string.Format(CultureInfo.InvariantCulture, "0 {0} 6 0", summaryTopMargin);
-                if (_chartSummaryPanel != null && _chartSummaryTopRightQueueLineCount != queueLineCount)
-                {
-                    _chartSummaryPanel.HorizontalAlignment = HorizontalAlignment.Right;
-                    _chartSummaryPanel.Margin = summaryMargin;
-                    _chartSummaryTopRightQueueLineCount = queueLineCount;
-                }
                 var canUpdateExisting = _chartSummaryPanel != null &&
                     string.Equals(_chartSummaryLayoutKey, layoutKey, StringComparison.Ordinal) &&
                     _chartSummaryAllRowControls != null;
@@ -34904,12 +34890,11 @@ namespace cAlgo.Robots
                     Orientation = Orientation.Vertical,
                     HorizontalAlignment = HorizontalAlignment.Right,
                     VerticalAlignment = VerticalAlignment.Top,
-                    Margin = summaryMargin,
+                    Margin = "0 18 6 0",
                     Opacity = 0.90
                 };
-                _chartSummaryTopRightQueueLineCount = queueLineCount;
 
-                var headerRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = "0 0 0 1" };
+                var headerRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = 0 };
                 headerRow.AddChild(BuildChartSummaryLabel("", Color.White, symbolWidth, "Left"));
                 foreach (var frame in summaryTimeFrames)
                     headerRow.AddChild(BuildChartSummaryLabel(frame.Label, frame.Color, tfWidth));
@@ -34921,7 +34906,7 @@ namespace cAlgo.Robots
                 foreach (var rowState in rowStates)
                 {
                     var controls = new ChartSummaryRowControls();
-                    var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = "0 0 0 1" };
+                    var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = 0 };
                     row.AddChild(BuildChartSummaryLabel(rowState.SymbolName, Color.White, symbolWidth, "Left"));
                     foreach (var bias in rowState.Biases)
                     {
@@ -34940,7 +34925,7 @@ namespace cAlgo.Robots
                 }
 
                 var allControls = new ChartSummaryRowControls();
-                var allRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = "0 0 0 1" };
+                var allRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = 0 };
                 allRow.AddChild(BuildChartSummaryLabel(allRowState.SymbolName, Color.White, symbolWidth, "Left"));
                 foreach (var bias in allRowState.Biases)
                 {
@@ -43507,7 +43492,7 @@ namespace cAlgo.Robots
                         "Panel_GATE_HDR", "Panel_GATE_BODY", "Panel_GATE_ROW1", "Panel_GATE_ROW2", "Panel_GATE_ROW3",
                         "Panel_GATE_ROW4", "Panel_GATE_ROW5", "Panel_GATE_SUM_HDR", "Panel_GATE_SUM_BODY",
                         "Panel_GATE_SUM_SYM", "Panel_GATE_SUM_WIN", "Panel_GATE_SUM_LOSE", "Panel_TL", "Panel_BL",
-                        "Panel_BR", "Panel_ERR"
+                        "Panel_BR", "Panel_ERR", "Panel_QUEUE"
                     })
                         Chart.RemoveObject(objectName);
                     _legacyDashboardObjectsCleaned = true;
@@ -43610,15 +43595,6 @@ namespace cAlgo.Robots
                         TryStyleChartText(metricPanel, 9, "Courier New", false);
                         TrySetPropertyValue(metricPanel, "Margin", "0 -8 0 0");
                     }
-                }
-
-                var queueText = BuildStrategyActionQueueDashboardText();
-                if (!string.Equals(_lastDrawnQueuePanelText, queueText, StringComparison.Ordinal))
-                {
-                    _lastDrawnQueuePanelText = queueText;
-                    var queuePanel = Chart.DrawStaticText("Panel_QUEUE", queueText, VerticalAlignment.Top, HorizontalAlignment.Right, Color.LightGray);
-                    TryStyleChartText(queuePanel, 9, "Courier New", false);
-                    TrySetPropertyValue(queuePanel, "Margin", "0 -8 0 0");
                 }
 
                 if (includeVisualOverlays)
@@ -44196,155 +44172,6 @@ namespace cAlgo.Robots
                     SafeLog("ERROR", "[ActionQueue] Close failed {0} #{1} action={2} rule={3} error={4}", watcher.Position.SymbolName, watcher.Position.Id, watcher.ActionName, watcher.DefinitionId, closeResult != null ? closeResult.Error.ToString() : "no result");
                 }
             }
-        }
-
-        private string BuildStrategyActionQueueDashboardText()
-        {
-            var rows = new List<Tuple<string, int, DateTime, string>>();
-            foreach (var pending in _pendingStrategyEntries.Values)
-            {
-                var signal = pending.Signal;
-                rows.Add(Tuple.Create(
-                    pending.SymbolName ?? "",
-                    TimeFrameToMinutes(signal.SourceTimeFrame),
-                    signal.SignalTime,
-                    string.Format(
-                        CultureInfo.InvariantCulture,
-                        "{0,-8} {1,-2} {2,-4} {3,-22} {4,-16}|",
-                        CompactActionQueueSymbol(pending.SymbolName),
-                        signal.TradeType == TradeType.Buy ? "B" : "S",
-                        GetTimeFrameShortLabel(signal.SourceTimeFrame),
-                        CompactActionQueueText(BuildActionQueueTrigger(pending), 22),
-                        CompactActionQueueText(BuildActionQueueEntryAt(pending), 16))));
-            }
-            foreach (var watcher in BuildSharedPositionActionWatchers())
-            {
-                rows.Add(Tuple.Create(
-                    watcher.Position.SymbolName ?? "",
-                    TimeFrameToMinutes(watcher.TimeFrame),
-                    watcher.Position.EntryTime,
-                    string.Format(
-                        CultureInfo.InvariantCulture,
-                        "{0,-8} {1,-2} {2,-4} {3,-22} {4,-16}|",
-                        CompactActionQueueSymbol(watcher.Position.SymbolName),
-                        watcher.Position.TradeType == TradeType.Buy ? "B" : "S",
-                        GetTimeFrameShortLabel(watcher.TimeFrame),
-                        CompactActionQueueText(watcher.DefinitionId, 22),
-                        CompactActionQueueText("exit." + GetTimeFrameShortLabel(watcher.TimeFrame), 16))));
-            }
-
-            var orderedRows = rows
-                .OrderBy(item => item.Item1, StringComparer.OrdinalIgnoreCase)
-                .ThenByDescending(item => item.Item2)
-                .ThenBy(item => item.Item3)
-                .Select(item => item.Item4)
-                .ToList();
-
-            var builder = new StringBuilder();
-            builder.AppendLine(string.Format(
-                CultureInfo.InvariantCulture,
-                "{0,-8} {1,-2} {2,-4} {3,-22} {4,-16}|",
-                "SYMBOL",
-                "SIDE",
-                "TF",
-                "TRIGGER",
-                "ENTRY AT"));
-            if (orderedRows.Count == 0)
-                builder.Append(string.Format(
-                    CultureInfo.InvariantCulture,
-                    "{0,-8} {1,-2} {2,-4} {3,-22} {4,-16}|",
-                    "-",
-                    "-",
-                    "-",
-                    "-",
-                    "empty"));
-            else
-                builder.Append(string.Join(Environment.NewLine, orderedRows.Take(12)));
-            if (orderedRows.Count > 12)
-                builder.AppendLine().Append(CompactActionQueueText("+" + (orderedRows.Count - 12) + " more", 59)).Append("|");
-            return builder.ToString();
-        }
-
-        private string ResolveActionQueueTriggerLabel(BacktestStrategySignal signal)
-        {
-            var sourceLabel = signal.SourceLabel ?? "";
-            if (string.IsNullOrWhiteSpace(sourceLabel))
-                return "-";
-
-            var timeFramePrefix = GetTimeFrameShortLabel(signal.SourceTimeFrame) + ".";
-            var matchingLabel = sourceLabel
-                .Split(new[] { '+' }, StringSplitOptions.RemoveEmptyEntries)
-                .Select(label => label.Trim())
-                .Where(label => label.StartsWith(timeFramePrefix, StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(GetEventLabelPriorityScore)
-                .FirstOrDefault();
-            return string.IsNullOrWhiteSpace(matchingLabel) ? "-" : matchingLabel;
-        }
-
-        private string CompactActionQueueText(string value, int width)
-        {
-            var text = string.IsNullOrWhiteSpace(value) ? "-" : value.Trim();
-            if (text.Length > width)
-                text = text.Substring(0, width);
-            return text.PadRight(width);
-        }
-
-        private string BuildActionQueueEntryAt(PendingStrategyEntry pending)
-        {
-            if (pending == null)
-                return "-";
-
-            var signal = pending.Signal;
-            var timeFrame = GetTimeFrameShortLabel(signal.SourceTimeFrame);
-            var direction = signal.TradeType == TradeType.Buy ? "b" : "s";
-            if (pending.EntryBarMode == StrategyEntryBarMode.First_bar_reverse_trend)
-                direction = signal.TradeType == TradeType.Buy ? "s" : "b";
-            else if (pending.EntryBarMode == StrategyEntryBarMode.First_bar_after_trigger)
-                direction = "any";
-            return "#" + Math.Max(1, signal.TradeChainSlot).ToString(CultureInfo.InvariantCulture) + "." + timeFrame + "." + direction;
-        }
-
-        private string BuildActionQueueTrigger(PendingStrategyEntry pending)
-        {
-            if (pending == null)
-                return "-";
-
-            var signal = pending.Signal;
-            var eventLabel = ResolveActionQueueTriggerLabel(signal);
-            // Queue rows identify the actual trigger bar, not when this cBot happened to scan it.
-            var triggerBarTime = signal.SignalTime;
-            if (triggerBarTime != DateTime.MinValue)
-            {
-                return string.Format(
-                    CultureInfo.InvariantCulture,
-                    "{0}@{1:HH:mm:ss}",
-                    eventLabel,
-                    triggerBarTime);
-            }
-
-            return eventLabel;
-        }
-
-        private DateTime ResolveActionQueueEventCloseTime(string symbolName, BacktestStrategySignal signal)
-        {
-            if (string.IsNullOrWhiteSpace(symbolName) || signal.SignalTime == DateTime.MinValue)
-                return DateTime.MinValue;
-
-            try
-            {
-                var sourceBars = MarketData.GetBars(signal.SourceTimeFrame, symbolName);
-                return ResolveSourceBarEndTime(sourceBars, signal.SignalTime, signal.SourceTimeFrame);
-            }
-            catch
-            {
-                return ResolveSourceBarEndTime(null, signal.SignalTime, signal.SourceTimeFrame);
-            }
-        }
-
-        private string CompactActionQueueSymbol(string symbolName)
-        {
-            var value = string.IsNullOrWhiteSpace(symbolName) ? "-" : symbolName.Trim().ToUpperInvariant();
-            return value.Length <= 9 ? value : value.Substring(0, 9);
         }
 
         private void PopulateSharedConfigIndicators(Dictionary<string, object> context, Dictionary<string, object> strategy, Bars bars, int barIndex)
