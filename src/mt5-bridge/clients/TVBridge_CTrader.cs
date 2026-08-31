@@ -46,6 +46,10 @@ namespace cAlgo.Robots
         private const double InactiveOrHtfAlphaFactor = 0.80;
         private const int HtfCandleComponentAlpha = 24;
         private const int TrendlineFutureProjectionBars = 3;
+        // Shared label spacing, expressed as a fraction of the source bar/range.
+        // Use these for labels attached to a line, box edge, or candle wick.
+        private const double LABEL_VERTICAL_DISTANCE = 0.12;
+        private const double LABEL_HORIZONTAL_DISTANCE = 0.50;
         private const string SharedPatternContextCacheKey = "__ctrader_detected_patterns";
         private const int MinimumMasterTimerSeconds = 5;
         private const int DefaultKillerZoneDays = 7;
@@ -5604,7 +5608,22 @@ namespace cAlgo.Robots
         {
             return CTraderChartEngine.ResolveDirectionalLabelPrice(
                 isBullish, wickPrice, barRange, slotIndex, fallbackRange,
-                Symbol != null ? Symbol.PipSize : 0.0);
+                Symbol != null ? Symbol.PipSize : 0.0,
+                LABEL_VERTICAL_DISTANCE);
+        }
+
+        private double ResolveLabelVerticalPrice(bool above, double anchorPrice, double sourceRange, int slotIndex = 0)
+        {
+            var effectiveRange = Math.Max(sourceRange, Symbol != null ? Symbol.PipSize * 8.0 : 0.0000001);
+            var baseDistance = Math.Max(Symbol != null ? Symbol.PipSize * 4.0 : 0.0000001, effectiveRange * LABEL_VERTICAL_DISTANCE);
+            var distance = baseDistance * (1.0 + Math.Max(0, slotIndex) * 0.50);
+            return above ? anchorPrice + distance : anchorPrice - distance;
+        }
+
+        private DateTime ResolveLabelHorizontalTime(DateTime anchorTime, TimeFrame sourceTimeFrame)
+        {
+            var minutes = Math.Max(0.2, TimeFrameToMinutes(sourceTimeFrame ?? (Chart != null ? Chart.TimeFrame : TimeFrame.Minute)) * LABEL_HORIZONTAL_DISTANCE);
+            return anchorTime.AddMinutes(minutes);
         }
 
         // cTrader plots OpenTime at the horizontal center of a chart candle. Time ranges
@@ -16769,7 +16788,6 @@ namespace cAlgo.Robots
             if (sourceBars == null || Symbol == null || barIndex < 0 || barIndex >= sourceBars.Count)
                 return objectIndex;
 
-            var sourceTfMinutes = Math.Max(1, TimeFrameToMinutes(sourceTimeFrame));
             var patternStartIndex = Math.Max(0, barIndex - Math.Max(1, patternSpan) + 1);
             var patternHigh = sourceBars.HighPrices[barIndex];
             var patternLow = sourceBars.LowPrices[barIndex];
@@ -16792,8 +16810,7 @@ namespace cAlgo.Robots
             // retained for call-site compatibility, but a directional event is always boxed.
             DrawPatternRangeBox(visualPrefix + "_" + GetMiniChartLabel(sourceTimeFrame) + "_" + objectIndex.ToString(CultureInfo.InvariantCulture), sourceBars, sourceTimeFrame, barIndex, patternSpan, patternBoxColor, 8);
             // Keep the marker as one text object so icon/label spacing stays stable at every zoom.
-            var wickCenterTime = sourceBars.OpenTimes[barIndex].AddMinutes(Math.Max(0.2, sourceTfMinutes * 0.5));
-            var markerTime = wickCenterTime.AddMinutes(-sourceTfMinutes);
+            var markerTime = ResolveLabelHorizontalTime(sourceBars.OpenTimes[barIndex], sourceTimeFrame);
             var iconPrice = ResolveDirectionalLabelPrice(isBullish, wickAnchorPrice, barRange, slotIndex);
             var iconText = GetConfluenceGatedDirectionalTriangleIcon(sourceBars, sourceTimeFrame, barIndex, isBullish);
             var normalizedLabel = string.IsNullOrWhiteSpace(combinedLabel)
@@ -16838,12 +16855,9 @@ namespace cAlgo.Robots
 
             if (ShowMarkerLabel == ChartLabelVisibilityMode.Yes && rangeBox != null)
             {
-                var sourceTfMinutes = Math.Max(1, TimeFrameToMinutes(sourceTimeFrame));
-                var wickCenterTime = sourceBars.OpenTimes[barIndex].AddMinutes(Math.Max(0.2, sourceTfMinutes * 0.5));
-                var labelTime = wickCenterTime.AddMinutes(-sourceTfMinutes);
+                var labelTime = ResolveLabelHorizontalTime(sourceBars.OpenTimes[barIndex], sourceTimeFrame);
                 var barRange = Math.Max(sourceBars.HighPrices[barIndex] - sourceBars.LowPrices[barIndex], Symbol.PipSize * 8.0);
-                var verticalPad = Math.Max(Symbol.PipSize * 2.0, barRange * 0.035);
-                var labelPrice = sourceBars.HighPrices[barIndex] + verticalPad;
+                var labelPrice = ResolveLabelVerticalPrice(true, sourceBars.HighPrices[barIndex], barRange);
                 var label = Chart.DrawText(
                     "PAT_LBL_" + GetMiniChartLabel(sourceTimeFrame) + "_" + objectIndex.ToString(CultureInfo.InvariantCulture),
                     string.IsNullOrWhiteSpace(labelText) ? GetMiniChartLabel(sourceTimeFrame) + ".har." : labelText.Trim().ToLowerInvariant(),
@@ -18048,8 +18062,8 @@ namespace cAlgo.Robots
                 TrySetChartObjectBackground(bottomProjection);
             }
 
-            var textX = topStartUtc;
-            var topTextY = topHigh + (Math.Max(topHigh - low, Symbol.PipSize * 20) * 0.08);
+            var textX = ResolveLabelHorizontalTime(topStartUtc, Chart != null ? Chart.TimeFrame : TimeFrame.Minute);
+            var topTextY = ResolveLabelVerticalPrice(true, topHigh, Math.Max(topHigh - low, Symbol.PipSize * 20));
             var sessionLabel = string.IsNullOrWhiteSpace(displayLabel) ? "SESSION" : displayLabel.Trim().ToUpperInvariant();
             var text = Chart.DrawText("KZ_TXT_" + objectIndex.ToString(CultureInfo.InvariantCulture), sessionLabel, textX, topTextY, temporalColor);
             TryStyleChartText(text, GetNormalChartLabelFontSize(), "Courier New", true);
@@ -47387,11 +47401,13 @@ namespace cAlgo.Robots
             double barRange,
             int slotIndex,
             double fallbackRange,
-            double pipSize)
+            double pipSize,
+            double verticalDistance)
         {
             var effectiveRange = Math.Max(Math.Max(barRange, fallbackRange), pipSize > 0 ? pipSize * 8.0 : 0.0000001);
-            var textPad = Math.Max(pipSize > 0 ? pipSize * (0.8 + slotIndex * 0.4) : 0.0000001,
-                effectiveRange * (0.012 + slotIndex * 0.007));
+            var basePad = Math.Max(pipSize > 0 ? pipSize * 4.0 : 0.0000001,
+                effectiveRange * Math.Max(0.0, verticalDistance));
+            var textPad = basePad * (1.0 + Math.Max(0, slotIndex) * 0.50);
             return isBullish ? wickPrice - textPad : wickPrice + textPad;
         }
 
