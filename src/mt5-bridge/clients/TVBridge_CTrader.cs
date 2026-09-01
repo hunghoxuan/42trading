@@ -5877,14 +5877,9 @@ namespace cAlgo.Robots
                 return lines;
             };
 
-            if (SelectedRiskTemplate != RiskTemplate.Custom)
-                return buildTemplateSection(SelectedRiskTemplate);
-
-            var combined = new List<string>();
-            combined.AddRange(buildTemplateSection(RiskTemplate.FTMO_1Step));
-            combined.Add(" -----");
-            combined.AddRange(buildTemplateSection(RiskTemplate.Custom));
-            return combined;
+            // The dashboard reflects the active profile only.  Showing FTMO alongside
+            // Custom makes the active limits unnecessarily ambiguous.
+            return buildTemplateSection(SelectedRiskTemplate);
         }
 
         private static string GetFirstLine(string text)
