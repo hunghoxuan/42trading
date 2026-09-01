@@ -8391,6 +8391,11 @@ namespace cAlgo.Robots
         // When both resolve to the same candle, the combined version is drawn only once.
         private int DrawHtfCandlePatternBoxes(int objectIndex, HashSet<string> drawnCandleKeys)
         {
+            // Pattern highlights include an HTF candle body/wick, so they belong to the
+            // background layer. Mini_chart must never render them.
+            if (!ShouldDrawHtfBackground())
+                return objectIndex;
+
             var chartTimeFrame = Chart != null ? Chart.TimeFrame : TimeFrame.Minute;
             var chartTfMinutes = TimeFrameToMinutes(chartTimeFrame);
             if (chartTfMinutes <= 0)
