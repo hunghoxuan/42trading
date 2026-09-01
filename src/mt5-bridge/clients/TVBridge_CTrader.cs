@@ -198,6 +198,7 @@ namespace cAlgo.Robots
         private ChartIndicator _chartRsiIndicator;
         private ChartIndicator _chartStochasticIndicator;
         private ChartIndicator _chartMacdIndicator;
+        private ChartIndicator _chartTickVolumeIndicator;
         private readonly HashSet<string> _managedDivergenceIndicatorObjectNames = new HashSet<string>(StringComparer.Ordinal);
         private string _chartOscillatorSignature = "";
         // Native price-panel overlays (EMA / VWAP / Bollinger / Ichimoku). When these exist,
@@ -6283,6 +6284,7 @@ namespace cAlgo.Robots
                     ShouldUseNativeRsiIndicator() ? "rsi:native" : "rsi:custom",
                     ShouldUseNativeStochasticIndicator() ? "sto:native" : "sto:custom",
                     ShouldUseNativeMacdIndicator() ? "macd:native" : "macd:custom",
+                    "tickvolume:native",
                     _resolvedRsiEventConfig.Period.ToString(CultureInfo.InvariantCulture),
                     _resolvedStochasticEventConfig.KPeriod.ToString(CultureInfo.InvariantCulture),
                     _resolvedStochasticEventConfig.KSlowingPeriod.ToString(CultureInfo.InvariantCulture),
@@ -6310,12 +6312,15 @@ namespace cAlgo.Robots
             var macdEnabled =
                 EffectiveMomentumOscillatorEnabled(DrawMacdMode != MacdVisualMode.Off, MomentumTechnicalComboMode.MacdEvents) &&
                 ShouldUseNativeMacdIndicator();
+            var tickVolumeEnabled =
+                rsiEnabled || stochasticEnabled || macdEnabled || ResolveLastExistingIndicatorPanelIndex() > 0;
 
             var signature = BuildOscillatorPanelSignature();
             if (string.Equals(_chartOscillatorSignature, signature, StringComparison.Ordinal) &&
                 ((_chartRsiIndicator != null) == rsiEnabled) &&
                 ((_chartStochasticIndicator != null) == stochasticEnabled) &&
-                ((_chartMacdIndicator != null) == macdEnabled))
+                ((_chartMacdIndicator != null) == macdEnabled) &&
+                ((_chartTickVolumeIndicator != null) == tickVolumeEnabled))
             {
                 // A timer refresh with unchanged configuration must not touch indicator
                 // properties or remove/recreate level lines; cTrader repaints the entire
@@ -6377,6 +6382,23 @@ namespace cAlgo.Robots
                     _chartMacdIndicator.PanelIndex = nextPanelIndex++;
             }
 
+            // Native cTrader Tick Volume shares the last occupied indicator pane. If the
+            // chart has no subpanel, skip it instead of allocating a volume-only panel.
+            var tickVolumePanelIndex = ResolveLastExistingIndicatorPanelIndex();
+            if (tickVolumePanelIndex > 0)
+            {
+                try
+                {
+                    _chartTickVolumeIndicator = ChartIndicators.Add("Tick Volume", new object[0]);
+                    if (_chartTickVolumeIndicator != null)
+                        _chartTickVolumeIndicator.PanelIndex = tickVolumePanelIndex;
+                }
+                catch (Exception ex)
+                {
+                    SafePrint("[Visuals] Native Tick Volume unavailable: {0}", ex.Message);
+                }
+            }
+
             _chartOscillatorSignature = signature;
             ApplyManagedIndicatorLineStyles();
             SyncManagedOscillatorLevelLines();
@@ -6407,12 +6429,30 @@ namespace cAlgo.Robots
             return 1;
         }
 
+        private int ResolveLastExistingIndicatorPanelIndex()
+        {
+            var lastPanelIndex = 0;
+            if (ChartIndicators == null)
+                return lastPanelIndex;
+
+            foreach (var indicator in ChartIndicators)
+            {
+                if (indicator == null || ReferenceEquals(indicator, _chartTickVolumeIndicator))
+                    continue;
+                if (indicator.PanelIndex > lastPanelIndex)
+                    lastPanelIndex = indicator.PanelIndex;
+            }
+
+            return lastPanelIndex;
+        }
+
         private void RemoveManagedOscillatorIndicators()
         {
             RemoveManagedOscillatorLevelLines();
             TryRemoveManagedChartIndicator(ref _chartRsiIndicator);
             TryRemoveManagedChartIndicator(ref _chartStochasticIndicator);
             TryRemoveManagedChartIndicator(ref _chartMacdIndicator);
+            TryRemoveManagedChartIndicator(ref _chartTickVolumeIndicator);
             RemoveStaleManagedOscillatorIndicators();
             _chartOscillatorSignature = "";
         }
