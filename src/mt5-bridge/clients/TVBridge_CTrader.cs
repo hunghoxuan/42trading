@@ -335,7 +335,7 @@ namespace cAlgo.Robots
         private const double MiniChartStartAfterLabelColumnsBars = 20.0;
         // Two chart bars for the centered candle body plus one chart-bar gutter.
         private const double MiniChartCandleWidthBars = 3.0;
-        private const double MiniChartSlotSpacingBars = 3.0;
+        private const double MiniChartSlotSpacingBars = 6.0;
         private Color _lastPanelMessageColor = Color.White;
         private RiskGateState _lastSuccessfulPanelRiskGateState;
         private DateTime _lastPanelRiskSnapshotWarningAt = DateTime.MinValue;
