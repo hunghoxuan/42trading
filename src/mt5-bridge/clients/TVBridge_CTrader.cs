@@ -8996,8 +8996,8 @@ namespace cAlgo.Robots
             foreach (var boundary in boundaries)
             {
                 // ChartVerticalLine is propagated by cTrader through every panel sharing
-                // the time axis. A same-time trend-line segment is clipped to the main
-                // price area's Y range, keeping splitter grids out of RSI/Stoch panels.
+                // the time axis. A same-time trend line stays in the main price area, while
+                // ExtendToInfinity keeps it full-height after zooming or price-scale changes.
                 var splitter = Chart.DrawTrendLine(
                     objectPrefix + objectIndex.ToString(CultureInfo.InvariantCulture),
                     boundary,
@@ -9007,7 +9007,7 @@ namespace cAlgo.Robots
                     splitterColor);
                 TrySetPropertyValue(splitter, "Thickness", Math.Max(1, thickness));
                 TrySetEnumPropertyValue(splitter, "LineStyle", lineStyle);
-                TrySetPropertyValue(splitter, "ExtendToInfinity", false);
+                TrySetPropertyValue(splitter, "ExtendToInfinity", true);
                 objectIndex++;
             }
 
@@ -18079,7 +18079,7 @@ namespace cAlgo.Robots
 
             // Mark the exact first and last bar of every session/KZ range. These edges are
             // deliberately faint so they define the time window without obscuring candles.
-            var boundaryColor = WithAlpha(kzColor, 40);
+            var boundaryColor = WithAlpha(kzColor, ResolveSurroundingBoxAlpha());
             // cTrader can discard a bounded trend line whose two X coordinates are exactly
             // identical. A sub-pixel time offset keeps the edge visually vertical while giving
             // the renderer a non-zero segment to paint.
@@ -18099,7 +18099,7 @@ namespace cAlgo.Robots
             // finishes: Asia -> London, London -> New York, New York -> next Asia.
             if (hasProjection)
             {
-                var projectionColor = WithAlpha(kzColor, 30);
+                var projectionColor = WithAlpha(kzColor, ResolveSurroundingBoxAlpha());
                 var topProjection = Chart.DrawTrendLine("KZ_TOP_PROJ_" + id, topEndUtc, topHigh, projectionEndUtc, topHigh, projectionColor);
                 TrySetPropertyValue(topProjection, "Thickness", 1);
                 TrySetEnumPropertyValue(topProjection, "LineStyle", "Dots");
