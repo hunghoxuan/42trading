@@ -50,6 +50,7 @@ function displaySettingName(type, name) {
   if (t === "settings" && n === "ANALYSE_SETTINGS") return "analyse";
   if (t === "system_config" && n === "enabled_log_prefixes")
     return "log_prefixes";
+  if (t === "system_config" && n === "write_logs") return "write_logs";
   if (t === "execution_profile" && n === "default") return "execution_profile";
   if (t === "symbol_groups" && n === "default") return "symbol_groups";
   return n || t;
@@ -61,6 +62,8 @@ function canonicalSettingPath(type, name) {
   if (t === "settings" && n === "ANALYSE_SETTINGS") return "/settings/analyse";
   if (t === "system_config" && n === "enabled_log_prefixes")
     return "/settings/log_prefixes";
+  if (t === "system_config" && n === "write_logs")
+    return "/settings/write_logs";
   if (t === "execution_profile" && n === "default")
     return "/settings/execution_profile";
   if (t === "symbol_groups" && n === "default")
@@ -795,6 +798,34 @@ export default function SettingsPage({
                   </label>
                 </div>
               ) : String(selectedSetting.type || "").toLowerCase() ===
+                    "system_config" &&
+                  String(selectedSetting.name || "") === "write_logs" ? (
+                <label className="stack-layout" style={{ gap: 6 }}>
+                  <span className="minor-text">Write server logs</span>
+                  <select
+                    value={
+                      String(selectedSetting.data?.enabled || "NO").toUpperCase() ===
+                      "YES"
+                        ? "YES"
+                        : "NO"
+                    }
+                    onChange={(event) =>
+                      updateSetting(
+                        getSettingKey(selectedSetting),
+                        "enabled",
+                        event.target.value,
+                      )
+                    }
+                  >
+                    <option value="NO">NO</option>
+                    <option value="YES">YES</option>
+                  </select>
+                  <span className="minor-text">
+                    NO disables persistent server, notification, audit, broker,
+                    and AI analysis log writes. Console output remains available.
+                  </span>
+                </label>
+              ) : String(selectedSetting.type || "").toLowerCase() ===
                 "symbol_groups" ? (
                 <div className="stack-layout" style={{ gap: 14 }}>
                   <div className="stack-layout" style={{ gap: 8 }}>
@@ -947,7 +978,12 @@ export default function SettingsPage({
                 <div style={{ display: "flex", gap: 8 }}>
                   {!EXCLUDED_TYPES.has(String(selectedSetting.type || "")) &&
                     String(selectedSetting.type || "").toLowerCase() !==
-                      "symbol_groups" && (
+                      "symbol_groups" &&
+                    !(
+                      String(selectedSetting.type || "").toLowerCase() ===
+                        "system_config" &&
+                      String(selectedSetting.name || "") === "write_logs"
+                    ) && (
                       <button
                         className="danger-button"
                         onClick={() =>

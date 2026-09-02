@@ -29,6 +29,7 @@ const ROOT_FLAT_SETTINGS = new Map([
   ["notification_config:preferences", "notification.json"],
   ["settings:ANALYSE_SETTINGS", "analyse.json"],
   ["system_config:enabled_log_prefixes", "log_prefixes.json"],
+  ["system_config:write_logs", "write_logs.json"],
   ["execution_profile:default", "execution_profile.json"],
   ["symbol_groups:default", "symbol_groups.json"],
 ]);

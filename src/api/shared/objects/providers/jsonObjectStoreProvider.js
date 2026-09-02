@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const fsp = fs.promises;
 const path = require("path");
+const { isPersistentLogWritesEnabled } = require("../../logWriteGate");
 
 const PROJECT_ROOT = path.resolve(__dirname, "..", "..", "..", "..", "..");
 const DATA_ROOT = path.join(PROJECT_ROOT, "data", "users");
@@ -160,6 +161,7 @@ function extractWatchlistSymbols(data) {
 }
 
 async function appendWatchlistAudit(entry) {
+  if (!isPersistentLogWritesEnabled()) return;
   try {
     await ensurePrivateDir(path.dirname(WATCHLIST_AUDIT_LOG_PATH));
     await fsp.appendFile(

@@ -9,6 +9,7 @@ const {
   objectLogsDir,
 } = require("./objectStore");
 const { normalizeActivityResult } = require("../activityResult");
+const { isPersistentLogWritesEnabled } = require("../logWriteGate");
 
 const SENSITIVE_KEY_RE =
   /key|secret|token|password|authorization|cookie|session|credential|private/i;
@@ -179,6 +180,9 @@ function buildObjectLogLine(userId, objectType, objectId, metadata = {}) {
 }
 
 async function writeObjectLog(userId, objectType, objectId, metadata = {}) {
+  if (!isPersistentLogWritesEnabled()) {
+    return { path: null, line: null, skipped: true };
+  }
   const fullPath = resolveObjectLogFilePath(
     userId,
     objectType,

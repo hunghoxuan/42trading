@@ -15,6 +15,11 @@ const path = require("path");
 const net = require("net");
 const dbQueries = require("../../db/queries");
 const settingsDomain = require("../modules/system/settings");
+const {
+  isPersistentLogWritesEnabled,
+  normalizeLogWriteSetting,
+  setPersistentLogWritesEnabled,
+} = require("../shared/logWriteGate");
 const dbManagerSystem = require("../modules/system/dbManager");
 const fileBrowserSystem = require("../modules/system/fileBrowser");
 const studioDomain = require("../modules/studio/service");
@@ -668,6 +673,27 @@ const ENABLE_DB_SOURCE_LOGS = envFlag(process.env.DB_SOURCE_LOGS, false);
 const BROKER_TRACKED_SYMBOLS_CACHE_TTL_MS = 2000;
 const BROKER_TRACKED_SYMBOLS_CACHE = new Map();
 
+async function initializePersistentLogWriteSetting() {
+  const userId = CFG.mt5DefaultUserId;
+  let data = await settingsStore.getUserSettingData(
+    userId,
+    "system_config",
+    "write_logs",
+  );
+  if (!data) {
+    data = { enabled: "NO" };
+    await settingsStore.upsertUserSetting(
+      userId,
+      "system_config",
+      "write_logs",
+      data,
+      "active",
+    );
+  }
+  const enabled = setPersistentLogWritesEnabled(data);
+  console.log(`[server] persistent log writes=${enabled ? "YES" : "NO"}`);
+}
+
 // --- SSE Notification Bus ---
 const SSE_CLIENTS = new Map(); // userId -> Set<res>
 function sseRegisterClient(userId, res) {
@@ -1005,6 +1031,7 @@ const NOTIFICATIONS_LOG_PATH = path.join(
 );
 
 function appendNotificationToFile(payload) {
+  if (!isPersistentLogWritesEnabled()) return;
   try {
     const dir = path.dirname(NOTIFICATIONS_LOG_PATH);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -3058,7 +3085,7 @@ function resolveLogFile(objectId, metadata, objectTable = "") {
 }
 
 function fileLog(objectId, objectTable, metadata = {}, userId = null) {
-  if (!SERVER_LOG_DIR) return;
+  if (!SERVER_LOG_DIR || !isPersistentLogWritesEnabled()) return;
   const evt = String(
     metadata.event || metadata.event_type || "INFO",
   ).toUpperCase();
@@ -8902,7 +8929,9 @@ function resolveTradeDirForCreate(sid, symbol = "", category = "draft") {
 
 function tradeLogsDir(sid, symbol = "") {
   const dir = path.join(resolveTradeDirForCreate(sid, symbol, "draft"), "logs");
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  if (isPersistentLogWritesEnabled() && !fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
   return dir;
 }
 
@@ -32763,7 +32792,7 @@ const appHandler = async (req, res) => {
       body = await readJson(req);
       if (!body.type)
         return json(res, 400, { ok: false, error: "Missing type" });
-      const userId = sess.user_id || CFG.mt5DefaultUserId;
+      let userId = sess.user_id || CFG.mt5DefaultUserId;
       let payloadData = body.data;
       if (!payloadData || typeof payloadData !== "object") {
         if (body.value !== undefined && body.value !== null) {
@@ -32782,6 +32811,13 @@ const appHandler = async (req, res) => {
 
       let settingName = String(body.name || body.type || "").trim();
       let data = payloadData;
+
+      if (body.type === "system_config" && settingName === "write_logs") {
+        userId = CFG.mt5DefaultUserId;
+        data = {
+          enabled: normalizeLogWriteSetting(payloadData) ? "YES" : "NO",
+        };
+      }
 
       if (body.type === "ai_template") {
         return json(res, 400, {
@@ -32892,6 +32928,9 @@ const appHandler = async (req, res) => {
         data,
         body.status || "active",
       );
+      if (body.type === "system_config" && settingName === "write_logs") {
+        setPersistentLogWritesEnabled(data);
+      }
       await StateRepo.del("USER_SETTINGS", userId);
       const shouldNotify = body?.notify !== false && body?.silent !== true;
       if (shouldNotify) {
@@ -32955,6 +32994,12 @@ const appHandler = async (req, res) => {
 
       if (!type || !name)
         return json(res, 400, { ok: false, error: "Missing type or name" });
+      if (type === "system_config" && name === "write_logs") {
+        return json(res, 400, {
+          ok: false,
+          error: "The server log setting cannot be deleted; set it to NO instead",
+        });
+      }
       const userId = sess.user_id || CFG.mt5DefaultUserId;
       await settingsStore.deleteUserSetting(userId, type, name);
       await StateRepo.del("USER_SETTINGS", userId);
@@ -37659,13 +37704,15 @@ const appHandler = async (req, res) => {
           files_count: snapshotFiles.length,
           files: snapshotFiles.map((f) => f.fileName || f),
         };
-        const logsDir = tradeLogsDir(sessionId, requestedSymbol);
-        const errorPath = path.join(logsDir, "error.json");
-        if (fs.existsSync(errorPath)) fs.rmSync(errorPath, { force: true });
-        fs.writeFileSync(
-          path.join(logsDir, "payload.json"),
-          JSON.stringify(payloadLog, null, 2),
-        );
+        if (isPersistentLogWritesEnabled()) {
+          const logsDir = tradeLogsDir(sessionId, requestedSymbol);
+          const errorPath = path.join(logsDir, "error.json");
+          if (fs.existsSync(errorPath)) fs.rmSync(errorPath, { force: true });
+          fs.writeFileSync(
+            path.join(logsDir, "payload.json"),
+            JSON.stringify(payloadLog, null, 2),
+          );
+        }
       } catch (_) {}
 
       let aiResult = null;
@@ -37806,23 +37853,25 @@ const appHandler = async (req, res) => {
           raw_response: rawResponse,
           parsed_json: parsedJson,
         };
-        const logsDir = tradeLogsDir(sessionId, requestedSymbol);
-        fs.writeFileSync(
-          path.join(logsDir, "response.json"),
-          JSON.stringify(responseLog, null, 2),
-        );
-        const errorPath = path.join(logsDir, "error.json");
-        if (fs.existsSync(errorPath)) fs.rmSync(errorPath, { force: true });
-        // Also save clean AI JSON directly — no parsing needed on read
-        if (
-          parsedJson &&
-          typeof parsedJson === "object" &&
-          Object.keys(parsedJson).length > 0
-        ) {
+        if (isPersistentLogWritesEnabled()) {
+          const logsDir = tradeLogsDir(sessionId, requestedSymbol);
           fs.writeFileSync(
-            path.join(logsDir, "ai_response.json"),
-            JSON.stringify(parsedJson, null, 2),
+            path.join(logsDir, "response.json"),
+            JSON.stringify(responseLog, null, 2),
           );
+          const errorPath = path.join(logsDir, "error.json");
+          if (fs.existsSync(errorPath)) fs.rmSync(errorPath, { force: true });
+          // Also save clean AI JSON directly — no parsing needed on read
+          if (
+            parsedJson &&
+            typeof parsedJson === "object" &&
+            Object.keys(parsedJson).length > 0
+          ) {
+            fs.writeFileSync(
+              path.join(logsDir, "ai_response.json"),
+              JSON.stringify(parsedJson, null, 2),
+            );
+          }
         }
       } catch (_) {}
 
@@ -37959,7 +38008,6 @@ const appHandler = async (req, res) => {
     } catch (error) {
       try {
         const userId = sess.user_id || CFG.mt5DefaultUserId;
-        const logsDir = tradeLogsDir(sessionId, requestedSymbol);
         const errorLog = {
           timestamp: new Date().toISOString(),
           session_id: sessionId,
@@ -37969,10 +38017,13 @@ const appHandler = async (req, res) => {
           error: String(error?.message || error || "Unknown analysis error"),
           stack_preview: clipForLog(error?.stack || "", 3000),
         };
-        fs.writeFileSync(
-          path.join(logsDir, "error.json"),
-          JSON.stringify(errorLog, null, 2),
-        );
+        if (isPersistentLogWritesEnabled()) {
+          const logsDir = tradeLogsDir(sessionId, requestedSymbol);
+          fs.writeFileSync(
+            path.join(logsDir, "error.json"),
+            JSON.stringify(errorLog, null, 2),
+          );
+        }
         await (
           await mt5Backend()
         ).log(
@@ -44646,6 +44697,7 @@ const appHandler = async (req, res) => {
 };
 
 async function start() {
+  await initializePersistentLogWriteSetting();
   const runtime = await getAppRuntime();
 
   if (CFG.uiAuthEnabled) {

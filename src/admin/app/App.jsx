@@ -1630,6 +1630,20 @@ export default function App() {
                 }
               />
               <Route
+                path="/settings/write_logs"
+                element={
+                  guardPageElement(
+                    "pages.system.logs",
+                    <SettingsPage
+                      routeAlias={{
+                        type: "system_config",
+                        name: "write_logs",
+                      }}
+                    />,
+                  )
+                }
+              />
+              <Route
                 path="/settings/execution_profile"
                 element={
                   guardPageElement(
