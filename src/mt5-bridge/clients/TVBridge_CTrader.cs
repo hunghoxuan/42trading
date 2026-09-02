@@ -3454,6 +3454,9 @@ namespace cAlgo.Robots
 
         private void DeletePersistedAnalysisCacheFiles()
         {
+            if (!Is42TradeServerSyncEnabled())
+                return;
+
             var marketDataRoot = Path.Combine(GetBaseServerRootPath(), "data", "market_data");
             if (!Directory.Exists(marketDataRoot))
                 return;
@@ -3612,6 +3615,9 @@ namespace cAlgo.Robots
 
         private void WriteAnalysisCacheFile(string filePath, IEnumerable<string> lines)
         {
+            if (!Is42TradeServerSyncEnabled())
+                return;
+
             var folder = Path.GetDirectoryName(filePath);
             if (!string.IsNullOrWhiteSpace(folder)) Directory.CreateDirectory(folder);
             var tempPath = filePath + "." + Process.GetCurrentProcess().Id + "." + DateTime.UtcNow.Ticks + ".tmp";
@@ -4425,7 +4431,7 @@ namespace cAlgo.Robots
 
         private void LoadCustomUiSettings()
         {
-            if (DisableCustomUiSettingsPersistenceForIsolation)
+            if (DisableCustomUiSettingsPersistenceForIsolation || !Is42TradeServerSyncEnabled())
                 return;
 
             _customUiSettings.Clear();
@@ -4472,7 +4478,7 @@ namespace cAlgo.Robots
 
         private void SaveCustomUiSettings()
         {
-            if (DisableCustomUiSettingsPersistenceForIsolation)
+            if (DisableCustomUiSettingsPersistenceForIsolation || !Is42TradeServerSyncEnabled())
                 return;
 
             var serialized = SerializeCustomUiSettingsSnapshot();
@@ -4497,6 +4503,9 @@ namespace cAlgo.Robots
 
         private async Task ProcessCustomUiSettingsPersistenceAsync()
         {
+            if (!Is42TradeServerSyncEnabled())
+                return;
+
             while (true)
             {
                 string serialized;
@@ -4550,6 +4559,9 @@ namespace cAlgo.Robots
 
         private void WriteCustomUiSettingsFile(string serialized)
         {
+            if (!Is42TradeServerSyncEnabled())
+                return;
+
             var path = GetCustomUiSettingsFilePath();
             var folder = Path.GetDirectoryName(path);
             if (!string.IsNullOrWhiteSpace(folder))
@@ -4577,6 +4589,9 @@ namespace cAlgo.Robots
         // consumers (or a future multi-machine setup) read the same selections.
         private async Task SaveUiSettingsToApiAsync(string serializedSettings)
         {
+            if (!Is42TradeServerSyncEnabled())
+                return;
+
             var payload = new Dictionary<string, object>
             {
                 ["source_id"] = BridgeSourceId,
@@ -19371,7 +19386,7 @@ namespace cAlgo.Robots
 
         private void StartBacktestExportSession()
         {
-            if (!EnableBacktestExport || !IsBacktestingRuntime() || _backtestExportActive)
+            if (!Is42TradeServerSyncEnabled() || !EnableBacktestExport || !IsBacktestingRuntime() || _backtestExportActive)
                 return;
 
             _backtestExportUserId = DefaultBacktestUserId;
@@ -19851,7 +19866,7 @@ namespace cAlgo.Robots
 
         private void FinalizeBacktestExportSession()
         {
-            if (!EnableBacktestExport || !_backtestExportActive || string.IsNullOrWhiteSpace(_backtestExportRunDir))
+            if (!Is42TradeServerSyncEnabled() || !EnableBacktestExport || !_backtestExportActive || string.IsNullOrWhiteSpace(_backtestExportRunDir))
                 return;
 
             try
@@ -21568,17 +21583,17 @@ namespace cAlgo.Robots
 
         private bool ShouldUseLocalRuntime()
         {
-            return !Is42TradeServerSyncEnabled() || IsApiOfflineCooldownActive(DateTime.Now);
+            return Is42TradeServerSyncEnabled() && IsApiOfflineCooldownActive(DateTime.Now);
         }
 
         private bool IsBarsPersistenceEnabled()
         {
-            return EnableBarsSave == YesNoMode.Yes;
+            return Is42TradeServerSyncEnabled() && EnableBarsSave == YesNoMode.Yes;
         }
 
         private bool IsAnalysisFileCacheEnabled()
         {
-            return UseCachedFiles == YesNoMode.Yes;
+            return Is42TradeServerSyncEnabled() && UseCachedFiles == YesNoMode.Yes;
         }
 
         private int GetCachedFileMaxBars()
@@ -21621,6 +21636,9 @@ namespace cAlgo.Robots
 
         private string RunLocalRuntime(Dictionary<string, object> payload)
         {
+            if (!Is42TradeServerSyncEnabled())
+                throw new InvalidOperationException("42trade sync is disabled");
+
             var bridgePath = GetLocalRuntimeBridgePath();
             if (!System.IO.File.Exists(bridgePath))
                 throw new FileNotFoundException("Local runtime bridge not found", bridgePath);
@@ -21723,7 +21741,7 @@ namespace cAlgo.Robots
                 PrintBypassLogFilter("[Bridge] Isolation build active: OnStart early return");
                 return;
             }
-            if (!IsAnalysisFileCacheEnabled())
+            if (Is42TradeServerSyncEnabled() && !IsAnalysisFileCacheEnabled())
                 DeletePersistedAnalysisCacheFiles();
             Positions.Closed += OnStrategyPositionClosed;
             // Clean slate: sweep every object this bot can draw before (re)drawing. If the
@@ -21877,7 +21895,7 @@ namespace cAlgo.Robots
             SafePrint(
                 "[Bars] persistence={0}; route when enabled={1}",
                 IsBarsPersistenceEnabled() ? "enabled" : "disabled",
-                Is42TradeServerSyncEnabled() ? "42trade API /api/broker/bars" : "local Parquet bridge");
+                Is42TradeServerSyncEnabled() ? "42trade API /api/broker/bars" : "disabled");
             SafePrint(
                 "[AnalysisCache] files={0}; max_recent_bars={1}",
                 IsAnalysisFileCacheEnabled() ? "enabled" : "disabled",
@@ -21899,6 +21917,9 @@ namespace cAlgo.Robots
 
         private async Task<HttpResponseMessage> SendWithTimeoutAsync(HttpRequestMessage request, int timeoutSeconds)
         {
+            if (!Is42TradeServerSyncEnabled())
+                throw new InvalidOperationException("42trade sync is disabled");
+
             return await CTraderTransportEngine.SendWithTimeoutAsync(_httpClient, request, timeoutSeconds);
         }
 
@@ -29955,7 +29976,7 @@ namespace cAlgo.Robots
 
         private void PersistWaitConfirmQueueLocal()
         {
-            if (IsBacktestingRuntime())
+            if (!Is42TradeServerSyncEnabled() || IsBacktestingRuntime())
                 return;
             try
             {
@@ -29970,7 +29991,7 @@ namespace cAlgo.Robots
 
         private void LoadWaitConfirmQueueLocal()
         {
-            if (IsBacktestingRuntime())
+            if (!Is42TradeServerSyncEnabled() || IsBacktestingRuntime())
                 return;
             try
             {
@@ -32987,6 +33008,11 @@ namespace cAlgo.Robots
                 return;
             }
 
+            // Enable Sync is the master switch for every 42trade transport and project-file
+            // side effect. Chart visuals and local trading continue above this boundary.
+            if (!Is42TradeServerSyncEnabled())
+                return;
+
             if (_consecutiveErrors > 0)
             {
                 int bs = Math.Min(30, (int)Math.Pow(2, _consecutiveErrors - 1));
@@ -33378,6 +33404,9 @@ namespace cAlgo.Robots
 
         private async Task SyncSharedCanonicalArtifactsAsync(string accountId, List<string> symbols)
         {
+            if (!Is42TradeServerSyncEnabled())
+                return;
+
             var timeFrames = new[]
             {
                 TimeFrame.Minute,
@@ -33447,7 +33476,7 @@ namespace cAlgo.Robots
         {
             try
             {
-                if (IsBacktestingRuntime())
+                if (!Is42TradeServerSyncEnabled() || IsBacktestingRuntime())
                     return;
 
                 if (!_syncOnly)
@@ -40331,6 +40360,9 @@ namespace cAlgo.Robots
 
         private async Task PollSignalsAsync(string accountId)
         {
+            if (!Is42TradeServerSyncEnabled())
+                return;
+
             if (ShouldUseLocalRuntime())
             {
                 await PollSignalsLocalAsync(accountId);
@@ -40415,6 +40447,9 @@ namespace cAlgo.Robots
 
         private async Task PollSignalsLocalAsync(string accountId)
         {
+            if (!Is42TradeServerSyncEnabled())
+                return;
+
             _pollCount++;
             _pollStatus = "LOCAL";
             try
@@ -41638,6 +41673,9 @@ namespace cAlgo.Robots
 
         private async Task SyncWithVpsAsync(string accId, double bal, double eq, double marg, string brokerName, List<string> posList, List<string> ordersList, List<string> closedList, HashSet<string> activeTicketIds, List<string> metricsList, List<Tuple<string, double, double>> priceData, List<string> syncSymbols, string queueActionsJson, List<string> queueTerminalKeysSent, bool queueSnapshotComplete)
         {
+            if (!Is42TradeServerSyncEnabled())
+                return;
+
             if (ShouldUseLocalRuntime())
             {
                 await SyncWithLocalRuntimeAsync(accId, bal, eq, marg, brokerName, posList, ordersList, closedList, queueActionsJson, queueSnapshotComplete);
@@ -41767,6 +41805,9 @@ namespace cAlgo.Robots
 
         private async Task SyncWithLocalRuntimeAsync(string accId, double bal, double eq, double marg, string brokerName, List<string> posList, List<string> ordersList, List<string> closedList, string queueActionsJson, bool queueSnapshotComplete)
         {
+            if (!Is42TradeServerSyncEnabled())
+                return;
+
             try
             {
                 var json = await RunLocalRuntimeAsync(new Dictionary<string, object>
@@ -42420,6 +42461,9 @@ namespace cAlgo.Robots
             double tpPips = 0
         )
         {
+            if (!Is42TradeServerSyncEnabled())
+                return;
+
             var accountId = Account != null ? Account.UserId.ToString() : "";
             if (ShouldUseLocalRuntime())
             {
