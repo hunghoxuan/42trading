@@ -1,0 +1,2 @@
+fb23293993c1e16e74db2ce3d09f136f1d42ddfc  /Users/macmini/Projects/moza/42trade/backups/ctrader-refactor-20260824-161836/TVBridge_CTrader.repo.cs
+fb23293993c1e16e74db2ce3d09f136f1d42ddfc  /Users/macmini/Projects/moza/42trade/backups/ctrader-refactor-20260824-161836/tvbridge.active.cs
