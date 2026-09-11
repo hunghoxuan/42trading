@@ -53,7 +53,7 @@
 
 | Section | Meaning | Notes |
 |---|---|---|
-| Identity | `id`, `name`, `engine_version`, `kind`, `status` | Current schema expects `42trade.strategy.v1` or `.v2` |
+| Identity | `id`, `name`, `engine_version`, `kind`, `status` | Current schema accepts `42trade.strategy.v1`, `.v2`, or `.v3`; shared runtime presets use `.v3` |
 | Market scope | `market.symbol`, `market.tf` | Optional strategy market binding |
 | Params | `params` | Loose scalar bag for indicator/risk params |
 | Indicators | `indicators[]` | Typed indicator definitions such as `ema`, `rsi`, `macd`, `bollinger` |
@@ -88,7 +88,7 @@
 | Payload | Validator/loader | Notes |
 |---|---|---|
 | Strategy config | `src/api/modules/42trade/strategies/strategyConfigService.js` | Loads schema + function catalog, normalizes events/rules, validates expression trees |
-| Built-in strategy preset | `src/api/shared/config/configStore.js` | Reads from `src/config/strategies/*.json` and caches via object store |
+| Shared strategy preset | `src/api/shared/config/configStore.js` | Reads and writes `src/config/strategies/*.json`; cTrader and 42Trade use the same files |
 | Backtest strategy snapshot | `src/api/modules/42trade/backtests/backtestService.js` | Uses built-in or custom strategy payloads during simulation |
 
 ## Cross-Reference
@@ -98,4 +98,3 @@
 | Folder rules for schemas/configs | [project-structure.md](./project-structure.md) |
 | Runtime and realtime use of bars/timeframes | [runtime-realtime.md](./runtime-realtime.md) |
 | Strategy and backtest behavior | [trading-backtests.md](./trading-backtests.md) |
-

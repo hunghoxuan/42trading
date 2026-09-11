@@ -186,6 +186,57 @@ const STRATEGY_CONDITION_FIELDS = [
   },
 ];
 
+const optionList = (values) => values.map((value) => ({ value, label: value }));
+const SCOPE_OPTIONS = optionList(["No", "Yes", "LTF", "HTF"]);
+const TRADE_TYPES = ["Wick", "Event", "Swing"];
+const TRADE_TPS = ["", "R03", "R05", "R07", "R1", "R13", "R15", "R17", "R2", "R25", "R3"];
+const buildTradeChainOptions = (timing, entries) => TRADE_TYPES.flatMap((type) =>
+  entries.flatMap((entry) => TRADE_TPS.map((tp) =>
+    [timing, type, entry, tp].filter(Boolean).join("_"),
+  )),
+);
+const TRADE_CHAIN_OPTIONS = optionList([
+  "No",
+  "Now",
+  ...buildTradeChainOptions("Now", ["", "L0", "L01", "L02", "L03", "L04", "L05", "L06", "L07", "L08", "S01"]),
+  "Wait_confirm",
+  ...buildTradeChainOptions("Wait", ["", "L0", "L01", "L02", "L03", "L04", "L05", "L06", "L07", "L08"]),
+]);
+const STRATEGY_PRESET_FIELDS = {
+  trade_config: [
+    { key: "symbols", label: "Symbols", type: "text" },
+    { key: "timeframes", label: "Timeframes", type: "text" },
+    { key: "news_block", label: "News block", options: optionList(["No", "_30m", "_60m", "_90m", "_120m"]) },
+    { key: "first_trade", label: "1st Trade", options: TRADE_CHAIN_OPTIONS },
+    { key: "second_trade", label: "2nd Trade", options: TRADE_CHAIN_OPTIONS },
+    { key: "third_trade", label: "3rd Trade", options: TRADE_CHAIN_OPTIONS },
+    { key: "pending_order_expiry_bars", label: "Pending order expiry bars", type: "number" },
+    { key: "trade_count", label: "n.Trades", options: optionList(["Auto", "_1", "_2", "_3", "_4", "_5"]) },
+    { key: "entry", label: "Entry", options: optionList(["market", "L0", "L01", "L02", "L03", "L04", "L05", "L06", "L07", "L08", "L00_025R", "L00_05R", "L00_075R", "candle_mid", "candle_retest", "ltf_Key_levels", "HTF_Key_levels", "fvg_mid", "ob_mid", "breakout_close", "reclaim_retest", "L00_01", "L00_03", "L00_05", "L00_07", "S01", "S03", "S05", "S07"]) },
+    { key: "sl", label: "SL", options: optionList(["No", "Auto", "candle_wick", "candle_range_5", "candle_range_10", "candle_wick_1_5", "candle_wick_2", "pattern", "protective_swing", "furthest_invalidation", "swing", "ltf_Key_levels", "HTF_Key_levels", "event_invalidation", "ob_edge", "fvg_edge", "session_high_low", "event", "wick", "structure"]) },
+    { key: "tp", label: "TP", options: optionList(["No", "Auto", "candle", "RR_0_3", "RR_0_5", "RR_0_7", "RR_1", "RR_1_3", "RR_1_5", "RR_1_7", "RR_2", "RR_2_5", "RR_3", "ltf_Key_levels", "HTF_Key_levels", "next_liquidity", "session_high_low", "ob_edge", "fvg_edge", "vwap", "ema_mid", "atr_1", "atr_2", "atr_3", "trail_only", "event", "structure"]) },
+    { key: "exit_mode", label: "Exit mode", options: optionList(["Off", "Trailing_Stop", "Break_Even", "Reversed_when_SL", "Trailing_Stop_Reversed_when_SL", "Break_Even_Reversed_when_SL"]) },
+  ],
+  confluences: [
+    { key: "days", label: "Days", options: optionList(["All", "Weekdays", "Weekend", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "MonToThu", "TueToFri", "Off"]) },
+    { key: "time_range", label: "Trade TimeRange", options: optionList(["All", "Asia_KZ", "_30_Asia_KZ", "_30_London_KZ", "_30_NY_KZ", "_30_KZs", "_60_Asia_KZ", "_60_London_KZ", "_60_NY_KZ", "_60_KZs", "LD_KZ", "NY_KZ", "Asia_LD_Overlap", "LD_NY_Overlap", "KZ_Overlap", "Asia_02_11", "London_10_19", "NewYork_15_00", "Ld_Ny_10_00", "A_Ld_Ny_02_00", "Overnight_00_06", "Morning_06_12", "Afternoon_12_18", "Night_18_24", "Off"]) },
+    { key: "overnight_block", label: "Overnight block", options: optionList(["No", "Cbot", "Manual", "Both"]) },
+    { key: "weekend_block", label: "Weekend block", options: optionList(["No", "Cbot", "Manual", "Both"]) },
+    { key: "minimum_count", label: "Min. Confluences", options: optionList(Array.from({ length: 10 }, (_, index) => `_${index + 1}`)) },
+    { key: "volume_surge", label: "Vol Surge", options: SCOPE_OPTIONS },
+    { key: "trend_bias", label: "Trend Bias", options: SCOPE_OPTIONS },
+    { key: "premium_discount", label: "Premium/Discount", options: SCOPE_OPTIONS },
+    { key: "bar_direction", label: "Bar Direction", type: "boolean" },
+    { key: "ema", label: "EMA Confluence", options: SCOPE_OPTIONS },
+    { key: "vwap", label: "VWAP Confluence", options: SCOPE_OPTIONS },
+    { key: "bollinger", label: "Bollinger Confluence", options: SCOPE_OPTIONS },
+    { key: "rsi", label: "RSI Confluence", options: SCOPE_OPTIONS },
+    { key: "stochastic", label: "Stoch Confluence", options: SCOPE_OPTIONS },
+    { key: "macd", label: "MACD Confluence", options: SCOPE_OPTIONS },
+    { key: "ichimoku", label: "Ichimoku Confluence", options: SCOPE_OPTIONS },
+  ],
+};
+
 const PARAM_KEY_OPTIONS = [
   { value: "fast_period", label: "fast_period" },
   { value: "mid_period", label: "mid_period" },
@@ -342,6 +393,13 @@ function normalizeEditorStrategy(value) {
     nextValue.params = nextParams;
     nextValue.risk = nextRisk;
     nextValue.conditions = nextConditions;
+    nextValue.settings =
+      nextValue.settings && typeof nextValue.settings === "object" && !Array.isArray(nextValue.settings)
+        ? {
+            trade_config: { ...(nextValue.settings.trade_config || {}) },
+            confluences: { ...(nextValue.settings.confluences || {}) },
+          }
+        : { trade_config: {}, confluences: {} };
     nextValue.metadata =
       nextValue.metadata && typeof nextValue.metadata === "object" && !Array.isArray(nextValue.metadata)
         ? {
@@ -1024,13 +1082,17 @@ function buildDefaultDraft(exampleStrategy, defaults = {}) {
     id: baseId || `custom_strategy_${timestamp}`,
     name: base.name || "New Custom Strategy",
     description: base.description || "",
-    engine_version: "42trade.strategy.v2",
+    engine_version: base.engine_version || "42trade.strategy.v3",
     kind: "custom",
     status: "draft",
     market: {
       symbol: String(base.market?.symbol ?? "").trim(),
       tf: String(base.market?.tf ?? "").trim(),
     },
+    settings:
+      base.settings && typeof base.settings === "object" && !Array.isArray(base.settings)
+        ? base.settings
+        : { trade_config: {}, confluences: {} },
     params:
       base.params && typeof base.params === "object" && !Array.isArray(base.params)
         ? base.params
@@ -2450,6 +2512,89 @@ function RuleTreeEditor({
   );
 }
 
+function StrategyPresetSection({ title, section, fields, draft, updateDraft }) {
+  const values = draft?.settings?.[section] || {};
+  return (
+    <div className="stack-layout" style={{ gap: 10 }}>
+      <div className="minor-text" style={{ fontSize: 11, fontWeight: 700 }}>{title}</div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+          gap: 10,
+        }}
+      >
+        {fields.map((field) => {
+          const rawValue = values?.[field.key];
+          const setValue = (nextValue) =>
+            updateDraft((base) => {
+              const nextSection = { ...(base?.settings?.[section] || {}) };
+              if (nextValue === "" || nextValue === null || nextValue === undefined) {
+                delete nextSection[field.key];
+              } else {
+                nextSection[field.key] = nextValue;
+              }
+              return {
+                ...base,
+                settings: {
+                  ...(base.settings || {}),
+                  [section]: nextSection,
+                },
+              };
+            });
+          return (
+            <label key={`${section}:${field.key}`} className="stack-layout" style={{ gap: 6 }}>
+              <span className="minor-text">{field.label}</span>
+              {field.type === "text" || field.type === "number" ? (
+                <input
+                  className="input"
+                  value={rawValue ?? ""}
+                  type={field.type === "number" ? "number" : "text"}
+                  onChange={(event) =>
+                    setValue(
+                      field.type === "number"
+                        ? parseNullableNumberInput(event.target.value)
+                        : event.target.value,
+                    )
+                  }
+                />
+              ) : (
+                <InputComboSelect
+                  value={
+                    field.type === "boolean"
+                      ? rawValue === true
+                        ? "true"
+                        : rawValue === false
+                          ? "false"
+                          : ""
+                      : resolveSelectValue(rawValue, field.options || [])
+                  }
+                  searchable={(field.options || []).length > 8}
+                  onChange={(event) =>
+                    setValue(
+                      field.type === "boolean"
+                        ? parseNullableBooleanInput(event.target.value)
+                        : event.target.value,
+                    )
+                  }
+                >
+                  {toFlatOptions(
+                    withNullOption(
+                      field.type === "boolean"
+                        ? optionList(["true", "false"])
+                        : field.options || [],
+                    ),
+                  )}
+                </InputComboSelect>
+              )}
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function StrategyEditorPanel({
   strategy,
   selectionKey,
@@ -3279,6 +3424,30 @@ export default function StrategyEditorPanel({
                     ))}
                   </div>
                 </div>
+              </ResponsivePanel>
+
+              <ResponsivePanel
+                title="Runtime Preset"
+                subtitle="Defined values override the matching cTrader parameters and are stored with the 42Trade strategy."
+                defaultOpen
+                collapseDirection="top-down"
+                border="always"
+                bodyClassName="stack-layout"
+              >
+                <StrategyPresetSection
+                  title="Trade Config"
+                  section="trade_config"
+                  fields={STRATEGY_PRESET_FIELDS.trade_config}
+                  draft={draft}
+                  updateDraft={updateDraft}
+                />
+                <StrategyPresetSection
+                  title="Confluences"
+                  section="confluences"
+                  fields={STRATEGY_PRESET_FIELDS.confluences}
+                  draft={draft}
+                  updateDraft={updateDraft}
+                />
               </ResponsivePanel>
 
               <ResponsivePanel

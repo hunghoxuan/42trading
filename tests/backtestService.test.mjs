@@ -455,7 +455,7 @@ test("all built-in preset strategies are rule-based and executable through the g
   }
 
   for (const strategy of await backtestService.listStrategies()) {
-    assert.equal(strategy.engine_version, "42trade.strategy.v2", `${strategy.key} should declare engine version`);
+    assert.equal(strategy.engine_version, "42trade.strategy.v3", `${strategy.key} should declare engine version`);
     assert.ok(Array.isArray(strategy.events), `${strategy.key} should define events`);
     assert.ok(Array.isArray(strategy.indicators), `${strategy.key} should define indicators`);
     assert.ok(strategy.rules && typeof strategy.rules === "object", `${strategy.key} should define rules`);

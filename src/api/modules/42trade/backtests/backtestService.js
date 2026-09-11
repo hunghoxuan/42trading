@@ -178,6 +178,7 @@ function normalizeStrategySnapshotForFingerprint(snapshot = {}) {
   return {
     engine_version: snapshot?.engine_version || null,
     market: snapshot?.market || {},
+    settings: snapshot?.settings || {},
     params: snapshot?.params || {},
     indicators: Array.isArray(snapshot?.indicators) ? snapshot.indicators : [],
     events: Array.isArray(snapshot?.events) ? snapshot.events : [],
@@ -381,22 +382,27 @@ async function listAvailableStrategies(userId, options = {}) {
     engine_version: strategy.engine_version || "42trade.strategy.v2",
     params: strategy.params || {},
     market: strategy.market || {},
+    settings: strategy.settings || {},
     indicators: strategy.indicators || [],
     events: Array.isArray(strategy.events)
       ? strategy.events
       : normalizeStrategyEventsForSimulation(strategy),
     rules: Array.isArray(strategy.rules) ? strategy.rules : strategy.rules || [],
       risk: strategy.risk || {},
+      conditions: strategy.conditions || {},
+      metadata: strategy.metadata || {},
     });
   });
   const records = Array.isArray(options.records)
     ? options.records
     : await listPersistedBacktestRecords(userId);
   const summaryIndex = buildBacktestSummaryIndex(records);
-  return attachBacktestSummaryToStrategies(
-    [...(await listStrategies()), ...customRows],
-    summaryIndex,
-  );
+  const byId = new Map();
+  [...(await listStrategies()), ...customRows].forEach((strategy) => {
+    const id = String(strategy?.id || strategy?.key || "").trim();
+    if (id) byId.set(id, strategy);
+  });
+  return attachBacktestSummaryToStrategies(Array.from(byId.values()), summaryIndex);
 }
 
 function makeRunId() {

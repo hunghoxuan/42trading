@@ -195,75 +195,18 @@ test("simulateStrategy rejects trades that violate market metadata min stop pips
   assert.equal(result.execution_options.min_stop_pips, 15);
 });
 
-test("simulateStrategy ports ThreeCandlesV1 continue mode with cTrader-style stop and target", async () => {
-  const strategy = (await backtestService.listStrategies()).find(
-    (item) => item?.key === "three_candles_v1",
-  );
-  assert.ok(strategy, "three_candles_v1 preset should load");
-
-  const bars = [
-    { time: 60, open: 1.099, high: 1.1002, low: 1.0988, close: 1.1, volume: 10 },
-    { time: 120, open: 1.1, high: 1.1012, low: 1.0998, close: 1.101, volume: 10 },
-    { time: 180, open: 1.101, high: 1.1022, low: 1.1006, close: 1.102, volume: 10 },
-    { time: 240, open: 1.102, high: 1.1035, low: 1.1014, close: 1.1032, volume: 10 }
-  ];
-
-  const result = backtestService.__test.simulateStrategy(bars, strategy, {
-    tf: "1m",
-    symbol: "EURUSD",
-    returnDetails: true,
-    marketMetadata: {
-      symbol: "EURUSD",
-      pip_size: 0.0001,
-      spread_pips: 0
-    }
-  });
-
-  const trade = result.trades[0];
-  assert.ok(trade, "strategy should open a trade after three bullish candles");
-  assert.equal(String(trade.action || "").toUpperCase(), "BUY");
-  assert.equal(Number(trade.entry), 1.102);
-  assert.equal(Number(trade.sl), 1.0998);
-  assert.equal(Number(trade.tp), 1.1042);
+test("strategy catalog contains only the shared candle_pattern_trend file", async () => {
+  const strategies = await backtestService.listStrategies();
+  assert.deepEqual(strategies.map((item) => item?.id || item?.key), ["candle_pattern_trend"]);
+  assert.equal(strategies[0]?.engine_version, "42trade.strategy.v3");
 });
 
-test("simulateStrategy ports ThreeCandlesV1 reverse mode", async () => {
-  const base = (await backtestService.listStrategies()).find(
-    (item) => item?.key === "three_candles_v1",
-  );
-  assert.ok(base, "three_candles_v1 preset should load");
-  const strategy = {
-    ...base,
-    params: {
-      ...(base.params || {}),
-      direction_mode: "reverse"
-    }
-  };
-
-  const bars = [
-    { time: 60, open: 1.105, high: 1.1052, low: 1.1039, close: 1.104, volume: 10 },
-    { time: 120, open: 1.104, high: 1.1041, low: 1.1029, close: 1.103, volume: 10 },
-    { time: 180, open: 1.103, high: 1.1032, low: 1.1018, close: 1.102, volume: 10 },
-    { time: 240, open: 1.102, high: 1.1024, low: 1.1005, close: 1.1012, volume: 10 }
-  ];
-
-  const result = backtestService.__test.simulateStrategy(bars, strategy, {
-    tf: "1m",
-    symbol: "EURUSD",
-    returnDetails: true,
-    marketMetadata: {
-      symbol: "EURUSD",
-      pip_size: 0.0001,
-      spread_pips: 0
-    }
-  });
-
-  const trade = result.trades[0];
-  assert.ok(trade, "reverse mode should buy after three bearish candles");
-  assert.equal(String(trade.action || "").toUpperCase(), "BUY");
-  assert.equal(Number(trade.entry), 1.102);
-  assert.equal(Number(trade.sl), 1.1018);
-  assert.equal(Number(trade.tp), 1.1022);
+test("candle_pattern_trend exposes the shared cTrader preset settings", async () => {
+  const strategy = (await backtestService.listStrategies())[0];
+  assert.equal(strategy?.settings?.trade_config?.entry, "L0");
+  assert.equal(strategy?.settings?.trade_config?.sl, "event");
+  assert.equal(strategy?.settings?.trade_config?.tp, "RR_1_5");
+  assert.equal(strategy?.settings?.confluences?.minimum_count, "_2");
 });
 
 test("simulateStrategy fills limit orders only after price touches the limit", () => {
@@ -419,9 +362,9 @@ test("runBacktest reports loaded vs required bars when the dataset is too short"
         symbol: "BTCUSD",
         tf: "1",
         limit: 30,
-        strategy: "golden_cross_v1",
+        strategy: "candle_pattern_trend",
         persist: false,
       }),
-    /loaded 100, required 240/i,
+    /loaded 0, required 20/i,
   );
 });

@@ -1,0 +1,128 @@
+{
+  "id": "candle_pattern_trend",
+  "key": "candle_pattern_trend",
+  "name": "Candle Pattern Trend",
+  "description": "Shared cTrader and 42Trade candle-pattern preset. Defined values override the matching cTrader parameters.",
+  "engine_version": "42trade.strategy.v3",
+  "kind": "custom",
+  "status": "active",
+  "market": {
+    "symbol": "",
+    "tf": ""
+  },
+  "settings": {
+    "trade_config": {
+      "symbols": "DE40,US30,BTCUSD,XAUUSD,EURGBP,EURUSD,GBPJPY,EURJPY",
+      "timeframes": "m5,m15,m30,h1,h4",
+      "news_block": "_30m",
+      "first_trade": "Now_Wick_L0_R2",
+      "second_trade": "Now_Event_L03_R1",
+      "third_trade": "No",
+      "pending_order_expiry_bars": 5,
+      "trade_count": "_1",
+      "entry": "L0",
+      "sl": "event",
+      "tp": "RR_1_5",
+      "exit_mode": "Break_Even"
+    },
+    "confluences": {
+      "days": "All",
+      "time_range": "_60_KZs",
+      "overnight_block": "No",
+      "weekend_block": "No",
+      "minimum_count": "_2",
+      "volume_surge": "No",
+      "trend_bias": "No",
+      "premium_discount": "No",
+      "bar_direction": true,
+      "ema": "No",
+      "vwap": "No",
+      "bollinger": "No",
+      "rsi": "No",
+      "stochastic": "No",
+      "macd": "No",
+      "ichimoku": "No"
+    }
+  },
+  "params": {
+    "stop_lookback": 3,
+    "reward_rr": 1.5,
+    "min_stop_pips": 15
+  },
+  "indicators": [],
+  "rules": [
+    {
+      "id": "bullish_candle_trigger",
+      "name": "Bullish Candle Trigger",
+      "bias": "bullish",
+      "priority": "medium",
+      "when": {
+        "or": [
+          { "fn": "pin_bar", "args": ["bullish"] },
+          { "fn": "engulfing", "args": ["bullish"] },
+          { "fn": "outside_bar", "args": ["bullish"] }
+        ]
+      },
+      "actions": [
+        {
+          "id": "open_long",
+          "action": "trade.open.long",
+          "trade_plan": {
+            "direction": "buy",
+            "type": "market",
+            "entry": "bar.close",
+            "sl": "price_action_sl(buy, params.stop_lookback, 0, params.min_stop_pips)",
+            "tp": "price_action_tp(buy, params.stop_lookback, params.reward_rr, 0, params.min_stop_pips)"
+          }
+        }
+      ]
+    },
+    {
+      "id": "bearish_candle_trigger",
+      "name": "Bearish Candle Trigger",
+      "bias": "bearish",
+      "priority": "medium",
+      "when": {
+        "or": [
+          { "fn": "pin_bar", "args": ["bearish"] },
+          { "fn": "engulfing", "args": ["bearish"] },
+          { "fn": "outside_bar", "args": ["bearish"] }
+        ]
+      },
+      "actions": [
+        {
+          "id": "open_short",
+          "action": "trade.open.short",
+          "trade_plan": {
+            "direction": "sell",
+            "type": "market",
+            "entry": "bar.close",
+            "sl": "price_action_sl(sell, params.stop_lookback, 0, params.min_stop_pips)",
+            "tp": "price_action_tp(sell, params.stop_lookback, params.reward_rr, 0, params.min_stop_pips)"
+          }
+        }
+      ]
+    }
+  ],
+  "risk": {
+    "rr_target": 1.5,
+    "min_rr": 1.5,
+    "stop_lookback": 3,
+    "max_open_trades": 1,
+    "fallback_stop_pct": 0.001,
+    "fallback_tp_pct": 0.0015
+  },
+  "conditions": {
+    "symbols": ["DE40", "US30", "BTCUSD", "XAUUSD", "EURGBP", "EURUSD", "GBPJPY", "EURJPY"],
+    "timeframes": ["m5", "m15", "m30", "h1", "h4"],
+    "skip_news": true,
+    "news_window_minutes": 30,
+    "min_rr": 1.5,
+    "sessions": [],
+    "regime_tags": []
+  },
+  "metadata": {
+    "author": "42trade",
+    "preset_scope": "ctrader_and_42trade"
+  }
+}

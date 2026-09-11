@@ -30,7 +30,7 @@
     },
     "engine_version": {
       "type": "string",
-      "enum": ["42trade.strategy.v1", "42trade.strategy.v2"]
+      "enum": ["42trade.strategy.v1", "42trade.strategy.v2", "42trade.strategy.v3"]
     },
     "kind": {
       "type": "string",
@@ -45,6 +45,53 @@
       "properties": {
         "symbol": { "type": "string" },
         "tf": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "settings": {
+      "type": "object",
+      "description": "Shared preset overrides. A defined value overrides the matching runtime parameter; omitted values keep the runtime default.",
+      "properties": {
+        "trade_config": {
+          "type": "object",
+          "properties": {
+            "symbols": { "type": "string" },
+            "timeframes": { "type": "string" },
+            "news_block": { "type": "string" },
+            "first_trade": { "type": "string" },
+            "second_trade": { "type": "string" },
+            "third_trade": { "type": "string" },
+            "pending_order_expiry_bars": { "type": "integer", "minimum": 1, "maximum": 50 },
+            "trade_count": { "type": "string" },
+            "entry": { "type": "string" },
+            "sl": { "type": "string" },
+            "tp": { "type": "string" },
+            "exit_mode": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "confluences": {
+          "type": "object",
+          "properties": {
+            "days": { "type": "string" },
+            "time_range": { "type": "string" },
+            "overnight_block": { "type": "string" },
+            "weekend_block": { "type": "string" },
+            "minimum_count": { "type": "string" },
+            "volume_surge": { "type": "string" },
+            "trend_bias": { "type": "string" },
+            "premium_discount": { "type": "string" },
+            "bar_direction": { "type": "boolean" },
+            "ema": { "type": "string" },
+            "vwap": { "type": "string" },
+            "bollinger": { "type": "string" },
+            "rsi": { "type": "string" },
+            "stochastic": { "type": "string" },
+            "macd": { "type": "string" },
+            "ichimoku": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },

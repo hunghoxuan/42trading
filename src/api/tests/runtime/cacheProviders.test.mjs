@@ -259,4 +259,20 @@ test("createStrategyConfigService loads schema and strategy functions through co
   });
 
   assert.equal(validation.ok, true);
+
+  const saved = await service.saveStrategy("ignored-user", {
+    ...validation.strategy,
+    engine_version: "42trade.strategy.v3",
+    settings: {
+      trade_config: { entry: "L0" },
+      confluences: { minimum_count: "_2" },
+    },
+  });
+  assert.equal(saved.settings.trade_config.entry, "L0");
+  assert.deepEqual((await service.listStrategies("other-user")).map((item) => item.id), ["demo"]);
+  assert.equal(
+    JSON.parse(fs.readFileSync(path.join(configDir, "strategies", "demo.json"), "utf8"))
+      .settings.confluences.minimum_count,
+    "_2",
+  );
 });

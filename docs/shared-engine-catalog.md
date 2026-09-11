@@ -104,17 +104,19 @@ editor because they also contain indicators, actions, market constraints, and ri
 
 ## cTrader Runtime
 
-Set the cBot `Shared Strategy IDs` parameter to a comma-separated list of strategy IDs. `*`
-selects every active shared strategy. Leaving the parameter blank preserves the existing enum
-strategy behavior.
+The cBot strategy combo selects a file-backed preset from `src/config/strategies`. For now the
+combo contains only `Off` and `custom_trade`; selecting `custom_trade` loads
+`src/config/strategies/custom_trade.json`, the same definition shown by 42Trade.
 
-When shared IDs are configured, cTrader:
+When a strategy file is selected, cTrader:
 
-1. Loads rules, events, and strategies from the base server config path.
-2. Resolves `rule_id` and `event_id` references.
-3. Builds its own bar, indicator, parameter, and market context.
-4. Evaluates built-in handlers or text/JSON expressions with the C# engine.
-5. Sends matched trade actions through the existing risk and protected-order pipeline.
+1. Loads the strategy, rules, and events from the base server config path.
+2. Applies every defined `settings.trade_config` and `settings.confluences` value as an override
+   of the matching cTrader parameter. Omitted settings keep the cTrader parameter value.
+3. Resolves `rule_id` and `event_id` references.
+4. Builds its own bar, indicator, parameter, and market context.
+5. Evaluates built-in handlers or text/JSON expressions with the C# engine.
+6. Sends matched trade actions through the existing risk and protected-order pipeline.
 
 Invalid, missing, inactive, or unmatched shared definitions do not fall back to legacy enum
 rules. This prevents an invalid edit from unexpectedly enabling a different strategy.
@@ -129,7 +131,6 @@ as server simulations.
 ## Compatibility
 
 - Existing JSON expressions remain valid.
-- Existing preset strategy files remain valid.
 - Existing predefined JavaScript rules remain available through the legacy rules endpoint.
-- Existing per-user custom strategies remain available and can reference shared definitions.
-- cTrader legacy enums remain the default when `Shared Strategy IDs` is blank.
+- Strategy definitions are file-backed in `src/config/strategies`; the API and editor save to
+  that same folder instead of a per-user object store.

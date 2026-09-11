@@ -4193,9 +4193,10 @@ function normalizeTfKey3(tfRaw = "") {
   if (raw === "1m" || raw === "1min" || raw === "m1" || raw === "1") return "1m";
   if (raw === "5m" || raw === "5min" || raw === "m5" || raw === "5") return "5m";
   if (raw === "15m" || raw === "15min" || raw === "m15" || raw === "15") return "15m";
+  if (raw === "30m" || raw === "30min" || raw === "m30" || raw === "30") return "30m";
   if (raw === "1h" || raw === "60" || raw === "h1") return "1h";
   if (raw === "4h" || raw === "240" || raw === "h4") return "4h";
-  if (raw === "1d" || raw === "d" || raw === "day") return "1d";
+  if (raw === "1d" || raw === "d1" || raw === "1440" || raw === "d" || raw === "day") return "1d";
   if (raw === "1w" || raw === "w" || raw === "week") return "1w";
   return raw;
 }
@@ -4227,16 +4228,23 @@ function normalizeStrategyStatus(strategy = {}) {
 }
 function normalizeStrategyConditions(strategy = {}) {
   const raw = strategy?.conditions && typeof strategy.conditions === "object" && !Array.isArray(strategy.conditions) ? strategy.conditions : strategy?.metadata?.conditions && typeof strategy.metadata.conditions === "object" && !Array.isArray(strategy.metadata.conditions) ? strategy.metadata.conditions : {};
+  const tradeConfig = strategy?.settings?.trade_config && typeof strategy.settings.trade_config === "object" && !Array.isArray(strategy.settings.trade_config) ? strategy.settings.trade_config : {};
+  const presetList = (value) => Array.isArray(value) ? value : String(value || "").split(/[;,\s]+/).map((item) => item.trim()).filter(Boolean);
   const marketTf = normalizeTfKey3(strategy?.market?.tf || "");
+  const presetTimeframes = presetList(tradeConfig.timeframes);
   const timeframeCandidates = normalizeTimeframeList([
-    ...Array.isArray(raw?.timeframes) ? raw.timeframes : [],
-    ...Array.isArray(raw?.tfs) ? raw.tfs : [],
-    raw?.tf,
+    ...presetTimeframes.length ? presetTimeframes : [
+      ...Array.isArray(raw?.timeframes) ? raw.timeframes : [],
+      ...Array.isArray(raw?.tfs) ? raw.tfs : [],
+      raw?.tf
+    ],
     ...Array.isArray(strategy?.market?.timeframes) ? strategy.market.timeframes : [],
     marketTf
   ]);
+  const newsBlockMatch = String(tradeConfig.news_block || "").match(/(\d+)/);
+  const configuredNewsWindow = newsBlockMatch ? Number(newsBlockMatch[1]) : null;
   const sharedNewsWindow = toFiniteNumber2(
-    raw?.news_window_minutes ?? raw?.skip_news_window_minutes,
+    configuredNewsWindow ?? raw?.news_window_minutes ?? raw?.skip_news_window_minutes,
     null
   );
   const beforeMinutes = toFiniteNumber2(
@@ -4262,8 +4270,10 @@ function normalizeStrategyConditions(strategy = {}) {
   return {
     status: normalizeStrategyStatus(strategy),
     timeframes: timeframeCandidates,
-    symbols: normalizeStringList(raw?.symbols),
-    skip_news: raw?.skip_news === true || raw?.avoid_news === true,
+    symbols: normalizeStringList(
+      presetList(tradeConfig.symbols).length ? presetList(tradeConfig.symbols) : raw?.symbols
+    ),
+    skip_news: String(tradeConfig.news_block || "").trim() ? String(tradeConfig.news_block).trim().toLowerCase() !== "no" : raw?.skip_news === true || raw?.avoid_news === true,
     news_window_minutes: Number.isFinite(sharedNewsWindow) ? sharedNewsWindow : null,
     news_before_minutes: beforeMinutes,
     news_after_minutes: afterMinutes,

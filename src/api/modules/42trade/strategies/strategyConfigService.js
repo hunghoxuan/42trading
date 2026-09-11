@@ -127,19 +127,43 @@ function buildSupportedValueSet(items = []) {
   );
 }
 
-function normalizeStrategyConditions(input) {
-  if (!input || typeof input !== "object" || Array.isArray(input)) return {};
+function splitPresetList(value) {
+  if (Array.isArray(value)) return value;
+  return String(value || "").split(/[;,\s]+/);
+}
+
+function newsBlockMinutes(value) {
+  const match = String(value || "").match(/(\d+)/);
+  return match ? Number(match[1]) : null;
+}
+
+function normalizeStrategyConditions(input, settings = {}) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) input = {};
+  const tradeConfig =
+    settings?.trade_config && typeof settings.trade_config === "object"
+      ? settings.trade_config
+      : {};
+  const configuredTimeframes = splitPresetList(tradeConfig.timeframes);
+  const configuredSymbols = splitPresetList(tradeConfig.symbols);
   const timeframes = [...new Set(
     [
-      ...(Array.isArray(input?.timeframes) ? input.timeframes : []),
-      ...(Array.isArray(input?.tfs) ? input.tfs : []),
-      input?.tf,
+      ...(configuredTimeframes.filter(Boolean).length
+        ? configuredTimeframes
+        : [
+            ...(Array.isArray(input?.timeframes) ? input.timeframes : []),
+            ...(Array.isArray(input?.tfs) ? input.tfs : []),
+            input?.tf,
+          ]),
     ]
       .map((item) => String(item || "").trim())
       .filter(Boolean),
   )];
   const symbols = [...new Set(
-    (Array.isArray(input?.symbols) ? input.symbols : [])
+    [
+      ...(configuredSymbols.filter(Boolean).length
+        ? configuredSymbols
+        : Array.isArray(input?.symbols) ? input.symbols : []),
+    ]
       .map((item) => String(item || "").trim().toUpperCase())
       .filter(Boolean),
   )];
@@ -165,8 +189,15 @@ function normalizeStrategyConditions(input) {
     ...(tags.length ? { tags } : {}),
     ...(regimeTags.length ? { regime_tags: regimeTags } : {}),
   };
-  if (typeof input?.skip_news === "boolean") out.skip_news = input.skip_news;
-  if (Number.isFinite(Number(input?.news_window_minutes))) {
+  const configuredNewsMinutes = newsBlockMinutes(tradeConfig.news_block);
+  if (String(tradeConfig.news_block || "").trim()) {
+    out.skip_news = String(tradeConfig.news_block).trim().toLowerCase() !== "no";
+  } else if (typeof input?.skip_news === "boolean") {
+    out.skip_news = input.skip_news;
+  }
+  if (Number.isFinite(configuredNewsMinutes)) {
+    out.news_window_minutes = Math.max(0, configuredNewsMinutes);
+  } else if (Number.isFinite(Number(input?.news_window_minutes))) {
     out.news_window_minutes = Math.max(0, Number(input.news_window_minutes));
   }
   if (Number.isFinite(Number(input?.news_before_minutes))) {
@@ -425,10 +456,8 @@ async function validateStrategyPayload(
   if (typeof strategy.name !== "string" || strategy.name.trim().length < 3) {
     errors.push("name must be at least 3 chars");
   }
-  if (strategy.engine_version !== "42trade.strategy.v1") {
-    if (strategy.engine_version !== "42trade.strategy.v2") {
-      errors.push("engine_version must be 42trade.strategy.v1 or 42trade.strategy.v2");
-    }
+  if (!["42trade.strategy.v1", "42trade.strategy.v2", "42trade.strategy.v3"].includes(strategy.engine_version)) {
+    errors.push("engine_version must be 42trade.strategy.v1, 42trade.strategy.v2, or 42trade.strategy.v3");
   }
   if (strategy.kind !== "custom") {
     errors.push("kind must be custom");
@@ -534,13 +563,17 @@ async function validateStrategyPayload(
       name: String(strategy.name || "").trim(),
       description: String(strategy.description || "").trim(),
       engine_version:
-        strategy.engine_version === "42trade.strategy.v2"
-          ? "42trade.strategy.v2"
+        ["42trade.strategy.v2", "42trade.strategy.v3"].includes(strategy.engine_version)
+          ? strategy.engine_version
           : "42trade.strategy.v1",
       kind: "custom",
       status: String(strategy.status || "draft"),
       market:
         strategy.market && typeof strategy.market === "object" ? strategy.market : {},
+      settings:
+        strategy.settings && typeof strategy.settings === "object" && !Array.isArray(strategy.settings)
+          ? strategy.settings
+          : {},
       params:
         strategy.params && typeof strategy.params === "object" && !Array.isArray(strategy.params)
           ? strategy.params
@@ -569,7 +602,7 @@ async function validateStrategyPayload(
         strategy.risk && typeof strategy.risk === "object" && !Array.isArray(strategy.risk)
           ? strategy.risk
           : {},
-      conditions: normalizeStrategyConditions(strategy.conditions),
+      conditions: normalizeStrategyConditions(strategy.conditions, strategy.settings),
       metadata:
         strategy.metadata && typeof strategy.metadata === "object" && !Array.isArray(strategy.metadata)
           ? strategy.metadata
@@ -636,12 +669,16 @@ function buildExampleStrategy() {
     id: "custom_rsi_reversion",
     name: "Custom RSI Reversion",
     description: "Buy RSI recovery from oversold and sell rollover from overbought.",
-    engine_version: "42trade.strategy.v2",
+    engine_version: "42trade.strategy.v3",
     kind: "custom",
     status: "draft",
     market: {
       symbol: "EURAUD",
       tf: "15"
+    },
+    settings: {
+      trade_config: {},
+      confluences: {}
     },
     params: {
       rsi_oversold: 30,
@@ -758,19 +795,21 @@ function buildExampleStrategy() {
 
 function createStrategyConfigService({
   configStore = defaultConfigStore,
-  storeRepo = objectStore,
 } = {}) {
   return {
     readSchema: () => readSchema(configStore),
     validateStrategyPayload: (input = {}) =>
       validateStrategyPayload(input, { configStore }),
     async listStrategies(userId) {
-      const rows = await storeRepo.listObjectsByType(userId, "strategies");
-      return rows.map((row) => row.data || {}).filter(Boolean);
+      return configStore.listStrategies({ refresh: true });
     },
     async getStrategy(userId, strategyId) {
-      const row = await storeRepo.getObject(userId, "strategies", strategyId);
-      return row?.data || null;
+      try {
+        return await configStore.getStrategy(strategyId, { refresh: true });
+      } catch (error) {
+        if (error?.code === "ENOENT") return null;
+        throw error;
+      }
     },
     async saveStrategy(userId, payload = {}) {
       const validation = await validateStrategyPayload(payload, { configStore });
@@ -792,13 +831,7 @@ function createStrategyConfigService({
           schema_id: strategySchema.$id,
         },
       };
-      await storeRepo.upsertObject(
-        userId,
-        "strategies",
-        strategy.id,
-        strategy,
-        String(strategy.status || "draft").toUpperCase(),
-      );
+      await configStore.saveStrategy(strategy.id, strategy);
       return strategy;
     },
     async archiveStrategy(userId, strategyId) {
@@ -810,7 +843,11 @@ function createStrategyConfigService({
       });
     },
     async deleteStrategy(userId, strategyId) {
-      await storeRepo.deleteObject(userId, "strategies", strategyId);
+      try {
+        await configStore.deleteDocument("strategy", strategyId);
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+      }
     },
     buildExampleStrategy,
   };

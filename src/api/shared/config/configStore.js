@@ -63,12 +63,16 @@ function createConfigStore(options = {}) {
   async function loadFileBackedDocument(kind, id, { refresh = false } = {}) {
     const safeId = normalizeId(id);
     const objectType = objectTypeForKind(kind);
-    if (!refresh) {
+    // Strategy JSON under src/config/strategies is the single source of truth shared
+    // by 42Trade and cTrader. Do not create/read a second object-store copy for it.
+    if (kind !== "strategy" && !refresh) {
       const cached = await repo.getObjectData(systemUserId, objectType, safeId);
       if (cached && typeof cached === "object") return cached;
     }
     const value = await readJsonFile(resolvePath(kind, safeId));
-    await repo.upsertObject(systemUserId, objectType, safeId, value);
+    if (kind !== "strategy") {
+      await repo.upsertObject(systemUserId, objectType, safeId, value);
+    }
     return value;
   }
 
@@ -76,7 +80,9 @@ function createConfigStore(options = {}) {
     const safeId = normalizeId(id);
     const objectType = objectTypeForKind(kind);
     await writeJsonAtomic(resolvePath(kind, safeId), value);
-    await repo.upsertObject(systemUserId, objectType, safeId, value);
+    if (kind !== "strategy") {
+      await repo.upsertObject(systemUserId, objectType, safeId, value);
+    }
     return value;
   }
 
@@ -173,7 +179,9 @@ function createConfigStore(options = {}) {
       }
       const safeId = normalizeId(name);
       await fsp.unlink(resolvePath(kind, safeId));
-      await repo.deleteObject(systemUserId, objectTypeForKind(kind), safeId);
+      if (kind !== "strategy") {
+        await repo.deleteObject(systemUserId, objectTypeForKind(kind), safeId);
+      }
     },
   };
 }

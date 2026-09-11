@@ -59,6 +59,18 @@ test("Strategy editor parameter catalog includes price-action params and custom 
   assert.match(strategyEditorSource, /Object\.keys\(draft\?\.params \|\| \{\}\)\.forEach/);
 });
 
+test("Strategy editor exposes shared cTrader trade and confluence preset combos", () => {
+  assert.match(strategyEditorSource, /title="Runtime Preset"/);
+  assert.match(strategyEditorSource, /section="trade_config"/);
+  assert.match(strategyEditorSource, /section="confluences"/);
+  assert.match(strategyEditorSource, /key: "entry", label: "Entry"/);
+  assert.match(strategyEditorSource, /key: "minimum_count", label: "Min\. Confluences"/);
+  assert.match(strategyEditorSource, /const TRADE_TYPES = \["Wick", "Event", "Swing"\]/);
+  assert.match(strategyEditorSource, /const TRADE_TPS = \["", "R03", "R05", "R07", "R1", "R13", "R15"/);
+  assert.match(strategyEditorSource, /\[timing, type, entry, tp\]\.filter\(Boolean\)\.join\("_"\)/);
+  assert.doesNotMatch(strategyEditorSource, /ScalpWick|ScalpEvent/);
+});
+
 test("TradePlanEditor numeric controls render readOnly inputs and disabled nested controls", () => {
   assert.match(editorSource, /const NumericInput = memo\(function NumericInput\(\{/);
   assert.match(editorSource, /readOnly\s*=\s*false/);

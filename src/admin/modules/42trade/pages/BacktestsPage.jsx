@@ -1708,13 +1708,17 @@ function buildNewStrategyDraft(example, defaults = {}) {
     id: `${nextIdBase}_${timestamp}`,
     name: sourceName ? `${sourceName} Copy` : "New Custom Strategy",
     description: base.description || "",
-    engine_version: "42trade.strategy.v2",
+    engine_version: "42trade.strategy.v3",
     kind: "custom",
     status: "draft",
     market: {
       symbol: defaults.symbol || base.market?.symbol || "",
       tf: defaults.tf || base.market?.tf || "",
     },
+    settings:
+      base.settings && typeof base.settings === "object" && !Array.isArray(base.settings)
+        ? base.settings
+        : { trade_config: {}, confluences: {} },
     params:
       base.params && typeof base.params === "object" && !Array.isArray(base.params)
         ? base.params
