@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../../../app/api";
 import PageHeader from "../../../shared/components/PageHeader";
+import { useConfirmDialog } from "../../../shared/components/ConfirmDialog";
 import "./YtDlpPage.css";
 
 const INITIAL_FORM = {
@@ -40,12 +41,14 @@ function saveBlob({ blob, fileName }, fallbackName) {
 }
 
 export default function YtDlpPage() {
+  const confirm = useConfirmDialog();
   const [form, setForm] = useState(INITIAL_FORM);
   const [runtime, setRuntime] = useState(null);
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [preview, setPreview] = useState(null);
 
   const hasActiveJobs = useMemo(
     () => jobs.some((job) => ["queued", "running"].includes(job.status)),
@@ -104,10 +107,39 @@ export default function YtDlpPage() {
 
   async function download(job, index) {
     try {
+      const suggestedName = job.output_files[index]?.name || "download";
+      let fileHandle = null;
+      if (typeof window.showSaveFilePicker === "function") {
+        fileHandle = await window.showSaveFilePicker({ suggestedName });
+      }
       const result = await api.ytDlpDownloadFile(job.sid, index);
-      saveBlob(result, job.output_files[index]?.name);
+      if (fileHandle) {
+        const writable = await fileHandle.createWritable();
+        await writable.write(result.blob);
+        await writable.close();
+      } else {
+        saveBlob(result, suggestedName);
+      }
     } catch (downloadError) {
+      if (downloadError?.name === "AbortError") return;
       setError(downloadError.message || "Could not download the file.");
+    }
+  }
+
+  async function remove(job) {
+    const accepted = await confirm({
+      title: "Delete download?",
+      message: `Delete “${job.source_title || job.sid}” and all files saved in its module folder?`,
+      confirmLabel: "Delete",
+      tone: "danger",
+    });
+    if (!accepted) return;
+    try {
+      await api.ytDlpDeleteJob(job.sid);
+      setJobs((current) => current.filter((item) => item.sid !== job.sid));
+      setPreview((current) => current?.sid === job.sid ? null : current);
+    } catch (deleteError) {
+      setError(deleteError.message || "Could not delete the download.");
     }
   }
 
@@ -117,7 +149,7 @@ export default function YtDlpPage() {
         title="YT DLP"
         actions={
           <button type="button" className="secondary-button" onClick={() => load()} disabled={loading}>
-            Refresh
+            <span aria-hidden="true">↻</span> Refresh
           </button>
         }
       />
@@ -186,9 +218,31 @@ export default function YtDlpPage() {
           <label><input type="checkbox" checked={form.embed_metadata} onChange={(event) => setForm({ ...form, embed_metadata: event.target.checked })} /> Metadata</label>
         </div>
         <button type="submit" className="primary-button" disabled={submitting || !runtime?.installed}>
-          {submitting ? "Starting…" : "Download"}
+          <span aria-hidden="true">⬇</span> {submitting ? "Starting…" : "Download"}
         </button>
+        <div className="minor-text yt-dlp-auto-save">
+          Downloads are automatically saved to <code>data/modules/yt-dlp/downloads/</code>.
+        </div>
       </form>
+
+      {preview && (
+        <section className="panel yt-dlp-preview">
+          <div className="yt-dlp-preview__header">
+            <div>
+              <div className="panel-label">Preview</div>
+              <div className="minor-text">{preview.name}</div>
+            </div>
+            <button type="button" className="secondary-button icon-button" onClick={() => setPreview(null)} aria-label="Close preview" title="Close preview">
+              <span aria-hidden="true">✕</span>
+            </button>
+          </div>
+          {preview.mediaKind === "audio" ? (
+            <audio key={preview.url} src={preview.url} controls autoPlay crossOrigin="use-credentials" />
+          ) : (
+            <video key={preview.url} src={preview.url} controls autoPlay crossOrigin="use-credentials" />
+          )}
+        </section>
+      )}
 
       <section className="panel yt-dlp-history">
         <div className="panel-label">Download history</div>
@@ -220,13 +274,35 @@ export default function YtDlpPage() {
                     <td>{new Date(job.created_at).toLocaleString()}</td>
                     <td>
                       {["queued", "running"].includes(job.status) && (
-                        <button type="button" className="secondary-button danger-text" onClick={() => cancel(job.sid)}>Cancel</button>
+                        <button type="button" className="secondary-button danger-text" onClick={() => cancel(job.sid)} title="Cancel download">
+                          <span aria-hidden="true">■</span> Cancel
+                        </button>
                       )}
                       {(job.output_files || []).map((file, index) => (
-                        <button key={`${job.sid}-${index}`} type="button" className="secondary-button" onClick={() => download(job, index)} title={`${file.name} (${formatBytes(file.size)})`}>
-                          Save {index + 1}
-                        </button>
+                        <span className="yt-dlp-file-actions" key={`${job.sid}-${index}`}>
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() => setPreview({
+                              sid: job.sid,
+                              name: file.name,
+                              mediaKind: job.media_kind,
+                              url: api.ytDlpPreviewUrl(job.sid, index),
+                            })}
+                            title={`Preview ${file.name}`}
+                          >
+                            <span aria-hidden="true">▶</span> Preview
+                          </button>
+                          <button type="button" className="secondary-button" onClick={() => download(job, index)} title={`Choose where to save ${file.name} (${formatBytes(file.size)})`}>
+                            <span aria-hidden="true">⬇</span> Save
+                          </button>
+                        </span>
                       ))}
+                      {!["queued", "running"].includes(job.status) && (
+                        <button type="button" className="secondary-button danger-text" onClick={() => remove(job)} title="Delete history and module files">
+                          <span aria-hidden="true">🗑</span> Delete
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}

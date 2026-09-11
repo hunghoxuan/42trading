@@ -1069,6 +1069,13 @@ export const api = {
   ytDlpCreateJob: (payload = {}) => post("/api/media/yt-dlp/jobs", payload),
   ytDlpCancelJob: (sid) =>
     post(`/api/media/yt-dlp/jobs/${encodeURIComponent(sid)}/cancel`, {}),
+  ytDlpDeleteJob: (sid) =>
+    del(`/api/media/yt-dlp/jobs/${encodeURIComponent(sid)}`),
+  ytDlpPreviewUrl: (sid, index = 0) =>
+    buildUrl(
+      runtimeApiBase(),
+      `/api/media/yt-dlp/jobs/${encodeURIComponent(sid)}/preview?index=${encodeURIComponent(index)}`,
+    ),
   ytDlpDownloadFile: (sid, index = 0) =>
     getBlob(
       `/api/media/yt-dlp/jobs/${encodeURIComponent(sid)}/file?index=${encodeURIComponent(index)}`,

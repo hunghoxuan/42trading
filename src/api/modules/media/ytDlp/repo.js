@@ -95,6 +95,11 @@ function createSqliteProvider(filePath) {
         .all(userId, limit)
         .map(normalizeRow);
     },
+    async delete(sid, userId) {
+      return db
+        .prepare(`DELETE FROM ${TABLE_NAME} WHERE sid = ? AND user_id = ?`)
+        .run(sid, userId).changes > 0;
+    },
   };
 }
 
@@ -163,6 +168,13 @@ async function createPostgresProvider(pool) {
       );
       return result.rows.map(normalizeRow);
     },
+    async delete(sid, userId) {
+      const result = await pool.query(
+        `DELETE FROM ${TABLE_NAME} WHERE sid = $1 AND user_id = $2`,
+        [sid, userId],
+      );
+      return result.rowCount > 0;
+    },
   };
 }
 
@@ -186,6 +198,7 @@ function createYtDlpRepo({ dataRoot, getBackend }) {
     update: async (sid, patch) => (await provider()).update(sid, patch),
     get: async (sid, userId) => (await provider()).get(sid, userId),
     list: async (userId, limit = 100) => (await provider()).list(userId, limit),
+    delete: async (sid, userId) => (await provider()).delete(sid, userId),
   };
 }
 

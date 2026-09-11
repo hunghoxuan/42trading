@@ -51,6 +51,37 @@
   font-size: 12px;
 }
 
+.yt-dlp-auto-save {
+  grid-column: 1 / -1;
+}
+
+.yt-dlp-auto-save code {
+  user-select: all;
+}
+
+.yt-dlp-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.yt-dlp-preview__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.yt-dlp-preview video {
+  width: 100%;
+  max-height: min(62vh, 680px);
+  background: #000;
+}
+
+.yt-dlp-preview audio {
+  width: 100%;
+}
+
 .yt-dlp-history {
   min-height: 180px;
 }
@@ -94,6 +125,11 @@
   display: flex;
   gap: 5px;
   flex-wrap: wrap;
+}
+
+.yt-dlp-file-actions {
+  display: inline-flex;
+  gap: 5px;
 }
 
 @media (max-width: 900px) {

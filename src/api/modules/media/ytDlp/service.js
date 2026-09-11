@@ -281,10 +281,25 @@ function createYtDlpService(options) {
     return { path: resolved, name: path.basename(resolved), size: fs.statSync(resolved).size };
   }
 
+  async function deleteJob(sid, userId) {
+    const job = await repo.get(sid, userId);
+    if (!job) return false;
+    if (["queued", "running"].includes(job.status) || activeJobs.has(sid)) {
+      throw new Error("Cancel the active download before deleting it.");
+    }
+    const jobDirectory = path.resolve(moduleRoot(dataRoot), "downloads", sid);
+    const downloadsRoot = path.resolve(moduleRoot(dataRoot), "downloads");
+    if (jobDirectory.startsWith(`${downloadsRoot}${path.sep}`)) {
+      fs.rmSync(jobDirectory, { recursive: true, force: true });
+    }
+    return repo.delete(sid, userId);
+  }
+
   return {
     runtimeStatus,
     createJob,
     cancelJob,
+    deleteJob,
     resolveOutputFile,
     getJob: async (sid, userId) => publicJob(await repo.get(sid, userId)),
     listJobs: async (userId, limit) => (await repo.list(userId, limit)).map(publicJob),

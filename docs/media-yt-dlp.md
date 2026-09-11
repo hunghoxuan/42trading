@@ -44,6 +44,8 @@ because child processes cannot be reattached safely.
 | `GET` | `/api/media/yt-dlp/jobs/{sid}` | Read one job |
 | `POST` | `/api/media/yt-dlp/jobs/{sid}/cancel` | Cancel an active job |
 | `GET` | `/api/media/yt-dlp/jobs/{sid}/file?index=0` | Save a completed output file |
+| `GET` | `/api/media/yt-dlp/jobs/{sid}/preview?index=0` | Stream an inline audio/video preview |
+| `DELETE` | `/api/media/yt-dlp/jobs/{sid}` | Delete history and the job output folder |
 
 The backend constructs an allowlisted argument array and never accepts raw yt-dlp flags. Output
 paths are generated server-side and file responses are constrained to the job's download folder.
