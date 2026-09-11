@@ -23487,6 +23487,16 @@ function mt5BuildBrokerSyncItems(payload = {}) {
         source_id: channel || null,
         source: channel || null,
         strategy,
+        strategy_days_preset: String(
+          raw.strategy_days_preset ?? raw.strategy_days ?? raw.days_preset ?? "",
+        ).trim(),
+        strategy_time_range_preset: String(
+          raw.strategy_time_range_preset ??
+            raw.strategy_sessions ??
+            raw.trade_time_range ??
+            "",
+        ).trim(),
+        strategy_preset_source: String(raw.strategy_preset_source || "").trim(),
         status_raw: statusRaw || "UNKNOWN",
         execution_status: executionStatus,
         close_reason: closeReason,
@@ -30237,6 +30247,14 @@ const appHandler = async (req, res) => {
           url.searchParams.get("win_lose"),
       ).toLowerCase();
       const range = envStr(url.searchParams.get("range"), "all").toLowerCase();
+      const strategyDaysPreset = envStr(
+        url.searchParams.get("strategy_days_preset") ||
+          url.searchParams.get("days_preset"),
+      );
+      const strategyTimeRangePreset = envStr(
+        url.searchParams.get("strategy_time_range_preset") ||
+          url.searchParams.get("trade_time_range"),
+      );
 
       // Use the universal-store backed trades service for authoritative dashboard stats.
       // The legacy `trades` table has been retired/renamed during migration.
@@ -30250,6 +30268,8 @@ const appHandler = async (req, res) => {
         entry_model: model,
         chart_tf: chartTf,
         trade_tf: signalTf,
+        strategy_days_preset: strategyDaysPreset,
+        strategy_time_range_preset: strategyTimeRangePreset,
         range,
       });
       return json(res, 200, {

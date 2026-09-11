@@ -1145,6 +1145,8 @@ export default function DashboardPage() {
     symbol: "",
     source: "",
     entry_model: "",
+    strategy_days_preset: "",
+    strategy_time_range_preset: "",
     direction: "",
     pnl_state: "",
     chart_tf: "",
@@ -1390,6 +1392,8 @@ export default function DashboardPage() {
     reacted_artifacts: [],
     directions: [],
     holding_times: [],
+    days_presets: [],
+    trade_time_ranges: [],
     strategies: [],
   };
   const f = data.filters || {};
@@ -1693,7 +1697,7 @@ export default function DashboardPage() {
                 className="dashboard-filter-grid"
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(145px, 1fr))",
                   gap: "12px",
                   width: "100%",
                   justifyContent: "stretch",
@@ -1733,6 +1737,58 @@ export default function DashboardPage() {
                       })),
                     ]}
                     ariaLabel="Filter by account"
+                    fullWidth
+                  />
+                </div>
+                <div className="dashboard-filter-field">
+                  <span className="minor-text" style={{ fontSize: 9, opacity: 0.7 }}>
+                    DAYS PRESET
+                  </span>
+                  <ComboButtonMenu
+                    selectId="db-filter-days-preset"
+                    value={filters.strategy_days_preset}
+                    buttonText={filters.strategy_days_preset || "ALL DAYS PRESETS"}
+                    onChange={(nextValue) =>
+                      setFilters((prev) => ({
+                        ...prev,
+                        strategy_days_preset: nextValue,
+                      }))
+                    }
+                    items={[
+                      { value: "", label: "ALL DAYS PRESETS" },
+                      ...(f.strategy_days_presets || []).map((value) => ({
+                        value: String(value),
+                        label: String(value),
+                      })),
+                    ]}
+                    ariaLabel="Filter by cTrader Days preset"
+                    fullWidth
+                  />
+                </div>
+                <div className="dashboard-filter-field">
+                  <span className="minor-text" style={{ fontSize: 9, opacity: 0.7 }}>
+                    TRADE TIME RANGE
+                  </span>
+                  <ComboButtonMenu
+                    selectId="db-filter-time-range-preset"
+                    value={filters.strategy_time_range_preset}
+                    buttonText={
+                      filters.strategy_time_range_preset || "ALL TIME RANGES"
+                    }
+                    onChange={(nextValue) =>
+                      setFilters((prev) => ({
+                        ...prev,
+                        strategy_time_range_preset: nextValue,
+                      }))
+                    }
+                    items={[
+                      { value: "", label: "ALL TIME RANGES" },
+                      ...(f.strategy_time_range_presets || []).map((value) => ({
+                        value: String(value),
+                        label: String(value),
+                      })),
+                    ]}
+                    ariaLabel="Filter by cTrader Trade TimeRange preset"
                     fullWidth
                   />
                 </div>
@@ -2536,6 +2592,8 @@ export default function DashboardPage() {
               marginTop: "12px",
             }}
           >
+            <TableBlock title="Days preset" noun="presets" rows={history.days_presets || []} />
+            <TableBlock title="Trade TimeRange" noun="presets" rows={history.trade_time_ranges || []} />
             <TableBlock title="Open time" noun="hours" rows={history.open_hours || []} />
             <TableBlock title="Session" noun="sessions" rows={history.sessions || []} />
             <TableBlock title="Killer zone" noun="zones" rows={history.killer_zones || []} />

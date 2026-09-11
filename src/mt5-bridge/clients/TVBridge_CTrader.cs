@@ -36407,7 +36407,8 @@ namespace cAlgo.Robots
                                 ",\"status\":\"OPEN\"" +
                                 ",\"remaining_volume\":" + remainingVol.ToString("F2", CultureInfo.InvariantCulture) +
                                 ",\"closed_volume_partial\":" + partialClosedVol.ToString("F2", CultureInfo.InvariantCulture) +
-                                ",\"has_partial\":" + (hasPartial ? "true" : "false") + "}");
+                                ",\"has_partial\":" + (hasPartial ? "true" : "false") +
+                                BuildStrategyPresetSyncJson("live_snapshot") + "}");
                         }
 
                         closedList = BuildClosedHistorySyncRows();
@@ -36443,7 +36444,8 @@ namespace cAlgo.Robots
                                 ",\"status\":\"PENDING\"" +
                                 ",\"margin\":0.0" +
                                 ",\"pnl_tp\":" + pnlTp.ToString("F2", CultureInfo.InvariantCulture) +
-                                ",\"pnl_sl\":" + pnlSl.ToString("F2", CultureInfo.InvariantCulture) + "}");
+                                ",\"pnl_sl\":" + pnlSl.ToString("F2", CultureInfo.InvariantCulture) +
+                                BuildStrategyPresetSyncJson("live_snapshot") + "}");
                         }
 
                         var symbolsToSync = new HashSet<string>();
@@ -43676,9 +43678,17 @@ namespace cAlgo.Robots
                     ",\"swap\":" + (double.IsNaN(trade.Swap) ? 0 : trade.Swap).ToString("F2", CultureInfo.InvariantCulture) +
                     ",\"status\":\"CLOSED\"" +
                     ",\"close_reason\":\"BROKER_HISTORY\"" +
+                    BuildStrategyPresetSyncJson("history_backfill_current") +
                     ",\"label\":\"" + EscapeJson(trade.Label) + "\"}");
             }
             return rows;
+        }
+
+        private string BuildStrategyPresetSyncJson(string source)
+        {
+            return ",\"strategy_days_preset\":\"" + EscapeJson(StrategyDaysPresetValue.ToString()) + "\"" +
+                ",\"strategy_time_range_preset\":\"" + EscapeJson(StrategySessionsPresetValue.ToString()) + "\"" +
+                ",\"strategy_preset_source\":\"" + EscapeJson(source) + "\"";
         }
 
         // Full sync payload builder: positions + orders + closed + metrics
@@ -43706,7 +43716,7 @@ namespace cAlgo.Robots
                 var tk = pos.Id.ToString(); double pcv = 0; _partialClosedVolumes.TryGetValue(tk, out pcv);
                 double rv = double.IsNaN(pos.VolumeInUnits) ? 0 : pos.VolumeInUnits; bool hp = pcv > 0;
                 var syncSource = ResolveSyncedTradeSource(pos.Label, pos.Comment);
-                pl.Add("{\"sid\":\"" + sid + "\",\"comment\":\"" + EscapeJson(pos.Comment) + "\",\"source\":\"" + EscapeJson(syncSource) + "\",\"ticket\":\"" + pos.Id + "\",\"symbol\":\"" + pos.SymbolName + "\",\"side\":\"" + pos.TradeType.ToString().ToUpper() + "\",\"type\":\"MARKET\",\"entry\":" + (double.IsNaN(pos.EntryPrice) ? 0 : pos.EntryPrice).ToString("F5", CultureInfo.InvariantCulture) + ",\"sl\":" + (pos.StopLoss ?? 0).ToString("F5", CultureInfo.InvariantCulture) + ",\"tp\":" + (pos.TakeProfit ?? 0).ToString("F5", CultureInfo.InvariantCulture) + ",\"volume\":" + (double.IsNaN(pos.VolumeInUnits) ? 0 : pos.VolumeInUnits).ToString("F2", CultureInfo.InvariantCulture) + ",\"lots\":" + (double.IsNaN(lotsVal) ? 0 : lotsVal).ToString("F2", CultureInfo.InvariantCulture) + ",\"pnl\":" + (double.IsNaN(pos.NetProfit) ? 0 : pos.NetProfit).ToString("F2", CultureInfo.InvariantCulture) + ",\"pips\":" + (double.IsNaN(pos.Pips) ? 0 : pos.Pips).ToString("F2", CultureInfo.InvariantCulture) + ",\"commission\":" + (double.IsNaN(pos.Commissions) ? 0 : pos.Commissions).ToString("F2", CultureInfo.InvariantCulture) + ",\"swap\":" + (double.IsNaN(pos.Swap) ? 0 : pos.Swap).ToString("F2", CultureInfo.InvariantCulture) + ",\"margin\":" + (double.IsNaN(pos.Margin) ? 0 : pos.Margin).ToString("F2", CultureInfo.InvariantCulture) + ",\"tp_pnl\":" + (double.IsNaN(tpPnl) ? 0 : tpPnl).ToString("F2", CultureInfo.InvariantCulture) + ",\"sl_pnl\":" + (double.IsNaN(slPnl) ? 0 : slPnl).ToString("F2", CultureInfo.InvariantCulture) + ",\"spread\":" + spreadVal.ToString("F2", CultureInfo.InvariantCulture) + ",\"distance_sl\":" + distSl.ToString("F2", CultureInfo.InvariantCulture) + ",\"distance_tp\":" + distTp.ToString("F2", CultureInfo.InvariantCulture) + ",\"balance_sl\":" + balSl.ToString("F2", CultureInfo.InvariantCulture) + ",\"balance_tp\":" + balTp.ToString("F2", CultureInfo.InvariantCulture) + ",\"label\":\"" + pos.Label + "\",\"status\":\"OPEN\",\"remaining_volume\":" + rv.ToString("F2", CultureInfo.InvariantCulture) + ",\"closed_volume_partial\":" + pcv.ToString("F2", CultureInfo.InvariantCulture) + ",\"has_partial\":" + (hp ? "true" : "false") + "}");
+                pl.Add("{\"sid\":\"" + sid + "\",\"comment\":\"" + EscapeJson(pos.Comment) + "\",\"source\":\"" + EscapeJson(syncSource) + "\",\"ticket\":\"" + pos.Id + "\",\"symbol\":\"" + pos.SymbolName + "\",\"side\":\"" + pos.TradeType.ToString().ToUpper() + "\",\"type\":\"MARKET\",\"entry\":" + (double.IsNaN(pos.EntryPrice) ? 0 : pos.EntryPrice).ToString("F5", CultureInfo.InvariantCulture) + ",\"sl\":" + (pos.StopLoss ?? 0).ToString("F5", CultureInfo.InvariantCulture) + ",\"tp\":" + (pos.TakeProfit ?? 0).ToString("F5", CultureInfo.InvariantCulture) + ",\"volume\":" + (double.IsNaN(pos.VolumeInUnits) ? 0 : pos.VolumeInUnits).ToString("F2", CultureInfo.InvariantCulture) + ",\"lots\":" + (double.IsNaN(lotsVal) ? 0 : lotsVal).ToString("F2", CultureInfo.InvariantCulture) + ",\"pnl\":" + (double.IsNaN(pos.NetProfit) ? 0 : pos.NetProfit).ToString("F2", CultureInfo.InvariantCulture) + ",\"pips\":" + (double.IsNaN(pos.Pips) ? 0 : pos.Pips).ToString("F2", CultureInfo.InvariantCulture) + ",\"commission\":" + (double.IsNaN(pos.Commissions) ? 0 : pos.Commissions).ToString("F2", CultureInfo.InvariantCulture) + ",\"swap\":" + (double.IsNaN(pos.Swap) ? 0 : pos.Swap).ToString("F2", CultureInfo.InvariantCulture) + ",\"margin\":" + (double.IsNaN(pos.Margin) ? 0 : pos.Margin).ToString("F2", CultureInfo.InvariantCulture) + ",\"tp_pnl\":" + (double.IsNaN(tpPnl) ? 0 : tpPnl).ToString("F2", CultureInfo.InvariantCulture) + ",\"sl_pnl\":" + (double.IsNaN(slPnl) ? 0 : slPnl).ToString("F2", CultureInfo.InvariantCulture) + ",\"spread\":" + spreadVal.ToString("F2", CultureInfo.InvariantCulture) + ",\"distance_sl\":" + distSl.ToString("F2", CultureInfo.InvariantCulture) + ",\"distance_tp\":" + distTp.ToString("F2", CultureInfo.InvariantCulture) + ",\"balance_sl\":" + balSl.ToString("F2", CultureInfo.InvariantCulture) + ",\"balance_tp\":" + balTp.ToString("F2", CultureInfo.InvariantCulture) + ",\"label\":\"" + pos.Label + "\",\"status\":\"OPEN\",\"remaining_volume\":" + rv.ToString("F2", CultureInfo.InvariantCulture) + ",\"closed_volume_partial\":" + pcv.ToString("F2", CultureInfo.InvariantCulture) + ",\"has_partial\":" + (hp ? "true" : "false") + BuildStrategyPresetSyncJson("live_snapshot") + "}");
             }
             // Build orders list
             var ol = new List<string>();
@@ -43716,7 +43726,7 @@ namespace cAlgo.Robots
                 var s2 = ResolveLoadedSymbol(order.SymbolName); double lotsVal2 = (s2 != null) ? s2.VolumeInUnitsToQuantity(order.VolumeInUnits) : (order.VolumeInUnits / 100000.0);
                 double pnlTp = 0, pnlSl = 0; if (s2 != null) { if (order.TakeProfit.HasValue) { double pp = Math.Abs(order.TargetPrice - order.TakeProfit.Value) / s2.PipSize; pnlTp = EstimatePnlFromPips(s2, pp, order.VolumeInUnits); } if (order.StopLoss.HasValue) { double pp = Math.Abs(order.TargetPrice - order.StopLoss.Value) / s2.PipSize; pnlSl = -EstimatePnlFromPips(s2, pp, order.VolumeInUnits); } }
                 var syncSourceOrder = ResolveSyncedTradeSource(order.Label, order.Comment);
-                ol.Add("{\"sid\":\"" + sid3 + "\",\"comment\":\"" + EscapeJson(order.Comment) + "\",\"source\":\"" + EscapeJson(syncSourceOrder) + "\",\"ticket\":\"" + order.Id + "\",\"symbol\":\"" + order.SymbolName + "\",\"side\":\"" + order.TradeType.ToString().ToUpper() + "\",\"type\":\"" + order.OrderType.ToString().ToUpper() + "\",\"target_price\":" + order.TargetPrice.ToString("F5", CultureInfo.InvariantCulture) + ",\"entry\":" + order.TargetPrice.ToString("F5", CultureInfo.InvariantCulture) + ",\"sl\":" + (order.StopLoss ?? 0).ToString("F5", CultureInfo.InvariantCulture) + ",\"tp\":" + (order.TakeProfit ?? 0).ToString("F5", CultureInfo.InvariantCulture) + ",\"volume\":" + (double.IsNaN(order.VolumeInUnits) ? 0 : order.VolumeInUnits).ToString("F2", CultureInfo.InvariantCulture) + ",\"lots\":" + (double.IsNaN(lotsVal2) ? 0 : lotsVal2).ToString("F2", CultureInfo.InvariantCulture) + ",\"label\":\"" + order.Label + "\",\"status\":\"PENDING\",\"margin\":0.0,\"pnl_tp\":" + pnlTp.ToString("F2", CultureInfo.InvariantCulture) + ",\"pnl_sl\":" + pnlSl.ToString("F2", CultureInfo.InvariantCulture) + "}");
+                ol.Add("{\"sid\":\"" + sid3 + "\",\"comment\":\"" + EscapeJson(order.Comment) + "\",\"source\":\"" + EscapeJson(syncSourceOrder) + "\",\"ticket\":\"" + order.Id + "\",\"symbol\":\"" + order.SymbolName + "\",\"side\":\"" + order.TradeType.ToString().ToUpper() + "\",\"type\":\"" + order.OrderType.ToString().ToUpper() + "\",\"target_price\":" + order.TargetPrice.ToString("F5", CultureInfo.InvariantCulture) + ",\"entry\":" + order.TargetPrice.ToString("F5", CultureInfo.InvariantCulture) + ",\"sl\":" + (order.StopLoss ?? 0).ToString("F5", CultureInfo.InvariantCulture) + ",\"tp\":" + (order.TakeProfit ?? 0).ToString("F5", CultureInfo.InvariantCulture) + ",\"volume\":" + (double.IsNaN(order.VolumeInUnits) ? 0 : order.VolumeInUnits).ToString("F2", CultureInfo.InvariantCulture) + ",\"lots\":" + (double.IsNaN(lotsVal2) ? 0 : lotsVal2).ToString("F2", CultureInfo.InvariantCulture) + ",\"label\":\"" + order.Label + "\",\"status\":\"PENDING\",\"margin\":0.0,\"pnl_tp\":" + pnlTp.ToString("F2", CultureInfo.InvariantCulture) + ",\"pnl_sl\":" + pnlSl.ToString("F2", CultureInfo.InvariantCulture) + BuildStrategyPresetSyncJson("live_snapshot") + "}");
             }
             // Build closed list
             var cl = BuildClosedHistorySyncRows();

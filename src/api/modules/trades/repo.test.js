@@ -511,6 +511,9 @@ test("MT5 history discovery updates known positions and creates unknown closed p
       entry: 3500,
       exit_price: 3514.5,
       duration_seconds: 3600,
+      strategy_days_preset: "Weekdays",
+      strategy_time_range_preset: "_60_KZs",
+      strategy_preset_source: "history_backfill_current",
       opened_at: "2026-06-02T10:00:00.000Z",
       closed_at: "2026-06-02T11:00:00.000Z",
       close_reason: "SL",
@@ -550,6 +553,9 @@ test("MT5 history discovery updates known positions and creates unknown closed p
   assert.equal(imported.trade.broker_pips, -14.5);
   assert.equal(imported.trade.metadata.broker_data.exit_price, 3514.5);
   assert.equal(imported.trade.metadata.broker_data.duration_seconds, 3600);
+  assert.equal(imported.trade.strategy_days_preset, "Weekdays");
+  assert.equal(imported.trade.strategy_time_range_preset, "_60_KZs");
+  assert.equal(imported.trade.strategy_preset_source, "history_backfill_current");
 });
 
 test("trades broker sync treats broker comment note suffix as non-identity", async () => {

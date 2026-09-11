@@ -168,6 +168,21 @@ test("brokerSnapshotHash changes when synced broker fields change", () => {
   assert.notEqual(before, after);
 });
 
+test("brokerSnapshotHash changes when cTrader strategy time presets change", () => {
+  const before = guards.brokerSnapshotHash({
+    ticket: "123",
+    strategy_days_preset: "Weekdays",
+    strategy_time_range_preset: "_60_KZs",
+  });
+  const after = guards.brokerSnapshotHash({
+    ticket: "123",
+    strategy_days_preset: "Tuesday",
+    strategy_time_range_preset: "NY_KZ",
+  });
+
+  assert.notEqual(before, after);
+});
+
 test("shouldClearRejectedDispatchFromBrokerSnapshot repairs stale lease retry rejects", () => {
   assert.equal(
     guards.shouldClearRejectedDispatchFromBrokerSnapshot(

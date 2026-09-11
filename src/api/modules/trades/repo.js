@@ -305,6 +305,15 @@ function normalizeStoredTrade(input = {}) {
     signal_id: text(raw.signal_id || raw.trade_id || sid),
     source_id: sourceId,
     strategy: text(raw.strategy) || null,
+    strategy_days_preset:
+      text(raw.strategy_days_preset || raw.strategy_days || raw.days_preset) || null,
+    strategy_time_range_preset:
+      text(
+        raw.strategy_time_range_preset ||
+          raw.strategy_sessions ||
+          raw.trade_time_range,
+      ) || null,
+    strategy_preset_source: text(raw.strategy_preset_source) || null,
     entry_model: text(raw.entry_model || raw.entryModel) || null,
     trade_tf: tradeTf,
     signal_tf: tradeTf,
@@ -562,6 +571,19 @@ function matchesTradeFilters(trade = {}, filters = {}) {
     return false;
   }
   if (!exact("entry_model", filters.entry_model)) return false;
+  if (
+    filters.strategy_days_preset &&
+    tradesStrategyDaysPresetFromRow(trade) !== text(filters.strategy_days_preset)
+  ) {
+    return false;
+  }
+  if (
+    filters.strategy_time_range_preset &&
+    tradesStrategyTimeRangePresetFromRow(trade) !==
+      text(filters.strategy_time_range_preset)
+  ) {
+    return false;
+  }
   if (!exact("chart_tf", filters.chart_tf || filters.chartTf)) return false;
   if (
     !exact("trade_tf", filters.trade_tf || filters.tradeTf, (x) => text(x))
@@ -774,6 +796,25 @@ function tradesSourceIdFromRow(row = {}) {
 function tradesStrategyLabelFromRow(row = {}) {
   const raw = row.raw_json || {};
   return text(row.strategy || raw.strategy);
+}
+
+function tradesStrategyDaysPresetFromRow(row = {}) {
+  return text(
+    row.strategy_days_preset ||
+      row.metadata?.broker_data?.strategy_days_preset ||
+      row.raw_json?.strategy_days_preset ||
+      row.raw_json?.strategy_days,
+  );
+}
+
+function tradesStrategyTimeRangePresetFromRow(row = {}) {
+  return text(
+    row.strategy_time_range_preset ||
+      row.metadata?.broker_data?.strategy_time_range_preset ||
+      row.raw_json?.strategy_time_range_preset ||
+      row.raw_json?.strategy_sessions ||
+      row.raw_json?.trade_time_range,
+  );
 }
 
 function tradesEntryModelLabelFromRow(row = {}) {
@@ -1172,6 +1213,8 @@ function tradesHistoryAnalysis(rows = []) {
     reacted_artifacts: all((row) => tradesCommentParts(row).artifact),
     directions: all((row) => text(row.action || row.side).toUpperCase()),
     holding_times: all(tradesDurationBucket),
+    days_presets: all(tradesStrategyDaysPresetFromRow),
+    trade_time_ranges: all(tradesStrategyTimeRangePresetFromRow),
     strategies: all((row) => tradesStrategyLabelFromRow(row)),
   };
 }
@@ -2333,6 +2376,20 @@ function createTradesRepo(options = {}) {
                   ),
                 )
                 .filter(Boolean),
+              ),
+          ].sort(),
+          strategy_days_presets: [
+            ...new Set(
+              rowsByDimension
+                .map((row) => tradesStrategyDaysPresetFromRow(row))
+                .filter(Boolean),
+            ),
+          ].sort(),
+          strategy_time_range_presets: [
+            ...new Set(
+              rowsByDimension
+                .map((row) => tradesStrategyTimeRangePresetFromRow(row))
+                .filter(Boolean),
             ),
           ].sort(),
         },
@@ -2896,6 +2953,14 @@ function createTradesRepo(options = {}) {
                         brokerStrategyLabel(it) ||
                         "",
                     ).trim() || existing.strategy || null,
+              strategy_days_preset:
+                existing.strategy_days_preset || it.strategy_days_preset || null,
+              strategy_time_range_preset:
+                existing.strategy_time_range_preset ||
+                it.strategy_time_range_preset ||
+                null,
+              strategy_preset_source:
+                existing.strategy_preset_source || it.strategy_preset_source || null,
               metadata: nextMetadata,
               opened_at: resolvePersistedOpenedAt(it, existing, nowIso),
               closed_at: isTerminalExecutionStatus(nextExecutionStatus)
@@ -3014,9 +3079,12 @@ function createTradesRepo(options = {}) {
                   it.strategy_name ||
                   it.metadata?.strategy ||
                   it.raw_json?.strategy ||
-                  brokerStrategyLabel(it) ||
+                brokerStrategyLabel(it) ||
                   "",
               ).trim() || null,
+            strategy_days_preset: it.strategy_days_preset || null,
+            strategy_time_range_preset: it.strategy_time_range_preset || null,
+            strategy_preset_source: it.strategy_preset_source || null,
             entry_model:
               String(
                 it.entry_model ||

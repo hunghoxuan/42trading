@@ -311,6 +311,8 @@ test("trades service exposes dashboard aggregates", async () => {
     opened_at: "2026-07-10T08:15:00.000Z",
     closed_at: "2026-07-10T10:00:00.000Z",
     comment: "m30.b.h4.sply +1|Now_Event_L03_R1",
+    strategy_days_preset: "Tuesday",
+    strategy_time_range_preset: "_60_London_KZ",
   });
   await service.upsertTrade({
     sid: "TRD_DASH_2",
@@ -355,5 +357,22 @@ test("trades service exposes dashboard aggregates", async () => {
   assert.equal(dashboard.history_analysis.movements[0].key, "b");
   assert.equal(dashboard.history_analysis.reacted_artifacts[0].key, "h4.sply");
   assert.equal(dashboard.history_analysis.holding_times[0].key, "1–4 hours");
+  assert.equal(dashboard.history_analysis.days_presets[0].key, "Tuesday");
+  assert.equal(
+    dashboard.history_analysis.trade_time_ranges[0].key,
+    "_60_London_KZ",
+  );
+  assert.deepEqual(dashboard.filters.strategy_days_presets, ["Tuesday"]);
+  assert.deepEqual(dashboard.filters.strategy_time_range_presets, [
+    "_60_London_KZ",
+  ]);
   assert.equal(dashboard.accounts_summary.length, 2);
+
+  const filtered = await service.dashboard({
+    user_id: "user",
+    range: "all",
+    strategy_days_preset: "Tuesday",
+    strategy_time_range_preset: "_60_London_KZ",
+  });
+  assert.equal(filtered.metrics.count_closed, 1);
 });

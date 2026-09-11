@@ -171,6 +171,14 @@ function brokerSnapshotFingerprint(item = {}) {
     swap: normNumber(item.swap),
     opened_at: String(item.opened_at || item.openedAt || "").trim(),
     closed_at: String(item.closed_at || item.closedAt || "").trim(),
+    strategy_days_preset: normText(
+      item.strategy_days_preset || item.strategy_days || item.days_preset,
+    ),
+    strategy_time_range_preset: normText(
+      item.strategy_time_range_preset ||
+        item.strategy_sessions ||
+        item.trade_time_range,
+    ),
   };
 }
 
