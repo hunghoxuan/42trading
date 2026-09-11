@@ -507,6 +507,10 @@ test("MT5 history discovery updates known positions and creates unknown closed p
       execution_status: "CLOSED",
       lots: 0.1,
       pnl: -32.25,
+      pips: -14.5,
+      entry: 3500,
+      exit_price: 3514.5,
+      duration_seconds: 3600,
       opened_at: "2026-06-02T10:00:00.000Z",
       closed_at: "2026-06-02T11:00:00.000Z",
       close_reason: "SL",
@@ -542,6 +546,10 @@ test("MT5 history discovery updates known positions and creates unknown closed p
   assert.equal(imported.trade.execution_status, "CLOSED");
   assert.equal(imported.trade.pnl_realized, -32.25);
   assert.equal(imported.trade.broker_trade_id, "70002");
+  assert.equal(imported.trade.entry_exec, 3500);
+  assert.equal(imported.trade.broker_pips, -14.5);
+  assert.equal(imported.trade.metadata.broker_data.exit_price, 3514.5);
+  assert.equal(imported.trade.metadata.broker_data.duration_seconds, 3600);
 });
 
 test("trades broker sync treats broker comment note suffix as non-identity", async () => {

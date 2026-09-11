@@ -901,7 +901,7 @@ function TableBlock({
 
   return (
     <ResponsivePanel
-      title={`${rows.length} ${String(noun || "items").toLowerCase()}`}
+      title={`${title} · ${rows.length} ${String(noun || "items").toLowerCase()}`}
       className="fadeIn"
       open={isOpen}
       onOpenChange={setIsOpen}
@@ -1300,6 +1300,21 @@ export default function DashboardPage() {
     directional: [],
     sources: [],
     entry_models: [],
+    strategies: [],
+  };
+  const history = data.history_analysis || {
+    open_hours: [],
+    sessions: [],
+    killer_zones: [],
+    weekdays: [],
+    dates: [],
+    symbols: [],
+    events: [],
+    event_timeframes: [],
+    movements: [],
+    reacted_artifacts: [],
+    directions: [],
+    holding_times: [],
     strategies: [],
   };
   const f = data.filters || {};
@@ -2424,6 +2439,37 @@ export default function DashboardPage() {
                 </div>
               </div>
             </div>
+          </div>
+
+          <div className="dashboard-section-heading" style={{ marginTop: "18px" }}>
+            <h2 style={{ marginBottom: "4px" }}>History edge analysis</h2>
+            <div className="minor-text">
+              Top five by win rate (minimum {Number(history.minimum_sample || 5)} trades) · {Number(history.closed_trades || 0)} closed trades · open hour UTC · sessions and KZs use New York time
+            </div>
+          </div>
+
+          <div
+            className="dashboard-grid tables history-analysis"
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gap: "16px",
+              marginTop: "12px",
+            }}
+          >
+            <TableBlock title="Open time" noun="hours" rows={history.open_hours || []} />
+            <TableBlock title="Session" noun="sessions" rows={history.sessions || []} />
+            <TableBlock title="Killer zone" noun="zones" rows={history.killer_zones || []} />
+            <TableBlock title="Weekday" noun="days" rows={history.weekdays || []} />
+            <TableBlock title="Best date" noun="dates" rows={history.dates || []} />
+            <TableBlock title="Symbol" noun="symbols" rows={history.symbols || []} />
+            <TableBlock title="Event" noun="events" rows={history.events || []} />
+            <TableBlock title="Event timeframe" noun="timeframes" rows={history.event_timeframes || []} />
+            <TableBlock title="Movement" noun="movements" rows={history.movements || []} />
+            <TableBlock title="Reacted artifact" noun="artifacts" rows={history.reacted_artifacts || []} />
+            <TableBlock title="Direction" noun="directions" rows={history.directions || []} />
+            <TableBlock title="Holding time" noun="buckets" rows={history.holding_times || []} />
+            <TableBlock title="Strategy" noun="strategies" rows={history.strategies || []} />
           </div>
 
           <div

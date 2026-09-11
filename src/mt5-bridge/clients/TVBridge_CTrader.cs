@@ -36410,38 +36410,7 @@ namespace cAlgo.Robots
                                 ",\"has_partial\":" + (hasPartial ? "true" : "false") + "}");
                         }
 
-                        closedList = new List<string>();
-                        var limit = DateTime.UtcNow.AddDays(-2);
-                        // Filter before sorting: accounts can have a large complete history, but
-                        // the broker sync only needs the newest two days and at most 20 deals.
-                        var historicalDeals = History
-                            .Where(d => d.ClosingTime >= limit)
-                            .OrderByDescending(d => d.ClosingTime)
-                            .Take(20)
-                            .ToList();
-                        foreach (var deal in historicalDeals)
-                        {
-                            if (_syncedClosedTickets.Contains(deal.PositionId.ToString())) continue;
-                            var sid2 = ResolveSid(deal.PositionId.ToString(), deal.Comment).Replace("\"", "'");
-                            string closeReason = "MANUAL_CLOSE";
-                            var syncSourceClosed = ResolveSyncedTradeSource(deal.Label, deal.Comment);
-                            closedList.Add("{\"sid\":\"" + sid2 + "\"" +
-                                ",\"comment\":\"" + EscapeJson(deal.Comment) + "\"" +
-                                ",\"source\":\"" + EscapeJson(syncSourceClosed) + "\"" +
-                                ",\"ticket\":\"" + deal.PositionId + "\"" +
-                                ",\"symbol\":\"" + deal.SymbolName + "\"" +
-                                ",\"symbol_code\":\"" + deal.SymbolName + "\"" +
-                                ",\"side\":\"" + deal.TradeType.ToString().ToUpper() + "\"" +
-                                ",\"volume\":" + (double.IsNaN(deal.VolumeInUnits) ? 0 : deal.VolumeInUnits).ToString("F2", CultureInfo.InvariantCulture) +
-                                ",\"pnl\":" + (double.IsNaN(deal.NetProfit) ? 0 : deal.NetProfit).ToString("F2", CultureInfo.InvariantCulture) +
-                                ",\"pips\":0.0" +
-                                ",\"commission\":" + (double.IsNaN(deal.Commissions) ? 0 : deal.Commissions).ToString("F2", CultureInfo.InvariantCulture) +
-                                ",\"swap\":" + (double.IsNaN(deal.Swap) ? 0 : deal.Swap).ToString("F2", CultureInfo.InvariantCulture) +
-                                ",\"status\":\"CLOSED\"" +
-                                ",\"close_reason\":\"" + closeReason + "\"" +
-                                ",\"closed_at\":\"" + deal.ClosingTime.ToString("O") + "\"" +
-                                ",\"label\":\"" + deal.Label + "\"}");
-                        }
+                        closedList = BuildClosedHistorySyncRows();
 
                         ordersList = new List<string>();
 
@@ -40478,6 +40447,7 @@ namespace cAlgo.Robots
                 barsPayload != "{\"account_id\":\"A1\",\"bars\":[{\"t\":1}]}" ||
                 incrementalPayload != "{\"account_id\":\"A1\",\"sync_mode\":\"incremental\",\"items\":[{\"symbol\":\"EURUSD\"}]}" ||
                 !syncPayload.Contains("\"queue_snapshot_hydrated\":true") ||
+                !syncPayload.Contains("\"history_import\":true") ||
                 !syncPayload.Contains("\"prices\":[{\"s\":\"EURUSD\",\"b\":1.10000,\"a\":1.20000}]") ||
                 !ackPayload.Contains("\"execution_status\":\"FILLED\"") ||
                 !ackPayload.Contains("\"sl_pips\":10.00,\"tp_pips\":20.00") ||
@@ -43665,6 +43635,52 @@ namespace cAlgo.Robots
             }
         }
 
+        private List<string> BuildClosedHistorySyncRows()
+        {
+            const int batchSize = 200;
+            var rows = new List<string>();
+            var historicalTrades = History
+                .Where(trade => !_syncedClosedTickets.Contains(trade.PositionId.ToString()))
+                .OrderByDescending(trade => trade.ClosingTime)
+                .Take(batchSize)
+                .ToList();
+
+            foreach (var trade in historicalTrades)
+            {
+                var ticket = trade.PositionId.ToString();
+                var sid = ResolveSid(ticket, trade.Comment).Replace("\"", "'");
+                var symbol = ResolveLoadedSymbol(trade.SymbolName);
+                var lots = symbol != null
+                    ? symbol.VolumeInUnitsToQuantity(trade.VolumeInUnits)
+                    : trade.VolumeInUnits / 100000.0;
+                var durationSeconds = Math.Max(0, (trade.ClosingTime - trade.EntryTime).TotalSeconds);
+                var source = ResolveSyncedTradeSource(trade.Label, trade.Comment);
+                rows.Add("{\"sid\":\"" + sid + "\"" +
+                    ",\"comment\":\"" + EscapeJson(trade.Comment) + "\"" +
+                    ",\"source\":\"" + EscapeJson(source) + "\"" +
+                    ",\"ticket\":\"" + ticket + "\"" +
+                    ",\"symbol\":\"" + EscapeJson(trade.SymbolName) + "\"" +
+                    ",\"side\":\"" + trade.TradeType.ToString().ToUpperInvariant() + "\"" +
+                    ",\"type\":\"MARKET\"" +
+                    ",\"entry\":" + (double.IsNaN(trade.EntryPrice) ? 0 : trade.EntryPrice).ToString("F8", CultureInfo.InvariantCulture) +
+                    ",\"exit_price\":" + (double.IsNaN(trade.ClosingPrice) ? 0 : trade.ClosingPrice).ToString("F8", CultureInfo.InvariantCulture) +
+                    ",\"opened_at\":\"" + trade.EntryTime.ToUniversalTime().ToString("O") + "\"" +
+                    ",\"closed_at\":\"" + trade.ClosingTime.ToUniversalTime().ToString("O") + "\"" +
+                    ",\"duration_seconds\":" + durationSeconds.ToString("F0", CultureInfo.InvariantCulture) +
+                    ",\"volume\":" + (double.IsNaN(trade.VolumeInUnits) ? 0 : trade.VolumeInUnits).ToString("F2", CultureInfo.InvariantCulture) +
+                    ",\"lots\":" + (double.IsNaN(lots) ? 0 : lots).ToString("F4", CultureInfo.InvariantCulture) +
+                    ",\"pnl\":" + (double.IsNaN(trade.NetProfit) ? 0 : trade.NetProfit).ToString("F2", CultureInfo.InvariantCulture) +
+                    ",\"gross_pnl\":" + (double.IsNaN(trade.GrossProfit) ? 0 : trade.GrossProfit).ToString("F2", CultureInfo.InvariantCulture) +
+                    ",\"pips\":" + (double.IsNaN(trade.Pips) ? 0 : trade.Pips).ToString("F2", CultureInfo.InvariantCulture) +
+                    ",\"commission\":" + (double.IsNaN(trade.Commissions) ? 0 : trade.Commissions).ToString("F2", CultureInfo.InvariantCulture) +
+                    ",\"swap\":" + (double.IsNaN(trade.Swap) ? 0 : trade.Swap).ToString("F2", CultureInfo.InvariantCulture) +
+                    ",\"status\":\"CLOSED\"" +
+                    ",\"close_reason\":\"BROKER_HISTORY\"" +
+                    ",\"label\":\"" + EscapeJson(trade.Label) + "\"}");
+            }
+            return rows;
+        }
+
         // Full sync payload builder: positions + orders + closed + metrics
         private void BuildAndDispatchSync(string accId)
         {
@@ -43703,14 +43719,7 @@ namespace cAlgo.Robots
                 ol.Add("{\"sid\":\"" + sid3 + "\",\"comment\":\"" + EscapeJson(order.Comment) + "\",\"source\":\"" + EscapeJson(syncSourceOrder) + "\",\"ticket\":\"" + order.Id + "\",\"symbol\":\"" + order.SymbolName + "\",\"side\":\"" + order.TradeType.ToString().ToUpper() + "\",\"type\":\"" + order.OrderType.ToString().ToUpper() + "\",\"target_price\":" + order.TargetPrice.ToString("F5", CultureInfo.InvariantCulture) + ",\"entry\":" + order.TargetPrice.ToString("F5", CultureInfo.InvariantCulture) + ",\"sl\":" + (order.StopLoss ?? 0).ToString("F5", CultureInfo.InvariantCulture) + ",\"tp\":" + (order.TakeProfit ?? 0).ToString("F5", CultureInfo.InvariantCulture) + ",\"volume\":" + (double.IsNaN(order.VolumeInUnits) ? 0 : order.VolumeInUnits).ToString("F2", CultureInfo.InvariantCulture) + ",\"lots\":" + (double.IsNaN(lotsVal2) ? 0 : lotsVal2).ToString("F2", CultureInfo.InvariantCulture) + ",\"label\":\"" + order.Label + "\",\"status\":\"PENDING\",\"margin\":0.0,\"pnl_tp\":" + pnlTp.ToString("F2", CultureInfo.InvariantCulture) + ",\"pnl_sl\":" + pnlSl.ToString("F2", CultureInfo.InvariantCulture) + "}");
             }
             // Build closed list
-            var cl = new List<string>();
-            var lim = DateTime.UtcNow.AddDays(-2);
-            var hd = History
-                .Where(deal => deal.ClosingTime >= lim)
-                .OrderByDescending(deal => deal.ClosingTime)
-                .Take(20)
-                .ToList();
-            foreach (var deal in hd) { if (_syncedClosedTickets.Contains(deal.PositionId.ToString())) continue; var sid2 = ResolveSid(deal.PositionId.ToString(), deal.Comment).Replace("\"", "'"); var syncSourceClosed = ResolveSyncedTradeSource(deal.Label, deal.Comment); cl.Add("{\"sid\":\"" + sid2 + "\",\"comment\":\"" + EscapeJson(deal.Comment) + "\",\"source\":\"" + EscapeJson(syncSourceClosed) + "\",\"ticket\":\"" + deal.PositionId + "\",\"symbol\":\"" + deal.SymbolName + "\",\"side\":\"" + deal.TradeType.ToString().ToUpper() + "\",\"volume\":" + (double.IsNaN(deal.VolumeInUnits) ? 0 : deal.VolumeInUnits).ToString("F2", CultureInfo.InvariantCulture) + ",\"pnl\":" + (double.IsNaN(deal.NetProfit) ? 0 : deal.NetProfit).ToString("F2", CultureInfo.InvariantCulture) + ",\"pips\":0.0,\"commission\":" + (double.IsNaN(deal.Commissions) ? 0 : deal.Commissions).ToString("F2", CultureInfo.InvariantCulture) + ",\"swap\":" + (double.IsNaN(deal.Swap) ? 0 : deal.Swap).ToString("F2", CultureInfo.InvariantCulture) + ",\"status\":\"CLOSED\",\"close_reason\":\"MANUAL_CLOSE\",\"closed_at\":\"" + deal.ClosingTime.ToString("O") + "\",\"label\":\"" + deal.Label + "\"}"); }
+            var cl = BuildClosedHistorySyncRows();
             // Build metrics
             var ml = new List<string>();
             var ssm = new HashSet<string>();
@@ -45049,7 +45058,7 @@ namespace cAlgo.Robots
 
             // Clean up old synced closed tickets
             var removedClosedTickets = CTraderSyncEngine.TrimClosedTicketSet(
-                _syncedClosedTickets, 500, 250);
+                _syncedClosedTickets, 100000, 50000);
             if (removedClosedTickets > 0)
                 SafePrint("[Cleanup] Removed {0} old closed tickets from memory", removedClosedTickets);
 
@@ -45220,6 +45229,7 @@ namespace cAlgo.Robots
                     { "equity", eq },
                     { "margin", marg },
                     { "broker_name", brokerName ?? "" },
+                    { "history_import", true },
                     { "positions", posList ?? new List<string>() },
                     { "orders", ordersList ?? new List<string>() },
                     { "closed", closedList ?? new List<string>() },
@@ -45743,7 +45753,7 @@ namespace cAlgo.Robots
 
                     if (status == "Ok")
                     {
-                        if (status == "Ok" && !activeTicketIds.Contains(ticket)) _syncedClosedTickets.Add(ticket);
+                        if (!activeTicketIds.Contains(ticket)) _syncedClosedTickets.Add(ticket);
                         continue;
                     }
                     if (status == "Skip")
@@ -45753,6 +45763,8 @@ namespace cAlgo.Robots
                     if (string.Equals(status, "NoChange", StringComparison.OrdinalIgnoreCase))
                     {
                         if (!hasServerSummary) _lastSyncSummary.Unchanged++;
+                        if (!string.IsNullOrEmpty(ticket) && !activeTicketIds.Contains(ticket))
+                            _syncedClosedTickets.Add(ticket);
                         if (!string.IsNullOrEmpty(ticket) && !string.IsNullOrEmpty(sid) && sid != "null")
                             _ticketSidMap[ticket] = sid;
                         continue;
@@ -45760,6 +45772,8 @@ namespace cAlgo.Robots
                     if (string.Equals(status, "Added", StringComparison.OrdinalIgnoreCase))
                     {
                         if (!hasServerSummary) _lastSyncSummary.Created++;
+                        if (!string.IsNullOrEmpty(ticket) && !activeTicketIds.Contains(ticket))
+                            _syncedClosedTickets.Add(ticket);
                         if (!string.IsNullOrWhiteSpace(sid) && sid != "null") addedSids.Add(sid.Trim());
                         AddSyncEvent(ticket, sid, sym, act, "DISCOVERED_TRADE", reason, "created");
                         if (!string.IsNullOrEmpty(ticket) && !string.IsNullOrEmpty(sid) && sid != "null")
@@ -51593,6 +51607,7 @@ namespace cAlgo.Robots
                 + ",\"broker_name\":\"" + (brokerName ?? "").Replace("\"", "'") + "\""
                 + ",\"provider_code\":\"" + (providerCode ?? "").Replace("\"", "'") + "\""
                 + ",\"build_version\":\"" + (buildVersion ?? "") + "\""
+                + ",\"history_import\":true"
                 + ",\"positions\":[" + string.Join(",", positions ?? Enumerable.Empty<string>()) + "]"
                 + ",\"orders\":[" + string.Join(",", orders ?? Enumerable.Empty<string>()) + "]"
                 + ",\"closed\":[" + string.Join(",", closed ?? Enumerable.Empty<string>()) + "]"

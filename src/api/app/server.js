@@ -23493,6 +23493,12 @@ function mt5BuildBrokerSyncItems(payload = {}) {
         opened_at: openedAt,
         closed_at: closedAt,
         exit_price: exitPrice,
+        gross_pnl: Number.isFinite(Number(raw.gross_pnl))
+          ? Number(raw.gross_pnl)
+          : null,
+        duration_seconds: Number.isFinite(Number(raw.duration_seconds))
+          ? Math.max(0, Number(raw.duration_seconds))
+          : null,
         has_partial: hasPartial,
         margin: Number(raw.margin) || 0,
         tp_pnl: Number.isFinite(Number(raw.tp_pnl ?? raw.pnl_tp))
@@ -24219,6 +24225,7 @@ async function mt5BrokerSyncSqlite(accountId, payload = {}) {
     sourceId:
       (payload.broker_name || "BROKER").toUpperCase().replace(/\s+/g, "_"),
     generateSid: mt5GenerateTimeSid,
+    allowHistoricalDiscovery: payload.history_import === true,
     resolvePlannedTpPnl: (item) => {
       const fallback = mt5ComputePlannedPnlFromMetrics(
         item,

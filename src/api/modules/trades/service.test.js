@@ -307,7 +307,9 @@ test("trades service exposes dashboard aggregates", async () => {
     execution_status: "CLOSED",
     close_reason: "TP",
     pnl_realized: 120,
+    opened_at: "2026-07-10T08:15:00.000Z",
     closed_at: "2026-07-10T10:00:00.000Z",
+    comment: "m30.b.h4.sply +1|Now_Event_L03_R1",
   });
   await service.upsertTrade({
     sid: "TRD_DASH_2",
@@ -341,5 +343,14 @@ test("trades service exposes dashboard aggregates", async () => {
   assert.deepEqual(dashboard.filters.symbols, ["BTCUSD", "ETHUSD"]);
   assert.deepEqual(dashboard.filters.accounts, ["acc-1", "acc-2"]);
   assert.equal(dashboard.top_winrate.symbols[0].key, "BTCUSD");
+  assert.equal(dashboard.history_analysis.closed_trades, 1);
+  assert.equal(dashboard.history_analysis.open_hours[0].key, "08:00 UTC");
+  assert.equal(dashboard.history_analysis.weekdays[0].key, "Friday");
+  assert.equal(dashboard.history_analysis.symbols[0].key, "BTCUSD");
+  assert.equal(dashboard.history_analysis.events[0].key, "m30.b.h4.sply");
+  assert.equal(dashboard.history_analysis.event_timeframes[0].key, "m30");
+  assert.equal(dashboard.history_analysis.movements[0].key, "b");
+  assert.equal(dashboard.history_analysis.reacted_artifacts[0].key, "h4.sply");
+  assert.equal(dashboard.history_analysis.holding_times[0].key, "1–4 hours");
   assert.equal(dashboard.accounts_summary.length, 2);
 });

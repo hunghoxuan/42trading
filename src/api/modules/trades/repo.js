@@ -953,7 +953,11 @@ function tradesComputeTopWinrateRows(
       else if (status === "SL" || closeReason === "SL") stat.losses += 1;
       else if (pnl !== null && pnl > 0) stat.wins += 1;
       else if (pnl !== null && pnl < 0) stat.losses += 1;
-      if (pnl !== null) stat.pnl_total += pnl;
+      if (pnl !== null) {
+        stat.pnl_total += pnl;
+        if (pnl > 0) stat.gross_profit = (stat.gross_profit || 0) + pnl;
+        if (pnl < 0) stat.gross_loss = (stat.gross_loss || 0) + Math.abs(pnl);
+      }
     }
   }
   let entries = [...map.values()].map((item) => {
@@ -961,6 +965,14 @@ function tradesComputeTopWinrateRows(
     return {
       ...item,
       win_rate: decided > 0 ? (item.wins / decided) * 100 : 0,
+      flats: Math.max(0, item.trades - decided),
+      avg_pnl: item.trades > 0 ? item.pnl_total / item.trades : 0,
+      profit_factor:
+        Number(item.gross_loss || 0) > 0
+          ? Number(item.gross_profit || 0) / Number(item.gross_loss || 0)
+          : Number(item.gross_profit || 0) > 0
+            ? null
+            : 0,
     };
   });
   entries = entries.filter(
@@ -977,6 +989,142 @@ function tradesComputeTopWinrateRows(
       (a.key < b.key ? -1 : 1),
   );
   return limit > 0 ? entries.slice(0, limit) : entries;
+}
+
+const tradesNewYorkClock = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  hour: "2-digit",
+  hourCycle: "h23",
+});
+
+function tradesOpenedDate(row = {}) {
+  const value =
+    row.opened_at ||
+    row.metadata?.broker_data?.opened_at ||
+    row.raw_json?.opened_at ||
+    null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function tradesNewYorkHour(date) {
+  if (!(date instanceof Date)) return null;
+  const hourPart = tradesNewYorkClock
+    .formatToParts(date)
+    .find((part) => part.type === "hour");
+  const hour = Number(hourPart?.value);
+  return Number.isFinite(hour) ? hour : null;
+}
+
+function tradesSessionAtOpen(row = {}) {
+  const hour = tradesNewYorkHour(tradesOpenedDate(row));
+  if (hour === null) return "";
+  if (hour >= 19 || hour < 3) return "Asia";
+  if (hour >= 3 && hour < 8) return "London";
+  if (hour >= 8 && hour < 12) return "London / New York overlap";
+  if (hour >= 12 && hour < 17) return "New York";
+  return "Outside sessions";
+}
+
+function tradesKillerZoneAtOpen(row = {}) {
+  const hour = tradesNewYorkHour(tradesOpenedDate(row));
+  if (hour === null) return "";
+  if (hour >= 20) return "Asia KZ";
+  if (hour >= 2 && hour < 5) return "London KZ";
+  if (hour >= 7 && hour < 10) return "New York KZ";
+  return "Outside KZ";
+}
+
+function tradesOpenHourUtc(row = {}) {
+  const date = tradesOpenedDate(row);
+  return date ? `${String(date.getUTCHours()).padStart(2, "0")}:00 UTC` : "";
+}
+
+function tradesOpenWeekdayUtc(row = {}) {
+  const date = tradesOpenedDate(row);
+  return date
+    ? ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][date.getUTCDay()]
+    : "";
+}
+
+function tradesOpenDateUtc(row = {}) {
+  const date = tradesOpenedDate(row);
+  return date ? date.toISOString().slice(0, 10) : "";
+}
+
+function tradesCommentParts(row = {}) {
+  const comment = text(
+    row.comment || row.note || row.metadata?.broker_data?.comment,
+  );
+  const event = text(comment.split("|")[0]);
+  const tokens = event.split(".").map((part) => part.trim()).filter(Boolean);
+  const movementCodes = new Set(["b", "r", "s", "x", "xr", "pb"]);
+  const movementIndex = tokens.findIndex(
+    (part, index) => index > 0 && movementCodes.has(part.toLowerCase()),
+  );
+  return {
+    event: event.replace(/\s+[+-]\d+\s*$/, ""),
+    timeframe: tokens[0] || "",
+    movement: movementIndex >= 0 ? tokens[movementIndex] : "",
+    artifact:
+      movementIndex >= 0 && tokens.length > movementIndex + 1
+        ? tokens.slice(movementIndex + 1).join(".").replace(/\s+[+-]\d+\s*$/, "")
+        : "",
+  };
+}
+
+function tradesDurationBucket(row = {}) {
+  const opened = tradesOpenedDate(row);
+  const closed = new Date(
+    row.closed_at || row.metadata?.broker_data?.closed_at || null,
+  );
+  const supplied = Number(row.metadata?.broker_data?.duration_seconds);
+  const seconds = Number.isFinite(supplied)
+    ? supplied
+    : opened && Number.isFinite(closed.getTime())
+      ? Math.max(0, (closed.getTime() - opened.getTime()) / 1000)
+      : null;
+  if (seconds === null) return "";
+  if (seconds < 5 * 60) return "< 5 min";
+  if (seconds < 15 * 60) return "5–15 min";
+  if (seconds < 60 * 60) return "15–60 min";
+  if (seconds < 4 * 60 * 60) return "1–4 hours";
+  return "> 4 hours";
+}
+
+function tradesHistoryAnalysis(rows = []) {
+  const minimumSample = 5;
+  const top = (picker) => {
+    const ranked = tradesComputeTopWinrateRows(rows, picker, {
+      limit: 0,
+      includeDirection: false,
+    });
+    const qualified = ranked.filter((item) => item.trades >= minimumSample);
+    return (qualified.length ? qualified : ranked).slice(0, 5);
+  };
+  return {
+    timezone: "UTC",
+    session_clock: "America/New_York",
+    minimum_sample: minimumSample,
+    closed_trades: rows.filter((row) =>
+      ["CLOSED", "TP", "SL"].includes(
+        tradesCanonicalStatus(row.execution_status || row.status, row.close_reason),
+      ),
+    ).length,
+    open_hours: top(tradesOpenHourUtc),
+    sessions: top(tradesSessionAtOpen),
+    killer_zones: top(tradesKillerZoneAtOpen),
+    weekdays: top(tradesOpenWeekdayUtc),
+    dates: top(tradesOpenDateUtc),
+    symbols: top((row) => text(row.symbol).toUpperCase()),
+    events: top((row) => tradesCommentParts(row).event),
+    event_timeframes: top((row) => tradesCommentParts(row).timeframe),
+    movements: top((row) => tradesCommentParts(row).movement),
+    reacted_artifacts: top((row) => tradesCommentParts(row).artifact),
+    directions: top((row) => text(row.action || row.side).toUpperCase()),
+    holding_times: top(tradesDurationBucket),
+    strategies: top((row) => tradesStrategyLabelFromRow(row)),
+  };
 }
 
 function tradesBuildAccountsSummary(rows = []) {
@@ -2141,6 +2289,7 @@ function createTradesRepo(options = {}) {
         },
         metrics: tradesComputeTradeMetrics(selectedRows),
         period_totals: periodTotals,
+        history_analysis: tradesHistoryAnalysis(selectedRows),
         top_winrate: {
           symbols: tradesComputeTopWinrateRows(
             selectedRows,
@@ -2830,6 +2979,7 @@ function createTradesRepo(options = {}) {
             order_type: it.order_type || null,
             volume: Number(it.lots ?? it.volume ?? 0),
             entry: it.entry || 0,
+            entry_exec: it.entry || null,
             sl: it.sl ?? null,
             tp: it.tp ?? null,
             tp1:
