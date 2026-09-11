@@ -2573,6 +2573,7 @@ namespace cAlgo.Robots
         private PanelEventSummary _lastPollSummary = new PanelEventSummary();
         private PanelEventSummary _lastSyncSummary = new PanelEventSummary();
         private HashSet<string> _syncedClosedTickets = new HashSet<string>();
+        private string _activeHistoryImportJobId = "";
 
         private class PanelEventEntry
         {
@@ -40440,7 +40441,8 @@ namespace cAlgo.Robots
             var syncPayload = CTraderSyncEngine.BuildSyncPayload(
                 "\"account_id\":\"A1\"", 100, 101, 2, "Broker", "provider", "build",
                 new[] { "{\"id\":1}" }, new string[0], new string[0], "[]", true,
-                new string[0], new[] { Tuple.Create("EURUSD", 1.1, 1.2) });
+                new string[0], new[] { Tuple.Create("EURUSD", 1.1, 1.2) },
+                "hist_1", 250, 200, false, "hist_1:0");
             var ackPayload = CTraderSyncEngine.BuildAckPayload(
                 "\"account_id\":\"A1\"", "sid", "token", "FILLED", "ticket", "", 1.1,
                 10, 0.1, 1, 1, 2, 2, 10, 20);
@@ -40450,6 +40452,8 @@ namespace cAlgo.Robots
                 incrementalPayload != "{\"account_id\":\"A1\",\"sync_mode\":\"incremental\",\"items\":[{\"symbol\":\"EURUSD\"}]}" ||
                 !syncPayload.Contains("\"queue_snapshot_hydrated\":true") ||
                 !syncPayload.Contains("\"history_import\":true") ||
+                !syncPayload.Contains("\"history_import_id\":\"hist_1\"") ||
+                !syncPayload.Contains("\"history_import_processed\":200") ||
                 !syncPayload.Contains("\"prices\":[{\"s\":\"EURUSD\",\"b\":1.10000,\"a\":1.20000}]") ||
                 !ackPayload.Contains("\"execution_status\":\"FILLED\"") ||
                 !ackPayload.Contains("\"sl_pips\":10.00,\"tp_pips\":20.00") ||
@@ -43897,9 +43901,33 @@ namespace cAlgo.Robots
             return CTraderTransportEngine.GetBalancedJsonArrayBody(json, key);
         }
 
+        private void ProcessHistoryImportRequest(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+                return;
+            var jobId = GetJsonValue(json, "history_import_id");
+            var status = GetJsonValue(json, "history_import_status");
+            if (string.Equals(jobId, "null", StringComparison.OrdinalIgnoreCase))
+                jobId = "";
+            if (!string.IsNullOrWhiteSpace(jobId) &&
+                !string.Equals(jobId, _activeHistoryImportJobId, StringComparison.Ordinal))
+            {
+                _activeHistoryImportJobId = jobId;
+                _syncedClosedTickets.Clear();
+                SafePrint("[HistoryImport] Started {0}; queued {1} cTrader closed positions", jobId, History.Count);
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(jobId) &&
+                string.Equals(status, "COMPLETED", StringComparison.OrdinalIgnoreCase))
+            {
+                _activeHistoryImportJobId = "";
+            }
+        }
+
         private void ProcessResponse(string json)
         {
             ResetPollCycle(0);
+            ProcessHistoryImportRequest(json);
             if (string.IsNullOrEmpty(json) || !json.Contains("\"items\"")) return;
             ProcessServerQueueActions(json);
             var pullSummaryJson = GetJsonObject(json, "pull_summary");
@@ -45112,6 +45140,17 @@ namespace cAlgo.Robots
                 _lastPushPriceSymbolCount = priceData != null ? priceData.Select(p => p.Item1).Where(s => !string.IsNullOrWhiteSpace(s)).Distinct(StringComparer.OrdinalIgnoreCase).Count() : 0;
                 if (_lastPushPriceSymbolCount > 0) _priceStatus = "PUSHING";
                 var resolvedProviderCode = ResolveProviderCode(brokerName);
+                var historyTotal = string.IsNullOrWhiteSpace(_activeHistoryImportJobId) ? 0 : History.Count;
+                var historyProcessedBefore = string.IsNullOrWhiteSpace(_activeHistoryImportJobId)
+                    ? 0
+                    : Math.Min(historyTotal, _syncedClosedTickets.Count);
+                var historyBatchCount = closedList != null ? closedList.Count : 0;
+                var historyProcessed = Math.Min(historyTotal, historyProcessedBefore + historyBatchCount);
+                var historyComplete = !string.IsNullOrWhiteSpace(_activeHistoryImportJobId) &&
+                    historyProcessed >= historyTotal;
+                var historyBatchId = string.IsNullOrWhiteSpace(_activeHistoryImportJobId)
+                    ? ""
+                    : _activeHistoryImportJobId + ":" + historyProcessedBefore.ToString(CultureInfo.InvariantCulture);
                 var payload = CTraderSyncEngine.BuildSyncPayload(
                     GetBridgeIdentityJson(accId),
                     bal,
@@ -45126,7 +45165,12 @@ namespace cAlgo.Robots
                     queueActionsJson,
                     queueSnapshotComplete,
                     metricsList,
-                    priceData);
+                    priceData,
+                    _activeHistoryImportJobId,
+                    historyTotal,
+                    historyProcessed,
+                    historyComplete,
+                    historyBatchId);
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
                 using (request = new HttpRequestMessage(System.Net.Http.HttpMethod.Post, BuildServerApiUrl("broker/sync")))
                 {
@@ -51603,7 +51647,12 @@ namespace cAlgo.Robots
             string queueActionsJson,
             bool queueSnapshotComplete,
             IEnumerable<string> symbolMetrics,
-            IEnumerable<Tuple<string, double, double>> prices)
+            IEnumerable<Tuple<string, double, double>> prices,
+            string historyImportId,
+            int historyImportTotal,
+            int historyImportProcessed,
+            bool historyImportComplete,
+            string historyImportBatchId)
         {
             var priceRows = (prices ?? Enumerable.Empty<Tuple<string, double, double>>())
                 .Where(price => price != null)
@@ -51618,6 +51667,12 @@ namespace cAlgo.Robots
                 + ",\"provider_code\":\"" + (providerCode ?? "").Replace("\"", "'") + "\""
                 + ",\"build_version\":\"" + (buildVersion ?? "") + "\""
                 + ",\"history_import\":true"
+                + (string.IsNullOrWhiteSpace(historyImportId) ? "" :
+                    ",\"history_import_id\":\"" + EscapeFragment(historyImportId) + "\"" +
+                    ",\"history_import_total\":" + Math.Max(0, historyImportTotal).ToString(CultureInfo.InvariantCulture) +
+                    ",\"history_import_processed\":" + Math.Max(0, historyImportProcessed).ToString(CultureInfo.InvariantCulture) +
+                    ",\"history_import_complete\":" + (historyImportComplete ? "true" : "false") +
+                    ",\"history_import_batch_id\":\"" + EscapeFragment(historyImportBatchId) + "\"")
                 + ",\"positions\":[" + string.Join(",", positions ?? Enumerable.Empty<string>()) + "]"
                 + ",\"orders\":[" + string.Join(",", orders ?? Enumerable.Empty<string>()) + "]"
                 + ",\"closed\":[" + string.Join(",", closed ?? Enumerable.Empty<string>()) + "]"

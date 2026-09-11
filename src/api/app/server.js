@@ -24473,8 +24473,14 @@ async function mt5BrokerSyncV2(accountId, payload) {
         payload?.queue_snapshot_hydrated === true,
     },
   );
+  const historyImport = await mt5UpdateHistoryImportFromBrokerSync(
+    accountId,
+    payload,
+    result,
+  );
   return {
     ...result,
+    history_import: historyImport,
     queue_actions: queueResult.items,
     queue_terminal_action_ids: queueResult.terminalActionIds,
     queue_snapshot_complete: true,
@@ -24485,6 +24491,76 @@ async function mt5BrokerSyncV2(accountId, payload) {
       waiting: queueResult.items.length,
     },
   };
+}
+
+async function mt5UpdateHistoryImportFromBrokerSync(
+  accountId,
+  payload = {},
+  result = {},
+) {
+  const requestedJobId = String(payload?.history_import_id || "").trim();
+  if (!requestedJobId || payload?.history_import !== true) return null;
+
+  const account = await findUnifiedUserAccountById(accountId);
+  const current = mt5HistoryImportJobFromAccount(account || {});
+  if (
+    requestedJobId !== String(current?.id || "") ||
+    !["REQUESTED", "RUNNING"].includes(String(current?.status || ""))
+  ) {
+    return current || null;
+  }
+
+  const closedTickets = new Set(
+    (Array.isArray(payload?.closed) ? payload.closed : [])
+      .map((item) => String(item?.ticket || item?.position_id || "").trim())
+      .filter(Boolean),
+  );
+  const batchResults = (Array.isArray(result?.results) ? result.results : [])
+    .filter((item) => closedTickets.has(String(item?.ticket || "").trim()));
+  const countStatus = (status) =>
+    batchResults.filter(
+      (item) => String(item?.status || "").trim().toUpperCase() === status,
+    ).length;
+  const batchCreated = countStatus("ADDED");
+  const batchUpdated = countStatus("OK");
+  const batchUnchanged = countStatus("NOCHANGE");
+  const batchErrors = countStatus("ERROR") + countStatus("SKIP");
+  const reportedTotal = Math.max(0, Number(payload?.history_import_total || 0));
+  const reportedProcessed = Math.max(
+    0,
+    Number(payload?.history_import_processed || 0) - batchErrors,
+  );
+  const batchId = String(payload?.history_import_batch_id || "").trim();
+  const now = mt5NowIso();
+
+  return mt5SetHistoryImportJob(accountId, (previous) => {
+    if (String(previous?.id || "") !== requestedJobId) return previous;
+    const alreadyCounted = Boolean(
+      batchId && batchId === String(previous?.last_batch_id || ""),
+    );
+    const complete = payload?.history_import_complete === true && batchErrors === 0;
+    return {
+      ...previous,
+      status: complete ? "COMPLETED" : "RUNNING",
+      started_at: previous?.started_at || now,
+      completed_at: complete ? now : null,
+      updated_at: now,
+      total: Math.max(Number(previous?.total || 0), reportedTotal),
+      processed: Math.max(Number(previous?.processed || 0), reportedProcessed),
+      created:
+        Number(previous?.created || 0) + (alreadyCounted ? 0 : batchCreated),
+      updated:
+        Number(previous?.updated || 0) + (alreadyCounted ? 0 : batchUpdated),
+      unchanged:
+        Number(previous?.unchanged || 0) +
+        (alreadyCounted ? 0 : batchUnchanged),
+      last_batch_id: batchId || previous?.last_batch_id || null,
+      error:
+        batchErrors > 0
+          ? `${batchErrors} history row(s) were rejected and will be retried`
+          : null,
+    };
+  });
 }
 
 async function mt5CreateBrokerTradeV2(accountId, payload) {
@@ -31848,12 +31924,6 @@ const appHandler = async (req, res) => {
       const brokerType = String(
         account?.broker?.Type || account?.metadata?.provider_code || "MT5",
       ).toUpperCase();
-      if (req.method === "POST" && brokerType.includes("CTRADER")) {
-        return json(res, 400, {
-          ok: false,
-          error: "This importer currently supports MT5 accounts only",
-        });
-      }
       if (req.method === "GET") {
         return json(res, 200, {
           ok: true,
@@ -31882,6 +31952,7 @@ const appHandler = async (req, res) => {
         created: 0,
         updated: 0,
         unchanged: 0,
+        broker_type: brokerType,
         error: null,
       });
       return json(res, 202, { ok: true, account_id: accountId, job });

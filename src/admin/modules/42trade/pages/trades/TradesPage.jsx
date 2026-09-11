@@ -762,6 +762,17 @@ export default function TradesPage() {
     (accounts || []).forEach((a) => map.set(String(a.account_id || ""), a));
     return map;
   }, [accounts]);
+  const selectedHistoryAccount = accountById.get(
+    String(filter.account_id || ""),
+  );
+  const historyBrokerLabel = String(
+    selectedHistoryAccount?.broker?.Type ||
+      selectedHistoryAccount?.metadata?.provider_code ||
+      selectedHistoryAccount?.provider_code ||
+      "broker",
+  )
+    .trim()
+    .toUpperCase();
 
   useEffect(() => {
     const accountId = String(filter.account_id || "").trim();
@@ -781,7 +792,7 @@ export default function TradesPage() {
       } catch (requestError) {
         if (!cancelled) {
           setHistoryImportError(
-            requestError?.message || "Could not read MT5 import status",
+            requestError?.message || "Could not read broker import status",
           );
         }
       }
@@ -810,13 +821,13 @@ export default function TradesPage() {
   async function handleStartHistoryImport() {
     const accountId = String(filter.account_id || "").trim();
     if (!accountId) {
-      setHistoryImportError("Select one MT5 account first.");
+      setHistoryImportError("Select one broker account first.");
       return;
     }
     const account = accountById.get(accountId);
     const accountName = account?.name || accountId;
     const approved = await confirm({
-      title: "Import all MT5 history?",
+      title: `Import all ${historyBrokerLabel} history?`,
       message: `Import all closed broker positions for ${accountName}. Existing trades will be matched and updated, not duplicated.`,
       confirmLabel: "Start Import",
       cancelLabel: "Cancel",
@@ -829,7 +840,8 @@ export default function TradesPage() {
       setHistoryImportJob(response?.job || null);
     } catch (requestError) {
       setHistoryImportError(
-        requestError?.message || "Could not start MT5 history import",
+        requestError?.message ||
+          `Could not start ${historyBrokerLabel} history import`,
       );
     } finally {
       setHistoryImportBusy(false);
@@ -1722,7 +1734,7 @@ export default function TradesPage() {
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             {historyImportJob?.status ? (
               <span className={historyImportJob.status === "COMPLETED" ? "loading" : "panel-label"}>
-                MT5 {historyImportJob.status}
+                {historyBrokerLabel} {historyImportJob.status}
                 {Number(historyImportJob.total || 0) > 0
                   ? ` ${Number(historyImportJob.processed || 0)}/${Number(historyImportJob.total || 0)}`
                   : ""}
@@ -1745,11 +1757,13 @@ export default function TradesPage() {
               }
               title={
                 filter.account_id
-                  ? "Import all closed MT5 positions for the selected account"
+                  ? `Import all closed ${historyBrokerLabel} positions for the selected account`
                   : "Select one account in the filter first"
               }
             >
-              {historyImportBusy ? "STARTING..." : "IMPORT MT5 HISTORY"}
+              {historyImportBusy
+                ? "STARTING..."
+                : `IMPORT ${historyBrokerLabel} HISTORY`}
             </button>
             <CronRunLauncher
               value={selectedCronName}
