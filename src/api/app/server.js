@@ -33,6 +33,8 @@ const tradesDomain = require("../modules/42trade/trades0");
 const usersDomain = require("../modules/system/users");
 const { create42PayService } = require("../modules/42pay/service");
 const { createTradesService } = require("../modules/trades/service");
+const { createYtDlpService } = require("../modules/media/ytDlp/service");
+const { createYtDlpHttpHandler } = require("../modules/media/ytDlp/httpHandlers");
 const {
   handle42PayDashboard,
   handle42PayProductsList,
@@ -578,6 +580,24 @@ const CONFIG_DIR = path.join(PROJECT_ROOT, "src", "config");
 const CONFIG_GUIDE_DIR = path.join(CONFIG_DIR, "guide");
 const USER_DATA_ROOT = path.join(GLOBAL_DATA_DIR, "users");
 const USER_REPO_ROOT = path.join(GLOBAL_DATA_DIR, "system", "users");
+const YT_DLP_DATA_ROOT = path.join(REPO_ROOT, "data");
+const YT_DLP_SERVICE = createYtDlpService({
+  dataRoot: YT_DLP_DATA_ROOT,
+  getBackend: async () => {
+    if (String(process.env.MT5_STORAGE || "sqlite").trim().toLowerCase() !== "postgres") {
+      return { storage: "sqlite", pool: null };
+    }
+    const backend = await mt5InitBackend();
+    return { storage: backend.storage, pool: backend.pool };
+  },
+});
+const handleYtDlpRequest = createYtDlpHttpHandler({
+  service: YT_DLP_SERVICE,
+  json,
+  readJson,
+  getSession: getUiSessionFromReq,
+  requirePermission: requireUiPermission,
+});
 
 function scopedUserId(userId) {
   return safeObjectPathPart(String(userId || "").trim() || "default", "default");
@@ -26998,6 +27018,8 @@ const appHandler = async (req, res) => {
     res.end();
     return;
   }
+
+  if (await handleYtDlpRequest(req, res, url)) return;
 
   if (
     LEGACY_TRADES_TEMP_DISABLED &&

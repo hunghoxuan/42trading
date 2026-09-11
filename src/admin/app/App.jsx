@@ -40,6 +40,7 @@ import Pay42ScanPage from "../modules/42pay/pages/Pay42ScanPage";
 import Pay42TopupPage from "../modules/42pay/pages/Pay42TopupPage";
 import Pay42PurchaseConfirmationPage from "../modules/42pay/pages/Pay42PurchaseConfirmationPage";
 import StudioPage from "../modules/studio/pages/StudioPage";
+import YtDlpPage from "../modules/media/yt-dlp/YtDlpPage";
 
 function LegacyMiniAppRedirect() {
   const { appId } = useParams();
@@ -215,6 +216,10 @@ export default function App() {
     const p = String(location?.pathname || "");
     return p.startsWith("/studio");
   }, [location?.pathname]);
+  const mediaMenuActive = useMemo(() => {
+    const p = String(location?.pathname || "");
+    return p.startsWith("/media");
+  }, [location?.pathname]);
   const trades2MenuActive = useMemo(() => {
     const p = String(location?.pathname || "");
     return p.startsWith("/trades");
@@ -367,6 +372,10 @@ export default function App() {
     { to: "/settings/notification", label: "Settings", permission: "pages.settings.notification" },
   ].filter((item) => canAccessPage(navigationUser, item.permission));
 
+  const mediaMenuItems = [
+    { to: "/media/yt-dlp", label: "YT DLP", permission: "pages.media.yt_dlp" },
+  ].filter((item) => canAccessPage(navigationUser, item.permission));
+
   const aiMenuItems = [
     { to: "/trades/analyze", label: "Analyze", permission: "pages.ai.analyze" },
     { to: "/trades/response", label: "Response", permission: "pages.ai.response" },
@@ -393,6 +402,7 @@ export default function App() {
     pay42MenuItems.length > 0,
     !navShows42PayOnly && canAccessPage(navigationUser, "pages.trades"),
     !navShows42PayOnly && canAccessPage(navigationUser, "pages.studio"),
+    !navShows42PayOnly && mediaMenuItems.length > 0,
   ].filter(Boolean).length;
   const flattenPay42Navigation =
     primaryNavGroupCount === 1 && pay42MenuItems.length > 0;
@@ -900,6 +910,25 @@ export default function App() {
               Studio
             </NavLink>
           )}
+          {!navShows42PayOnly && mediaMenuItems.length > 0 && (
+            <NavDropdown
+              align="start"
+              trigger={
+                <NavLink
+                  to={mediaMenuItems[0].to}
+                  className={() =>
+                    `secondary-button nav-dropdown-trigger topbar-single-nav-link ${mediaMenuActive ? "active" : ""}`
+                  }
+                >
+                  Media
+                </NavLink>
+              }
+            >
+              {mediaMenuItems.map((item) => (
+                <NavLink key={item.to} to={item.to}>{item.label}</NavLink>
+              ))}
+            </NavDropdown>
+          )}
 
           <div style={{ flex: 1 }} />
 
@@ -1060,6 +1089,23 @@ export default function App() {
             >
               Studio
             </NavLink>
+          )}
+          {!navShows42PayOnly && mediaMenuItems.length > 0 && (
+            <NavDropdown
+              align="start"
+              trigger={
+                <NavLink
+                  to={mediaMenuItems[0].to}
+                  className={() => `mobile-nav-link ${mediaMenuActive ? "active" : ""}`}
+                >
+                  Media
+                </NavLink>
+              }
+            >
+              {mediaMenuItems.map((item) => (
+                <NavLink key={item.to} to={item.to}>{item.label}</NavLink>
+              ))}
+            </NavDropdown>
           )}
 
           <div style={{ flex: 1 }} />
@@ -1513,6 +1559,10 @@ export default function App() {
               <Route
                 path="/studio"
                 element={guardPageElement("pages.studio", <StudioPage authUser={authUser} />)}
+              />
+              <Route
+                path="/media/yt-dlp"
+                element={guardPageElement("pages.media.yt_dlp", <YtDlpPage />)}
               />
               <Route
                 path="/ai"

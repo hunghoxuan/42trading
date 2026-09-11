@@ -14,6 +14,7 @@ This folder is the current documentation hub for the 42Trade codebase.
 | [integrations-storage.md](./integrations-storage.md) | Remote APIs, MT5 bridge, object storage, cache, and JSON/config readers | Read before touching integrations or persistence seams |
 | [ctrader-bridge.md](./ctrader-bridge.md) | cTrader bot: trade-trigger events/short codes, Chart Visuals combos, SMC presets, panels, splitter grid | Read before editing `src/mt5-bridge/clients/TVBridge_CTrader.cs` |
 | [api-domain-architecture.md](./api-domain-architecture.md) | Canonical `src/api` domain split target | Read when refactoring API boundaries |
+| [media-yt-dlp.md](./media-yt-dlp.md) | YT DLP module layout, runtime, storage, and API | Read before changing media downloads |
 
 ## Coverage Map
 
@@ -47,4 +48,3 @@ This folder is the current documentation hub for the 42Trade codebase.
 | `src/api/shared/objects/**` | Object store and user object persistence |
 | `src/config/schema/*.json` | JSON contracts used by API and UI |
 | `src/db/schema*.js` | Drizzle DB schema reference |
-

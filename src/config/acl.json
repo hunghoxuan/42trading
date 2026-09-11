@@ -145,6 +145,11 @@
       "permission": "pages.studio"
     },
     {
+      "label": "Media YT DLP",
+      "to": "/media/yt-dlp",
+      "permission": "pages.media.yt_dlp"
+    },
+    {
       "label": "Profile",
       "to": "/settings/profile",
       "permission": "pages.settings.profile"
@@ -285,6 +290,16 @@
       "label": "42Pay Admin Users Read",
       "to": "/api/42pay/admin/users",
       "permission": "apis.42pay.admin.users.read"
+    },
+    {
+      "label": "Media YT DLP Read",
+      "to": "/api/media/yt-dlp",
+      "permission": "apis.media.yt_dlp.read"
+    },
+    {
+      "label": "Media YT DLP Write",
+      "to": "/api/media/yt-dlp",
+      "permission": "apis.media.yt_dlp.write"
     },
     {
       "label": "Auth Me",

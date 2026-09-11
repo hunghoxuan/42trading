@@ -1061,6 +1061,18 @@ async function downloadCsv(path, params = {}) {
 }
 
 export const api = {
+  ytDlpStatus: () => get("/api/media/yt-dlp/status"),
+  ytDlpJobs: (limit = 100) =>
+    get(`/api/media/yt-dlp/jobs?limit=${encodeURIComponent(limit)}`),
+  ytDlpJob: (sid) =>
+    get(`/api/media/yt-dlp/jobs/${encodeURIComponent(sid)}`),
+  ytDlpCreateJob: (payload = {}) => post("/api/media/yt-dlp/jobs", payload),
+  ytDlpCancelJob: (sid) =>
+    post(`/api/media/yt-dlp/jobs/${encodeURIComponent(sid)}/cancel`, {}),
+  ytDlpDownloadFile: (sid, index = 0) =>
+    getBlob(
+      `/api/media/yt-dlp/jobs/${encodeURIComponent(sid)}/file?index=${encodeURIComponent(index)}`,
+    ),
   universalEntities: (params = {}) => {
     const q = new URLSearchParams();
     Object.entries(params || {}).forEach(([k, v]) => {
