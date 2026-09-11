@@ -90,6 +90,50 @@ function trades2PnlValue(row = {}) {
   return Number.isFinite(value) ? value : null;
 }
 
+function trades2RealizedRrValue(row = {}) {
+  const directRaw =
+    row?.rr_realized ??
+      row?.metadata?.rr_realized ??
+      row?.metadata?.broker_data?.rr_realized;
+  const direct = Number(directRaw);
+  if (directRaw !== null && directRaw !== undefined && Number.isFinite(direct)) {
+    return direct;
+  }
+  const pnl = trades2PnlValue(row);
+  const riskMoney = Math.abs(
+    Number(
+      row?.risk_money_planned ??
+        row?.planned_sl_pnl ??
+        row?.broker_sl_pnl ??
+        row?.metadata?.risk_money_planned,
+    ),
+  );
+  if (pnl !== null && Number.isFinite(riskMoney) && riskMoney > 0) {
+    return pnl / riskMoney;
+  }
+  const entry = Number(row?.entry_exec ?? row?.entry);
+  const stop = Number(row?.sl_exec ?? row?.sl);
+  const exit = Number(
+    row?.exit_price ??
+      row?.metadata?.broker_data?.exit_price ??
+      row?.raw_json?.exit_price,
+  );
+  const riskDistance = Math.abs(entry - stop);
+  if (
+    Number.isFinite(entry) &&
+    Number.isFinite(stop) &&
+    Number.isFinite(exit) &&
+    riskDistance > 0
+  ) {
+    const reward =
+      trades2Text(row?.action || row?.side).toUpperCase() === "SELL"
+        ? entry - exit
+        : exit - entry;
+    return reward / riskDistance;
+  }
+  return null;
+}
+
 function trades2CanonicalStatus(row = {}) {
   const raw = trades2Text(row?.execution_status || row?.status).toUpperCase();
   const closeReason = trades2Text(row?.close_reason).toUpperCase();
@@ -347,7 +391,7 @@ function computeTrades2Metrics(rows = []) {
   };
 }
 
-function computeTrades2TopRows(rows = [], keyPicker, { limit = 100 } = {}) {
+function computeTrades2TopRows(rows = [], keyPicker, { limit = 0 } = {}) {
   const map = new Map();
   for (const row of Array.isArray(rows) ? rows : []) {
     const baseKey = trades2Text(keyPicker(row));
@@ -383,6 +427,12 @@ function computeTrades2TopRows(rows = [], keyPicker, { limit = 100 } = {}) {
       else if (pnl !== null && pnl > 0) entry.wins += 1;
       else if (pnl !== null && pnl < 0) entry.losses += 1;
       if (pnl !== null) entry.pnl_total += pnl;
+      const rr = trades2RealizedRrValue(row);
+      if (rr !== null) {
+        entry.rr_total += rr;
+        entry.rr_sum += rr;
+        entry.rr_count += 1;
+      }
     }
   }
   return [...map.values()]
@@ -391,6 +441,7 @@ function computeTrades2TopRows(rows = [], keyPicker, { limit = 100 } = {}) {
       return {
         ...entry,
         win_rate: decided > 0 ? (entry.wins / decided) * 100 : 0,
+        rr_avg: entry.rr_count > 0 ? entry.rr_sum / entry.rr_count : null,
       };
     })
     .filter(
@@ -406,7 +457,7 @@ function computeTrades2TopRows(rows = [], keyPicker, { limit = 100 } = {}) {
         b.trades - a.trades ||
         (a.key < b.key ? -1 : 1),
     )
-    .slice(0, limit);
+    .slice(0, limit > 0 ? limit : undefined);
 }
 
 async function loadTrades2DashboardFromList(apiClient, filters = {}) {
@@ -887,9 +938,18 @@ function TableBlock({
     } else if (sortKey === "PnL") {
       va = a.pnl_total;
       vb = b.pnl_total;
+    } else if (sortKey === "RR") {
+      const aHasRr = a.rr_avg != null && Number.isFinite(Number(a.rr_avg));
+      const bHasRr = b.rr_avg != null && Number.isFinite(Number(b.rr_avg));
+      if (aHasRr !== bHasRr) return aHasRr ? -1 : 1;
+      va = aHasRr ? Number(a.rr_avg) : 0;
+      vb = bHasRr ? Number(b.rr_avg) : 0;
+    } else if (sortKey === "Trades") {
+      va = Number(a.trades || 0);
+      vb = Number(b.trades || 0);
     } else return 0;
 
-    if (va === vb) return 0;
+    if (va === vb) return Number(b.trades || 0) - Number(a.trades || 0);
     const res = va > vb ? 1 : -1;
     return sortDir === "DESC" ? -res : res;
   });
@@ -948,6 +1008,30 @@ function TableBlock({
               WR% (W/L){sortMarker("WR")}
             </span>
             <span
+              onClick={() => toggleSort("RR")}
+              style={{
+                flex: "1.2",
+                textAlign: "right",
+                fontSize: "10px",
+                color: "var(--muted)",
+                cursor: "pointer",
+              }}
+            >
+              AVG RR{sortMarker("RR")}
+            </span>
+            <span
+              onClick={() => toggleSort("Trades")}
+              style={{
+                flex: "1",
+                textAlign: "right",
+                fontSize: "10px",
+                color: "var(--muted)",
+                cursor: "pointer",
+              }}
+            >
+              TRADES{sortMarker("Trades")}
+            </span>
+            <span
               onClick={() => toggleSort("PnL")}
               style={{
                 flex: "1.5",
@@ -958,18 +1042,6 @@ function TableBlock({
               }}
             >
               PNL{sortMarker("PnL")}
-            </span>
-            <span
-              onClick={() => toggleSort("RR")}
-              style={{
-                flex: "1",
-                textAlign: "right",
-                fontSize: "10px",
-                color: "var(--muted)",
-                cursor: "pointer",
-              }}
-            >
-              RR{sortMarker("RR")}
             </span>
           </div>
           {sortedRows.map((r) => (
@@ -1016,19 +1088,22 @@ function TableBlock({
                 </span>
               </span>
               <span
-                style={{ flex: "1.5", textAlign: "right" }}
-                className={moneyClass(r.pnl_total)}
-              >
-                {asMoneySigned(r.pnl_total)}
-              </span>
-              <span
                 style={{
-                  flex: "1",
+                  flex: "1.2",
                   textAlign: "right",
                   fontSize: "10px",
                 }}
               >
-                {asRR(r.rr_total)}
+                {r.rr_avg == null ? "—" : asRR(r.rr_avg)}
+              </span>
+              <span style={{ flex: "1", textAlign: "right", fontSize: "10px" }}>
+                {Number(r.trades || 0)}
+              </span>
+              <span
+                style={{ flex: "1.5", textAlign: "right" }}
+                className={moneyClass(r.pnl_total)}
+              >
+                {asMoneySigned(r.pnl_total)}
               </span>
             </div>
           ))}
@@ -2444,7 +2519,11 @@ export default function DashboardPage() {
           <div className="dashboard-section-heading" style={{ marginTop: "18px" }}>
             <h2 style={{ marginBottom: "4px" }}>History edge analysis</h2>
             <div className="minor-text">
-              Top five by win rate (minimum {Number(history.minimum_sample || 5)} trades) · {Number(history.closed_trades || 0)} closed trades · open hour UTC · sessions and KZs use New York time
+              All results · calculated live from the database
+              {history.generated_at
+                ? ` at ${new Date(history.generated_at).toLocaleString()}`
+                : ""}
+              {` · ${Number(history.closed_trades || 0)} closed trades · open hour UTC · sessions and KZs use New York time`}
             </div>
           </div>
 

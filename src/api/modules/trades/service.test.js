@@ -307,6 +307,7 @@ test("trades service exposes dashboard aggregates", async () => {
     execution_status: "CLOSED",
     close_reason: "TP",
     pnl_realized: 120,
+    planned_sl_pnl: -60,
     opened_at: "2026-07-10T08:15:00.000Z",
     closed_at: "2026-07-10T10:00:00.000Z",
     comment: "m30.b.h4.sply +1|Now_Event_L03_R1",
@@ -344,7 +345,9 @@ test("trades service exposes dashboard aggregates", async () => {
   assert.deepEqual(dashboard.filters.accounts, ["acc-1", "acc-2"]);
   assert.equal(dashboard.top_winrate.symbols[0].key, "BTCUSD");
   assert.equal(dashboard.history_analysis.closed_trades, 1);
+  assert.ok(Number.isFinite(Date.parse(dashboard.history_analysis.generated_at)));
   assert.equal(dashboard.history_analysis.open_hours[0].key, "08:00 UTC");
+  assert.equal(dashboard.history_analysis.open_hours[0].rr_avg, 2);
   assert.equal(dashboard.history_analysis.weekdays[0].key, "Friday");
   assert.equal(dashboard.history_analysis.symbols[0].key, "BTCUSD");
   assert.equal(dashboard.history_analysis.events[0].key, "m30.b.h4.sply");

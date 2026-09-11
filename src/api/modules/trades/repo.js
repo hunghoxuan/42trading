@@ -625,6 +625,50 @@ function tradesPnlValue(trade = {}) {
   return Number.isFinite(pnl) ? pnl : null;
 }
 
+function tradesRealizedRrValue(row = {}) {
+  const directRaw =
+    row.rr_realized ??
+      row.metadata?.rr_realized ??
+      row.metadata?.broker_data?.rr_realized;
+  const direct = Number(directRaw);
+  if (directRaw !== null && directRaw !== undefined && Number.isFinite(direct)) {
+    return direct;
+  }
+
+  const pnl = tradesPnlValue(row);
+  const riskMoney = Math.abs(
+    Number(
+      row.risk_money_planned ??
+        row.planned_sl_pnl ??
+        row.broker_sl_pnl ??
+        row.metadata?.risk_money_planned,
+    ),
+  );
+  if (pnl !== null && Number.isFinite(riskMoney) && riskMoney > 0) {
+    return pnl / riskMoney;
+  }
+
+  const entry = Number(row.entry_exec ?? row.entry);
+  const stop = Number(row.sl_exec ?? row.sl);
+  const exit = Number(
+    row.exit_price ??
+      row.metadata?.broker_data?.exit_price ??
+      row.raw_json?.exit_price,
+  );
+  const riskDistance = Math.abs(entry - stop);
+  if (
+    Number.isFinite(entry) &&
+    Number.isFinite(stop) &&
+    Number.isFinite(exit) &&
+    riskDistance > 0
+  ) {
+    const direction = text(row.action || row.side).toUpperCase();
+    const reward = direction === "SELL" ? entry - exit : exit - entry;
+    return reward / riskDistance;
+  }
+  return null;
+}
+
 function tradesTradeTimestampMs(trade = {}) {
   const raw =
     trade.closed_at || trade.opened_at || trade.updated_at || trade.created_at;
@@ -958,6 +1002,12 @@ function tradesComputeTopWinrateRows(
         if (pnl > 0) stat.gross_profit = (stat.gross_profit || 0) + pnl;
         if (pnl < 0) stat.gross_loss = (stat.gross_loss || 0) + Math.abs(pnl);
       }
+      const rr = tradesRealizedRrValue(row);
+      if (rr !== null) {
+        stat.rr_total += rr;
+        stat.rr_sum += rr;
+        stat.rr_count += 1;
+      }
     }
   }
   let entries = [...map.values()].map((item) => {
@@ -967,6 +1017,7 @@ function tradesComputeTopWinrateRows(
       win_rate: decided > 0 ? (item.wins / decided) * 100 : 0,
       flats: Math.max(0, item.trades - decided),
       avg_pnl: item.trades > 0 ? item.pnl_total / item.trades : 0,
+      rr_avg: item.rr_count > 0 ? item.rr_sum / item.rr_count : null,
       profit_factor:
         Number(item.gross_loss || 0) > 0
           ? Number(item.gross_profit || 0) / Number(item.gross_loss || 0)
@@ -1064,7 +1115,9 @@ function tradesCommentParts(row = {}) {
   );
   return {
     event: event.replace(/\s+[+-]\d+\s*$/, ""),
-    timeframe: tokens[0] || "",
+    timeframe: /^(?:m\d+|h\d+|d1|w1|mn1)$/i.test(tokens[0] || "")
+      ? tokens[0]
+      : "",
     movement: movementIndex >= 0 ? tokens[movementIndex] : "",
     artifact:
       movementIndex >= 0 && tokens.length > movementIndex + 1
@@ -1093,37 +1146,33 @@ function tradesDurationBucket(row = {}) {
 }
 
 function tradesHistoryAnalysis(rows = []) {
-  const minimumSample = 5;
-  const top = (picker) => {
-    const ranked = tradesComputeTopWinrateRows(rows, picker, {
+  const all = (picker) =>
+    tradesComputeTopWinrateRows(rows, picker, {
       limit: 0,
       includeDirection: false,
     });
-    const qualified = ranked.filter((item) => item.trades >= minimumSample);
-    return (qualified.length ? qualified : ranked).slice(0, 5);
-  };
   return {
+    generated_at: new Date().toISOString(),
     timezone: "UTC",
     session_clock: "America/New_York",
-    minimum_sample: minimumSample,
     closed_trades: rows.filter((row) =>
       ["CLOSED", "TP", "SL"].includes(
         tradesCanonicalStatus(row.execution_status || row.status, row.close_reason),
       ),
     ).length,
-    open_hours: top(tradesOpenHourUtc),
-    sessions: top(tradesSessionAtOpen),
-    killer_zones: top(tradesKillerZoneAtOpen),
-    weekdays: top(tradesOpenWeekdayUtc),
-    dates: top(tradesOpenDateUtc),
-    symbols: top((row) => text(row.symbol).toUpperCase()),
-    events: top((row) => tradesCommentParts(row).event),
-    event_timeframes: top((row) => tradesCommentParts(row).timeframe),
-    movements: top((row) => tradesCommentParts(row).movement),
-    reacted_artifacts: top((row) => tradesCommentParts(row).artifact),
-    directions: top((row) => text(row.action || row.side).toUpperCase()),
-    holding_times: top(tradesDurationBucket),
-    strategies: top((row) => tradesStrategyLabelFromRow(row)),
+    open_hours: all(tradesOpenHourUtc),
+    sessions: all(tradesSessionAtOpen),
+    killer_zones: all(tradesKillerZoneAtOpen),
+    weekdays: all(tradesOpenWeekdayUtc),
+    dates: all(tradesOpenDateUtc),
+    symbols: all((row) => text(row.symbol).toUpperCase()),
+    events: all((row) => tradesCommentParts(row).event),
+    event_timeframes: all((row) => tradesCommentParts(row).timeframe),
+    movements: all((row) => tradesCommentParts(row).movement),
+    reacted_artifacts: all((row) => tradesCommentParts(row).artifact),
+    directions: all((row) => text(row.action || row.side).toUpperCase()),
+    holding_times: all(tradesDurationBucket),
+    strategies: all((row) => tradesStrategyLabelFromRow(row)),
   };
 }
 
@@ -2294,27 +2343,27 @@ function createTradesRepo(options = {}) {
           symbols: tradesComputeTopWinrateRows(
             selectedRows,
             (row) => text(row.symbol).toUpperCase(),
-            { limit: 100, includeDirection: false },
+            { limit: 0, includeDirection: false },
           ),
           entry_models: tradesComputeTopWinrateRows(
             selectedRows,
             (row) => tradesEntryModelLabelFromRow(row),
-            { limit: 100, includeDirection: false },
+            { limit: 0, includeDirection: false },
           ),
           strategies: tradesComputeTopWinrateRows(
             selectedRows,
             (row) => tradesStrategyLabelFromRow(row),
-            { limit: 100, includeDirection: false },
+            { limit: 0, includeDirection: false },
           ),
           accounts: tradesComputeTopWinrateRows(
             selectedRows,
             (row) => text(row.account_id),
-            { limit: 100, includeDirection: false },
+            { limit: 0, includeDirection: false },
           ),
           sources: tradesComputeTopWinrateRows(
             selectedRows,
             (row) => tradesSourceIdFromRow(row),
-            { limit: 100, includeDirection: false },
+            { limit: 0, includeDirection: false },
           ),
           directional: tradesComputeTopWinrateRows(
             selectedRows,
@@ -2325,7 +2374,7 @@ function createTradesRepo(options = {}) {
                 value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
               return `${capitalize(dir)} ${capitalize(typeRaw)}`;
             },
-            { limit: 100, includeDirection: false },
+            { limit: 0, includeDirection: false },
           ),
         },
         pnl_series: [...seriesMap.entries()]
