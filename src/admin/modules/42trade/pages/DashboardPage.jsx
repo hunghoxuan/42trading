@@ -1538,16 +1538,6 @@ export default function DashboardPage() {
     strategies: [],
   };
   const analysisBlocks = [
-    {
-      title: "Days preset",
-      noun: "presets",
-      rows: history.days_presets || [],
-    },
-    {
-      title: "Trade TimeRange",
-      noun: "presets",
-      rows: history.trade_time_ranges || [],
-    },
     { title: "Open time", noun: "hours", rows: history.open_hours || [] },
     {
       title: "Session / Killer Zone",
@@ -1613,7 +1603,14 @@ export default function DashboardPage() {
     },
   ].sort((left, right) => {
     const lengthDifference = right.rows.length - left.rows.length;
-    return lengthDifference || left.title.localeCompare(right.title);
+    if (lengthDifference) return lengthDifference;
+    const tieOrder = {
+      "Source ID": 0,
+      "Session / Killer Zone": 1,
+    };
+    const positionDifference =
+      (tieOrder[left.title] ?? 2) - (tieOrder[right.title] ?? 2);
+    return positionDifference || left.title.localeCompare(right.title);
   });
   const f = data.filters || {};
   const accountRows = Array.isArray(data.accounts_summary)
