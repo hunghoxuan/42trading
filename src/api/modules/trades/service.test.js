@@ -355,7 +355,7 @@ test("trades service exposes dashboard aggregates", async () => {
   assert.equal(dashboard.history_analysis.events[0].key, "m30.b.h4.sply");
   assert.equal(dashboard.history_analysis.event_timeframes[0].key, "m30");
   assert.equal(dashboard.history_analysis.movements[0].key, "b");
-  assert.equal(dashboard.history_analysis.reacted_artifacts[0].key, "h4.sply");
+  assert.equal(dashboard.history_analysis.reacted_artifacts[0].key, "sply");
   assert.equal(dashboard.history_analysis.holding_times[0].key, "1–4 hours");
   assert.equal(dashboard.history_analysis.days_presets[0].key, "Tuesday");
   assert.equal(

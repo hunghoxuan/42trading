@@ -1188,6 +1188,24 @@ function tradesDurationBucket(row = {}) {
   return "> 4 hours";
 }
 
+function tradesReactedArtifactType(row = {}) {
+  const artifact = text(tradesCommentParts(row).artifact).replace(
+    /\s*[+-]\d+\s*$/,
+    "",
+  );
+  if (!artifact) return "";
+  const parts = artifact
+    .split(".")
+    .map((part) => part.trim())
+    .filter(
+      (part) =>
+        part &&
+        !/^(?:m\d+|h\d+|d1|w1|mn1)$/i.test(part) &&
+        !/^[+-]?\d+$/.test(part),
+    );
+  return text(parts[parts.length - 1]).toLowerCase();
+}
+
 function tradesHistoryAnalysis(rows = []) {
   const all = (picker) =>
     tradesComputeTopWinrateRows(rows, picker, {
@@ -1212,7 +1230,7 @@ function tradesHistoryAnalysis(rows = []) {
     events: all((row) => tradesCommentParts(row).event),
     event_timeframes: all((row) => tradesCommentParts(row).timeframe),
     movements: all((row) => tradesCommentParts(row).movement),
-    reacted_artifacts: all((row) => tradesCommentParts(row).artifact),
+    reacted_artifacts: all(tradesReactedArtifactType),
     directions: all((row) => text(row.action || row.side).toUpperCase()),
     holding_times: all(tradesDurationBucket),
     days_presets: all(tradesStrategyDaysPresetFromRow),

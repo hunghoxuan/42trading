@@ -1549,11 +1549,13 @@ export default function DashboardPage() {
       rows: history.trade_time_ranges || [],
     },
     { title: "Open time", noun: "hours", rows: history.open_hours || [] },
-    { title: "Session", noun: "sessions", rows: history.sessions || [] },
     {
-      title: "Killer zone",
-      noun: "zones",
-      rows: history.killer_zones || [],
+      title: "Session / Killer Zone",
+      noun: "periods",
+      rows: [
+        ...(Array.isArray(history.sessions) ? history.sessions : []),
+        ...(Array.isArray(history.killer_zones) ? history.killer_zones : []),
+      ],
     },
     { title: "Weekday", noun: "days", rows: history.weekdays || [] },
     {
@@ -1573,7 +1575,7 @@ export default function DashboardPage() {
       rows: history.event_timeframes || [],
     },
     {
-      title: "Reacted artifact",
+      title: "Related Artifacts",
       noun: "artifacts",
       rows: history.reacted_artifacts || [],
     },
