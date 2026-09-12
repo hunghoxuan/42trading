@@ -37,12 +37,20 @@ async function responseJson(response) {
   return data;
 }
 
-function uploadFile(urlRaw, file, headers = {}, onProgress = () => {}, start = 0, end = file.size - 1) {
+function uploadFile(
+  urlRaw,
+  file,
+  headers = {},
+  onProgress = () => {},
+  start = 0,
+  end = file.size - 1,
+  method = "PUT",
+) {
   return new Promise((resolve, reject) => {
     const url = new URL(urlRaw);
     const transport = url.protocol === "http:" ? http : https;
     const request = transport.request(url, {
-      method: "PUT",
+      method,
       headers: { ...headers, "Content-Length": end - start + 1 },
     }, (response) => {
       const chunks = [];
@@ -189,6 +197,60 @@ async function uploadTikTokDraft(item, file, config, onRefresh, onProgress) {
   return { remoteId: publishId, remoteUrl: "" };
 }
 
+async function uploadFacebookReel(item, file, config, onProgress) {
+  const graphVersion = /^v\d+[.]\d+$/.test(config.graphVersion)
+    ? config.graphVersion
+    : "v26.0";
+  const edge = `https://graph.facebook.com/${graphVersion}/${encodeURIComponent(config.pageId)}/video_reels`;
+  const startResponse = await fetch(edge, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.accessToken}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({ upload_phase: "start" }),
+  });
+  const started = await responseJson(startResponse);
+  if (!started.video_id || !started.upload_url) {
+    throw new Error("Facebook did not return a Reel upload session.");
+  }
+  const uploaded = await uploadFile(
+    started.upload_url,
+    file,
+    {
+      Authorization: `OAuth ${config.accessToken}`,
+      "Content-Type": mediaType(file.name),
+      offset: "0",
+      file_size: String(file.size),
+    },
+    onProgress,
+    0,
+    file.size - 1,
+    "POST",
+  );
+  if (uploaded.success === false) throw new Error("Facebook rejected the Reel video upload.");
+  const finishResponse = await fetch(edge, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.accessToken}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      upload_phase: "finish",
+      video_id: String(started.video_id),
+      video_state: "PUBLISHED",
+      title: item.title.slice(0, 255),
+      description: item.description.slice(0, 5000),
+    }),
+  });
+  const finished = await responseJson(finishResponse);
+  if (finished.success === false) throw new Error("Facebook could not publish the Reel.");
+  return {
+    remoteId: String(started.video_id),
+    remoteUrl: `https://www.facebook.com/reel/${encodeURIComponent(started.video_id)}`,
+  };
+}
+
 function createMediaPublishService({
   repo,
   resolveOutputFile,
@@ -210,6 +272,11 @@ function createMediaPublishService({
         ...stored.tiktok,
         label: text(stored.tiktok?.label, "TikTok account"),
       },
+      facebook: {
+        ...stored.facebook,
+        label: text(stored.facebook?.label, "Facebook Page"),
+        graphVersion: text(stored.facebook?.graphVersion, "v26.0"),
+      },
     };
   }
 
@@ -229,6 +296,13 @@ function createMediaPublishService({
         )),
         label: config.tiktok.label,
         mode: "inbox_draft",
+      },
+      facebook: {
+        configured: config.facebook.enabled !== false && Boolean(
+          config.facebook.pageId && config.facebook.accessToken
+        ),
+        label: config.facebook.label,
+        mode: "page_reel",
       },
     };
   }
@@ -262,7 +336,7 @@ function createMediaPublishService({
       if (item.platform === "youtube") {
         if (!destinations.youtube.configured) throw new Error("YouTube channel credentials are not configured.");
         result = await uploadYouTube(item, file, config.youtube, onProgress);
-      } else {
+      } else if (item.platform === "tiktok") {
         if (!destinations.tiktok.configured) throw new Error("TikTok account credentials are not configured.");
         result = await uploadTikTokDraft(
           item,
@@ -271,6 +345,9 @@ function createMediaPublishService({
           (next) => savePublishingCredentials?.(item.user_id, "tiktok", next),
           onProgress,
         );
+      } else {
+        if (!destinations.facebook.configured) throw new Error("Facebook Page credentials are not configured.");
+        result = await uploadFacebookReel(item, file, config.facebook, onProgress);
       }
       const completedAt = new Date().toISOString();
       await repo.updatePublish(item.sid, {
@@ -289,7 +366,9 @@ function createMediaPublishService({
   }
 
   async function create(input, userId) {
-    if (!["youtube", "tiktok"].includes(input.platform)) throw new Error("Select a valid publishing platform.");
+    if (!["youtube", "tiktok", "facebook"].includes(input.platform)) {
+      throw new Error("Select a valid publishing platform.");
+    }
     const platform = input.platform;
     const index = Math.max(0, Number(input.file_index) || 0);
     const file = await resolveOutputFile(input.job_sid, userId, index);
@@ -302,8 +381,14 @@ function createMediaPublishService({
     if (platform === "tiktok" && file.size > 4 * 1024 ** 3) {
       throw new Error("TikTok upload supports video files up to 4 GB.");
     }
+    if (platform === "facebook" && ![".mp4", ".mov", ".mkv"].includes(path.extname(file.name).toLowerCase())) {
+      throw new Error("Facebook Reel upload supports MP4, MOV, or MKV video files.");
+    }
     const configured = (await status(userId))[platform];
-    if (!configured.configured) throw new Error(`${platform === "youtube" ? "YouTube" : "TikTok"} credentials are not configured.`);
+    if (!configured.configured) {
+      const platformLabel = platform === "youtube" ? "YouTube" : platform === "tiktok" ? "TikTok" : "Facebook";
+      throw new Error(`${platformLabel} credentials are not configured.`);
+    }
     const now = new Date();
     const requestedAt = input.scheduled_at ? new Date(input.scheduled_at) : now;
     if (!Number.isFinite(requestedAt.getTime())) throw new Error("Invalid scheduled date and time.");
@@ -316,7 +401,10 @@ function createMediaPublishService({
       file_index: index,
       platform,
       account_label: configured.label,
-      title: (text(input.title) || path.parse(file.name).name).slice(0, platform === "youtube" ? 100 : 2200),
+      title: (text(input.title) || path.parse(file.name).name).slice(
+        0,
+        platform === "youtube" ? 100 : platform === "facebook" ? 255 : 2200,
+      ),
       description: text(input.description),
       privacy: platform === "youtube" && ["private", "unlisted", "public"].includes(input.privacy) ? input.privacy : "private",
       status: "scheduled",

@@ -306,7 +306,11 @@ export default function YtDlpPage() {
           <div className="yt-dlp-preview__header">
             <div>
               <div className="panel-label">
-                {publishDraft.platform === "youtube" ? "YouTube channel" : "TikTok account"}
+                {publishDraft.platform === "youtube"
+                  ? "YouTube channel"
+                  : publishDraft.platform === "tiktok"
+                    ? "TikTok account"
+                    : "Facebook Page Reel"}
               </div>
               <div className="minor-text">
                 {platforms[publishDraft.platform]?.configured
@@ -314,7 +318,7 @@ export default function YtDlpPage() {
                   : (
                       <>
                         Not configured. Open{" "}
-                        <a href={`/settings/providers/${publishDraft.platform === "youtube" ? "YOUTUBE" : "TIKTOK"}`}>
+                        <a href={`/settings/providers/${publishDraft.platform.toUpperCase()}`}>
                           Settings → Providers
                         </a>.
                       </>
@@ -335,14 +339,16 @@ export default function YtDlpPage() {
           </div>
           <label className="yt-dlp-field">
             <span>Title</span>
-            <input required maxLength={publishDraft.platform === "youtube" ? 100 : 2200} value={publishDraft.title} onChange={(event) => setPublishDraft({ ...publishDraft, title: event.target.value })} />
+            <input required maxLength={publishDraft.platform === "youtube" ? 100 : publishDraft.platform === "facebook" ? 255 : 2200} value={publishDraft.title} onChange={(event) => setPublishDraft({ ...publishDraft, title: event.target.value })} />
           </label>
+          {["youtube", "facebook"].includes(publishDraft.platform) && (
+            <label className="yt-dlp-field">
+              <span>Description</span>
+              <textarea rows="3" maxLength="5000" value={publishDraft.description} onChange={(event) => setPublishDraft({ ...publishDraft, description: event.target.value })} />
+            </label>
+          )}
           {publishDraft.platform === "youtube" && (
             <>
-              <label className="yt-dlp-field">
-                <span>Description</span>
-                <textarea rows="3" maxLength="5000" value={publishDraft.description} onChange={(event) => setPublishDraft({ ...publishDraft, description: event.target.value })} />
-              </label>
               <label className="yt-dlp-field">
                 <span>Privacy</span>
                 <select value={publishDraft.privacy} onChange={(event) => setPublishDraft({ ...publishDraft, privacy: event.target.value })}>
@@ -355,6 +361,9 @@ export default function YtDlpPage() {
           )}
           {publishDraft.platform === "tiktok" && (
             <div className="minor-text">Uploads to the TikTok inbox as a draft. Review and post it from the TikTok app.</div>
+          )}
+          {publishDraft.platform === "facebook" && (
+            <div className="minor-text">Publishes a public Page Reel. Meta expects a vertical 9:16 video, at least 540 × 960, between 4 and 60 seconds.</div>
           )}
           {publishDraft.mode === "schedule" && (
             <label className="yt-dlp-field">
@@ -431,6 +440,11 @@ export default function YtDlpPage() {
                                   <span aria-hidden="true">♪</span> TikTok
                                 </button>
                               )}
+                              {/[.](mp4|mov|mkv)$/i.test(file.name) && (
+                                <button type="button" className="secondary-button" onClick={() => openPublish(job, index, "facebook")} title="Upload a Reel to Facebook Page">
+                                  <span aria-hidden="true">f</span> Facebook
+                                </button>
+                              )}
                             </>
                           )}
                         </span>
@@ -460,7 +474,7 @@ export default function YtDlpPage() {
               <tbody>
                 {publishes.map((item) => (
                   <tr key={item.sid}>
-                    <td>{item.platform === "youtube" ? "▶ YouTube" : "♪ TikTok"}<div className="minor-text">{item.account_label}</div></td>
+                    <td>{item.platform === "youtube" ? "▶ YouTube" : item.platform === "tiktok" ? "♪ TikTok" : "f Facebook"}<div className="minor-text">{item.account_label}</div></td>
                     <td>{item.title}</td>
                     <td><span className={`status-dot ${statusTone(item.status)}`} /> {item.status}{item.status === "uploading" ? ` ${Math.round(item.progress || 0)}%` : ""}</td>
                     <td>{new Date(item.scheduled_at).toLocaleString()}</td>

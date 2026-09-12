@@ -43,9 +43,10 @@ queued.
 
 Configure one channel/account per user in **Settings > Providers**. Use **YouTube Publishing** for
 the OAuth client ID, client secret, refresh token, and channel label. Use **TikTok Publishing** for
-the client key, client secret, access token, refresh token, and account label. These records use the
-existing user-scoped Providers object store and the same encrypted-at-rest/masked-secret handling as
-the other provider settings. No publishing credential is read from `.env`.
+the client key, client secret, access token, refresh token, and account label. Use **Facebook
+Publishing** for the Page ID, Page access token, Page label, and Graph API version. These records use
+the existing user-scoped Providers object store and the same encrypted-at-rest/masked-secret handling
+as the other provider settings. No publishing credential is read from `.env`.
 
 The YouTube refresh token must be authorized for the `youtube.upload` OAuth scope. Uploads use the
 YouTube Data API resumable-upload endpoint and can be created as private, unlisted, or public.
@@ -57,6 +58,12 @@ silently direct-posting without TikTok's required creator/privacy interaction an
 scheduling, configure the client key, client secret, and refresh token; rotated tokens are written
 back to the encrypted TikTok provider database record. Unmasked tokens are never returned by normal
 settings or publishing-status requests.
+
+Facebook publishing targets a Facebook Page Reel through Meta's Reels Publishing API. The Page
+access token needs `pages_manage_posts`, `pages_read_engagement`, and `pages_show_list`. The module
+uploads at the locally scheduled time and then publishes the Reel; Meta currently expects a vertical
+9:16 video with a minimum 540 × 960 resolution and a 4–60 second duration. The Graph API version is
+configurable in Providers and defaults to `v26.0`.
 
 ## API
 

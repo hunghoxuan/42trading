@@ -591,9 +591,10 @@ async function loadMediaPublishingCredentials(userId) {
       enabled: Boolean(row) && String(row.status || "ACTIVE").toUpperCase() === "ACTIVE",
     };
   };
-  const [youtube, tiktok] = await Promise.all([
+  const [youtube, tiktok, facebook] = await Promise.all([
     readProvider("YOUTUBE_API_KEY"),
     readProvider("TIKTOK_API_KEY"),
+    readProvider("FACEBOOK_API_KEY"),
   ]);
   return {
     youtube: {
@@ -611,6 +612,13 @@ async function loadMediaPublishingCredentials(userId) {
       clientSecret: String(tiktok.data.client_secret || ""),
       refreshToken: String(tiktok.data.refresh_token || ""),
       expiresAt: Number(tiktok.data.expires_at || 0),
+    },
+    facebook: {
+      enabled: facebook.enabled,
+      label: String(facebook.data.page_label || "Facebook Page"),
+      pageId: String(facebook.data.page_id || ""),
+      accessToken: String(facebook.data.page_access_token || ""),
+      graphVersion: String(facebook.data.graph_version || "v26.0"),
     },
   };
 }
@@ -7720,13 +7728,14 @@ const MEDIA_PROVIDER_FIELDS = Object.freeze({
   TIKTOK_API_KEY: [
     "account_label", "client_key", "client_secret", "access_token", "refresh_token", "expires_at",
   ],
+  FACEBOOK_API_KEY: ["page_label", "page_id", "page_access_token", "graph_version"],
 });
 const ALLOWED_PROVIDER_SETTING_NAMES = new Set([
   ...ALLOWED_AI_API_KEY_NAMES,
   ...Object.keys(MEDIA_PROVIDER_FIELDS),
 ]);
 const MEDIA_PROVIDER_SECRET_FIELDS = new Set([
-  "client_secret", "access_token", "refresh_token",
+  "client_secret", "access_token", "refresh_token", "page_access_token",
 ]);
 
 function isMediaPublishingProvider(name) {
@@ -7788,6 +7797,7 @@ function normalizeAiApiKeyName(rawName) {
     return "OLLAMA_API_KEY";
   if (name === "YOUTUBE" || name === "YOUTUBE_PUBLISHING") return "YOUTUBE_API_KEY";
   if (name === "TIKTOK" || name === "TIKTOK_PUBLISHING") return "TIKTOK_API_KEY";
+  if (name === "FACEBOOK" || name === "FACEBOOK_PUBLISHING") return "FACEBOOK_API_KEY";
   return name;
 }
 

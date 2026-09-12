@@ -86,6 +86,17 @@ const PROVIDERS = [
       { name: "refresh_token", label: "Refresh token", secret: true },
     ],
   },
+  {
+    name: "FACEBOOK",
+    label: "Facebook Publishing",
+    kind: "publishing",
+    fields: [
+      { name: "page_label", label: "Page label", placeholder: "My Facebook Page" },
+      { name: "page_id", label: "Page ID" },
+      { name: "page_access_token", label: "Page access token", secret: true },
+      { name: "graph_version", label: "Graph API version", placeholder: "v26.0" },
+    ],
+  },
 ];
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -107,6 +118,7 @@ function normalizeProviderName(raw) {
     return "TWELVE_DATA";
   if (s === "YOUTUBE" || s === "YOUTUBE_API_KEY") return "YOUTUBE";
   if (s === "TIKTOK" || s === "TIKTOK_API_KEY") return "TIKTOK";
+  if (s === "FACEBOOK" || s === "FACEBOOK_API_KEY") return "FACEBOOK";
   return s.replace(/_API_KEY$/i, "");
 }
 
@@ -609,6 +621,9 @@ export default function ProvidersPage() {
                       )}
                       {selectedProvider === "TIKTOK" && (
                         <div className="minor-text">Use video.upload permission. Client credentials and a refresh token enable long-running schedules.</div>
+                      )}
+                      {selectedProvider === "FACEBOOK" && (
+                        <div className="minor-text">Publishes Page Reels. The Page token needs pages_manage_posts, pages_read_engagement, and pages_show_list.</div>
                       )}
                     </div>
                   ) : (
