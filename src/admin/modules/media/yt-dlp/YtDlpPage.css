@@ -28,14 +28,6 @@
   padding: 8px 10px;
 }
 
-.yt-dlp-download-panel.responsive-panel {
-  padding: 12px 16px;
-}
-
-.yt-dlp-download-panel__body {
-  width: 100%;
-}
-
 .yt-dlp-form {
   display: flex;
   align-items: center;
@@ -44,7 +36,8 @@
 }
 
 .yt-dlp-form input,
-.yt-dlp-form select {
+.yt-dlp-form select,
+.yt-dlp-form-select {
   min-height: 34px;
 }
 
@@ -53,7 +46,8 @@
   min-width: 320px;
 }
 
-.yt-dlp-form select {
+.yt-dlp-form select,
+.yt-dlp-form-select {
   flex: 0 0 auto;
   min-width: 130px;
 }
@@ -72,10 +66,6 @@
   align-items: center;
   gap: 4px;
   font-size: 12px;
-}
-
-.yt-dlp-download-button {
-  flex: 0 0 auto;
 }
 
 .yt-dlp-field {
@@ -119,6 +109,11 @@
 .yt-dlp-publish input,
 .yt-dlp-publish select {
   width: 100%;
+}
+
+.yt-dlp-publish--detail {
+  grid-template-columns: 1fr;
+  align-items: stretch;
 }
 
 .yt-dlp-crud-layout .crud-toolbar__filters,
@@ -255,18 +250,11 @@
     margin-left: 0;
   }
 
-  .yt-dlp-download-button {
-    margin-left: auto;
-  }
 }
 
 @media (max-width: 767px) {
   .yt-dlp-header-actions {
     justify-content: flex-start;
-  }
-
-  .yt-dlp-download-panel.responsive-panel {
-    padding: 0;
   }
 
   .yt-dlp-form,
@@ -275,7 +263,8 @@
   }
 
   .yt-dlp-url-input,
-  .yt-dlp-form select {
+  .yt-dlp-form select,
+  .yt-dlp-form-select {
     flex: 1 1 100%;
     min-width: 0;
     width: 100%;
@@ -284,10 +273,6 @@
   .yt-dlp-options {
     flex-wrap: wrap;
     width: 100%;
-  }
-
-  .yt-dlp-download-button {
-    margin-left: auto;
   }
 
   .yt-dlp-publish {
