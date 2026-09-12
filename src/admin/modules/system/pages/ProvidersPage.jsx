@@ -63,6 +63,29 @@ const PROVIDERS = [
     label: "Twelve Data",
     models: [],
   },
+  {
+    name: "YOUTUBE",
+    label: "YouTube Publishing",
+    kind: "publishing",
+    fields: [
+      { name: "channel_label", label: "Channel label", placeholder: "My YouTube channel" },
+      { name: "client_id", label: "OAuth client ID" },
+      { name: "client_secret", label: "OAuth client secret", secret: true },
+      { name: "refresh_token", label: "OAuth refresh token", secret: true },
+    ],
+  },
+  {
+    name: "TIKTOK",
+    label: "TikTok Publishing",
+    kind: "publishing",
+    fields: [
+      { name: "account_label", label: "Account label", placeholder: "My TikTok account" },
+      { name: "client_key", label: "Client key" },
+      { name: "client_secret", label: "Client secret", secret: true },
+      { name: "access_token", label: "Access token", secret: true },
+      { name: "refresh_token", label: "Refresh token", secret: true },
+    ],
+  },
 ];
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -82,6 +105,8 @@ function normalizeProviderName(raw) {
     return "OLLAMA";
   if (s === "TWELVE_DATA" || s === "TWELVEDATA" || s === "TWELVE_DATA_API_KEY")
     return "TWELVE_DATA";
+  if (s === "YOUTUBE" || s === "YOUTUBE_API_KEY") return "YOUTUBE";
+  if (s === "TIKTOK" || s === "TIKTOK_API_KEY") return "TIKTOK";
   return s.replace(/_API_KEY$/i, "");
 }
 
@@ -183,6 +208,7 @@ export default function ProvidersPage() {
       map[prov.name] = {
         setting: setting || null,
         data: {
+          ...data,
           models: Array.isArray(data.models) ? data.models : [],
           api_key: String(data.api_key || data.value || ""),
           api_keys: normalizeProviderKeyRows(data).map((entry) =>
@@ -215,6 +241,7 @@ export default function ProvidersPage() {
     models: [],
     key_entries: [],
     remain_credits: 0,
+    provider_data: {},
   });
 
   useEffect(() => {
@@ -228,14 +255,15 @@ export default function ProvidersPage() {
             ? currentProvider.data.key_entries.map((entry) => ({ ...entry }))
             : [createEmptyKeyRow()],
         remain_credits: currentProvider.data.remain_credits,
+        provider_data: Object.fromEntries(
+          (currentProvDef?.fields || []).map((field) => [
+            field.name,
+            String(currentProvider.data[field.name] || ""),
+          ]),
+        ),
       });
     }
-  }, [
-    selectedProvider,
-    currentProvider?.data?.api_key,
-    currentProvider?.data?.api_keys,
-    currentProvider?.data?.key_entries,
-  ]);
+  }, [selectedProvider, currentProvider, currentProvDef]);
 
   useEffect(() => {
     const normalizedRouteProvider = routeProviderName
@@ -290,6 +318,23 @@ export default function ProvidersPage() {
       ),
     }));
     return resolved;
+  };
+
+  const revealProviderField = async (field) => {
+    try {
+      const out = await api.getSettingSecret("api_key", selectedProvider, field);
+      const value = String(out?.value || "");
+      if (value) {
+        setForm((prev) => ({
+          ...prev,
+          provider_data: { ...prev.provider_data, [field]: value },
+        }));
+      }
+      return value;
+    } catch (err) {
+      setMsg(err?.message || "Failed to reveal secret.");
+      return "";
+    }
   };
 
   const updateKeyRow = (rowId, patch = {}) => {
@@ -366,23 +411,25 @@ export default function ProvidersPage() {
     const payload = {
       type: "api_key",
       name: existing?.name || selectedProvider,
-      data: {
-        models: form.models,
-        key_entries: (form.key_entries || [])
-          .map((entry) => ({
-            ...entry,
-            api_key: String(entry?.api_key || "").trim(),
-            status:
-              String(entry?.status || "active").toLowerCase() === "inactive"
-                ? "inactive"
-                : String(entry?.status || "active").toLowerCase() === "invalid"
-                  ? "invalid"
-                  : "active",
-          }))
-          .filter((entry) => entry.api_key),
-        remain_credits: Number(form.remain_credits || 0),
-      },
-      status: currentProvider?.status || "ACTIVE",
+      data: currentProvDef.kind === "publishing"
+        ? form.provider_data
+        : {
+            models: form.models,
+            key_entries: (form.key_entries || [])
+              .map((entry) => ({
+                ...entry,
+                api_key: String(entry?.api_key || "").trim(),
+                status:
+                  String(entry?.status || "active").toLowerCase() === "inactive"
+                    ? "inactive"
+                    : String(entry?.status || "active").toLowerCase() === "invalid"
+                      ? "invalid"
+                      : "active",
+              }))
+              .filter((entry) => entry.api_key),
+            remain_credits: Number(form.remain_credits || 0),
+          },
+      status: existing?.status || "ACTIVE",
     };
     try {
       await api.upsertSetting(payload);
@@ -515,6 +562,57 @@ export default function ProvidersPage() {
 
               {detailTab === "settings" ? (
                 <>
+                  {currentProvDef.kind === "publishing" ? (
+                    <div className="stack-layout" style={{ gap: 12 }}>
+                      <div className="minor-text">
+                        Stored encrypted in the current user's Providers database record.
+                      </div>
+                      {(currentProvDef.fields || []).map((field) => (
+                        <label className="stack-layout" style={{ gap: 6 }} key={field.name}>
+                          <span className="panel-label" style={{ fontSize: 10 }}>
+                            {field.label.toUpperCase()}
+                          </span>
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <input
+                              type={field.secret ? "password" : "text"}
+                              value={String(form.provider_data?.[field.name] || "")}
+                              placeholder={field.placeholder || field.label}
+                              autoComplete="off"
+                              onChange={(event) => setForm((prev) => ({
+                                ...prev,
+                                provider_data: {
+                                  ...prev.provider_data,
+                                  [field.name]: event.target.value,
+                                },
+                              }))}
+                              style={{ flex: 1 }}
+                            />
+                            {field.secret && (
+                              <button
+                                type="button"
+                                className="secondary-button"
+                                title={`Reveal ${field.label}`}
+                                onClick={async () => {
+                                  const value = await revealProviderField(field.name);
+                                  if (value) setMsg(`${field.label} revealed.`);
+                                }}
+                                disabled={saveBusy || !currentProvider?.setting}
+                              >
+                                <span aria-hidden="true">◉</span> Reveal
+                              </button>
+                            )}
+                          </div>
+                        </label>
+                      ))}
+                      {selectedProvider === "YOUTUBE" && (
+                        <div className="minor-text">The refresh token needs the youtube.upload OAuth scope.</div>
+                      )}
+                      {selectedProvider === "TIKTOK" && (
+                        <div className="minor-text">Use video.upload permission. Client credentials and a refresh token enable long-running schedules.</div>
+                      )}
+                    </div>
+                  ) : (
+                    <>
                   <div className="stack-layout" style={{ gap: 6 }}>
                     <span className="panel-label" style={{ fontSize: 10 }}>
                       MODELS (COMMA OR NEWLINE)
@@ -705,6 +803,8 @@ export default function ProvidersPage() {
                       style={{ width: 160 }}
                     />
                   </div>
+                    </>
+                  )}
 
                   <div
                     style={{

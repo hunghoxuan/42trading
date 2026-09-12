@@ -76,15 +76,6 @@ resolved_mt5_enabled() {
   fi
 }
 
-xml_escape() {
-  printf '%s' "$1" | sed \
-    -e 's/&/\&amp;/g' \
-    -e 's/</\&lt;/g' \
-    -e 's/>/\&gt;/g' \
-    -e 's/"/\&quot;/g' \
-    -e "s/'/\&apos;/g"
-}
-
 kill_port_owner() {
   local pids
   pids="$(port_pids)"
@@ -170,21 +161,10 @@ start_background() {
 }
 
 write_launch_agent_plist() {
-  local mt5_enabled mt5_storage node_path youtube_client_id youtube_client_secret
-  local youtube_refresh_token youtube_channel_label tiktok_access_token tiktok_account_label
-  local tiktok_client_key tiktok_client_secret tiktok_refresh_token
+  local mt5_enabled mt5_storage node_path
   mt5_storage="${MT5_STORAGE:-sqlite}"
   mt5_enabled="$(resolved_mt5_enabled)"
   node_path="${NODE_BIN:-}"
-  youtube_client_id="$(xml_escape "${MEDIA_YOUTUBE_CLIENT_ID:-}")"
-  youtube_client_secret="$(xml_escape "${MEDIA_YOUTUBE_CLIENT_SECRET:-}")"
-  youtube_refresh_token="$(xml_escape "${MEDIA_YOUTUBE_REFRESH_TOKEN:-}")"
-  youtube_channel_label="$(xml_escape "${MEDIA_YOUTUBE_CHANNEL_LABEL:-YouTube channel}")"
-  tiktok_access_token="$(xml_escape "${MEDIA_TIKTOK_ACCESS_TOKEN:-}")"
-  tiktok_client_key="$(xml_escape "${MEDIA_TIKTOK_CLIENT_KEY:-}")"
-  tiktok_client_secret="$(xml_escape "${MEDIA_TIKTOK_CLIENT_SECRET:-}")"
-  tiktok_refresh_token="$(xml_escape "${MEDIA_TIKTOK_REFRESH_TOKEN:-}")"
-  tiktok_account_label="$(xml_escape "${MEDIA_TIKTOK_ACCOUNT_LABEL:-TikTok account}")"
   if [ -z "${node_path}" ]; then
     echo "[src/api] unable to resolve node binary for launchctl mode"
     exit 1
@@ -222,24 +202,6 @@ write_launch_agent_plist() {
     <string>0</string>
     <key>MARKET_DATA_CRON_ENABLED</key>
     <string>0</string>
-    <key>MEDIA_YOUTUBE_CLIENT_ID</key>
-    <string>${youtube_client_id}</string>
-    <key>MEDIA_YOUTUBE_CLIENT_SECRET</key>
-    <string>${youtube_client_secret}</string>
-    <key>MEDIA_YOUTUBE_REFRESH_TOKEN</key>
-    <string>${youtube_refresh_token}</string>
-    <key>MEDIA_YOUTUBE_CHANNEL_LABEL</key>
-    <string>${youtube_channel_label}</string>
-    <key>MEDIA_TIKTOK_ACCESS_TOKEN</key>
-    <string>${tiktok_access_token}</string>
-    <key>MEDIA_TIKTOK_CLIENT_KEY</key>
-    <string>${tiktok_client_key}</string>
-    <key>MEDIA_TIKTOK_CLIENT_SECRET</key>
-    <string>${tiktok_client_secret}</string>
-    <key>MEDIA_TIKTOK_REFRESH_TOKEN</key>
-    <string>${tiktok_refresh_token}</string>
-    <key>MEDIA_TIKTOK_ACCOUNT_LABEL</key>
-    <string>${tiktok_account_label}</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>
@@ -259,8 +221,7 @@ write_launch_agent_plist() {
 </dict>
 </plist>
 EOF
-  # Publishing credentials are embedded for launchd, so keep the generated plist private.
-  chmod 600 "${LAUNCH_AGENT_PLIST}"
+  chmod 644 "${LAUNCH_AGENT_PLIST}"
 }
 
 start_launchctl() {

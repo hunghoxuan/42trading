@@ -581,8 +581,63 @@ const CONFIG_GUIDE_DIR = path.join(CONFIG_DIR, "guide");
 const USER_DATA_ROOT = path.join(GLOBAL_DATA_DIR, "users");
 const USER_REPO_ROOT = path.join(GLOBAL_DATA_DIR, "system", "users");
 const YT_DLP_DATA_ROOT = path.join(REPO_ROOT, "data");
+
+async function loadMediaPublishingCredentials(userId) {
+  const readProvider = async (name) => {
+    const row = await settingsStore.getUserSetting(userId, "api_key", name);
+    const data = decryptObject(row?.data && typeof row.data === "object" ? row.data : {});
+    return {
+      data,
+      enabled: Boolean(row) && String(row.status || "ACTIVE").toUpperCase() === "ACTIVE",
+    };
+  };
+  const [youtube, tiktok] = await Promise.all([
+    readProvider("YOUTUBE_API_KEY"),
+    readProvider("TIKTOK_API_KEY"),
+  ]);
+  return {
+    youtube: {
+      enabled: youtube.enabled,
+      label: String(youtube.data.channel_label || "YouTube channel"),
+      clientId: String(youtube.data.client_id || ""),
+      clientSecret: String(youtube.data.client_secret || ""),
+      refreshToken: String(youtube.data.refresh_token || ""),
+    },
+    tiktok: {
+      enabled: tiktok.enabled,
+      label: String(tiktok.data.account_label || "TikTok account"),
+      accessToken: String(tiktok.data.access_token || ""),
+      clientKey: String(tiktok.data.client_key || ""),
+      clientSecret: String(tiktok.data.client_secret || ""),
+      refreshToken: String(tiktok.data.refresh_token || ""),
+      expiresAt: Number(tiktok.data.expires_at || 0),
+    },
+  };
+}
+
+async function saveMediaPublishingCredentials(userId, platform, patch = {}) {
+  if (platform !== "tiktok") return;
+  const name = "TIKTOK_API_KEY";
+  const row = await settingsStore.getUserSetting(userId, "api_key", name);
+  const current = decryptObject(row?.data && typeof row.data === "object" ? row.data : {});
+  await settingsStore.upsertUserSetting(
+    userId,
+    "api_key",
+    name,
+    encryptObject({
+      ...current,
+      access_token: String(patch.accessToken || current.access_token || ""),
+      refresh_token: String(patch.refreshToken || current.refresh_token || ""),
+      expires_at: String(patch.expiresAt || current.expires_at || ""),
+    }),
+    row?.status || "ACTIVE",
+  );
+}
+
 const YT_DLP_SERVICE = createYtDlpService({
   dataRoot: YT_DLP_DATA_ROOT,
+  getPublishingCredentials: loadMediaPublishingCredentials,
+  savePublishingCredentials: saveMediaPublishingCredentials,
   getBackend: async () => {
     if (String(process.env.MT5_STORAGE || "sqlite").trim().toLowerCase() !== "postgres") {
       return { storage: "sqlite", pool: null };
@@ -7660,6 +7715,51 @@ const ALLOWED_AI_API_KEY_NAMES = new Set([
   "OLLAMA_API_KEY",
 ]);
 
+const MEDIA_PROVIDER_FIELDS = Object.freeze({
+  YOUTUBE_API_KEY: ["channel_label", "client_id", "client_secret", "refresh_token"],
+  TIKTOK_API_KEY: [
+    "account_label", "client_key", "client_secret", "access_token", "refresh_token", "expires_at",
+  ],
+});
+const ALLOWED_PROVIDER_SETTING_NAMES = new Set([
+  ...ALLOWED_AI_API_KEY_NAMES,
+  ...Object.keys(MEDIA_PROVIDER_FIELDS),
+]);
+const MEDIA_PROVIDER_SECRET_FIELDS = new Set([
+  "client_secret", "access_token", "refresh_token",
+]);
+
+function isMediaPublishingProvider(name) {
+  return Object.hasOwn(MEDIA_PROVIDER_FIELDS, name);
+}
+
+function maskMediaProviderPayload(name, data = {}) {
+  const out = {};
+  for (const field of MEDIA_PROVIDER_FIELDS[name] || []) {
+    const value = String(data[field] || "");
+    if (field === "expires_at") continue;
+    out[field] = MEDIA_PROVIDER_SECRET_FIELDS.has(field) && value
+      ? maskApiKeyForDisplay(value)
+      : value;
+  }
+  return out;
+}
+
+function normalizeMediaProviderPayload(name, incoming = {}, existing = {}) {
+  const out = {};
+  for (const field of MEDIA_PROVIDER_FIELDS[name] || []) {
+    if (field === "expires_at" && incoming[field] == null) {
+      out[field] = String(existing[field] || "");
+      continue;
+    }
+    const value = String(incoming[field] ?? "").trim();
+    out[field] = MEDIA_PROVIDER_SECRET_FIELDS.has(field) && (!value || isMaskedSecretLike(value))
+      ? String(existing[field] || "")
+      : value;
+  }
+  return out;
+}
+
 function normalizeAiApiKeyName(rawName) {
   const name = String(rawName || "")
     .trim()
@@ -7686,6 +7786,8 @@ function normalizeAiApiKeyName(rawName) {
     return "TWELVE_DATA_API_KEY";
   if (name === "OLLAMA" || name === "OLLAMA_LOCAL" || name === "OLLAMA_API_KEY")
     return "OLLAMA_API_KEY";
+  if (name === "YOUTUBE" || name === "YOUTUBE_PUBLISHING") return "YOUTUBE_API_KEY";
+  if (name === "TIKTOK" || name === "TIKTOK_PUBLISHING") return "TIKTOK_API_KEY";
   return name;
 }
 
@@ -32798,6 +32900,10 @@ const appHandler = async (req, res) => {
         // For api_key type, decrypt and mask the api_key field for display
         if (r.type === "api_key" && d && typeof d === "object") {
           const decrypted = decryptObject(d);
+          const providerName = normalizeAiApiKeyName(r.name);
+          if (isMediaPublishingProvider(providerName)) {
+            return { ...r, data: maskMediaProviderPayload(providerName, decrypted) };
+          }
           // Only mask the api_key field; models and remain_credits shown as-is
           const normalized = buildApiKeySettingPayload(decrypted);
           const masked = { ...normalized };
@@ -32949,73 +33055,75 @@ const appHandler = async (req, res) => {
 
       if (body.type === "api_key") {
         settingName = normalizeAiApiKeyName(settingName);
-        if (!ALLOWED_AI_API_KEY_NAMES.has(settingName)) {
+        if (!ALLOWED_PROVIDER_SETTING_NAMES.has(settingName)) {
           return json(res, 400, {
             ok: false,
             error:
-              "Invalid api_key name. Allowed: GEMINI_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, CLAUDE_API_KEY, OPENROUTER_API_KEY, TWELVE_DATA_API_KEY, OLLAMA_API_KEY",
+              "Invalid api_key provider name.",
           });
         }
-        const incomingValue = String(
-          payloadData.api_key ?? payloadData.value ?? "",
-        ).trim();
-        let nextKeyEntries = [];
-        const incomingKeys =
-          Array.isArray(payloadData.api_keys) && payloadData.api_keys.length
-            ? payloadData.api_keys
-            : splitApiKeyCandidates(incomingValue);
         const existingData = await settingsStore.getUserSettingData(
           userId,
           "api_key",
           settingName,
         );
-        const existingEntries = existingData
-          ? normalizeApiKeyEntries(
-              decryptObject(
-                typeof existingData === "string"
-                  ? JSON.parse(existingData)
-                  : existingData || {},
-              ),
+        const existingDecrypted = existingData
+          ? decryptObject(
+              typeof existingData === "string" ? JSON.parse(existingData) : existingData || {},
             )
-          : [];
-        const containsMaskedIncoming = incomingKeys.some((value) =>
-          isMaskedApiKeyLike(value),
-        );
-        const rawIncomingKeys = incomingKeys.filter(
-          (value) => !isMaskedApiKeyLike(value),
-        );
-        if (containsMaskedIncoming) {
-          nextKeyEntries = normalizeApiKeyEntries({
-            key_entries: [
-              ...existingEntries,
-              ...normalizeApiKeyEntries({
-                key_entries: Array.isArray(payloadData.key_entries)
-                  ? payloadData.key_entries
-                  : [],
-                api_keys: rawIncomingKeys,
-              }),
-            ],
-          });
+          : {};
+        if (isMediaPublishingProvider(settingName)) {
+          data = encryptObject(
+            normalizeMediaProviderPayload(settingName, payloadData, existingDecrypted),
+          );
         } else {
-          nextKeyEntries = normalizeApiKeyEntries({
-            key_entries: Array.isArray(payloadData.key_entries)
-              ? payloadData.key_entries
-              : [],
-            api_keys: incomingKeys,
-            api_key: incomingValue,
-          });
+          const incomingValue = String(
+            payloadData.api_key ?? payloadData.value ?? "",
+          ).trim();
+          let nextKeyEntries = [];
+          const incomingKeys =
+            Array.isArray(payloadData.api_keys) && payloadData.api_keys.length
+              ? payloadData.api_keys
+              : splitApiKeyCandidates(incomingValue);
+          const existingEntries = normalizeApiKeyEntries(existingDecrypted);
+          const containsMaskedIncoming = incomingKeys.some((value) =>
+            isMaskedApiKeyLike(value),
+          );
+          const rawIncomingKeys = incomingKeys.filter(
+            (value) => !isMaskedApiKeyLike(value),
+          );
+          if (containsMaskedIncoming) {
+            nextKeyEntries = normalizeApiKeyEntries({
+              key_entries: [
+                ...existingEntries,
+                ...normalizeApiKeyEntries({
+                  key_entries: Array.isArray(payloadData.key_entries)
+                    ? payloadData.key_entries
+                    : [],
+                  api_keys: rawIncomingKeys,
+                }),
+              ],
+            });
+          } else {
+            nextKeyEntries = normalizeApiKeyEntries({
+              key_entries: Array.isArray(payloadData.key_entries)
+                ? payloadData.key_entries
+                : [],
+              api_keys: incomingKeys,
+              api_key: incomingValue,
+            });
+          }
+          if (!nextKeyEntries.length && existingEntries.length) {
+            nextKeyEntries = existingEntries;
+          }
+          data = encryptObject(buildApiKeySettingPayload(
+            {
+              ...(payloadData && typeof payloadData === "object" ? payloadData : {}),
+              key_entries: nextKeyEntries,
+            },
+            { fallbackEntries: nextKeyEntries },
+          ));
         }
-        if (!nextKeyEntries.length && existingEntries.length) {
-          nextKeyEntries = existingEntries;
-        }
-        const normalizedPayload = buildApiKeySettingPayload(
-          {
-            ...(payloadData && typeof payloadData === "object" ? payloadData : {}),
-            key_entries: nextKeyEntries,
-          },
-          { fallbackEntries: nextKeyEntries },
-        );
-        data = encryptObject(normalizedPayload);
       }
 
       if (body.type === "cron") {

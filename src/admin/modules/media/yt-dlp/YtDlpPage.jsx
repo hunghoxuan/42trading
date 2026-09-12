@@ -311,7 +311,14 @@ export default function YtDlpPage() {
               <div className="minor-text">
                 {platforms[publishDraft.platform]?.configured
                   ? platforms[publishDraft.platform].label
-                  : "Credentials are not configured on the API server."}
+                  : (
+                      <>
+                        Not configured. Open{" "}
+                        <a href={`/settings/providers/${publishDraft.platform === "youtube" ? "YOUTUBE" : "TIKTOK"}`}>
+                          Settings → Providers
+                        </a>.
+                      </>
+                    )}
               </div>
             </div>
             <button type="button" className="secondary-button icon-button" onClick={() => setPublishDraft(null)} aria-label="Close upload form" title="Close">

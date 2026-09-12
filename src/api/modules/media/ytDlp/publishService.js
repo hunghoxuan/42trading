@@ -70,33 +70,11 @@ function uploadFile(urlRaw, file, headers = {}, onProgress = () => {}, start = 0
   });
 }
 
-function credentials() {
-  return {
-    youtube: {
-      clientId: text(process.env.MEDIA_YOUTUBE_CLIENT_ID),
-      clientSecret: text(process.env.MEDIA_YOUTUBE_CLIENT_SECRET),
-      refreshToken: text(process.env.MEDIA_YOUTUBE_REFRESH_TOKEN),
-      label: text(process.env.MEDIA_YOUTUBE_CHANNEL_LABEL, "YouTube channel"),
-    },
-    tiktok: {
-      accessToken: text(process.env.MEDIA_TIKTOK_ACCESS_TOKEN),
-      clientKey: text(process.env.MEDIA_TIKTOK_CLIENT_KEY),
-      clientSecret: text(process.env.MEDIA_TIKTOK_CLIENT_SECRET),
-      refreshToken: text(process.env.MEDIA_TIKTOK_REFRESH_TOKEN),
-      label: text(process.env.MEDIA_TIKTOK_ACCOUNT_LABEL, "TikTok account"),
-    },
-  };
-}
-
-async function tiktokAccessToken(config, dataRoot) {
-  const tokenPath = path.join(dataRoot, "modules", "yt-dlp", "tiktok-token.json");
-  let stored = {};
-  try { stored = JSON.parse(fs.readFileSync(tokenPath, "utf8")); } catch { stored = {}; }
-  const storedMatches = Boolean(config.clientKey && stored.client_key === config.clientKey);
-  if (storedMatches && stored.access_token && Number(stored.expires_at) > Date.now() + 5 * 60_000) {
-    return stored.access_token;
+async function tiktokAccessToken(config, onRefresh) {
+  if (config.accessToken && Number(config.expiresAt) > Date.now() + 5 * 60_000) {
+    return config.accessToken;
   }
-  const refreshToken = (storedMatches ? text(stored.refresh_token) : "") || config.refreshToken;
+  const refreshToken = config.refreshToken;
   if (!(config.clientKey && config.clientSecret && refreshToken)) {
     if (config.accessToken) return config.accessToken;
     throw new Error("TikTok account credentials are not configured.");
@@ -114,16 +92,12 @@ async function tiktokAccessToken(config, dataRoot) {
   const result = await responseJson(response);
   if (!result.access_token) throw new Error("TikTok OAuth refresh did not return an access token.");
   const next = {
-    client_key: config.clientKey,
-    access_token: result.access_token,
-    refresh_token: result.refresh_token || refreshToken,
-    expires_at: Date.now() + Math.max(60, Number(result.expires_in) || 86400) * 1000,
+    accessToken: result.access_token,
+    refreshToken: result.refresh_token || refreshToken,
+    expiresAt: Date.now() + Math.max(60, Number(result.expires_in) || 86400) * 1000,
   };
-  fs.mkdirSync(path.dirname(tokenPath), { recursive: true, mode: 0o700 });
-  const tempPath = `${tokenPath}.${process.pid}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(next), { mode: 0o600 });
-  fs.renameSync(tempPath, tokenPath);
-  return next.access_token;
+  await onRefresh(next);
+  return next.accessToken;
 }
 
 async function youtubeAccessToken(config) {
@@ -178,8 +152,8 @@ async function uploadYouTube(item, file, config, onProgress) {
   return { remoteId: result.id, remoteUrl: `https://www.youtube.com/watch?v=${result.id}` };
 }
 
-async function uploadTikTokDraft(item, file, config, dataRoot, onProgress) {
-  const accessToken = await tiktokAccessToken(config, dataRoot);
+async function uploadTikTokDraft(item, file, config, onRefresh, onProgress) {
+  const accessToken = await tiktokAccessToken(config, onRefresh);
   const chunkSize = file.size > 64 * 1024 * 1024 ? 32 * 1024 * 1024 : file.size;
   const chunkCount = Math.max(1, Math.floor(file.size / chunkSize));
   const response = await fetch("https://open.tiktokapis.com/v2/post/publish/inbox/video/init/", {
@@ -215,19 +189,42 @@ async function uploadTikTokDraft(item, file, config, dataRoot, onProgress) {
   return { remoteId: publishId, remoteUrl: "" };
 }
 
-function createMediaPublishService({ repo, resolveOutputFile, dataRoot }) {
+function createMediaPublishService({
+  repo,
+  resolveOutputFile,
+  getPublishingCredentials,
+  savePublishingCredentials,
+}) {
   let timer = null;
 
-  function status() {
-    const config = credentials();
+  async function credentials(userId) {
+    const stored = getPublishingCredentials
+      ? await getPublishingCredentials(userId)
+      : {};
     return {
       youtube: {
-        configured: Boolean(config.youtube.clientId && config.youtube.clientSecret && config.youtube.refreshToken),
+        ...stored.youtube,
+        label: text(stored.youtube?.label, "YouTube channel"),
+      },
+      tiktok: {
+        ...stored.tiktok,
+        label: text(stored.tiktok?.label, "TikTok account"),
+      },
+    };
+  }
+
+  async function status(userId) {
+    const config = await credentials(userId);
+    return {
+      youtube: {
+        configured: config.youtube.enabled !== false && Boolean(
+          config.youtube.clientId && config.youtube.clientSecret && config.youtube.refreshToken
+        ),
         label: config.youtube.label,
         mode: "channel_upload",
       },
       tiktok: {
-        configured: Boolean(config.tiktok.accessToken || (
+        configured: config.tiktok.enabled !== false && Boolean(config.tiktok.accessToken || (
           config.tiktok.clientKey && config.tiktok.clientSecret && config.tiktok.refreshToken
         )),
         label: config.tiktok.label,
@@ -259,14 +256,21 @@ function createMediaPublishService({ repo, resolveOutputFile, dataRoot }) {
       if (!mediaType(file.name).startsWith("video/")) {
         throw new Error("YouTube and TikTok publishing requires a video file.");
       }
-      const config = credentials();
+      const config = await credentials(item.user_id);
+      const destinations = await status(item.user_id);
       let result;
       if (item.platform === "youtube") {
-        if (!status().youtube.configured) throw new Error("YouTube channel credentials are not configured.");
+        if (!destinations.youtube.configured) throw new Error("YouTube channel credentials are not configured.");
         result = await uploadYouTube(item, file, config.youtube, onProgress);
       } else {
-        if (!status().tiktok.configured) throw new Error("TikTok account credentials are not configured.");
-        result = await uploadTikTokDraft(item, file, config.tiktok, dataRoot, onProgress);
+        if (!destinations.tiktok.configured) throw new Error("TikTok account credentials are not configured.");
+        result = await uploadTikTokDraft(
+          item,
+          file,
+          config.tiktok,
+          (next) => savePublishingCredentials?.(item.user_id, "tiktok", next),
+          onProgress,
+        );
       }
       const completedAt = new Date().toISOString();
       await repo.updatePublish(item.sid, {
@@ -298,7 +302,7 @@ function createMediaPublishService({ repo, resolveOutputFile, dataRoot }) {
     if (platform === "tiktok" && file.size > 4 * 1024 ** 3) {
       throw new Error("TikTok upload supports video files up to 4 GB.");
     }
-    const configured = status()[platform];
+    const configured = (await status(userId))[platform];
     if (!configured.configured) throw new Error(`${platform === "youtube" ? "YouTube" : "TikTok"} credentials are not configured.`);
     const now = new Date();
     const requestedAt = input.scheduled_at ? new Date(input.scheduled_at) : now;

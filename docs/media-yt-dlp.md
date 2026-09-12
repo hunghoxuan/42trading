@@ -41,20 +41,11 @@ uploads are persisted in the `media_publish_jobs` table and the API checks for d
 seconds. An upload that was in progress when the API restarts is marked failed; scheduled work remains
 queued.
 
-Configure one channel/account per API instance in `src/api/.env`, then restart the API:
-
-```dotenv
-MEDIA_YOUTUBE_CLIENT_ID=
-MEDIA_YOUTUBE_CLIENT_SECRET=
-MEDIA_YOUTUBE_REFRESH_TOKEN=
-MEDIA_YOUTUBE_CHANNEL_LABEL=My YouTube channel
-
-MEDIA_TIKTOK_ACCESS_TOKEN=
-MEDIA_TIKTOK_CLIENT_KEY=
-MEDIA_TIKTOK_CLIENT_SECRET=
-MEDIA_TIKTOK_REFRESH_TOKEN=
-MEDIA_TIKTOK_ACCOUNT_LABEL=My TikTok account
-```
+Configure one channel/account per user in **Settings > Providers**. Use **YouTube Publishing** for
+the OAuth client ID, client secret, refresh token, and channel label. Use **TikTok Publishing** for
+the client key, client secret, access token, refresh token, and account label. These records use the
+existing user-scoped Providers object store and the same encrypted-at-rest/masked-secret handling as
+the other provider settings. No publishing credential is read from `.env`.
 
 The YouTube refresh token must be authorized for the `youtube.upload` OAuth scope. Uploads use the
 YouTube Data API resumable-upload endpoint and can be created as private, unlisted, or public.
@@ -63,9 +54,9 @@ TikTok uses the Content Posting API `video.upload` permission and sends the vide
 TikTok inbox as a draft. The account owner completes review and posting in TikTok. This avoids
 silently direct-posting without TikTok's required creator/privacy interaction and separate
 `video.publish` approval. A static access token is enough for short-lived/manual use. For reliable
-scheduling, configure the client key, client secret, and refresh token; rotated tokens are written to
-the ignored `data/modules/yt-dlp/tiktok-token.json` file with owner-only permissions. Tokens are not
-stored in the module database or returned to the admin UI.
+scheduling, configure the client key, client secret, and refresh token; rotated tokens are written
+back to the encrypted TikTok provider database record. Unmasked tokens are never returned by normal
+settings or publishing-status requests.
 
 ## API
 

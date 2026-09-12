@@ -299,7 +299,12 @@ function createYtDlpService(options) {
     return repo.delete(sid, userId);
   }
 
-  const publishService = createMediaPublishService({ repo, resolveOutputFile, dataRoot });
+  const publishService = createMediaPublishService({
+    repo,
+    resolveOutputFile,
+    getPublishingCredentials: options.getPublishingCredentials,
+    savePublishingCredentials: options.savePublishingCredentials,
+  });
   publishService.startPublishScheduler();
 
   return {

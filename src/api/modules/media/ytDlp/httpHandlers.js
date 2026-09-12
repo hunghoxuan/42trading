@@ -72,7 +72,7 @@ function createYtDlpHttpHandler({ service, json, readJson, getSession, requirePe
         return true;
       }
       if (req.method === "GET" && url.pathname === "/v2/media/yt-dlp/publishing/status") {
-        json(res, 200, { ok: true, platforms: service.publishingStatus() });
+        json(res, 200, { ok: true, platforms: await service.publishingStatus(userId) });
         return true;
       }
       if (req.method === "GET" && url.pathname === "/v2/media/yt-dlp/publishes") {
