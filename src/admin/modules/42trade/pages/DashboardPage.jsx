@@ -2812,19 +2812,9 @@ export default function DashboardPage() {
               rows={history.symbols || []}
             />
             <TableBlock
-              title="Event"
-              noun="events"
-              rows={history.events || []}
-            />
-            <TableBlock
               title="Event timeframe"
               noun="timeframes"
               rows={history.event_timeframes || []}
-            />
-            <TableBlock
-              title="Movement"
-              noun="movements"
-              rows={history.movements || []}
             />
             <TableBlock
               title="Reacted artifact"
@@ -2835,11 +2825,6 @@ export default function DashboardPage() {
               title="Direction"
               noun="directions"
               rows={history.directions || []}
-            />
-            <TableBlock
-              title="Holding time"
-              noun="buckets"
-              rows={history.holding_times || []}
             />
             <TableBlock
               title="Strategy"
