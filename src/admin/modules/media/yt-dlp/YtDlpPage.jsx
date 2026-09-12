@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../../../app/api";
+import CrudContainer from "../../../shared/components/CrudContainer";
 import PageHeader from "../../../shared/components/PageHeader";
+import PaginationBar from "../../../shared/components/PaginationBar";
+import ResponsivePanel from "../../../shared/components/ResponsivePanel";
+import SearchFilterBar from "../../../shared/components/SearchFilterBar";
 import { useConfirmDialog } from "../../../shared/components/ConfirmDialog";
+import useIsMobile from "../../../shared/hooks/useIsMobile";
 import "./YtDlpPage.css";
 
 const INITIAL_FORM = {
@@ -47,6 +52,7 @@ function saveBlob({ blob, fileName }, fallbackName) {
 
 export default function YtDlpPage() {
   const confirm = useConfirmDialog();
+  const isMobile = useIsMobile();
   const [form, setForm] = useState(INITIAL_FORM);
   const [runtime, setRuntime] = useState(null);
   const [jobs, setJobs] = useState([]);
@@ -58,12 +64,70 @@ export default function YtDlpPage() {
   const [publishes, setPublishes] = useState([]);
   const [publishDraft, setPublishDraft] = useState(null);
   const [publishing, setPublishing] = useState(false);
+  const [historySearch, setHistorySearch] = useState("");
+  const [historyStatus, setHistoryStatus] = useState("");
+  const [historyType, setHistoryType] = useState("");
+  const [historySorting, setHistorySorting] = useState({ key: "created_at", dir: "desc" });
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyPageSize, setHistoryPageSize] = useState(25);
 
   const hasActiveWork = useMemo(
     () => jobs.some((job) => ["queued", "running"].includes(job.status))
       || publishes.some((item) => item.status === "uploading"),
     [jobs, publishes],
   );
+
+  const filteredJobs = useMemo(() => {
+    const query = historySearch.trim().toLowerCase();
+    const values = jobs.filter((job) => {
+      if (historyStatus && job.status !== historyStatus) return false;
+      if (historyType && job.media_kind !== historyType) return false;
+      if (!query) return true;
+      return [
+        job.source_title,
+        job.source_url,
+        job.extractor,
+        job.media_kind,
+        job.requested_format,
+        job.status,
+        ...(job.output_files || []).map((file) => file.name),
+      ].some((value) => String(value || "").toLowerCase().includes(query));
+    });
+
+    const direction = historySorting?.dir === "asc" ? 1 : -1;
+    const key = historySorting?.key;
+    return [...values].sort((left, right) => {
+      const getValue = (job) => {
+        if (key === "media") return job.source_title || job.source_url || "";
+        if (key === "format") return `${job.media_kind || ""} ${job.requested_format || ""}`;
+        if (key === "progress") return Number(job.progress || 0);
+        return job[key] ?? "";
+      };
+      const leftValue = getValue(left);
+      const rightValue = getValue(right);
+      if (typeof leftValue === "number" && typeof rightValue === "number") {
+        return (leftValue - rightValue) * direction;
+      }
+      return String(leftValue).localeCompare(String(rightValue), undefined, {
+        numeric: true,
+        sensitivity: "base",
+      }) * direction;
+    });
+  }, [historySearch, historySorting, historyStatus, historyType, jobs]);
+
+  const historyPages = Math.max(1, Math.ceil(filteredJobs.length / historyPageSize));
+  const visibleJobs = useMemo(() => {
+    const offset = (historyPage - 1) * historyPageSize;
+    return filteredJobs.slice(offset, offset + historyPageSize);
+  }, [filteredJobs, historyPage, historyPageSize]);
+
+  useEffect(() => {
+    setHistoryPage(1);
+  }, [historySearch, historySorting, historyStatus, historyType, historyPageSize]);
+
+  useEffect(() => {
+    setHistoryPage((current) => Math.min(current, historyPages));
+  }, [historyPages]);
 
   const load = useCallback(async ({ quiet = false } = {}) => {
     if (!quiet) setLoading(true);
@@ -200,66 +264,172 @@ export default function YtDlpPage() {
     }
   }
 
+  function openPreview(job, fileIndex) {
+    const file = job.output_files[fileIndex];
+    setPreview({
+      sid: job.sid,
+      job,
+      fileIndex,
+      name: file.name,
+      mediaKind: job.media_kind,
+      url: api.ytDlpPreviewUrl(job.sid, fileIndex),
+    });
+  }
+
+  const historyColumns = [
+    {
+      id: "media",
+      accessorFn: (job) => job.source_title || job.source_url || "",
+      header: "Media",
+      size: 330,
+      cell: ({ row }) => {
+        const job = row.original;
+        return (
+          <div className="yt-dlp-media-cell">
+            <div className="yt-dlp-title">{job.source_title || job.source_url}</div>
+            <div className="minor-text">{job.extractor || job.source_url}</div>
+            {job.error_message && <div className="msg-error yt-dlp-job-error">{job.error_message}</div>}
+          </div>
+        );
+      },
+    },
+    {
+      id: "format",
+      accessorFn: (job) => `${job.media_kind || ""} ${job.requested_format || ""}`,
+      header: "Format",
+      cell: ({ row }) => `${row.original.media_kind} · ${row.original.requested_format}`,
+    },
+    {
+      accessorKey: "status",
+      header: "Status",
+      cell: ({ getValue }) => (
+        <span className="yt-dlp-status"><span className={`status-dot ${statusTone(getValue())}`} /> {getValue()}</span>
+      ),
+    },
+    {
+      accessorKey: "progress",
+      header: "Progress",
+      size: 180,
+      cell: ({ row }) => {
+        const job = row.original;
+        return (
+          <div className="yt-dlp-progress-cell">
+            <div>{Math.round(job.progress || 0)}% · {formatBytes(job.downloaded_bytes)}</div>
+            <progress max="100" value={job.progress || 0} />
+            {(job.speed_text || job.eta_text) && <div className="minor-text">{job.speed_text || "—"} · ETA {job.eta_text || "—"}</div>}
+          </div>
+        );
+      },
+    },
+    {
+      accessorKey: "created_at",
+      header: "Created",
+      size: 150,
+      cell: ({ getValue }) => new Date(getValue()).toLocaleString(),
+    },
+    {
+      id: "actions",
+      header: "Files",
+      enableSorting: false,
+      size: 210,
+      cell: ({ row }) => {
+        const job = row.original;
+        return (
+          <div className="yt-dlp-row-actions">
+            {["queued", "running"].includes(job.status) && (
+              <button type="button" className="secondary-button icon-button danger-text" onClick={() => cancel(job.sid)} aria-label="Cancel download" title="Cancel download">
+                <span aria-hidden="true">■</span>
+              </button>
+            )}
+            {(job.output_files || []).map((file, index) => (
+              <span className="yt-dlp-file-actions" key={`${job.sid}-${index}`}>
+                <button type="button" className="secondary-button icon-button" onClick={() => openPreview(job, index)} aria-label={`Preview ${file.name}`} title={`Preview ${file.name}`}>
+                  <span aria-hidden="true">▶</span>
+                </button>
+                <button type="button" className="secondary-button icon-button" onClick={() => download(job, index)} aria-label={`Save ${file.name}`} title={`Choose where to save ${file.name} (${formatBytes(file.size)})`}>
+                  <span aria-hidden="true">↓</span>
+                </button>
+                {job.media_kind === "video" && (
+                  <>
+                    <button type="button" className="secondary-button icon-button yt-dlp-platform-youtube" onClick={() => openPublish(job, index, "youtube")} aria-label="Upload to YouTube channel" title="Upload to YouTube channel">
+                      <span aria-hidden="true">▶</span>
+                    </button>
+                    {/[.](mp4|webm|mov)$/i.test(file.name) && (
+                      <button type="button" className="secondary-button icon-button" onClick={() => openPublish(job, index, "tiktok")} aria-label="Upload to TikTok account" title="Upload to TikTok account">
+                        <span aria-hidden="true">♪</span>
+                      </button>
+                    )}
+                    {/[.](mp4|mov|mkv)$/i.test(file.name) && (
+                      <button type="button" className="secondary-button icon-button yt-dlp-platform-facebook" onClick={() => openPublish(job, index, "facebook")} aria-label="Upload a Reel to Facebook Page" title="Upload a Reel to Facebook Page">
+                        <span aria-hidden="true">f</span>
+                      </button>
+                    )}
+                  </>
+                )}
+              </span>
+            ))}
+            {!["queued", "running"].includes(job.status) && (
+              <button type="button" className="secondary-button icon-button danger-text" onClick={() => remove(job)} aria-label="Delete download" title="Delete history and module files">
+                <span aria-hidden="true">⌫</span>
+              </button>
+            )}
+          </div>
+        );
+      },
+    },
+  ];
+
   return (
     <div className="yt-dlp-page">
       <PageHeader
         title="YT DLP"
         actions={
-          <button type="button" className="secondary-button" onClick={() => load()} disabled={loading}>
-            <span aria-hidden="true">↻</span> Refresh
-          </button>
+          <div className="yt-dlp-header-actions">
+            <span className="minor-text yt-dlp-runtime-version">
+              <span className={`status-dot ${runtime?.installed ? "success" : "error"}`} />
+              {runtime?.installed ? `yt-dlp ${runtime.version}` : "yt-dlp unavailable"}
+            </span>
+            <span className={`minor-text ${runtime?.ffmpeg ? "money-pos" : "money-neg"}`}>
+              FFmpeg {runtime?.ffmpeg ? "ready" : "not found"}
+            </span>
+            <button type="button" className="secondary-button icon-button" onClick={() => load()} disabled={loading} aria-label="Refresh yt-dlp" title="Refresh">
+              <span aria-hidden="true">↻</span>
+            </button>
+          </div>
         }
       />
 
-      <div className="yt-dlp-runtime panel">
-        <span className={`status-dot ${runtime?.installed ? "success" : "error"}`} />
-        <strong>{runtime?.installed ? `yt-dlp ${runtime.version}` : "yt-dlp unavailable"}</strong>
-        <span className="minor-text">{runtime?.binary || "Checking runtime…"}</span>
-        <span className={`minor-text ${runtime?.ffmpeg ? "money-pos" : "money-neg"}`}>
-          FFmpeg {runtime?.ffmpeg ? "ready" : "not found"}
-        </span>
-      </div>
-
       {error && <div className="msg-error yt-dlp-message">{error}</div>}
 
-      <form className="toolbar-panel yt-dlp-form" onSubmit={submit}>
-        <label className="yt-dlp-field yt-dlp-url-field">
-          <span>Media URL</span>
+      <ResponsivePanel showToggle={false} className="yt-dlp-download-panel" bodyClassName="yt-dlp-download-panel__body">
+        <form className="yt-dlp-form" onSubmit={submit}>
           <input
             type="url"
             required
-            placeholder="https://www.youtube.com/watch?v=…"
+            className="yt-dlp-url-input"
+            aria-label="Media URL"
+            placeholder="MEDIA URL — YOUTUBE, TIKTOK OR FACEBOOK"
             value={form.source_url}
             onChange={(event) => setForm({ ...form, source_url: event.target.value })}
           />
-        </label>
-        <label className="yt-dlp-field">
-          <span>Type</span>
-          <select
-            value={form.media_kind}
-            onChange={(event) => setForm({ ...form, media_kind: event.target.value })}
-          >
-            <option value="video">Video</option>
-            <option value="audio">Audio only</option>
+          <select aria-label="Media type" value={form.media_kind} onChange={(event) => setForm({ ...form, media_kind: event.target.value })}>
+            <option value="video">VIDEO</option>
+            <option value="audio">AUDIO ONLY</option>
           </select>
-        </label>
-        {form.media_kind === "video" ? (
-          <label className="yt-dlp-field">
-            <span>Maximum quality</span>
+          {form.media_kind === "video" ? (
             <select
+              aria-label="Maximum quality"
               value={form.video_quality}
               onChange={(event) => setForm({ ...form, video_quality: event.target.value })}
             >
-              <option value="best">Best available</option>
+              <option value="best">BEST QUALITY</option>
               {[2160, 1440, 1080, 720, 480, 360].map((quality) => (
                 <option key={quality} value={quality}>{quality}p</option>
               ))}
             </select>
-          </label>
-        ) : (
-          <label className="yt-dlp-field">
-            <span>Audio format</span>
+          ) : (
             <select
+              aria-label="Audio format"
               value={form.audio_format}
               onChange={(event) => setForm({ ...form, audio_format: event.target.value })}
             >
@@ -267,39 +437,17 @@ export default function YtDlpPage() {
                 <option key={format} value={format}>{format.toUpperCase()}</option>
               ))}
             </select>
-          </label>
-        )}
-        <div className="yt-dlp-options">
-          <label><input type="checkbox" checked={form.playlist} onChange={(event) => setForm({ ...form, playlist: event.target.checked })} /> Playlist</label>
-          <label><input type="checkbox" checked={form.subtitles} onChange={(event) => setForm({ ...form, subtitles: event.target.checked })} /> Subtitles</label>
-          <label><input type="checkbox" checked={form.embed_metadata} onChange={(event) => setForm({ ...form, embed_metadata: event.target.checked })} /> Metadata</label>
-        </div>
-        <button type="submit" className="primary-button" disabled={submitting || !runtime?.installed}>
-          <span aria-hidden="true">⬇</span> {submitting ? "Starting…" : "Download"}
-        </button>
-        <div className="minor-text yt-dlp-auto-save">
-          Downloads are automatically saved to <code>data/modules/yt-dlp/downloads/</code>.
-        </div>
-      </form>
-
-      {preview && (
-        <section className="panel yt-dlp-preview">
-          <div className="yt-dlp-preview__header">
-            <div>
-              <div className="panel-label">Preview</div>
-              <div className="minor-text">{preview.name}</div>
-            </div>
-            <button type="button" className="secondary-button icon-button" onClick={() => setPreview(null)} aria-label="Close preview" title="Close preview">
-              <span aria-hidden="true">✕</span>
-            </button>
-          </div>
-          {preview.mediaKind === "audio" ? (
-            <audio key={preview.url} src={preview.url} controls autoPlay crossOrigin="use-credentials" />
-          ) : (
-            <video key={preview.url} src={preview.url} controls autoPlay crossOrigin="use-credentials" />
           )}
-        </section>
-      )}
+          <div className="yt-dlp-options">
+            <label><input type="checkbox" checked={form.playlist} onChange={(event) => setForm({ ...form, playlist: event.target.checked })} /> Playlist</label>
+            <label><input type="checkbox" checked={form.subtitles} onChange={(event) => setForm({ ...form, subtitles: event.target.checked })} /> Subtitles</label>
+            <label><input type="checkbox" checked={form.embed_metadata} onChange={(event) => setForm({ ...form, embed_metadata: event.target.checked })} /> Metadata</label>
+          </div>
+          <button type="submit" className="primary-button icon-button yt-dlp-download-button" disabled={submitting || !runtime?.installed} aria-label={submitting ? "Starting download" : "Download"} title={submitting ? "Starting…" : "Download"}>
+            <span aria-hidden="true">↓</span>
+          </button>
+        </form>
+      </ResponsivePanel>
 
       {publishDraft && (
         <form className="panel yt-dlp-publish" onSubmit={submitPublish}>
@@ -378,93 +526,133 @@ export default function YtDlpPage() {
         </form>
       )}
 
-      <section className="panel yt-dlp-history">
-        <div className="panel-label">Download history</div>
-        {loading && !jobs.length ? (
-          <div className="loading-container">Loading downloads…</div>
-        ) : !jobs.length ? (
-          <div className="minor-text">No downloads yet.</div>
-        ) : (
-          <div className="yt-dlp-table-wrap">
-            <table className="table-dense yt-dlp-table">
-              <thead>
-                <tr><th>Media</th><th>Format</th><th>Status</th><th>Progress</th><th>Created</th><th>Files</th></tr>
-              </thead>
-              <tbody>
-                {jobs.map((job) => (
-                  <tr key={job.sid}>
-                    <td>
-                      <div className="yt-dlp-title">{job.source_title || job.source_url}</div>
-                      <div className="minor-text">{job.extractor || job.source_url}</div>
-                      {job.error_message && <div className="msg-error yt-dlp-job-error">{job.error_message}</div>}
-                    </td>
-                    <td>{job.media_kind} · {job.requested_format}</td>
-                    <td><span className={`status-dot ${statusTone(job.status)}`} /> {job.status}</td>
-                    <td>
-                      <div>{Math.round(job.progress || 0)}% · {formatBytes(job.downloaded_bytes)}</div>
-                      <progress max="100" value={job.progress || 0} />
-                      {(job.speed_text || job.eta_text) && <div className="minor-text">{job.speed_text || "—"} · ETA {job.eta_text || "—"}</div>}
-                    </td>
-                    <td>{new Date(job.created_at).toLocaleString()}</td>
-                    <td>
-                      {["queued", "running"].includes(job.status) && (
-                        <button type="button" className="secondary-button danger-text" onClick={() => cancel(job.sid)} title="Cancel download">
-                          <span aria-hidden="true">■</span> Cancel
-                        </button>
-                      )}
-                      {(job.output_files || []).map((file, index) => (
-                        <span className="yt-dlp-file-actions" key={`${job.sid}-${index}`}>
-                          <button
-                            type="button"
-                            className="secondary-button"
-                            onClick={() => setPreview({
-                              sid: job.sid,
-                              name: file.name,
-                              mediaKind: job.media_kind,
-                              url: api.ytDlpPreviewUrl(job.sid, index),
-                            })}
-                            title={`Preview ${file.name}`}
-                          >
-                            <span aria-hidden="true">▶</span> Preview
-                          </button>
-                          <button type="button" className="secondary-button" onClick={() => download(job, index)} title={`Choose where to save ${file.name} (${formatBytes(file.size)})`}>
-                            <span aria-hidden="true">⬇</span> Save
-                          </button>
-                          {job.media_kind === "video" && (
-                            <>
-                              <button type="button" className="secondary-button" onClick={() => openPublish(job, index, "youtube")} title="Upload to YouTube channel">
-                                <span aria-hidden="true">▶</span> YouTube
-                              </button>
-                              {/[.](mp4|webm|mov)$/i.test(file.name) && (
-                                <button type="button" className="secondary-button" onClick={() => openPublish(job, index, "tiktok")} title="Upload to TikTok account">
-                                  <span aria-hidden="true">♪</span> TikTok
-                                </button>
-                              )}
-                              {/[.](mp4|mov|mkv)$/i.test(file.name) && (
-                                <button type="button" className="secondary-button" onClick={() => openPublish(job, index, "facebook")} title="Upload a Reel to Facebook Page">
-                                  <span aria-hidden="true">f</span> Facebook
-                                </button>
-                              )}
-                            </>
-                          )}
-                        </span>
-                      ))}
-                      {!["queued", "running"].includes(job.status) && (
-                        <button type="button" className="secondary-button danger-text" onClick={() => remove(job)} title="Delete history and module files">
-                          <span aria-hidden="true">🗑</span> Delete
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+      <CrudContainer
+        className="yt-dlp-crud-layout"
+        toolbar={{
+          displayMode: "inside_list",
+          filters: (
+            <SearchFilterBar
+              search={{
+                placeholder: "SEARCH DOWNLOADS...",
+                value: historySearch,
+                onChange: setHistorySearch,
+                style: { minWidth: "min(420px, 100%)", flex: "1 1 420px" },
+              }}
+              filters={[
+                {
+                  key: "type",
+                  value: historyType,
+                  onChange: setHistoryType,
+                  options: [
+                    { value: "", label: "ALL TYPES" },
+                    { value: "video", label: "VIDEO" },
+                    { value: "audio", label: "AUDIO" },
+                  ],
+                },
+                {
+                  key: "status",
+                  value: historyStatus,
+                  onChange: setHistoryStatus,
+                  options: [
+                    { value: "", label: "ALL STATUS" },
+                    ...Array.from(new Set(jobs.map((job) => job.status))).sort().map((status) => ({
+                      value: status,
+                      label: status.toUpperCase(),
+                    })),
+                  ],
+                },
+              ]}
+            />
+          ),
+          actions: (
+            <PaginationBar
+              page={historyPage}
+              pages={historyPages}
+              total={filteredJobs.length}
+              pageSize={historyPageSize}
+              pageSizeOptions={[10, 25, 50, 100]}
+              onPageChange={setHistoryPage}
+              onPageSizeChange={setHistoryPageSize}
+            />
+          ),
+        }}
+        detailMode={isMobile ? "modal" : "section"}
+        detailOpen={Boolean(preview)}
+        onDetailOpenChange={(open) => {
+          if (!open) setPreview(null);
+        }}
+        detailCloseButton
+        list={{
+          title: `${filteredJobs.length} Downloads`,
+          panelClassName: "yt-dlp-history-panel",
+          tableProps: {
+            columns: historyColumns,
+            data: visibleJobs,
+            sorting: historySorting,
+            onSortingChange: setHistorySorting,
+            loading: loading && !jobs.length,
+            emptyText: jobs.length ? "No downloads match the search and filters." : "No downloads yet.",
+            className: "events-table events-table--compact yt-dlp-data-table",
+            getRowId: (job) => job.sid,
+            selectedRowId: preview?.sid || null,
+            mobileCard: {
+              getTitle: (job) => job.source_title || job.source_url,
+              getSubtitle: (job) => job.extractor || job.source_url,
+              getBadges: (job) => [
+                { label: job.status, tone: statusTone(job.status) },
+                { label: `${job.media_kind} · ${job.requested_format}` },
+              ],
+              getRows: (job) => [[
+                { value: `${Math.round(job.progress || 0)}% · ${formatBytes(job.downloaded_bytes)}` },
+                { value: new Date(job.created_at).toLocaleString() },
+              ]],
+              getActions: (job) => (job.output_files || []).map((file, index) => ({
+                label: "▶",
+                onClick: () => openPreview(job, index),
+                className: "secondary-button icon-button",
+              })),
+            },
+          },
+        }}
+        detail={{
+          title: "Preview",
+          subtitle: preview?.name || "",
+          panelClassName: "yt-dlp-preview-panel",
+          children: preview ? (
+            <div className="yt-dlp-preview-detail">
+              {preview.mediaKind === "audio" ? (
+                <audio key={preview.url} src={preview.url} controls autoPlay crossOrigin="use-credentials" />
+              ) : (
+                <video key={preview.url} src={preview.url} controls autoPlay crossOrigin="use-credentials" />
+              )}
+              <dl className="yt-dlp-preview-meta">
+                <div><dt>Type</dt><dd>{preview.mediaKind}</dd></div>
+                <div><dt>Format</dt><dd>{preview.job.requested_format}</dd></div>
+                <div><dt>Size</dt><dd>{formatBytes(preview.job.output_files[preview.fileIndex]?.size)}</dd></div>
+                <div><dt>Source</dt><dd>{preview.job.extractor || "—"}</dd></div>
+              </dl>
+              <div className="yt-dlp-preview-actions">
+                <button type="button" className="secondary-button icon-button" onClick={() => download(preview.job, preview.fileIndex)} aria-label="Save file" title="Choose where to save">
+                  <span aria-hidden="true">↓</span>
+                </button>
+                {preview.mediaKind === "video" && (
+                  <>
+                    <button type="button" className="secondary-button icon-button yt-dlp-platform-youtube" onClick={() => openPublish(preview.job, preview.fileIndex, "youtube")} aria-label="Upload to YouTube channel" title="Upload to YouTube channel"><span aria-hidden="true">▶</span></button>
+                    {/[.](mp4|webm|mov)$/i.test(preview.name) && (
+                      <button type="button" className="secondary-button icon-button" onClick={() => openPublish(preview.job, preview.fileIndex, "tiktok")} aria-label="Upload to TikTok account" title="Upload to TikTok account"><span aria-hidden="true">♪</span></button>
+                    )}
+                    {/[.](mp4|mov|mkv)$/i.test(preview.name) && (
+                      <button type="button" className="secondary-button icon-button yt-dlp-platform-facebook" onClick={() => openPublish(preview.job, preview.fileIndex, "facebook")} aria-label="Upload a Reel to Facebook Page" title="Upload a Reel to Facebook Page"><span aria-hidden="true">f</span></button>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          ) : null,
+        }}
+      />
 
-      <section className="panel yt-dlp-history">
-        <div className="panel-label">Publishing queue</div>
+      <ResponsivePanel title="Publishing queue" showToggle={false} className="yt-dlp-publishing-panel">
         {!publishes.length ? (
           <div className="minor-text">No manual or scheduled uploads yet.</div>
         ) : (
@@ -479,14 +667,14 @@ export default function YtDlpPage() {
                     <td><span className={`status-dot ${statusTone(item.status)}`} /> {item.status}{item.status === "uploading" ? ` ${Math.round(item.progress || 0)}%` : ""}</td>
                     <td>{new Date(item.scheduled_at).toLocaleString()}</td>
                     <td>{item.remote_url ? <a href={item.remote_url} target="_blank" rel="noreferrer">Open ↗</a> : item.remote_id || "—"}{item.error_message && <div className="msg-error">{item.error_message}</div>}</td>
-                    <td>{item.status === "scheduled" && <button type="button" className="secondary-button danger-text" onClick={() => cancelPublish(item.sid)}><span aria-hidden="true">■</span> Cancel</button>}</td>
+                    <td>{item.status === "scheduled" && <button type="button" className="secondary-button icon-button danger-text" onClick={() => cancelPublish(item.sid)} aria-label="Cancel scheduled upload" title="Cancel scheduled upload"><span aria-hidden="true">■</span></button>}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
-      </section>
+      </ResponsivePanel>
     </div>
   );
 }
