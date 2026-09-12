@@ -409,45 +409,49 @@ export default function YtDlpPage() {
         toolbar={{
           displayMode: "top",
           filters: (
-            <form id="yt-dlp-download-form" className="yt-dlp-form" onSubmit={submit}>
-              <input
-                type="url"
-                required
-                className="yt-dlp-url-input"
-                aria-label="Media URL"
-                placeholder="MEDIA URL — YOUTUBE, TIKTOK OR FACEBOOK"
-                value={form.source_url}
-                onChange={(event) => setForm({ ...form, source_url: event.target.value })}
-              />
-              <InputComboSelect className="yt-dlp-form-select" aria-label="Media type" value={form.media_kind} onChange={(event) => setForm({ ...form, media_kind: event.target.value })}>
-                <option value="video">VIDEO</option>
-                <option value="audio">AUDIO ONLY</option>
-              </InputComboSelect>
-              {form.media_kind === "video" ? (
-                <InputComboSelect className="yt-dlp-form-select" aria-label="Maximum quality" value={form.video_quality} onChange={(event) => setForm({ ...form, video_quality: event.target.value })}>
-                  <option value="best">BEST QUALITY</option>
-                  {[2160, 1440, 1080, 720, 480, 360].map((quality) => (
-                    <option key={quality} value={quality}>{quality}p</option>
-                  ))}
-                </InputComboSelect>
-              ) : (
-                <InputComboSelect className="yt-dlp-form-select" aria-label="Audio format" value={form.audio_format} onChange={(event) => setForm({ ...form, audio_format: event.target.value })}>
-                  {["mp3", "m4a", "opus", "flac", "wav"].map((format) => (
-                    <option key={format} value={format}>{format.toUpperCase()}</option>
-                  ))}
-                </InputComboSelect>
-              )}
-              <div className="yt-dlp-options">
-                <label><input type="checkbox" checked={form.playlist} onChange={(event) => setForm({ ...form, playlist: event.target.checked })} /> Playlist</label>
-                <label><input type="checkbox" checked={form.subtitles} onChange={(event) => setForm({ ...form, subtitles: event.target.checked })} /> Subtitles</label>
-                <label><input type="checkbox" checked={form.embed_metadata} onChange={(event) => setForm({ ...form, embed_metadata: event.target.checked })} /> Metadata</label>
-              </div>
-            </form>
+            <SearchFilterBar
+              search={{
+                placeholder: "SEARCH DOWNLOADS...",
+                value: historySearch,
+                onChange: setHistorySearch,
+                style: { minWidth: "min(420px, 100%)", flex: "1 1 420px" },
+              }}
+              filters={[
+                {
+                  key: "type",
+                  value: historyType,
+                  onChange: setHistoryType,
+                  options: [
+                    { value: "", label: "ALL TYPES" },
+                    { value: "video", label: "VIDEO" },
+                    { value: "audio", label: "AUDIO" },
+                  ],
+                },
+                {
+                  key: "status",
+                  value: historyStatus,
+                  onChange: setHistoryStatus,
+                  options: [
+                    { value: "", label: "ALL STATUS" },
+                    ...Array.from(new Set(jobs.map((job) => job.status))).sort().map((status) => ({
+                      value: status,
+                      label: status.toUpperCase(),
+                    })),
+                  ],
+                },
+              ]}
+            />
           ),
           actions: (
-            <button form="yt-dlp-download-form" type="submit" className="primary-button icon-button" disabled={submitting || !runtime?.installed} aria-label={submitting ? "Starting download" : "Download"} title={submitting ? "Starting…" : "Download"}>
-              <span aria-hidden="true">↓</span>
-            </button>
+            <PaginationBar
+              page={historyPage}
+              pages={historyPages}
+              total={filteredJobs.length}
+              pageSize={historyPageSize}
+              pageSizeOptions={[10, 25, 50, 100]}
+              onPageChange={setHistoryPage}
+              onPageSizeChange={setHistoryPageSize}
+            />
           ),
         }}
         detailMode={isMobile ? "modal" : "section"}
@@ -467,49 +471,45 @@ export default function YtDlpPage() {
               <CrudToolbar
                 displayMode="inside_list"
                 filters={(
-                  <SearchFilterBar
-                    search={{
-                      placeholder: "SEARCH DOWNLOADS...",
-                      value: historySearch,
-                      onChange: setHistorySearch,
-                      style: { minWidth: "min(420px, 100%)", flex: "1 1 420px" },
-                    }}
-                    filters={[
-                      {
-                        key: "type",
-                        value: historyType,
-                        onChange: setHistoryType,
-                        options: [
-                          { value: "", label: "ALL TYPES" },
-                          { value: "video", label: "VIDEO" },
-                          { value: "audio", label: "AUDIO" },
-                        ],
-                      },
-                      {
-                        key: "status",
-                        value: historyStatus,
-                        onChange: setHistoryStatus,
-                        options: [
-                          { value: "", label: "ALL STATUS" },
-                          ...Array.from(new Set(jobs.map((job) => job.status))).sort().map((status) => ({
-                            value: status,
-                            label: status.toUpperCase(),
-                          })),
-                        ],
-                      },
-                    ]}
-                  />
+                  <form id="yt-dlp-download-form" className="yt-dlp-form" onSubmit={submit}>
+                    <input
+                      type="url"
+                      required
+                      className="yt-dlp-url-input"
+                      aria-label="Media URL"
+                      placeholder="MEDIA URL — YOUTUBE, TIKTOK OR FACEBOOK"
+                      value={form.source_url}
+                      onChange={(event) => setForm({ ...form, source_url: event.target.value })}
+                    />
+                    <InputComboSelect className="yt-dlp-form-select" aria-label="Media type" value={form.media_kind} onChange={(event) => setForm({ ...form, media_kind: event.target.value })}>
+                      <option value="video">VIDEO</option>
+                      <option value="audio">AUDIO ONLY</option>
+                    </InputComboSelect>
+                    {form.media_kind === "video" ? (
+                      <InputComboSelect className="yt-dlp-form-select" aria-label="Maximum quality" value={form.video_quality} onChange={(event) => setForm({ ...form, video_quality: event.target.value })}>
+                        <option value="best">BEST QUALITY</option>
+                        {[2160, 1440, 1080, 720, 480, 360].map((quality) => (
+                          <option key={quality} value={quality}>{quality}p</option>
+                        ))}
+                      </InputComboSelect>
+                    ) : (
+                      <InputComboSelect className="yt-dlp-form-select" aria-label="Audio format" value={form.audio_format} onChange={(event) => setForm({ ...form, audio_format: event.target.value })}>
+                        {["mp3", "m4a", "opus", "flac", "wav"].map((format) => (
+                          <option key={format} value={format}>{format.toUpperCase()}</option>
+                        ))}
+                      </InputComboSelect>
+                    )}
+                    <div className="yt-dlp-options">
+                      <label><input type="checkbox" checked={form.playlist} onChange={(event) => setForm({ ...form, playlist: event.target.checked })} /> Playlist</label>
+                      <label><input type="checkbox" checked={form.subtitles} onChange={(event) => setForm({ ...form, subtitles: event.target.checked })} /> Subtitles</label>
+                      <label><input type="checkbox" checked={form.embed_metadata} onChange={(event) => setForm({ ...form, embed_metadata: event.target.checked })} /> Metadata</label>
+                    </div>
+                  </form>
                 )}
                 actions={(
-                  <PaginationBar
-                    page={historyPage}
-                    pages={historyPages}
-                    total={filteredJobs.length}
-                    pageSize={historyPageSize}
-                    pageSizeOptions={[10, 25, 50, 100]}
-                    onPageChange={setHistoryPage}
-                    onPageSizeChange={setHistoryPageSize}
-                  />
+                  <button form="yt-dlp-download-form" type="submit" className="primary-button icon-button" disabled={submitting || !runtime?.installed} aria-label={submitting ? "Starting download" : "Download"} title={submitting ? "Starting…" : "Download"}>
+                    <span aria-hidden="true">↓</span>
+                  </button>
                 )}
               />
               <DataTable
