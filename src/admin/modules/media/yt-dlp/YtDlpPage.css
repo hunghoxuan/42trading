@@ -90,6 +90,34 @@
   width: 100%;
 }
 
+.yt-dlp-publish {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(180px, 280px) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.yt-dlp-publish .yt-dlp-preview__header,
+.yt-dlp-publish__mode,
+.yt-dlp-publish .minor-text {
+  grid-column: 1 / -1;
+}
+
+.yt-dlp-publish__mode {
+  display: flex;
+  gap: 6px;
+}
+
+.yt-dlp-publish textarea,
+.yt-dlp-publish input,
+.yt-dlp-publish select {
+  width: 100%;
+}
+
+.yt-dlp-publish-table {
+  min-width: 760px;
+}
+
 .yt-dlp-history {
   min-height: 180px;
 }
@@ -167,5 +195,9 @@
 
   .yt-dlp-form > button {
     width: 100%;
+  }
+
+  .yt-dlp-publish {
+    grid-template-columns: 1fr;
   }
 }

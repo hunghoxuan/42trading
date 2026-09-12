@@ -1080,6 +1080,13 @@ export const api = {
     getBlob(
       `/api/media/yt-dlp/jobs/${encodeURIComponent(sid)}/file?index=${encodeURIComponent(index)}`,
     ),
+  ytDlpPublishingStatus: () => get("/api/media/yt-dlp/publishing/status"),
+  ytDlpPublishes: (limit = 100) =>
+    get(`/api/media/yt-dlp/publishes?limit=${encodeURIComponent(limit)}`),
+  ytDlpCreatePublish: (payload = {}) =>
+    post("/api/media/yt-dlp/publishes", payload),
+  ytDlpCancelPublish: (sid) =>
+    post(`/api/media/yt-dlp/publishes/${encodeURIComponent(sid)}/cancel`, {}),
   universalEntities: (params = {}) => {
     const q = new URLSearchParams();
     Object.entries(params || {}).forEach(([k, v]) => {

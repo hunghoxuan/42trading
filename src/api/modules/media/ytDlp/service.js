@@ -7,6 +7,7 @@ const readline = require("readline");
 const { spawn, execFile } = require("child_process");
 const { promisify } = require("util");
 const { createYtDlpRepo } = require("./repo");
+const { createMediaPublishService } = require("./publishService");
 
 const execFileAsync = promisify(execFile);
 const activeJobs = new Map();
@@ -287,6 +288,9 @@ function createYtDlpService(options) {
     if (["queued", "running"].includes(job.status) || activeJobs.has(sid)) {
       throw new Error("Cancel the active download before deleting it.");
     }
+    if (publishService.hasActivePublishForJob(sid)) {
+      throw new Error("Wait for the active upload before deleting it.");
+    }
     const jobDirectory = path.resolve(moduleRoot(dataRoot), "downloads", sid);
     const downloadsRoot = path.resolve(moduleRoot(dataRoot), "downloads");
     if (jobDirectory.startsWith(`${downloadsRoot}${path.sep}`)) {
@@ -294,6 +298,9 @@ function createYtDlpService(options) {
     }
     return repo.delete(sid, userId);
   }
+
+  const publishService = createMediaPublishService({ repo, resolveOutputFile, dataRoot });
+  publishService.startPublishScheduler();
 
   return {
     runtimeStatus,
@@ -303,6 +310,7 @@ function createYtDlpService(options) {
     resolveOutputFile,
     getJob: async (sid, userId) => publicJob(await repo.get(sid, userId)),
     listJobs: async (userId, limit) => (await repo.list(userId, limit)).map(publicJob),
+    ...publishService,
   };
 }
 

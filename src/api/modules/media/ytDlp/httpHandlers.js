@@ -71,6 +71,25 @@ function createYtDlpHttpHandler({ service, json, readJson, getSession, requirePe
         json(res, 202, { ok: true, item: await service.createJob(await readJson(req), userId) });
         return true;
       }
+      if (req.method === "GET" && url.pathname === "/v2/media/yt-dlp/publishing/status") {
+        json(res, 200, { ok: true, platforms: service.publishingStatus() });
+        return true;
+      }
+      if (req.method === "GET" && url.pathname === "/v2/media/yt-dlp/publishes") {
+        const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit")) || 100));
+        json(res, 200, { ok: true, items: await service.listPublishes(userId, limit) });
+        return true;
+      }
+      if (req.method === "POST" && url.pathname === "/v2/media/yt-dlp/publishes") {
+        json(res, 202, { ok: true, item: await service.createPublish(await readJson(req), userId) });
+        return true;
+      }
+      const publishMatch = /^\/v2\/media\/yt-dlp\/publishes\/([^/]+)\/cancel$/.exec(url.pathname);
+      if (req.method === "POST" && publishMatch) {
+        const item = await service.cancelPublish(decodeURIComponent(publishMatch[1]), userId);
+        json(res, item ? 200 : 404, item ? { ok: true, item } : { ok: false, error: "NOT_FOUND" });
+        return true;
+      }
       const match = /^\/v2\/media\/yt-dlp\/jobs\/([^/]+)(?:\/(cancel|file|preview))?$/.exec(url.pathname);
       if (!match) {
         json(res, 404, { ok: false, error: "NOT_FOUND" });
@@ -113,7 +132,7 @@ function createYtDlpHttpHandler({ service, json, readJson, getSession, requirePe
       json(res, 405, { ok: false, error: "METHOD_NOT_ALLOWED" });
       return true;
     } catch (error) {
-      json(res, /valid|allowed|supported/i.test(error.message) ? 400 : 500, {
+      json(res, /valid|allowed|supported|configured|select|scheduled|not found/i.test(error.message) ? 400 : 500, {
         ok: false,
         error: error.message || String(error),
       });

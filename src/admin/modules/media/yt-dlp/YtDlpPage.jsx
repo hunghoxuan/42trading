@@ -25,8 +25,13 @@ function formatBytes(value) {
 function statusTone(status) {
   if (status === "completed") return "success";
   if (status === "failed") return "error";
-  if (status === "running" || status === "queued") return "pending";
+  if (["running", "queued", "uploading", "scheduled"].includes(status)) return "pending";
   return "idle";
+}
+
+function localDateTimeValue(date = new Date(Date.now() + 60 * 60 * 1000)) {
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
 }
 
 function saveBlob({ blob, fileName }, fallbackName) {
@@ -49,21 +54,30 @@ export default function YtDlpPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [preview, setPreview] = useState(null);
+  const [platforms, setPlatforms] = useState({});
+  const [publishes, setPublishes] = useState([]);
+  const [publishDraft, setPublishDraft] = useState(null);
+  const [publishing, setPublishing] = useState(false);
 
-  const hasActiveJobs = useMemo(
-    () => jobs.some((job) => ["queued", "running"].includes(job.status)),
-    [jobs],
+  const hasActiveWork = useMemo(
+    () => jobs.some((job) => ["queued", "running"].includes(job.status))
+      || publishes.some((item) => item.status === "uploading"),
+    [jobs, publishes],
   );
 
   const load = useCallback(async ({ quiet = false } = {}) => {
     if (!quiet) setLoading(true);
     try {
-      const [statusResult, jobsResult] = await Promise.all([
+      const [statusResult, jobsResult, publishingResult, publishesResult] = await Promise.all([
         api.ytDlpStatus(),
         api.ytDlpJobs(),
+        api.ytDlpPublishingStatus(),
+        api.ytDlpPublishes(),
       ]);
       setRuntime(statusResult.runtime || null);
       setJobs(Array.isArray(jobsResult.items) ? jobsResult.items : []);
+      setPlatforms(publishingResult.platforms || {});
+      setPublishes(Array.isArray(publishesResult.items) ? publishesResult.items : []);
       setError("");
     } catch (loadError) {
       setError(loadError.message || "Failed to load yt-dlp.");
@@ -77,9 +91,9 @@ export default function YtDlpPage() {
   }, [load]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => load({ quiet: true }), hasActiveJobs ? 1500 : 8000);
+    const timer = window.setInterval(() => load({ quiet: true }), hasActiveWork ? 1500 : 8000);
     return () => window.clearInterval(timer);
-  }, [hasActiveJobs, load]);
+  }, [hasActiveWork, load]);
 
   async function submit(event) {
     event.preventDefault();
@@ -140,6 +154,49 @@ export default function YtDlpPage() {
       setPreview((current) => current?.sid === job.sid ? null : current);
     } catch (deleteError) {
       setError(deleteError.message || "Could not delete the download.");
+    }
+  }
+
+  function openPublish(job, fileIndex, platform) {
+    setPublishDraft({
+      job_sid: job.sid,
+      file_index: fileIndex,
+      platform,
+      title: job.source_title || job.output_files[fileIndex]?.name || "Video",
+      description: "",
+      privacy: "private",
+      mode: "manual",
+      scheduled_at: localDateTimeValue(),
+    });
+  }
+
+  async function submitPublish(event) {
+    event.preventDefault();
+    setPublishing(true);
+    setError("");
+    try {
+      await api.ytDlpCreatePublish({
+        ...publishDraft,
+        scheduled_at:
+          publishDraft.mode === "schedule"
+            ? new Date(publishDraft.scheduled_at).toISOString()
+            : null,
+      });
+      setPublishDraft(null);
+      await load({ quiet: true });
+    } catch (publishError) {
+      setError(publishError.message || "Could not queue the upload.");
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  async function cancelPublish(sid) {
+    try {
+      await api.ytDlpCancelPublish(sid);
+      await load({ quiet: true });
+    } catch (cancelError) {
+      setError(cancelError.message || "Could not cancel the scheduled upload.");
     }
   }
 
@@ -244,6 +301,67 @@ export default function YtDlpPage() {
         </section>
       )}
 
+      {publishDraft && (
+        <form className="panel yt-dlp-publish" onSubmit={submitPublish}>
+          <div className="yt-dlp-preview__header">
+            <div>
+              <div className="panel-label">
+                {publishDraft.platform === "youtube" ? "YouTube channel" : "TikTok account"}
+              </div>
+              <div className="minor-text">
+                {platforms[publishDraft.platform]?.configured
+                  ? platforms[publishDraft.platform].label
+                  : "Credentials are not configured on the API server."}
+              </div>
+            </div>
+            <button type="button" className="secondary-button icon-button" onClick={() => setPublishDraft(null)} aria-label="Close upload form" title="Close">
+              <span aria-hidden="true">✕</span>
+            </button>
+          </div>
+          <div className="yt-dlp-publish__mode">
+            <button type="button" className={`secondary-button ${publishDraft.mode === "manual" ? "active" : ""}`} onClick={() => setPublishDraft({ ...publishDraft, mode: "manual" })}>
+              <span aria-hidden="true">⚡</span> Upload now
+            </button>
+            <button type="button" className={`secondary-button ${publishDraft.mode === "schedule" ? "active" : ""}`} onClick={() => setPublishDraft({ ...publishDraft, mode: "schedule" })}>
+              <span aria-hidden="true">◷</span> Schedule cron
+            </button>
+          </div>
+          <label className="yt-dlp-field">
+            <span>Title</span>
+            <input required maxLength={publishDraft.platform === "youtube" ? 100 : 2200} value={publishDraft.title} onChange={(event) => setPublishDraft({ ...publishDraft, title: event.target.value })} />
+          </label>
+          {publishDraft.platform === "youtube" && (
+            <>
+              <label className="yt-dlp-field">
+                <span>Description</span>
+                <textarea rows="3" maxLength="5000" value={publishDraft.description} onChange={(event) => setPublishDraft({ ...publishDraft, description: event.target.value })} />
+              </label>
+              <label className="yt-dlp-field">
+                <span>Privacy</span>
+                <select value={publishDraft.privacy} onChange={(event) => setPublishDraft({ ...publishDraft, privacy: event.target.value })}>
+                  <option value="private">Private</option>
+                  <option value="unlisted">Unlisted</option>
+                  <option value="public">Public</option>
+                </select>
+              </label>
+            </>
+          )}
+          {publishDraft.platform === "tiktok" && (
+            <div className="minor-text">Uploads to the TikTok inbox as a draft. Review and post it from the TikTok app.</div>
+          )}
+          {publishDraft.mode === "schedule" && (
+            <label className="yt-dlp-field">
+              <span>Run at</span>
+              <input type="datetime-local" required value={publishDraft.scheduled_at} onChange={(event) => setPublishDraft({ ...publishDraft, scheduled_at: event.target.value })} />
+            </label>
+          )}
+          <button type="submit" className="primary-button" disabled={publishing || !platforms[publishDraft.platform]?.configured}>
+            <span aria-hidden="true">{publishDraft.mode === "schedule" ? "◷" : "⬆"}</span>{" "}
+            {publishing ? "Queuing…" : publishDraft.mode === "schedule" ? "Schedule upload" : "Upload now"}
+          </button>
+        </form>
+      )}
+
       <section className="panel yt-dlp-history">
         <div className="panel-label">Download history</div>
         {loading && !jobs.length ? (
@@ -296,6 +414,18 @@ export default function YtDlpPage() {
                           <button type="button" className="secondary-button" onClick={() => download(job, index)} title={`Choose where to save ${file.name} (${formatBytes(file.size)})`}>
                             <span aria-hidden="true">⬇</span> Save
                           </button>
+                          {job.media_kind === "video" && (
+                            <>
+                              <button type="button" className="secondary-button" onClick={() => openPublish(job, index, "youtube")} title="Upload to YouTube channel">
+                                <span aria-hidden="true">▶</span> YouTube
+                              </button>
+                              {/[.](mp4|webm|mov)$/i.test(file.name) && (
+                                <button type="button" className="secondary-button" onClick={() => openPublish(job, index, "tiktok")} title="Upload to TikTok account">
+                                  <span aria-hidden="true">♪</span> TikTok
+                                </button>
+                              )}
+                            </>
+                          )}
                         </span>
                       ))}
                       {!["queued", "running"].includes(job.status) && (
@@ -304,6 +434,31 @@ export default function YtDlpPage() {
                         </button>
                       )}
                     </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="panel yt-dlp-history">
+        <div className="panel-label">Publishing queue</div>
+        {!publishes.length ? (
+          <div className="minor-text">No manual or scheduled uploads yet.</div>
+        ) : (
+          <div className="yt-dlp-table-wrap">
+            <table className="table-dense yt-dlp-table yt-dlp-publish-table">
+              <thead><tr><th>Platform</th><th>Title</th><th>Status</th><th>Scheduled</th><th>Result</th><th /></tr></thead>
+              <tbody>
+                {publishes.map((item) => (
+                  <tr key={item.sid}>
+                    <td>{item.platform === "youtube" ? "▶ YouTube" : "♪ TikTok"}<div className="minor-text">{item.account_label}</div></td>
+                    <td>{item.title}</td>
+                    <td><span className={`status-dot ${statusTone(item.status)}`} /> {item.status}{item.status === "uploading" ? ` ${Math.round(item.progress || 0)}%` : ""}</td>
+                    <td>{new Date(item.scheduled_at).toLocaleString()}</td>
+                    <td>{item.remote_url ? <a href={item.remote_url} target="_blank" rel="noreferrer">Open ↗</a> : item.remote_id || "—"}{item.error_message && <div className="msg-error">{item.error_message}</div>}</td>
+                    <td>{item.status === "scheduled" && <button type="button" className="secondary-button danger-text" onClick={() => cancelPublish(item.sid)}><span aria-hidden="true">■</span> Cancel</button>}</td>
                   </tr>
                 ))}
               </tbody>

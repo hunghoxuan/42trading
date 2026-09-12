@@ -3,7 +3,7 @@
 const fs = require("fs");
 const path = require("path");
 const Database = require("better-sqlite3");
-const { TABLE_NAME, sqliteSchema, postgresSchema } = require("./schema");
+const { TABLE_NAME, PUBLISH_TABLE_NAME, sqliteSchema, postgresSchema } = require("./schema");
 
 function parseJson(value, fallback) {
   if (value == null) return fallback;
@@ -29,6 +29,17 @@ function normalizeRow(row) {
   };
 }
 
+function normalizePublishRow(row) {
+  if (!row) return null;
+  return {
+    ...row,
+    file_index: Number(row.file_index || 0),
+    progress: Number(row.progress || 0),
+    options: parseJson(row.options_json, {}),
+    options_json: undefined,
+  };
+}
+
 function createSqliteProvider(filePath) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
   const db = new Database(filePath);
@@ -41,6 +52,12 @@ function createSqliteProvider(filePath) {
      SET status = 'failed', error_message = 'Download interrupted by API restart',
          completed_at = ?, updated_at = ?
      WHERE status IN ('queued', 'running')`,
+  ).run(recoveredAt, recoveredAt);
+  db.prepare(
+    `UPDATE ${PUBLISH_TABLE_NAME}
+     SET status = 'failed', error_message = 'Upload interrupted by API restart',
+         completed_at = ?, updated_at = ?
+     WHERE status = 'uploading'`,
   ).run(recoveredAt, recoveredAt);
   const insert = db.prepare(`
     INSERT INTO ${TABLE_NAME} (
@@ -100,6 +117,42 @@ function createSqliteProvider(filePath) {
         .prepare(`DELETE FROM ${TABLE_NAME} WHERE sid = ? AND user_id = ?`)
         .run(sid, userId).changes > 0;
     },
+    async createPublish(item) {
+      db.prepare(`
+        INSERT INTO ${PUBLISH_TABLE_NAME} (
+          sid, user_id, job_sid, file_index, platform, account_label, title,
+          description, privacy, status, progress, scheduled_at, started_at,
+          completed_at, remote_id, remote_url, error_message, options_json,
+          created_at, updated_at
+        ) VALUES (
+          @sid, @user_id, @job_sid, @file_index, @platform, @account_label, @title,
+          @description, @privacy, @status, @progress, @scheduled_at, @started_at,
+          @completed_at, @remote_id, @remote_url, @error_message, @options_json,
+          @created_at, @updated_at
+        )
+      `).run({ ...item, options_json: JSON.stringify(item.options || {}) });
+      return normalizePublishRow(db.prepare(`SELECT * FROM ${PUBLISH_TABLE_NAME} WHERE sid = ?`).get(item.sid));
+    },
+    async updatePublish(sid, patch) {
+      const allowed = ["status", "progress", "started_at", "completed_at", "remote_id", "remote_url", "error_message", "updated_at"];
+      const keys = allowed.filter((key) => Object.hasOwn(patch, key));
+      if (keys.length) {
+        db.prepare(`UPDATE ${PUBLISH_TABLE_NAME} SET ${keys.map((key) => `${key} = @${key}`).join(", ")} WHERE sid = @sid`)
+          .run({ sid, ...patch });
+      }
+      return normalizePublishRow(db.prepare(`SELECT * FROM ${PUBLISH_TABLE_NAME} WHERE sid = ?`).get(sid));
+    },
+    async getPublish(sid, userId) {
+      return normalizePublishRow(db.prepare(`SELECT * FROM ${PUBLISH_TABLE_NAME} WHERE sid = ? AND user_id = ?`).get(sid, userId));
+    },
+    async listPublishes(userId, limit) {
+      return db.prepare(`SELECT * FROM ${PUBLISH_TABLE_NAME} WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`)
+        .all(userId, limit).map(normalizePublishRow);
+    },
+    async listDuePublishes(now, limit) {
+      return db.prepare(`SELECT * FROM ${PUBLISH_TABLE_NAME} WHERE status = 'scheduled' AND scheduled_at <= ? ORDER BY scheduled_at ASC LIMIT ?`)
+        .all(now, limit).map(normalizePublishRow);
+    },
   };
 }
 
@@ -110,6 +163,12 @@ async function createPostgresProvider(pool) {
      SET status = 'failed', error_message = 'Download interrupted by API restart',
          completed_at = NOW(), updated_at = NOW()
      WHERE status IN ('queued', 'running')`,
+  );
+  await pool.query(
+    `UPDATE ${PUBLISH_TABLE_NAME}
+     SET status = 'failed', error_message = 'Upload interrupted by API restart',
+         completed_at = NOW(), updated_at = NOW()
+     WHERE status = 'uploading'`,
   );
   const columns = [
     "sid", "user_id", "source_url", "source_title", "extractor", "media_kind",
@@ -175,6 +234,37 @@ async function createPostgresProvider(pool) {
       );
       return result.rowCount > 0;
     },
+    async createPublish(item) {
+      const columns = ["sid", "user_id", "job_sid", "file_index", "platform", "account_label", "title", "description", "privacy", "status", "progress", "scheduled_at", "started_at", "completed_at", "remote_id", "remote_url", "error_message", "options_json", "created_at", "updated_at"];
+      const values = columns.map((key) => key === "options_json" ? JSON.stringify(item.options || {}) : item[key] ?? null);
+      const result = await pool.query(
+        `INSERT INTO ${PUBLISH_TABLE_NAME} (${columns.join(", ")}) VALUES (${columns.map((_, index) => `$${index + 1}`).join(", ")}) RETURNING *`,
+        values,
+      );
+      return normalizePublishRow(result.rows[0]);
+    },
+    async updatePublish(sid, patch) {
+      const allowed = ["status", "progress", "started_at", "completed_at", "remote_id", "remote_url", "error_message", "updated_at"];
+      const keys = allowed.filter((key) => Object.hasOwn(patch, key));
+      if (!keys.length) return null;
+      const result = await pool.query(
+        `UPDATE ${PUBLISH_TABLE_NAME} SET ${keys.map((key, index) => `${key} = $${index + 1}`).join(", ")} WHERE sid = $${keys.length + 1} RETURNING *`,
+        [...keys.map((key) => patch[key]), sid],
+      );
+      return normalizePublishRow(result.rows[0]);
+    },
+    async getPublish(sid, userId) {
+      const result = await pool.query(`SELECT * FROM ${PUBLISH_TABLE_NAME} WHERE sid = $1 AND user_id = $2`, [sid, userId]);
+      return normalizePublishRow(result.rows[0]);
+    },
+    async listPublishes(userId, limit) {
+      const result = await pool.query(`SELECT * FROM ${PUBLISH_TABLE_NAME} WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`, [userId, limit]);
+      return result.rows.map(normalizePublishRow);
+    },
+    async listDuePublishes(now, limit) {
+      const result = await pool.query(`SELECT * FROM ${PUBLISH_TABLE_NAME} WHERE status = 'scheduled' AND scheduled_at <= $1 ORDER BY scheduled_at ASC LIMIT $2`, [now, limit]);
+      return result.rows.map(normalizePublishRow);
+    },
   };
 }
 
@@ -199,6 +289,11 @@ function createYtDlpRepo({ dataRoot, getBackend }) {
     get: async (sid, userId) => (await provider()).get(sid, userId),
     list: async (userId, limit = 100) => (await provider()).list(userId, limit),
     delete: async (sid, userId) => (await provider()).delete(sid, userId),
+    createPublish: async (item) => (await provider()).createPublish(item),
+    updatePublish: async (sid, patch) => (await provider()).updatePublish(sid, patch),
+    getPublish: async (sid, userId) => (await provider()).getPublish(sid, userId),
+    listPublishes: async (userId, limit = 100) => (await provider()).listPublishes(userId, limit),
+    listDuePublishes: async (now, limit = 10) => (await provider()).listDuePublishes(now, limit),
   };
 }
 
