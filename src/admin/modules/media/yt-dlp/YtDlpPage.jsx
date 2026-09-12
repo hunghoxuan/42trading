@@ -166,7 +166,7 @@ export default function YtDlpPage() {
       {error && <div className="msg-error yt-dlp-message">{error}</div>}
 
       <form className="toolbar-panel yt-dlp-form" onSubmit={submit}>
-        <label className="form-item yt-dlp-url-field">
+        <label className="yt-dlp-field yt-dlp-url-field">
           <span>Media URL</span>
           <input
             type="url"
@@ -176,7 +176,7 @@ export default function YtDlpPage() {
             onChange={(event) => setForm({ ...form, source_url: event.target.value })}
           />
         </label>
-        <label className="form-item">
+        <label className="yt-dlp-field">
           <span>Type</span>
           <select
             value={form.media_kind}
@@ -187,7 +187,7 @@ export default function YtDlpPage() {
           </select>
         </label>
         {form.media_kind === "video" ? (
-          <label className="form-item">
+          <label className="yt-dlp-field">
             <span>Maximum quality</span>
             <select
               value={form.video_quality}
@@ -200,7 +200,7 @@ export default function YtDlpPage() {
             </select>
           </label>
         ) : (
-          <label className="form-item">
+          <label className="yt-dlp-field">
             <span>Audio format</span>
             <select
               value={form.audio_format}

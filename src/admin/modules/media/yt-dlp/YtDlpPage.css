@@ -27,8 +27,16 @@
   align-items: end;
 }
 
-.yt-dlp-form .form-item {
+.yt-dlp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   min-width: 0;
+}
+
+.yt-dlp-field > span {
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .yt-dlp-form input[type="url"],
