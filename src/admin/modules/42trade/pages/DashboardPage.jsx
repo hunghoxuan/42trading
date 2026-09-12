@@ -8,7 +8,6 @@ import {
   asMoney,
   asMoneySigned,
   asPct,
-  asRR,
   moneyClass,
 } from "../../../shared/utils/numberFormat";
 import CronRunLauncher from "../components/CronRunLauncher";
@@ -17,6 +16,7 @@ import GroupButtons from "../../../shared/components/GroupButtons";
 import PageHeader from "../../../shared/components/PageHeader";
 import ResponsivePanel from "../../../shared/components/ResponsivePanel";
 import { StatusDisplay } from "../../../shared/components/StatusBadge";
+import { useConfirmDialog } from "../../../shared/components/ConfirmDialog";
 
 const RANGE_OPTIONS = [
   { val: "all", lab: "ALL TIMES" },
@@ -93,10 +93,14 @@ function trades2PnlValue(row = {}) {
 function trades2RealizedRrValue(row = {}) {
   const directRaw =
     row?.rr_realized ??
-      row?.metadata?.rr_realized ??
-      row?.metadata?.broker_data?.rr_realized;
+    row?.metadata?.rr_realized ??
+    row?.metadata?.broker_data?.rr_realized;
   const direct = Number(directRaw);
-  if (directRaw !== null && directRaw !== undefined && Number.isFinite(direct)) {
+  if (
+    directRaw !== null &&
+    directRaw !== undefined &&
+    Number.isFinite(direct)
+  ) {
     return direct;
   }
   const pnl = trades2PnlValue(row);
@@ -138,7 +142,9 @@ function trades2CanonicalStatus(row = {}) {
   const raw = trades2Text(row?.execution_status || row?.status).toUpperCase();
   const closeReason = trades2Text(row?.close_reason).toUpperCase();
   if (["TP", "SL"].includes(raw)) return raw;
-  if (["PLACED", "OPEN", "ACTIVE", "EXECUTED", "START", "FILLED"].includes(raw)) {
+  if (
+    ["PLACED", "OPEN", "ACTIVE", "EXECUTED", "START", "FILLED"].includes(raw)
+  ) {
     return "FILLED";
   }
   if (["NEW", "LOCKED", "SUBMITTED", "PENDING"].includes(raw)) return "PENDING";
@@ -152,7 +158,8 @@ function trades2CanonicalStatus(row = {}) {
 }
 
 function trades2TimestampMs(row = {}) {
-  const value = row?.closed_at || row?.opened_at || row?.updated_at || row?.created_at;
+  const value =
+    row?.closed_at || row?.opened_at || row?.updated_at || row?.created_at;
   const ms = Date.parse(String(value || ""));
   return Number.isFinite(ms) ? ms : NaN;
 }
@@ -163,7 +170,11 @@ function trades2LocalPeriodRange(period = "all") {
   if (period === "all") return { start: null, end: null };
   if (period === "today") {
     return {
-      start: new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString(),
+      start: new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate(),
+      ).toISOString(),
       end,
     };
   }
@@ -174,7 +185,11 @@ function trades2LocalPeriodRange(period = "all") {
         now.getMonth(),
         now.getDate() - 1,
       ).toISOString(),
-      end: new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString(),
+      end: new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate(),
+      ).toISOString(),
     };
   }
   if (period === "week") {
@@ -224,12 +239,18 @@ function trades2LocalPeriodRange(period = "all") {
   return { start: null, end: null };
 }
 
-function filterTrades2RowsByPeriod(rows = [], { start = null, end = null } = {}) {
+function filterTrades2RowsByPeriod(
+  rows = [],
+  { start = null, end = null } = {},
+) {
   const fromMs = start ? Date.parse(String(start)) : NaN;
   const toMs = end ? Date.parse(String(end)) : NaN;
   return (Array.isArray(rows) ? rows : []).filter((row) => {
     const rowMs = trades2TimestampMs(row);
-    if (Number.isFinite(fromMs) && (!Number.isFinite(rowMs) || rowMs < fromMs)) {
+    if (
+      Number.isFinite(fromMs) &&
+      (!Number.isFinite(rowMs) || rowMs < fromMs)
+    ) {
       return false;
     }
     if (Number.isFinite(toMs) && (!Number.isFinite(rowMs) || rowMs > toMs)) {
@@ -255,7 +276,9 @@ function trades2ClosedRows(rows = []) {
 
 function trades2SourceIdFromRow(row = {}) {
   const raw = row?.raw_json || {};
-  return trades2Text(row?.source_id || raw?.source_id || row?.source || raw?.source);
+  return trades2Text(
+    row?.source_id || raw?.source_id || row?.source || raw?.source,
+  );
 }
 
 function trades2StrategyLabelFromRow(row = {}) {
@@ -307,8 +330,12 @@ function trades2OrderTypeFromRow(row = {}) {
 
 function computeTrades2Metrics(rows = []) {
   const all = Array.isArray(rows) ? rows : [];
-  const countPending = all.filter((row) => trades2CanonicalStatus(row) === "PENDING").length;
-  const countFilled = all.filter((row) => trades2CanonicalStatus(row) === "FILLED").length;
+  const countPending = all.filter(
+    (row) => trades2CanonicalStatus(row) === "PENDING",
+  ).length;
+  const countFilled = all.filter(
+    (row) => trades2CanonicalStatus(row) === "FILLED",
+  ).length;
   const countClosed = all.filter((row) =>
     ["CLOSED", "TP", "SL"].includes(trades2CanonicalStatus(row)),
   ).length;
@@ -335,7 +362,9 @@ function computeTrades2Metrics(rows = []) {
       if (pnl < 0) loseSumPnl += pnl;
     }
   }
-  const filledRows = all.filter((row) => trades2CanonicalStatus(row) === "FILLED");
+  const filledRows = all.filter(
+    (row) => trades2CanonicalStatus(row) === "FILLED",
+  );
   const filledOpenPnl = filledRows.reduce((sum, row) => {
     const pnl = trades2PnlValue(row);
     return pnl !== null ? sum + pnl : sum;
@@ -544,7 +573,11 @@ async function loadTrades2DashboardFromList(apiClient, filters = {}) {
 
   return {
     ok: true,
-    accounts_summary: [...new Set(allRows.map((row) => trades2Text(row?.account_id)).filter(Boolean))]
+    accounts_summary: [
+      ...new Set(
+        allRows.map((row) => trades2Text(row?.account_id)).filter(Boolean),
+      ),
+    ]
       .sort()
       .map((accountId) => ({ account_id: accountId, name: accountId })),
     filters: {
@@ -557,11 +590,37 @@ async function loadTrades2DashboardFromList(apiClient, filters = {}) {
       direction: trades2Text(filters.direction).toUpperCase(),
       pnl_state: trades2Text(filters.pnl_state).toLowerCase(),
       range,
-      accounts: [...new Set(allRows.map((row) => trades2Text(row?.account_id)).filter(Boolean))].sort(),
-      symbols: [...new Set(allRows.map((row) => trades2Text(row?.symbol).toUpperCase()).filter(Boolean))].sort(),
-      sources: [...new Set(allRows.map((row) => trades2SourceIdFromRow(row)).filter(Boolean))].sort(),
-      strategies: [...new Set(allRows.map((row) => trades2StrategyLabelFromRow(row)).filter(Boolean))].sort(),
-      entry_models: [...new Set(allRows.map((row) => trades2EntryModelLabelFromRow(row)).filter(Boolean))].sort(),
+      accounts: [
+        ...new Set(
+          allRows.map((row) => trades2Text(row?.account_id)).filter(Boolean),
+        ),
+      ].sort(),
+      symbols: [
+        ...new Set(
+          allRows
+            .map((row) => trades2Text(row?.symbol).toUpperCase())
+            .filter(Boolean),
+        ),
+      ].sort(),
+      sources: [
+        ...new Set(
+          allRows.map((row) => trades2SourceIdFromRow(row)).filter(Boolean),
+        ),
+      ].sort(),
+      strategies: [
+        ...new Set(
+          allRows
+            .map((row) => trades2StrategyLabelFromRow(row))
+            .filter(Boolean),
+        ),
+      ].sort(),
+      entry_models: [
+        ...new Set(
+          allRows
+            .map((row) => trades2EntryModelLabelFromRow(row))
+            .filter(Boolean),
+        ),
+      ].sort(),
       chart_tfs: [
         ...new Set(
           allRows
@@ -935,9 +994,6 @@ function TableBlock({
     } else if (sortKey === "WR") {
       va = a.win_rate;
       vb = b.win_rate;
-    } else if (sortKey === "PnL") {
-      va = a.pnl_total;
-      vb = b.pnl_total;
     } else if (sortKey === "RR") {
       const aHasRr = a.rr_avg != null && Number.isFinite(Number(a.rr_avg));
       const bHasRr = b.rr_avg != null && Number.isFinite(Number(b.rr_avg));
@@ -1031,18 +1087,6 @@ function TableBlock({
             >
               TRADES{sortMarker("Trades")}
             </span>
-            <span
-              onClick={() => toggleSort("PnL")}
-              style={{
-                flex: "1.5",
-                textAlign: "right",
-                fontSize: "10px",
-                color: "var(--muted)",
-                cursor: "pointer",
-              }}
-            >
-              PNL{sortMarker("PnL")}
-            </span>
           </div>
           {sortedRows.map((r) => (
             <div
@@ -1088,22 +1132,25 @@ function TableBlock({
                 </span>
               </span>
               <span
+                className={
+                  Number(r.rr_avg) > 0
+                    ? "money-pos"
+                    : Number(r.rr_avg) < 0
+                      ? "money-neg"
+                      : "money-neutral"
+                }
                 style={{
                   flex: "1.2",
                   textAlign: "right",
                   fontSize: "10px",
                 }}
               >
-                {r.rr_avg == null ? "—" : asRR(r.rr_avg)}
+                {r.rr_avg == null || !Number.isFinite(Number(r.rr_avg))
+                  ? "—"
+                  : Math.abs(Number(r.rr_avg)).toFixed(2)}
               </span>
               <span style={{ flex: "1", textAlign: "right", fontSize: "10px" }}>
                 {Number(r.trades || 0)}
-              </span>
-              <span
-                style={{ flex: "1.5", textAlign: "right" }}
-                className={moneyClass(r.pnl_total)}
-              >
-                {asMoneySigned(r.pnl_total)}
               </span>
             </div>
           ))}
@@ -1114,6 +1161,7 @@ function TableBlock({
 }
 
 export default function DashboardPage() {
+  const confirm = useConfirmDialog();
   const navigate = useNavigate();
   const location = useLocation();
   const isTrades2Route = location.pathname.startsWith("/trades2");
@@ -1124,6 +1172,9 @@ export default function DashboardPage() {
   const [lastRefreshAt, setLastRefreshAt] = useState(null);
   const [selectedCronName, setSelectedCronName] = useState("");
   const [runCronLoading, setRunCronLoading] = useState(false);
+  const [historyImportJob, setHistoryImportJob] = useState(null);
+  const [historyImportBusy, setHistoryImportBusy] = useState(false);
+  const [historyImportError, setHistoryImportError] = useState("");
   const [isFiltersPanelOpen, setIsFiltersPanelOpen] = useState(true);
   const [calendarMonth, setCalendarMonth] = useState(() =>
     new Date().getMonth(),
@@ -1157,6 +1208,7 @@ export default function DashboardPage() {
   const calendarMasterRef = useRef(loadCalendarCache());
   const initialLoadKeyRef = useRef("");
   const settingsLoadStartedRef = useRef(false);
+  const completedHistoryImportRef = useRef("");
 
   async function load() {
     if (inFlightRef.current) return;
@@ -1169,7 +1221,9 @@ export default function DashboardPage() {
         api.v2Accounts().catch(() => ({ items: [] })),
       ]);
       setData(resp);
-      setBrokerAccounts(Array.isArray(accountsResp?.items) ? accountsResp.items : []);
+      setBrokerAccounts(
+        Array.isArray(accountsResp?.items) ? accountsResp.items : [],
+      );
       const userKey = calendarScopeKey(filters, resp?.filters?.user_id || "");
       const dailyMap = buildDailyPnlMap(resp?.pnl_series || []);
       const merged = mergeDailyPnlMap(
@@ -1362,10 +1416,95 @@ export default function DashboardPage() {
           }
           const leftStale = Number(left?.brokerActivity?.stale_ms || 0);
           const rightStale = Number(right?.brokerActivity?.stale_ms || 0);
-          return leftConnected ? leftStale - rightStale : rightStale - leftStale;
+          return leftConnected
+            ? leftStale - rightStale
+            : rightStale - leftStale;
         }),
     [brokerAccounts],
   );
+  const selectedHistoryAccount = brokerAccounts.find(
+    (account) =>
+      String(account?.account_id || "") === String(filters.account_id || ""),
+  );
+  const historyBrokerLabel = "CTRADER";
+
+  useEffect(() => {
+    const accountId = String(filters.account_id || "").trim();
+    if (!accountId) {
+      setHistoryImportJob(null);
+      setHistoryImportError("");
+      return undefined;
+    }
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const response = await api.v2AccountHistoryImport(accountId);
+        if (!cancelled) {
+          setHistoryImportJob(response?.job || null);
+          setHistoryImportError("");
+        }
+      } catch (requestError) {
+        if (!cancelled) {
+          setHistoryImportError(
+            requestError?.message || "Could not read broker import status",
+          );
+        }
+      }
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [filters.account_id]);
+
+  useEffect(() => {
+    const jobId = String(historyImportJob?.id || "");
+    if (
+      String(historyImportJob?.status || "") !== "COMPLETED" ||
+      !jobId ||
+      completedHistoryImportRef.current === jobId
+    ) {
+      return;
+    }
+    completedHistoryImportRef.current = jobId;
+    load();
+  }, [historyImportJob?.id, historyImportJob?.status]);
+
+  async function handleStartHistoryImport() {
+    const accountId = String(filters.account_id || "").trim();
+    if (!accountId) {
+      setHistoryImportError("Select one cTrader account in Filters first.");
+      return;
+    }
+    const accountName = selectedHistoryAccount?.name || accountId;
+    const approved = await confirm({
+      title: `Import all ${historyBrokerLabel} history?`,
+      message: `Import all closed broker positions for ${accountName}. Existing trades will be matched and updated, not duplicated.`,
+      confirmLabel: "Start Import",
+      cancelLabel: "Cancel",
+    });
+    if (!approved) return;
+    setHistoryImportBusy(true);
+    setHistoryImportError("");
+    try {
+      const response = await api.v2StartAccountHistoryImport(accountId);
+      setHistoryImportJob(response?.job || null);
+      showToast(
+        "History import requested. cTrader will upload it in batches.",
+        "success",
+      );
+    } catch (requestError) {
+      const message =
+        requestError?.message ||
+        `Could not start ${historyBrokerLabel} history import`;
+      setHistoryImportError(message);
+      showToast(message, "error");
+    } finally {
+      setHistoryImportBusy(false);
+    }
+  }
 
   if (error) return <div className="error">{error}</div>;
   if (!data) return <div className="loading">Loading dashboard...</div>;
@@ -1555,24 +1694,58 @@ export default function DashboardPage() {
       <PageHeader
         title={isTrades2Route ? "Trades2 Dashboard" : "Trade Dashboard"}
         actions={
-          <CronRunLauncher
-            value={selectedCronName}
-            onChange={setSelectedCronName}
-            onRun={handleRunCron}
-            options={cronSettings.map((cron) => ({
-              value: cron.name,
-              label: cron.name,
-            }))}
-            disabled={cronSettings.length === 0}
-            loading={runCronLoading}
-            selectAriaLabel="Dashboard cron selector"
-            getConfirmOptions={(cronName) => ({
-              title: "Run cron?",
-              message: `Run cron "${cronName}" now?`,
-              confirmLabel: "Run",
-              tone: "danger",
-            })}
-          />
+          <div className="toolbar-group">
+            {historyImportJob?.status ? (
+              <span className="panel-label">
+                {historyBrokerLabel} {historyImportJob.status}
+                {Number(historyImportJob.total || 0) > 0
+                  ? ` ${Number(historyImportJob.processed || 0)}/${Number(historyImportJob.total || 0)}`
+                  : ""}
+              </span>
+            ) : null}
+            {historyImportError ? (
+              <span className="error">{historyImportError}</span>
+            ) : null}
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={handleStartHistoryImport}
+              disabled={
+                historyImportBusy ||
+                !filters.account_id ||
+                ["REQUESTED", "RUNNING"].includes(
+                  String(historyImportJob?.status || ""),
+                )
+              }
+              title={
+                filters.account_id
+                  ? `Import all closed ${historyBrokerLabel} positions`
+                  : "Select one cTrader account in Filters first"
+              }
+            >
+              {historyImportBusy
+                ? "STARTING..."
+                : `IMPORT ${historyBrokerLabel} HISTORY`}
+            </button>
+            <CronRunLauncher
+              value={selectedCronName}
+              onChange={setSelectedCronName}
+              onRun={handleRunCron}
+              options={cronSettings.map((cron) => ({
+                value: cron.name,
+                label: cron.name,
+              }))}
+              disabled={cronSettings.length === 0}
+              loading={runCronLoading}
+              selectAriaLabel="Dashboard cron selector"
+              getConfirmOptions={(cronName) => ({
+                title: "Run cron?",
+                message: `Run cron "${cronName}" now?`,
+                confirmLabel: "Run",
+                tone: "danger",
+              })}
+            />
+          </div>
         }
       />
       <div
@@ -1588,33 +1761,33 @@ export default function DashboardPage() {
           {brokerSyncAccounts.length > 0 ? (
             <div className="panel card-dense dashboard-broker-grid">
               {brokerSyncAccounts.map((account) => {
-                  const activity = account?.brokerActivity || {};
-                  const status = activity?.status || "UNKNOWN";
-                  const source = activity?.last_sync_source || "";
-                  const age = activity?.last_sync_at
-                    ? formatStaleAge(activity?.stale_ms)
-                    : "";
-                  return (
-                    <div
-                      key={account.account_id}
-                      className="dashboard-broker-cell"
-                      title={[status, source, age].filter(Boolean).join(" · ")}
-                    >
-                      <StatusDisplay
-                        status={brokerActivityTone(activity)}
-                        tooltipContent={[status, source, age]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      />
-                      <span className="dashboard-broker-cell__name">
-                        {account.name || account.account_id}
-                      </span>
-                      {age ? (
-                        <span className="dashboard-broker-cell__age">{age}</span>
-                      ) : null}
-                    </div>
-                  );
-                })}
+                const activity = account?.brokerActivity || {};
+                const status = activity?.status || "UNKNOWN";
+                const source = activity?.last_sync_source || "";
+                const age = activity?.last_sync_at
+                  ? formatStaleAge(activity?.stale_ms)
+                  : "";
+                return (
+                  <div
+                    key={account.account_id}
+                    className="dashboard-broker-cell"
+                    title={[status, source, age].filter(Boolean).join(" · ")}
+                  >
+                    <StatusDisplay
+                      status={brokerActivityTone(activity)}
+                      tooltipContent={[status, source, age]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    />
+                    <span className="dashboard-broker-cell__name">
+                      {account.name || account.account_id}
+                    </span>
+                    {age ? (
+                      <span className="dashboard-broker-cell__age">{age}</span>
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
           ) : null}
 
@@ -1741,13 +1914,18 @@ export default function DashboardPage() {
                   />
                 </div>
                 <div className="dashboard-filter-field">
-                  <span className="minor-text" style={{ fontSize: 9, opacity: 0.7 }}>
+                  <span
+                    className="minor-text"
+                    style={{ fontSize: 9, opacity: 0.7 }}
+                  >
                     DAYS PRESET
                   </span>
                   <ComboButtonMenu
                     selectId="db-filter-days-preset"
                     value={filters.strategy_days_preset}
-                    buttonText={filters.strategy_days_preset || "ALL DAYS PRESETS"}
+                    buttonText={
+                      filters.strategy_days_preset || "ALL DAYS PRESETS"
+                    }
                     onChange={(nextValue) =>
                       setFilters((prev) => ({
                         ...prev,
@@ -1766,7 +1944,10 @@ export default function DashboardPage() {
                   />
                 </div>
                 <div className="dashboard-filter-field">
-                  <span className="minor-text" style={{ fontSize: 9, opacity: 0.7 }}>
+                  <span
+                    className="minor-text"
+                    style={{ fontSize: 9, opacity: 0.7 }}
+                  >
                     TRADE TIME RANGE
                   </span>
                   <ComboButtonMenu
@@ -2572,7 +2753,10 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <div className="dashboard-section-heading" style={{ marginTop: "18px" }}>
+          <div
+            className="dashboard-section-heading"
+            style={{ marginTop: "18px" }}
+          >
             <h2 style={{ marginBottom: "4px" }}>History edge analysis</h2>
             <div className="minor-text">
               All results · calculated live from the database
@@ -2587,33 +2771,88 @@ export default function DashboardPage() {
             className="dashboard-grid tables history-analysis"
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
               gap: "16px",
               marginTop: "12px",
             }}
           >
-            <TableBlock title="Days preset" noun="presets" rows={history.days_presets || []} />
-            <TableBlock title="Trade TimeRange" noun="presets" rows={history.trade_time_ranges || []} />
-            <TableBlock title="Open time" noun="hours" rows={history.open_hours || []} />
-            <TableBlock title="Session" noun="sessions" rows={history.sessions || []} />
-            <TableBlock title="Killer zone" noun="zones" rows={history.killer_zones || []} />
-            <TableBlock title="Weekday" noun="days" rows={history.weekdays || []} />
-            <TableBlock title="Best date" noun="dates" rows={history.dates || []} />
-            <TableBlock title="Symbol" noun="symbols" rows={history.symbols || []} />
-            <TableBlock title="Event" noun="events" rows={history.events || []} />
-            <TableBlock title="Event timeframe" noun="timeframes" rows={history.event_timeframes || []} />
-            <TableBlock title="Movement" noun="movements" rows={history.movements || []} />
-            <TableBlock title="Reacted artifact" noun="artifacts" rows={history.reacted_artifacts || []} />
-            <TableBlock title="Direction" noun="directions" rows={history.directions || []} />
-            <TableBlock title="Holding time" noun="buckets" rows={history.holding_times || []} />
-            <TableBlock title="Strategy" noun="strategies" rows={history.strategies || []} />
+            <TableBlock
+              title="Days preset"
+              noun="presets"
+              rows={history.days_presets || []}
+            />
+            <TableBlock
+              title="Trade TimeRange"
+              noun="presets"
+              rows={history.trade_time_ranges || []}
+            />
+            <TableBlock
+              title="Open time"
+              noun="hours"
+              rows={history.open_hours || []}
+            />
+            <TableBlock
+              title="Session"
+              noun="sessions"
+              rows={history.sessions || []}
+            />
+            <TableBlock
+              title="Killer zone"
+              noun="zones"
+              rows={history.killer_zones || []}
+            />
+            <TableBlock
+              title="Weekday"
+              noun="days"
+              rows={history.weekdays || []}
+            />
+            <TableBlock
+              title="Symbol"
+              noun="symbols"
+              rows={history.symbols || []}
+            />
+            <TableBlock
+              title="Event"
+              noun="events"
+              rows={history.events || []}
+            />
+            <TableBlock
+              title="Event timeframe"
+              noun="timeframes"
+              rows={history.event_timeframes || []}
+            />
+            <TableBlock
+              title="Movement"
+              noun="movements"
+              rows={history.movements || []}
+            />
+            <TableBlock
+              title="Reacted artifact"
+              noun="artifacts"
+              rows={history.reacted_artifacts || []}
+            />
+            <TableBlock
+              title="Direction"
+              noun="directions"
+              rows={history.directions || []}
+            />
+            <TableBlock
+              title="Holding time"
+              noun="buckets"
+              rows={history.holding_times || []}
+            />
+            <TableBlock
+              title="Strategy"
+              noun="strategies"
+              rows={history.strategies || []}
+            />
           </div>
 
           <div
             className="dashboard-grid tables"
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+              gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
               gap: "16px",
             }}
           >
