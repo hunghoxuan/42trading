@@ -283,7 +283,9 @@ function trades2SourceIdFromRow(row = {}) {
 
 function trades2StrategyLabelFromRow(row = {}) {
   const raw = row?.raw_json || {};
-  return trades2Text(row?.strategy || raw?.strategy);
+  const strategy = trades2Text(row?.strategy || raw?.strategy);
+  const prefix = strategy.split(/[.#]/, 1)[0];
+  return prefix.replace(/[^a-z0-9]+/gi, "").toLowerCase();
 }
 
 function trades2EntryModelLabelFromRow(row = {}) {
@@ -1535,6 +1537,82 @@ export default function DashboardPage() {
     trade_time_ranges: [],
     strategies: [],
   };
+  const analysisBlocks = [
+    {
+      title: "Days preset",
+      noun: "presets",
+      rows: history.days_presets || [],
+    },
+    {
+      title: "Trade TimeRange",
+      noun: "presets",
+      rows: history.trade_time_ranges || [],
+    },
+    { title: "Open time", noun: "hours", rows: history.open_hours || [] },
+    { title: "Session", noun: "sessions", rows: history.sessions || [] },
+    {
+      title: "Killer zone",
+      noun: "zones",
+      rows: history.killer_zones || [],
+    },
+    { title: "Weekday", noun: "days", rows: history.weekdays || [] },
+    {
+      title: "Symbol",
+      noun: "symbols",
+      rows: history.symbols || [],
+      onRowClick: (row) =>
+        goTrades({
+          status: "closed",
+          time: filters.range || "all",
+          symbol: row?.key || "",
+        }),
+    },
+    {
+      title: "Event timeframe",
+      noun: "timeframes",
+      rows: history.event_timeframes || [],
+    },
+    {
+      title: "Reacted artifact",
+      noun: "artifacts",
+      rows: history.reacted_artifacts || [],
+    },
+    {
+      title: "Direction",
+      noun: "directions",
+      rows: history.directions || [],
+    },
+    {
+      title: "Strategy",
+      noun: "strategies",
+      rows: history.strategies || [],
+    },
+    {
+      title: "Entry Model",
+      noun: "models",
+      rows: Array.isArray(top.entry_models) ? top.entry_models : [],
+      onRowClick: (row) =>
+        goTrades({
+          status: "closed",
+          time: filters.range || "all",
+          entry_model: row?.key || "",
+        }),
+    },
+    {
+      title: "Source ID",
+      noun: "sources",
+      rows: Array.isArray(top.sources) ? top.sources : [],
+      onRowClick: (row) =>
+        goTrades({
+          status: "closed",
+          time: filters.range || "all",
+          source: row?.key || "",
+        }),
+    },
+  ].sort((left, right) => {
+    const lengthDifference = right.rows.length - left.rows.length;
+    return lengthDifference || left.title.localeCompare(right.title);
+  });
   const f = data.filters || {};
   const accountRows = Array.isArray(data.accounts_summary)
     ? data.accounts_summary
@@ -1674,12 +1752,12 @@ export default function DashboardPage() {
     return params.toString();
   };
 
-  const goTrades = ({ status = "closed", ...extra } = {}) => {
+  function goTrades({ status = "closed", ...extra } = {}) {
     const qs = buildTradeSearch(extra);
     navigate(
       `${tradeRouteBase}/${String(status).toLowerCase()}${qs ? `?${qs}` : ""}`,
     );
-  };
+  }
 
   const periodCardClick = (key) => {
     if (key === "filled_open") {
@@ -2776,117 +2854,9 @@ export default function DashboardPage() {
               marginTop: "12px",
             }}
           >
-            <TableBlock
-              title="Days preset"
-              noun="presets"
-              rows={history.days_presets || []}
-            />
-            <TableBlock
-              title="Trade TimeRange"
-              noun="presets"
-              rows={history.trade_time_ranges || []}
-            />
-            <TableBlock
-              title="Open time"
-              noun="hours"
-              rows={history.open_hours || []}
-            />
-            <TableBlock
-              title="Session"
-              noun="sessions"
-              rows={history.sessions || []}
-            />
-            <TableBlock
-              title="Killer zone"
-              noun="zones"
-              rows={history.killer_zones || []}
-            />
-            <TableBlock
-              title="Weekday"
-              noun="days"
-              rows={history.weekdays || []}
-            />
-            <TableBlock
-              title="Symbol"
-              noun="symbols"
-              rows={history.symbols || []}
-            />
-            <TableBlock
-              title="Event timeframe"
-              noun="timeframes"
-              rows={history.event_timeframes || []}
-            />
-            <TableBlock
-              title="Reacted artifact"
-              noun="artifacts"
-              rows={history.reacted_artifacts || []}
-            />
-            <TableBlock
-              title="Direction"
-              noun="directions"
-              rows={history.directions || []}
-            />
-            <TableBlock
-              title="Strategy"
-              noun="strategies"
-              rows={history.strategies || []}
-            />
-          </div>
-
-          <div
-            className="dashboard-grid tables"
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
-              gap: "16px",
-            }}
-          >
-            <TableBlock
-              title="Symbols"
-              noun="Symbols"
-              rows={Array.isArray(top.symbols) ? top.symbols : []}
-              onRowClick={(row) =>
-                goTrades({
-                  status: "closed",
-                  time: filters.range || "all",
-                  symbol: row?.key || "",
-                })
-              }
-            />
-            <TableBlock
-              title="Strategy"
-              noun="Strategies"
-              rows={Array.isArray(top.strategies) ? top.strategies : []}
-            />
-            <TableBlock
-              title="Entry Model"
-              noun="Models"
-              rows={Array.isArray(top.entry_models) ? top.entry_models : []}
-              onRowClick={(row) =>
-                goTrades({
-                  status: "closed",
-                  time: filters.range || "all",
-                  entry_model: row?.key || "",
-                })
-              }
-            />
-            <TableBlock
-              title="Source ID"
-              noun="Sources"
-              rows={Array.isArray(top.sources) ? top.sources : []}
-              onRowClick={(row) =>
-                goTrades({
-                  status: "closed",
-                  time: filters.range || "all",
-                  source: row?.key || "",
-                })
-              }
-            />
-            <TableBlock
-              title="Order Type"
-              noun="Order Type"
-              rows={Array.isArray(top.directional) ? top.directional : []}
-            />
+            {analysisBlocks.map((block) => (
+              <TableBlock key={block.title} {...block} />
+            ))}
           </div>
         </div>
       </div>

@@ -795,7 +795,9 @@ function tradesSourceIdFromRow(row = {}) {
 
 function tradesStrategyLabelFromRow(row = {}) {
   const raw = row.raw_json || {};
-  return text(row.strategy || raw.strategy);
+  const strategy = text(row.strategy || raw.strategy);
+  const prefix = strategy.split(/[.#]/, 1)[0];
+  return prefix.replace(/[^a-z0-9]+/gi, "").toLowerCase();
 }
 
 function tradesStrategyDaysPresetFromRow(row = {}) {
