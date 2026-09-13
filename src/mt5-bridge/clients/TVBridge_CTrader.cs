@@ -22,7 +22,7 @@ namespace cAlgo.Robots
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class TVBridgeCBot : Robot
     {
-        private const string BuildVersion = "v2026.09.13 15:30 UTC - no-synthetic-events";
+        private const string BuildVersion = "v2026.09.13 20:05 UTC - inside-candle-filter";
         private const string BridgeSourceId = "Ctrader";
         private const string BridgeSourceType = "ctrader_bridge";
         private const int TransientErrorLogThresholdCount = 10;
@@ -27597,6 +27597,15 @@ namespace cAlgo.Robots
             out bool matchesDirectionless,
             out string shortLabel)
         {
+            if (ShouldIgnoreInsidePreviousCandleEvent(option, sourceBars, latestClosedIndex))
+            {
+                matchesBullish = false;
+                matchesBearish = false;
+                matchesDirectionless = false;
+                shortLabel = "";
+                return false;
+            }
+
             StrategyCustomEventOption followUpBaseOption;
             if (TryMapStrategyFollowUpEventOption(option, out followUpBaseOption, out _))
             {
@@ -27629,6 +27638,39 @@ namespace cAlgo.Robots
                 out matchesBearish,
                 out matchesDirectionless,
                 out shortLabel);
+        }
+
+        private bool ShouldIgnoreInsidePreviousCandleEvent(
+            StrategyCustomEventOption option,
+            Bars sourceBars,
+            int evaluationBarIndex)
+        {
+            if (!string.Equals(GetTradeTriggerFamily(option), "candle", StringComparison.OrdinalIgnoreCase) ||
+                sourceBars == null)
+                return false;
+
+            var candleBarIndex = TryMapStrategyFollowUpEventOption(option, out _, out _)
+                ? evaluationBarIndex - 1
+                : evaluationBarIndex;
+            if (candleBarIndex < 1 || candleBarIndex >= sourceBars.Count)
+                return false;
+
+            return IsFullyInsidePreviousCandle(
+                sourceBars.HighPrices[candleBarIndex - 1],
+                sourceBars.LowPrices[candleBarIndex - 1],
+                sourceBars.HighPrices[candleBarIndex],
+                sourceBars.LowPrices[candleBarIndex]);
+        }
+
+        private bool IsFullyInsidePreviousCandle(
+            double previousHigh,
+            double previousLow,
+            double currentHigh,
+            double currentLow)
+        {
+            return IsFiniteNumber(previousHigh) && IsFiniteNumber(previousLow) &&
+                IsFiniteNumber(currentHigh) && IsFiniteNumber(currentLow) &&
+                currentHigh <= previousHigh && currentLow >= previousLow;
         }
 
         private bool TryEvaluateStrategyCustomEventOptionCore(
@@ -28479,6 +28521,12 @@ namespace cAlgo.Robots
 
         private void ValidateCombinedEventNameContracts()
         {
+            if (!IsFullyInsidePreviousCandle(110, 90, 108, 92) ||
+                !IsFullyInsidePreviousCandle(110, 90, 110, 90) ||
+                IsFullyInsidePreviousCandle(110, 90, 111, 92) ||
+                IsFullyInsidePreviousCandle(110, 90, 108, 89))
+                throw new InvalidOperationException("Inside-candle event exclusion contract failed.");
+
             var triggers = new[]
             {
                 new TradeTriggerEvent { Name = "m5.eng↑", Family = "candle", Option = StrategyCustomEventOption.Eng_Engulfing, IsBullish = true, Priority = 80 },
