@@ -22,7 +22,7 @@ namespace cAlgo.Robots
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class TVBridgeCBot : Robot
     {
-        private const string BuildVersion = "v2026.09.13 07:32 UTC - compact-all-event-names";
+        private const string BuildVersion = "v2026.09.13 07:53 UTC - purge-stale-event-render";
         private const string BridgeSourceId = "Ctrader";
         private const string BridgeSourceType = "ctrader_bridge";
         private const int TransientErrorLogThresholdCount = 10;
@@ -8161,7 +8161,8 @@ namespace cAlgo.Robots
                 "KZ_", "LIQ_", "SWEEP_", "BOS_", "CHOCH_", "RJ_", "BR_", "PB_", "CT_", "IM_",
                 "EMA20_", "EMA50_", "EMA200_", "PIN_", "ENG_", "STR_", "SEQ_", "BIG_",
                 "FVG_", "OB_", "HTF_FVG_", "HTF_OB_", "KEY_", "ZONE_TXT_", "STRAT_", "TL_", "TLR_", "DIV_",
-                "PAT_", "TECH_", "HTFBG_", "HTFBOX_", "CANDLE_CFL", "PZ_", "TRG_", "RAW_EVT_", "TRG_ART_", "AUTO_PREVIEW_", "TRADE_PREVIEW_");
+                "PAT_", "TECH_", "HTFBG_", "HTFBOX_", "CANDLE_CFL", "PZ_", "TRG_", "RAW_EVT_", "TRG_ART_",
+                "TRADE_TRIGGER_", "TRADEH_", "AUTO_PREVIEW_", "TRADE_PREVIEW_");
         }
 
         // True once the per-refresh chart object budget is reached; the heavy overlay
@@ -19548,6 +19549,7 @@ namespace cAlgo.Robots
             var symbolName = !string.IsNullOrWhiteSpace(Chart.SymbolName) ? Chart.SymbolName : Symbol.Name;
             var chartStartTime = Bars.OpenTimes[0];
             var chartEndTime = GetCurrentChartEndTime();
+            var reconstructedTriggersByFrame = new Dictionary<int, List<TradeTriggerEvent>>();
             var persistedGroups = _strategyChartMarkers
                 .Where(marker => marker.Kind == StrategyMarkerKind.Trigger)
                 .Where(marker => string.Equals(marker.SymbolName, symbolName, StringComparison.OrdinalIgnoreCase))
@@ -19589,6 +19591,23 @@ namespace cAlgo.Robots
                     continue;
 
                 var isBullish = marker.TradeType == TradeType.Buy;
+                List<TradeTriggerEvent> reconstructedFrameTriggers;
+                if (!reconstructedTriggersByFrame.TryGetValue(sourceMinutes, out reconstructedFrameTriggers))
+                {
+                    var visualLookbackBars = ResolveWorkingLookbackBars(sourceBars, sourceTimeFrame);
+                    reconstructedFrameTriggers = CollectTradeTriggerCandidates(
+                            symbolName,
+                            sourceTimeFrame,
+                            visualLookbackBars,
+                            true)
+                        .Where(trigger => IsCombinedTradeTriggerFamily(trigger.Family))
+                        .ToList();
+                    reconstructedTriggersByFrame[sourceMinutes] = reconstructedFrameTriggers;
+                }
+                var reconstructedMarkerTriggers = reconstructedFrameTriggers
+                    .Where(trigger => trigger.BarTime == marker.Time)
+                    .Where(trigger => trigger.IsBullish == isBullish && !trigger.IsDirectionless)
+                    .ToList();
                 var color = WithAlpha(GetDirectionalEventColor(isBullish), 255);
                 DrawPatternRangeBox(
                     "TRG_SAVED_" + GetMiniChartLabel(sourceTimeFrame) + "_" + objectIndex.ToString(CultureInfo.InvariantCulture),
@@ -19612,9 +19631,17 @@ namespace cAlgo.Robots
                     wickPrice,
                     labelFontSize,
                     eventBarRange);
-                var labelText = string.IsNullOrWhiteSpace(marker.Text)
-                    ? BuildCanonicalEventName(sourceTimeFrame, "trigger", isBullish)
-                    : marker.Text;
+                // Never redraw the immutable broker comment text verbatim: positions opened
+                // by an older build retain their old combined event name. Reconstruct with
+                // the current formatter, or use a neutral trigger label when the historical
+                // detector can no longer reproduce that event.
+                var labelText = reconstructedMarkerTriggers.Count > 0
+                    ? BuildCombinedTradeTriggerEventName(
+                        sourceTimeFrame,
+                        reconstructedMarkerTriggers,
+                        GetSelectedStrategyCustomEventOptions(),
+                        isBullish)
+                    : BuildCanonicalEventName(sourceTimeFrame, "trigger", isBullish);
                 var label = Chart.DrawText(
                     "TRG_SAVED_TXT_" + GetMiniChartLabel(sourceTimeFrame) + "_" + objectIndex.ToString(CultureInfo.InvariantCulture),
                     labelText,
