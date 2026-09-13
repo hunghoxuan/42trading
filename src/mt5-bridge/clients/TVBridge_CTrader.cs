@@ -22,7 +22,7 @@ namespace cAlgo.Robots
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class TVBridgeCBot : Robot
     {
-        private const string BuildVersion = "v2026.09.13 07:19 UTC - 81abc273";
+        private const string BuildVersion = "v2026.09.13 07:32 UTC - compact-all-event-names";
         private const string BridgeSourceId = "Ctrader";
         private const string BridgeSourceType = "ctrader_bridge";
         private const int TransientErrorLogThresholdCount = 10;
@@ -19494,12 +19494,6 @@ namespace cAlgo.Robots
                         wickPrice,
                         labelFontSize,
                         eventBarRange);
-                    var distinctNames = sameBarTriggers
-                        .Select(trigger => StripEventConfluenceSuffix(trigger.Name))
-                        .Where(name => !string.IsNullOrWhiteSpace(name))
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .ToList();
-                    var supportingCount = Math.Max(0, GetTradeTriggerGroupTotalCount(sameBarTriggers) - 1);
                     var labelText = isTradeEvent
                         ? BuildAcceptedCombinedTradeTriggerEventName(
                             symbolName,
@@ -19510,9 +19504,14 @@ namespace cAlgo.Robots
                             sameBarTriggers,
                             selectedOptions,
                             primary.IsBullish)
-                        : distinctNames.Count == 0
-                            ? BuildCanonicalEventName(sourceTimeFrame, "trigger", primary.IsBullish)
-                            : string.Join(".", distinctNames);
+                        // Raw/All labels must obey the same compact naming contract as
+                        // trade-qualified labels. The old path joined every same-bar name
+                        // with dots, producing very long labels on busy momentum bars.
+                        : BuildCombinedTradeTriggerEventName(
+                            sourceTimeFrame,
+                            sameBarTriggers,
+                            selectedOptions,
+                            primary.IsBullish);
                     var label = Chart.DrawText(
                         (isTradeEvent ? "TRG_TXT_" : "RAW_EVT_TXT_") + GetMiniChartLabel(sourceTimeFrame) + "_" + objectIndex.ToString(CultureInfo.InvariantCulture),
                         labelText,
