@@ -28361,8 +28361,8 @@ namespace cAlgo.Robots
         private static int GetTradeTriggerFamilyDisplayOrder(string family)
         {
             if (string.Equals(family, "candle", StringComparison.OrdinalIgnoreCase)) return 0;
-            if (string.Equals(family, "structure", StringComparison.OrdinalIgnoreCase)) return 1;
-            if (string.Equals(family, "momentum", StringComparison.OrdinalIgnoreCase)) return 2;
+            if (string.Equals(family, "momentum", StringComparison.OrdinalIgnoreCase)) return 1;
+            if (string.Equals(family, "structure", StringComparison.OrdinalIgnoreCase)) return 2;
             return 3;
         }
 
