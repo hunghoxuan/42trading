@@ -965,7 +965,7 @@ namespace cAlgo.Robots
             Big_BigCandle,
             [Description("har - Harami")]
             Har_Harami,
-            [Description("— Any Technical Event")]
+            [Description("— Any Momentum Event")]
             __AnyTechnicalEvent,
             [Description("r.ema - EMA Rejection")]
             EmaPb_EMAPullbackReclaim,
@@ -2272,12 +2272,11 @@ namespace cAlgo.Robots
         public StructureEventToggleMode DrawDivergenceEvents { get; set; }
 
 
-        // Candle patterns are only actionable when they react to an important market
-        // structure reference. Keep this gate separate from the named structure-event
-        // switches because it also supplies the matched artifact used by canonical names
-        // such as h4.r.ob.
-        [Parameter("Confluence with", Group = "Candles", DefaultValue = CandleConfluenceMode.All_touch)]
-        public CandleConfluenceMode CandleConfluenceWith { get; set; }
+        // Candle patterns are an independent event family. Artifact interaction belongs to
+        // the structure family and is combined later when both events finish on the same bar.
+        // Keep a fixed internal value so older saved parameter sets remain loadable without
+        // exposing the removed "Confluence with" gate in the cTrader parameter panel.
+        private CandleConfluenceMode CandleConfluenceWith { get { return CandleConfluenceMode.None; } }
 
         [Parameter("Mor - Morning Star", Group = "Candles", DefaultValue = CandlePatternToggleMode.Yes)]
         public CandlePatternToggleMode DrawMorningStarPatterns { get; set; }
@@ -4237,7 +4236,9 @@ namespace cAlgo.Robots
 
         private bool ShouldRunStrategiesOnTickEvent()
         {
-            return false;
+            // Native timers advance in wall-clock time, so a fast backtest can finish before
+            // even one timer callback. Drive the scheduler from simulated ticks in backtests.
+            return IsBacktestingRuntime();
         }
 
         private bool ShouldRunStrategySchedulerNow()
@@ -12356,12 +12357,84 @@ namespace cAlgo.Robots
             var barTime = sourceBars.OpenTimes[barIndex];
             var requiredScanBars = Math.Max(1, (sourceBars.Count - 2) - barIndex + 1);
             var effectiveScanBars = scanBars > 0 ? Math.Max(scanBars, requiredScanBars) : 0;
-            var matching = CollectTradeTriggerCandidates(symbolName, timeFrame, effectiveScanBars)
+            // Detection/naming is independent from Trigger eligibility. Resolve every enabled
+            // candle, structure and momentum event on this bar first; the selected Trigger
+            // options are evaluated later by BuildSelectedTriggerOptionStates (AND/OR).
+            var matching = CollectTradeTriggerCandidates(symbolName, timeFrame, effectiveScanBars, true)
                 .Where(trigger => !trigger.IsDirectionless)
                 .Where(trigger => trigger.BarTime == barTime)
-                .Where(trigger => selected.Any(selection => TradeTriggerMatchesSelectedOption(trigger, selection)))
+                .Where(trigger => IsCombinedTradeTriggerFamily(trigger.Family))
                 .ToList();
-            return ApplyMinimumConfluenceFilter(matching);
+            var qualityMatches = matching
+                .Where(IsEnabledNamedArtifactTrigger)
+                .Where(trigger => IsCanonicalArtifactValidAtEventBar(sourceBars, trigger))
+                .Where(trigger => IsHighQualityDirectionalTradeTrigger(symbolName, sourceBars, trigger))
+                .Where(trigger => PassesNamedConfluences(symbolName, sourceBars, trigger))
+                .ToList();
+            var directionResolved = ResolveSingleDirectionTradeTriggers(
+                symbolName,
+                sourceBars,
+                timeFrame,
+                qualityMatches);
+            return ApplyMinimumConfluenceFilter(directionResolved
+                .Where(trigger => PassesBarDirectionConfluence(sourceBars, trigger)));
+        }
+
+        private static bool IsCombinedTradeTriggerFamily(string family)
+        {
+            return string.Equals(family, "candle", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(family, "structure", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(family, "momentum", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private List<TradeTriggerEvent> CollectCombinedTradeTriggerNameCandidatesAtBar(
+            string symbolName,
+            TimeFrame timeFrame,
+            Bars sourceBars,
+            int barIndex,
+            int scanBars,
+            bool bullish)
+        {
+            if (sourceBars == null || barIndex < 1 || barIndex > sourceBars.Count - 2)
+                return new List<TradeTriggerEvent>();
+
+            var barTime = sourceBars.OpenTimes[barIndex];
+            var requiredScanBars = Math.Max(1, (sourceBars.Count - 2) - barIndex + 1);
+            var effectiveScanBars = scanBars > 0 ? Math.Max(scanBars, requiredScanBars) : 0;
+            // Naming is a description of everything detected on an accepted bar. Do not
+            // apply trade eligibility gates here: Trigger AND/OR, named confluences and the
+            // minimum-count rule decide whether the bar is accepted, not which same-bar
+            // candle/structure/momentum operands are allowed to appear in its final name.
+            return CollectTradeTriggerCandidates(symbolName, timeFrame, effectiveScanBars, true)
+                .Where(trigger => !trigger.IsDirectionless)
+                .Where(trigger => trigger.BarTime == barTime)
+                .Where(trigger => trigger.IsBullish == bullish)
+                .Where(trigger => IsCombinedTradeTriggerFamily(trigger.Family))
+                .ToList();
+        }
+
+        private string BuildAcceptedCombinedTradeTriggerEventName(
+            string symbolName,
+            TimeFrame sourceTimeFrame,
+            Bars sourceBars,
+            int barIndex,
+            int scanBars,
+            IEnumerable<TradeTriggerEvent> acceptedTriggerSequence,
+            IEnumerable<StrategyCustomEventOption> selectedOptions,
+            bool bullish)
+        {
+            var namingTriggers = CollectCombinedTradeTriggerNameCandidatesAtBar(
+                symbolName,
+                sourceTimeFrame,
+                sourceBars,
+                barIndex,
+                scanBars,
+                bullish);
+            return BuildCombinedTradeTriggerEventName(
+                sourceTimeFrame,
+                namingTriggers.Count > 0 ? namingTriggers : acceptedTriggerSequence,
+                selectedOptions,
+                bullish);
         }
 
         private bool IsHighQualityDirectionalTradeTrigger(string symbolName, Bars sourceBars, TradeTriggerEvent trigger)
@@ -12369,40 +12442,8 @@ namespace cAlgo.Robots
             if (trigger.IsDirectionless || sourceBars == null)
                 return false;
 
-            // Candle geometry alone is intentionally not enough for a trigger. Reuse the
-            // same volume, confluence and reversal-wick gates formerly applied only by the
-            // visual collector so execution and rendering accept the same pattern event.
-            if (string.Equals(trigger.Family, "candle", StringComparison.OrdinalIgnoreCase))
-            {
-                if (!IsCandleMovementScopeEnabled(ResolveCandleMovementCode(trigger.Name), trigger.SourceTimeFrame))
-                    return false;
-
-                var barIndex = ResolveSourceBarIndex(sourceBars, trigger.BarTime);
-                StrategyCustomEventOption baseOption;
-                StrategyEventFollowUpOutcome followUpOutcome;
-                var isFollowUp = TryMapStrategyFollowUpEventOption(trigger.Option, out baseOption, out followUpOutcome);
-                if (!isFollowUp)
-                    baseOption = trigger.Option;
-                var patternIndex = isFollowUp ? barIndex - 1 : barIndex;
-                var patternSpan = Math.Max(1, GetCustomEventPatternBarSpan(baseOption));
-                if (!IsValidBarIndex(sourceBars, patternIndex) ||
-                    !HasEventVolumeSurge(sourceBars, patternIndex, patternSpan))
-                    return false;
-                List<CandleConfluenceMatch> confluenceMatches;
-                if (!ShouldKeepCandlePatternInline(
-                        sourceBars,
-                        trigger.SourceTimeFrame,
-                        patternIndex,
-                        trigger.IsBullish,
-                        out confluenceMatches,
-                        symbolName,
-                        ResolveLoadedSymbol(symbolName)))
-                    return false;
-                if (RequiresDirectionalReversalWick(baseOption) &&
-                    !HasDirectionalReversalWick(sourceBars, patternIndex, trigger.IsBullish))
-                    return false;
-            }
-
+            // Pattern formation is the candle-family event. Structure touch/reaction,
+            // volume and momentum are independent families or named confluence gates.
             return true;
         }
 
@@ -12739,31 +12780,9 @@ namespace cAlgo.Robots
             if (!string.IsNullOrWhiteSpace(specialEventName))
                 name = specialEventName;
 
-            // Candle visuals and trade comments must identify the same movement. The precise
-            // pattern remains internal; the canonical event exposes only rejection/reversal
-            // (`r`) or breakout/impulse (`b`) plus the reacted artifact.
-            if (!directionless && GetCustomEventPatternBarSpan(baseOption) > 0)
-            {
-                var patternIndex = isFollowUp && barIndex > 0 ? barIndex - 1 : barIndex;
-                List<CandleConfluenceMatch> confluenceMatches;
-                if (ShouldKeepCandlePatternInline(
-                    sourceBars,
-                    timeFrame,
-                    patternIndex,
-                    bullish,
-                    out confluenceMatches,
-                    symbolName,
-                    ResolveLoadedSymbol(symbolName)))
-                {
-                    confluenceCount = confluenceMatches
-                        .Count(item => item != null && IsValidCandleConfluenceTimeFrame(timeFrame, item.SourceTimeFrame));
-                    name = FormatCanonicalCandlePatternEventName(
-                        timeFrame,
-                        normalizedLabel,
-                        bullish,
-                        confluenceMatches);
-                }
-            }
+            // Candle identity stays independent. A same-bar structure reaction is emitted by
+            // the structure detector and combined with this pattern later (for example
+            // m5.pin + m5.r.tl => m5.pin.r.tl).
 
             return new TradeTriggerEvent
             {
@@ -12789,8 +12808,8 @@ namespace cAlgo.Robots
             StrategyEventFollowUpOutcome outcome;
             if (!TryMapStrategyFollowUpEventOption(option, out baseOption, out outcome))
                 baseOption = option;
-            // These reuse canonical structure records internally, but they are technical
-            // triggers in the public selector and must match "Any Technical Event".
+            // These reuse canonical structure records internally, but remain standalone
+            // technical triggers rather than momentum events.
             if (baseOption == StrategyCustomEventOption.EmaPb_EMAPullbackReclaim ||
                 baseOption == StrategyCustomEventOption.VwapCt_VWAPContinuationReclaim)
                 return "technical";
@@ -12803,8 +12822,27 @@ namespace cAlgo.Robots
             string artifactKind;
             if (TryMapStrategyArtifactReactionEventOption(baseOption, out canonicalType, out artifactKind, out label)) return "structure";
             if (GetCustomEventPatternBarSpan(baseOption) > 0) return "candle";
+            if (IsMomentumCustomEventOption(baseOption)) return "momentum";
             if (IsIndicatorCustomEventOption(baseOption)) return "technical";
             return "context";
+        }
+
+        private static bool IsMomentumCustomEventOption(StrategyCustomEventOption option)
+        {
+            switch (option)
+            {
+                case StrategyCustomEventOption.R50_RsiMidlineCross:
+                case StrategyCustomEventOption.Ros_RsiExitOversold:
+                case StrategyCustomEventOption.Rob_RsiExitOverbought:
+                case StrategyCustomEventOption.Stx_StochCross:
+                case StrategyCustomEventOption.Sto_StochExitExtreme:
+                case StrategyCustomEventOption.Mdx_MacdSignalCross:
+                case StrategyCustomEventOption.Md0_MacdZeroCross:
+                case StrategyCustomEventOption.Div_Divergence:
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         // Detection and chart history must be invariant when the user changes the active
@@ -13882,11 +13920,39 @@ namespace cAlgo.Robots
             if (!IsValidBarIndex(sourceBars, barIndex))
                 return false;
 
+            // Cross-family conflicts are deterministic: momentum wins over structure,
+            // structure wins over candle. Only selected candidates are supplied by the
+            // custom_trade resolver, so an unrelated enabled detector cannot take control.
+            var directionalEvents = (reactionEvents ?? Enumerable.Empty<TradeTriggerEvent>())
+                .Where(item => !item.IsDirectionless)
+                .ToList();
+            var priorityScope = directionalEvents;
+            foreach (var family in new[] { "momentum", "structure", "candle" })
+            {
+                var familyEvents = directionalEvents
+                    .Where(item => string.Equals(item.Family, family, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                if (familyEvents.Count == 0)
+                    continue;
+
+                var familyDirections = familyEvents.Select(item => item.IsBullish).Distinct().ToList();
+                if (familyDirections.Count == 1)
+                {
+                    isBullish = familyDirections[0];
+                    return true;
+                }
+
+                // A conflict inside the winning family falls through to the established
+                // price-path/wick/bar-direction tie breakers below.
+                priorityScope = familyEvents;
+                break;
+            }
+
             // Highest-priority rule: when opposing reacted artifacts occur inside one candle,
             // the last level reached along that candle's body direction decides the result.
             // A bearish candle travels high-to-low, so its lowest reacted price is last; a
             // bullish candle travels low-to-high, so its highest reacted price is last.
-            var orderedReactions = (reactionEvents ?? Enumerable.Empty<TradeTriggerEvent>())
+            var orderedReactions = priorityScope
                 .Where(item => !item.IsDirectionless && item.HasCanonicalEvent &&
                     IsFiniteNumber(item.CanonicalEvent.PriceRef) && item.CanonicalEvent.PriceRef > 0)
                 .ToList();
@@ -13916,7 +13982,11 @@ namespace cAlgo.Robots
                 }
             }
 
-            var patterns = (patternDirections ?? Enumerable.Empty<bool>()).Distinct().ToList();
+            var patterns = priorityScope
+                .Where(item => string.Equals(item.Family, "candle", StringComparison.OrdinalIgnoreCase))
+                .Select(item => item.IsBullish)
+                .Distinct()
+                .ToList();
 
             // A single candle-pattern direction is authoritative for the closed bar.
             if (patterns.Count == 1)
@@ -13925,7 +13995,7 @@ namespace cAlgo.Robots
                 return true;
             }
 
-            var events = (eventDirections ?? Enumerable.Empty<bool>()).Distinct().ToList();
+            var events = priorityScope.Select(item => item.IsBullish).Distinct().ToList();
             if (patterns.Count == 0 && events.Count == 1)
             {
                 isBullish = events[0];
@@ -16999,7 +17069,7 @@ namespace cAlgo.Robots
             bool forceTouch = false)
         {
             matches = new List<CandleConfluenceMatch>();
-            if (CandleConfluenceWith == CandleConfluenceMode.None)
+            if (CandleConfluenceWith == CandleConfluenceMode.None && !forceTouch)
                 return true;
 
             var confluenceSymbol = symbolOverride ?? Symbol;
@@ -17260,7 +17330,8 @@ namespace cAlgo.Robots
                 out matches,
                 symbolName,
                 ResolveLoadedSymbol(symbolName),
-                CandleArtifactMatchMode.EarlyRejection);
+                CandleArtifactMatchMode.EarlyRejection,
+                true);
             // Unlike a plain candle-pattern gate, `xr` is defined by an attached artifact.
             // Candle Confluence=None therefore cannot produce an artifact-less XR event.
             return matched && matches != null && matches.Count > 0;
@@ -19280,24 +19351,16 @@ namespace cAlgo.Robots
                         .Where(trigger => !trigger.IsDirectionless)
                         .ToList()
                     : new List<TradeTriggerEvent>();
-                var tradeTriggers = showTradeEvents
-                    ? ApplyMinimumConfluenceFilter(CollectTradeTriggerCandidates(symbolName, sourceTimeFrame, visualLookbackBars)
+                var selectedRawTriggers = showTradeEvents
+                    ? CollectTradeTriggerCandidates(symbolName, sourceTimeFrame, visualLookbackBars, true)
                         .Where(trigger => !trigger.IsDirectionless)
                         .Where(trigger => selectedOptions.Count == 0 ||
-                            selectedOptions.Any(option => TradeTriggerMatchesSelectedOption(trigger, option))))
+                            selectedOptions.Any(option => TradeTriggerMatchesSelectedOption(trigger, option)))
+                        .ToList()
                     : new List<TradeTriggerEvent>();
-                var visibleTriggers = showRawEvents ? rawTriggers : tradeTriggers;
-                var tradeTriggerGroups = tradeTriggers
-                    .GroupBy(trigger => string.Format(
-                        CultureInfo.InvariantCulture,
-                        "{0}|{1}",
-                        trigger.BarTime.Ticks,
-                        trigger.IsBullish ? "B" : "S"))
-                    .ToDictionary(group => group.Key, group => group
-                        .OrderByDescending(trigger => trigger.IsDirectionRepresentative)
-                        .ThenByDescending(trigger => trigger.Priority)
-                        .ThenBy(trigger => trigger.Name)
-                        .ToList());
+                var visibleTriggers = showRawEvents
+                    ? rawTriggers.Concat(selectedRawTriggers).ToList()
+                    : selectedRawTriggers;
                 var strategyEvaluationBudget = eventLimit < 0
                     ? 24
                     : Math.Max(8, Math.Min(32, eventLimit * 4));
@@ -19326,9 +19389,19 @@ namespace cAlgo.Robots
                         "{0}|{1}",
                         primaryRaw.BarTime.Ticks,
                         primaryRaw.IsBullish ? "B" : "S");
-                    List<TradeTriggerEvent> qualifiedGroup = null;
-                    var isTradeEvent = showTradeEvents &&
-                        tradeTriggerGroups.TryGetValue(groupKey, out qualifiedGroup) &&
+                    var rawBarIndex = ResolveSourceBarIndex(sourceBars, primaryRaw.BarTime);
+                    var qualifiedGroup = showTradeEvents && IsValidBarIndex(sourceBars, rawBarIndex)
+                        ? CollectSelectedStrategyTriggerCandidatesAtBar(
+                            symbolName,
+                            sourceTimeFrame,
+                            sourceBars,
+                            rawBarIndex,
+                            selectedOptions,
+                            visualLookbackBars)
+                            .Where(trigger => trigger.IsBullish == primaryRaw.IsBullish)
+                            .ToList()
+                        : new List<TradeTriggerEvent>();
+                    var isTradeEvent = qualifiedGroup.Count > 0 &&
                         ShouldDisplayResolvedStrategySignalBar(
                             symbolName,
                             sourceBars,
@@ -19427,11 +19500,19 @@ namespace cAlgo.Robots
                         .Distinct(StringComparer.OrdinalIgnoreCase)
                         .ToList();
                     var supportingCount = Math.Max(0, GetTradeTriggerGroupTotalCount(sameBarTriggers) - 1);
-                    var labelText = distinctNames.Count == 0
-                        ? BuildCanonicalEventName(sourceTimeFrame, "trigger", primary.IsBullish)
-                        : distinctNames[0] + (supportingCount > 0
-                            ? " +" + supportingCount.ToString(CultureInfo.InvariantCulture)
-                            : "");
+                    var labelText = isTradeEvent
+                        ? BuildAcceptedCombinedTradeTriggerEventName(
+                            symbolName,
+                            sourceTimeFrame,
+                            sourceBars,
+                            barIndex,
+                            visualLookbackBars,
+                            sameBarTriggers,
+                            selectedOptions,
+                            primary.IsBullish)
+                        : distinctNames.Count == 0
+                            ? BuildCanonicalEventName(sourceTimeFrame, "trigger", primary.IsBullish)
+                            : string.Join(".", distinctNames);
                     var label = Chart.DrawText(
                         (isTradeEvent ? "TRG_TXT_" : "RAW_EVT_TXT_") + GetMiniChartLabel(sourceTimeFrame) + "_" + objectIndex.ToString(CultureInfo.InvariantCulture),
                         labelText,
@@ -24347,7 +24428,11 @@ namespace cAlgo.Robots
             ValidateSyncEngineContracts();
             ValidateChartEngineContracts();
             _startedAtUtc = DateTime.UtcNow;
-            _startupWarmupUntilUtc = _startedAtUtc.AddSeconds(12);
+            // A backtest can simulate days before 12 wall-clock seconds elapse. Applying the
+            // live startup warmup there suppresses every historical strategy evaluation.
+            _startupWarmupUntilUtc = IsBacktestingRuntime()
+                ? DateTime.MinValue
+                : _startedAtUtc.AddSeconds(12);
             _startupWarmupAnnounced = false;
             _lastStopReason = "running";
             if (DisableBridgeRuntimeForIsolation)
@@ -24751,7 +24836,9 @@ namespace cAlgo.Robots
             if (IsStartupWarmupActive())
                 return;
 
-            if (ShouldStrategyEngineRun() && ShouldRunStrategiesOnTickEvent())
+            if (ShouldStrategyEngineRun() &&
+                ShouldRunStrategiesOnTickEvent() &&
+                ShouldRunStrategySchedulerNow())
             {
                 if (TryRunBacktestStrategy())
                     MarkStrategySchedulerSlotProcessed();
@@ -27611,17 +27698,10 @@ namespace cAlgo.Robots
             var index = latestClosedIndex;
             if (option == StrategyCustomEventOption.__AnyTechnicalEvent)
             {
+                // The umbrella is now specifically momentum. EMA/VWAP/Bollinger price
+                // interactions remain individually selectable technical events.
                 var technicalOptions = new[]
                 {
-                    StrategyCustomEventOption.EmaPb_EMAPullbackReclaim,
-                    StrategyCustomEventOption.VwapCt_VWAPContinuationReclaim,
-                    StrategyCustomEventOption.Pxe_PriceEmaCross,
-                    StrategyCustomEventOption.Emx_EmaFastMidCross,
-                    StrategyCustomEventOption.Emt_EmaMidSlowCross,
-                    StrategyCustomEventOption.Vwx_PriceVwapCross,
-                    StrategyCustomEventOption.Vwr_VwapRejection,
-                    StrategyCustomEventOption.Bbx_BollingerMidCross,
-                    StrategyCustomEventOption.Bbr_BollingerBandReject,
                     StrategyCustomEventOption.R50_RsiMidlineCross,
                     StrategyCustomEventOption.Ros_RsiExitOversold,
                     StrategyCustomEventOption.Rob_RsiExitOverbought,
@@ -27857,6 +27937,7 @@ namespace cAlgo.Robots
                 case CanonicalEventType.SweepReclaim:
                 case CanonicalEventType.Rejection:
                 case CanonicalEventType.Breakout:
+                    return true;
                 default:
                     return false;
             }
@@ -28145,7 +28226,15 @@ namespace cAlgo.Robots
                 TradeTriggerEvent primaryTrigger;
                 if (!TryResolvePrimaryTradeTrigger(primaryTriggerSequence, selectedOptions, preferredBullish, out primaryTrigger))
                     return false;
-                sourceLabel = primaryTrigger.Name;
+                sourceLabel = BuildAcceptedCombinedTradeTriggerEventName(
+                    symbolName,
+                    strategyTimeFrame,
+                    sourceBars,
+                    strategyBarIndex,
+                    scanBars,
+                    primaryTriggerSequence,
+                    selectedOptions,
+                    preferredBullish);
                 signalTime = primaryTrigger.BarTime;
                 note = string.Format(
                     CultureInfo.InvariantCulture,
@@ -28153,7 +28242,7 @@ namespace cAlgo.Robots
                     SelectedStrategyCustomEventsMode,
                     sourceLabel,
                     string.IsNullOrWhiteSpace(rulesLabel) ? "" : ";rules=" + rulesLabel);
-                eventSlDistance = primaryTrigger.StopDistance;
+                eventSlDistance = ResolveTradeTriggerStopDistance(primaryTriggerSequence, selectedOptions, preferredBullish);
                 return true;
             }
 
@@ -28215,7 +28304,15 @@ namespace cAlgo.Robots
             TradeTriggerEvent resolvedPrimaryTrigger;
             if (!TryResolvePrimaryTradeTrigger(primaryTriggerSequence, selectedOptions, resolvedBullish, out resolvedPrimaryTrigger))
                 return false;
-            sourceLabel = resolvedPrimaryTrigger.Name;
+            sourceLabel = BuildAcceptedCombinedTradeTriggerEventName(
+                symbolName,
+                strategyTimeFrame,
+                sourceBars,
+                strategyBarIndex,
+                scanBars,
+                primaryTriggerSequence,
+                selectedOptions,
+                resolvedBullish);
             signalTime = resolvedPrimaryTrigger.BarTime;
             var resolvedRulesLabel = resolvedBullish ? bullishRulesLabel : bearishRulesLabel;
             note = string.Format(
@@ -28224,8 +28321,49 @@ namespace cAlgo.Robots
                 SelectedStrategyCustomEventsMode,
                 sourceLabel,
                 string.IsNullOrWhiteSpace(resolvedRulesLabel) ? "" : ";rules=" + resolvedRulesLabel);
-            eventSlDistance = resolvedPrimaryTrigger.StopDistance;
+            eventSlDistance = ResolveTradeTriggerStopDistance(primaryTriggerSequence, selectedOptions, resolvedBullish);
             return true;
+        }
+
+        private string BuildCombinedTradeTriggerEventName(
+            TimeFrame sourceTimeFrame,
+            IEnumerable<TradeTriggerEvent> triggerSequence,
+            IEnumerable<StrategyCustomEventOption> selectedOptions,
+            bool bullish)
+        {
+            var frameLabel = GetMiniChartLabel(sourceTimeFrame).Trim().ToLowerInvariant();
+            var operands = new List<string>();
+            foreach (var trigger in (triggerSequence ?? Enumerable.Empty<TradeTriggerEvent>())
+                .Where(item => !item.IsDirectionless && item.IsBullish == bullish)
+                .Where(item => IsCombinedTradeTriggerFamily(item.Family))
+                .OrderBy(item => GetTradeTriggerFamilyDisplayOrder(item.Family))
+                .ThenByDescending(item => item.Priority)
+                .ThenByDescending(item => item.HasCanonicalEvent ? item.CanonicalEvent.Score : 0))
+            {
+                foreach (var rawPart in StripEventConfluenceSuffix(trigger.Name)
+                    .Split(new[] { '+' }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var part = rawPart.Trim().Replace("↑", "").Replace("↓", "");
+                    var prefix = frameLabel + ".";
+                    if (part.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                        part = part.Substring(prefix.Length);
+                    if (!string.IsNullOrWhiteSpace(part) &&
+                        !operands.Any(value => string.Equals(value, part, StringComparison.OrdinalIgnoreCase)))
+                        operands.Add(part.ToLowerInvariant());
+                }
+            }
+
+            return operands.Count == 0
+                ? frameLabel + ".event"
+                : frameLabel + "." + string.Join(".", operands);
+        }
+
+        private static int GetTradeTriggerFamilyDisplayOrder(string family)
+        {
+            if (string.Equals(family, "candle", StringComparison.OrdinalIgnoreCase)) return 0;
+            if (string.Equals(family, "structure", StringComparison.OrdinalIgnoreCase)) return 1;
+            if (string.Equals(family, "momentum", StringComparison.OrdinalIgnoreCase)) return 2;
+            return 3;
         }
 
         private bool TryResolvePrimaryTradeTrigger(
@@ -28361,7 +28499,7 @@ namespace cAlgo.Robots
             string family;
             if (selectedName.StartsWith("__AnyStructureEvent", StringComparison.Ordinal)) family = "structure";
             else if (selectedName.StartsWith("__AnyCandlePattern", StringComparison.Ordinal)) family = "candle";
-            else if (selectedName.StartsWith("__AnyTechnicalEvent", StringComparison.Ordinal)) family = "technical";
+            else if (selectedName.StartsWith("__AnyTechnicalEvent", StringComparison.Ordinal)) family = "momentum";
             else return false;
             if (!string.Equals(trigger.Family, family, StringComparison.OrdinalIgnoreCase))
                 return false;
@@ -30150,12 +30288,6 @@ namespace cAlgo.Robots
                 GetSelectedStrategyCustomEventOptions(),
                 tradeType == TradeType.Buy,
                 out representativeTrigger);
-            if (hasRepresentativeTrigger)
-            {
-                sourceLabel = representativeTrigger.Name;
-                eventSlDistance = representativeTrigger.StopDistance;
-            }
-
             var candlePlan = default(CandlePatternSignalPlan);
             // A supporting candle pattern must not silently provide entry/SL while an
             // artifact reaction is advertised as the representative event.
@@ -30330,10 +30462,8 @@ namespace cAlgo.Robots
                 out primaryTrigger))
                 return;
 
-            // Keep the public label and the protection anchor tied to the same event that
-            // resolved this bar's direction. Never advertise a supporting event as primary.
-            if (signal.StrategyMode == BacktestStrategyMode.CustomTrade)
-                signal.SourceLabel = primaryTrigger.Name;
+            // The public custom_trade label was already composed from every selected event
+            // on this bar. Keep it intact while anchoring protection to the representative.
             ApplyRelatedOfficialZone(primaryTrigger, ref signal);
 
             // One setup can react to several artifacts on the same source candle (for
@@ -30971,8 +31101,6 @@ namespace cAlgo.Robots
                     return;
                 }
             }
-
-            AddCustomTradeTriggerMarker(symbolName, finalGateSignal);
 
             var symbol = ResolveLoadedSymbol(symbolName);
             if (symbol == null)
@@ -33657,8 +33785,6 @@ namespace cAlgo.Robots
                     return;
                 }
             }
-
-            AddCustomTradeTriggerMarker(symbolName, signal);
 
             string positionCapRejectReason;
             // Wait_confirm modifies its matching Now position; it does not create another
