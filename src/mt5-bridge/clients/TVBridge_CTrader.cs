@@ -22,7 +22,7 @@ namespace cAlgo.Robots
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class TVBridgeCBot : Robot
     {
-        private const string BuildVersion = "v2026.09.13 07:53 UTC - purge-stale-event-render";
+        private const string BuildVersion = "v2026.09.13 15:30 UTC - no-synthetic-events";
         private const string BridgeSourceId = "Ctrader";
         private const string BridgeSourceType = "ctrader_bridge";
         private const int TransientErrorLogThresholdCount = 10;
@@ -4393,9 +4393,6 @@ namespace cAlgo.Robots
 
         private void DeletePersistedAnalysisCacheFiles()
         {
-            if (!Is42TradeServerSyncEnabled())
-                return;
-
             var marketDataRoot = Path.Combine(GetBaseServerRootPath(), "data", "market_data");
             if (!Directory.Exists(marketDataRoot))
                 return;
@@ -10487,18 +10484,13 @@ namespace cAlgo.Robots
             {
                 var primary = triggerGroup[0];
                 var slotBars = slotBarsBySourceIndex[primary.BarIndex];
-                var names = triggerGroup.Select(item => StripEventConfluenceSuffix(item.Trigger.Name))
-                    .Where(name => !string.IsNullOrWhiteSpace(name))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-                var supportingCount = Math.Max(
-                    0,
-                    GetTradeTriggerGroupTotalCount(triggerGroup.Select(item => item.Trigger)) - 1);
-                var label = names.Count == 0
-                    ? BuildCanonicalEventName(sourceTimeFrame, "trigger", primary.Trigger.IsBullish)
-                    : names[0] + (supportingCount > 0
-                        ? " +" + supportingCount.ToString(CultureInfo.InvariantCulture)
-                        : "");
+                var label = BuildCombinedTradeTriggerEventName(
+                    sourceTimeFrame,
+                    triggerGroup.Select(item => item.Trigger),
+                    selectedOptions,
+                    primary.Trigger.IsBullish);
+                if (string.IsNullOrWhiteSpace(label))
+                    continue;
                 objectIndex = DrawMiniChartDirectionalMarker(
                     objectIndex,
                     sourceBars,
@@ -12364,7 +12356,8 @@ namespace cAlgo.Robots
             var matching = CollectTradeTriggerCandidates(symbolName, timeFrame, effectiveScanBars, true)
                 .Where(trigger => !trigger.IsDirectionless)
                 .Where(trigger => trigger.BarTime == barTime)
-                .Where(trigger => IsCombinedTradeTriggerFamily(trigger.Family))
+                .Where(trigger => IsCombinedTradeTriggerFamily(trigger.Family) ||
+                    string.Equals(trigger.Family, "technical", StringComparison.OrdinalIgnoreCase))
                 .ToList();
             var qualityMatches = matching
                 .Where(IsEnabledNamedArtifactTrigger)
@@ -12372,13 +12365,33 @@ namespace cAlgo.Robots
                 .Where(trigger => IsHighQualityDirectionalTradeTrigger(symbolName, sourceBars, trigger))
                 .Where(trigger => PassesNamedConfluences(symbolName, sourceBars, trigger))
                 .ToList();
+            // Technical detections support an already resolved candle/structure/momentum
+            // direction; they must not choose or reverse the direction themselves.
+            var directionalCandidates = qualityMatches
+                .Where(trigger => IsCombinedTradeTriggerFamily(trigger.Family))
+                .ToList();
             var directionResolved = ResolveSingleDirectionTradeTriggers(
                 symbolName,
                 sourceBars,
                 timeFrame,
-                qualityMatches);
-            return ApplyMinimumConfluenceFilter(directionResolved
-                .Where(trigger => PassesBarDirectionConfluence(sourceBars, trigger)));
+                directionalCandidates)
+                .Where(trigger => PassesBarDirectionConfluence(sourceBars, trigger))
+                .ToList();
+            var resolvedDirectionKeys = new HashSet<string>(directionResolved.Select(trigger => string.Format(
+                CultureInfo.InvariantCulture,
+                "{0}|{1}",
+                trigger.BarTime.Ticks,
+                trigger.IsBullish ? "B" : "S")));
+            var technicalSupports = qualityMatches
+                .Where(trigger => string.Equals(trigger.Family, "technical", StringComparison.OrdinalIgnoreCase))
+                .Where(trigger => PassesBarDirectionConfluence(sourceBars, trigger))
+                .Where(trigger => resolvedDirectionKeys.Contains(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "{0}|{1}",
+                    trigger.BarTime.Ticks,
+                    trigger.IsBullish ? "B" : "S")))
+                .ToList();
+            return ApplyMinimumConfluenceFilter(directionResolved.Concat(technicalSupports));
         }
 
         private static bool IsCombinedTradeTriggerFamily(string family)
@@ -12409,8 +12422,8 @@ namespace cAlgo.Robots
             return CollectTradeTriggerCandidates(symbolName, timeFrame, effectiveScanBars, true)
                 .Where(trigger => !trigger.IsDirectionless)
                 .Where(trigger => trigger.BarTime == barTime)
-                .Where(trigger => trigger.IsBullish == bullish)
-                .Where(trigger => IsCombinedTradeTriggerFamily(trigger.Family))
+                .Where(trigger => IsCombinedTradeTriggerFamily(trigger.Family) ||
+                    string.Equals(trigger.Family, "technical", StringComparison.OrdinalIgnoreCase))
                 .ToList();
         }
 
@@ -12424,16 +12437,15 @@ namespace cAlgo.Robots
             IEnumerable<StrategyCustomEventOption> selectedOptions,
             bool bullish)
         {
-            var namingTriggers = CollectCombinedTradeTriggerNameCandidatesAtBar(
-                symbolName,
-                sourceTimeFrame,
-                sourceBars,
-                barIndex,
-                scanBars,
-                bullish);
+            // The accepted sequence is the single source of truth for both the minimum
+            // confluence count and the displayed +N. Recollecting raw same-bar detections
+            // here used to advertise evidence that never passed the trade-event gate.
+            var namingTriggers = (acceptedTriggerSequence ?? Enumerable.Empty<TradeTriggerEvent>())
+                .Where(trigger => trigger.IsBullish == bullish)
+                .ToList();
             return BuildCombinedTradeTriggerEventName(
                 sourceTimeFrame,
-                namingTriggers.Count > 0 ? namingTriggers : acceptedTriggerSequence,
+                namingTriggers,
                 selectedOptions,
                 bullish);
         }
@@ -12695,6 +12707,10 @@ namespace cAlgo.Robots
                 {
                     if (candidate.EventType != canonicalType || (!directionless && candidate.IsBullish != bullish))
                         continue;
+                    if ((baseOption == StrategyCustomEventOption.Rj_KeyLevelRejection ||
+                         baseOption == StrategyCustomEventOption.Br_Breakout) &&
+                        IsTechnicalCanonicalMarketEvent(candidate))
+                        continue;
                     if (hasRequiredCanonicalReason && candidate.Reason != requiredCanonicalReason)
                         continue;
                     if (hasArtifactReaction && !string.Equals(candidate.LevelKind, artifactKind, StringComparison.OrdinalIgnoreCase))
@@ -12785,11 +12801,15 @@ namespace cAlgo.Robots
             // the structure detector and combined with this pattern later (for example
             // m5.pin + m5.r.tl => m5.pin.r.tl).
 
+            var resolvedFamily = GetTradeTriggerFamily(option);
+            if (hasCanonical && IsTechnicalCanonicalMarketEvent(canonical))
+                resolvedFamily = canonical.Reason == CanonicalEventReason.MomentumShift ? "momentum" : "technical";
+
             return new TradeTriggerEvent
             {
                 SymbolName = symbolName,
                 Name = name,
-                Family = GetTradeTriggerFamily(option),
+                Family = resolvedFamily,
                 Option = option,
                 SourceTimeFrame = timeFrame,
                 BarTime = sourceBars.OpenTimes[barIndex],
@@ -19439,6 +19459,26 @@ namespace cAlgo.Robots
                     if (!IsValidBarIndex(sourceBars, barIndex))
                         continue;
 
+                    var labelText = isTradeEvent
+                        ? BuildAcceptedCombinedTradeTriggerEventName(
+                            symbolName,
+                            sourceTimeFrame,
+                            sourceBars,
+                            barIndex,
+                            visualLookbackBars,
+                            sameBarTriggers,
+                            selectedOptions,
+                            primary.IsBullish)
+                        : BuildCombinedTradeTriggerEventName(
+                            sourceTimeFrame,
+                            sameBarTriggers,
+                            selectedOptions,
+                            primary.IsBullish);
+                    // No synthetic fallback: without an actual selected candle or structure
+                    // representative, this is not a displayable event.
+                    if (string.IsNullOrWhiteSpace(labelText))
+                        continue;
+
                     var color = WithAlpha(GetDirectionalEventColor(primary.IsBullish), isTradeEvent ? 255 : 179);
                     if (isTradeEvent)
                     {
@@ -19495,24 +19535,6 @@ namespace cAlgo.Robots
                         wickPrice,
                         labelFontSize,
                         eventBarRange);
-                    var labelText = isTradeEvent
-                        ? BuildAcceptedCombinedTradeTriggerEventName(
-                            symbolName,
-                            sourceTimeFrame,
-                            sourceBars,
-                            barIndex,
-                            visualLookbackBars,
-                            sameBarTriggers,
-                            selectedOptions,
-                            primary.IsBullish)
-                        // Raw/All labels must obey the same compact naming contract as
-                        // trade-qualified labels. The old path joined every same-bar name
-                        // with dots, producing very long labels on busy momentum bars.
-                        : BuildCombinedTradeTriggerEventName(
-                            sourceTimeFrame,
-                            sameBarTriggers,
-                            selectedOptions,
-                            primary.IsBullish);
                     var label = Chart.DrawText(
                         (isTradeEvent ? "TRG_TXT_" : "RAW_EVT_TXT_") + GetMiniChartLabel(sourceTimeFrame) + "_" + objectIndex.ToString(CultureInfo.InvariantCulture),
                         labelText,
@@ -19600,14 +19622,24 @@ namespace cAlgo.Robots
                             sourceTimeFrame,
                             visualLookbackBars,
                             true)
-                        .Where(trigger => IsCombinedTradeTriggerFamily(trigger.Family))
+                        .Where(trigger => IsCombinedTradeTriggerFamily(trigger.Family) ||
+                            string.Equals(trigger.Family, "technical", StringComparison.OrdinalIgnoreCase))
                         .ToList();
                     reconstructedTriggersByFrame[sourceMinutes] = reconstructedFrameTriggers;
                 }
                 var reconstructedMarkerTriggers = reconstructedFrameTriggers
                     .Where(trigger => trigger.BarTime == marker.Time)
-                    .Where(trigger => trigger.IsBullish == isBullish && !trigger.IsDirectionless)
+                    .Where(trigger => !trigger.IsDirectionless)
                     .ToList();
+                var labelText = reconstructedMarkerTriggers.Count > 0
+                    ? BuildCombinedTradeTriggerEventName(
+                        sourceTimeFrame,
+                        reconstructedMarkerTriggers,
+                        GetSelectedStrategyCustomEventOptions(),
+                        isBullish)
+                    : "";
+                if (string.IsNullOrWhiteSpace(labelText))
+                    continue;
                 var color = WithAlpha(GetDirectionalEventColor(isBullish), 255);
                 DrawPatternRangeBox(
                     "TRG_SAVED_" + GetMiniChartLabel(sourceTimeFrame) + "_" + objectIndex.ToString(CultureInfo.InvariantCulture),
@@ -19631,17 +19663,6 @@ namespace cAlgo.Robots
                     wickPrice,
                     labelFontSize,
                     eventBarRange);
-                // Never redraw the immutable broker comment text verbatim: positions opened
-                // by an older build retain their old combined event name. Reconstruct with
-                // the current formatter, or use a neutral trigger label when the historical
-                // detector can no longer reproduce that event.
-                var labelText = reconstructedMarkerTriggers.Count > 0
-                    ? BuildCombinedTradeTriggerEventName(
-                        sourceTimeFrame,
-                        reconstructedMarkerTriggers,
-                        GetSelectedStrategyCustomEventOptions(),
-                        isBullish)
-                    : BuildCanonicalEventName(sourceTimeFrame, "trigger", isBullish);
                 var label = Chart.DrawText(
                     "TRG_SAVED_TXT_" + GetMiniChartLabel(sourceTimeFrame) + "_" + objectIndex.ToString(CultureInfo.InvariantCulture),
                     labelText,
@@ -24450,6 +24471,7 @@ namespace cAlgo.Robots
         {
             ValidateStructureEngineV2Contracts();
             ValidateStrategyEngineContracts();
+            ValidateCombinedEventNameContracts();
             ValidateExecutionEngineContracts();
             ValidateSyncEngineContracts();
             ValidateChartEngineContracts();
@@ -24461,6 +24483,10 @@ namespace cAlgo.Robots
                 : _startedAtUtc.AddSeconds(12);
             _startupWarmupAnnounced = false;
             _lastStopReason = "running";
+            // A cTrader instance can reuse this robot object across stop/start cycles. Never
+            // let analysis computed by an older run survive into the new run, regardless of
+            // whether disk-backed analysis files are enabled.
+            ClearRuntimeAnalysisCaches();
             if (DisableBridgeRuntimeForIsolation)
             {
                 try
@@ -24478,7 +24504,9 @@ namespace cAlgo.Robots
                 PrintBypassLogFilter("[Bridge] Isolation build active: OnStart early return");
                 return;
             }
-            if (Is42TradeServerSyncEnabled() && !IsAnalysisFileCacheEnabled())
+            // "Use Cached files = No" is authoritative even when server sync is disabled.
+            // Remove old analysis files so enabling sync later cannot resurrect stale data.
+            if (UseCachedFiles == YesNoMode.No)
                 DeletePersistedAnalysisCacheFiles();
             Positions.Closed += OnStrategyPositionClosed;
             // Clean slate: sweep every object this bot can draw before (re)drawing. If the
@@ -27669,6 +27697,9 @@ namespace cAlgo.Robots
                 var hasRequiredReason = TryGetRequiredCanonicalEventReason(option, out requiredReason);
                 var matchingEvents = (eventsOnBar ?? new List<CanonicalMarketEvent>())
                     .Where(evt => evt.EventType == canonicalType &&
+                        !((option == StrategyCustomEventOption.Rj_KeyLevelRejection ||
+                           option == StrategyCustomEventOption.Br_Breakout) &&
+                          IsTechnicalCanonicalMarketEvent(evt)) &&
                         (!hasRequiredReason || evt.Reason == requiredReason))
                     .ToList();
                 matchesBullish = matchingEvents.Any(evt => evt.IsBullish);
@@ -27696,11 +27727,11 @@ namespace cAlgo.Robots
                 shortLabel = "";
                 var barEvents = (eventsOnBar ?? new List<CanonicalMarketEvent>()).ToList();
                 var matchedBullish = barEvents
-                    .Where(evt => IsStructureEventType(evt.EventType) && evt.IsBullish)
+                    .Where(evt => IsStructuralCanonicalMarketEvent(evt) && evt.IsBullish)
                     .OrderByDescending(evt => evt.Score)
                     .FirstOrDefault();
                 var matchedBearish = barEvents
-                    .Where(evt => IsStructureEventType(evt.EventType) && !evt.IsBullish)
+                    .Where(evt => IsStructuralCanonicalMarketEvent(evt) && !evt.IsBullish)
                     .OrderByDescending(evt => evt.Score)
                     .FirstOrDefault();
                 matchesBullish = matchedBullish.EventKey != null;
@@ -27967,6 +27998,21 @@ namespace cAlgo.Robots
                 default:
                     return false;
             }
+        }
+
+        private static bool IsTechnicalCanonicalMarketEvent(CanonicalMarketEvent evt)
+        {
+            return evt.Reason == CanonicalEventReason.EmaReclaim ||
+                evt.Reason == CanonicalEventReason.VwapReclaim ||
+                evt.Reason == CanonicalEventReason.MomentumShift ||
+                string.Equals(evt.LevelKind, "EMA", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(evt.LevelKind, "VWAP", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(evt.LevelKind, "MOM", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool IsStructuralCanonicalMarketEvent(CanonicalMarketEvent evt)
+        {
+            return IsStructureEventType(evt.EventType) && !IsTechnicalCanonicalMarketEvent(evt);
         }
 
         private string GetCanonicalEventTypeShortLabel(CanonicalEventType eventType)
@@ -28261,6 +28307,8 @@ namespace cAlgo.Robots
                     primaryTriggerSequence,
                     selectedOptions,
                     preferredBullish);
+                if (string.IsNullOrWhiteSpace(sourceLabel))
+                    return false;
                 signalTime = primaryTrigger.BarTime;
                 note = string.Format(
                     CultureInfo.InvariantCulture,
@@ -28339,6 +28387,8 @@ namespace cAlgo.Robots
                 primaryTriggerSequence,
                 selectedOptions,
                 resolvedBullish);
+            if (string.IsNullOrWhiteSpace(sourceLabel))
+                return false;
             signalTime = resolvedPrimaryTrigger.BarTime;
             var resolvedRulesLabel = resolvedBullish ? bullishRulesLabel : bearishRulesLabel;
             note = string.Format(
@@ -28359,14 +28409,20 @@ namespace cAlgo.Robots
         {
             var frameLabel = GetMiniChartLabel(sourceTimeFrame).Trim().ToLowerInvariant();
             var orderedTriggers = (triggerSequence ?? Enumerable.Empty<TradeTriggerEvent>())
-                .Where(item => !item.IsDirectionless && item.IsBullish == bullish)
-                .Where(item => IsCombinedTradeTriggerFamily(item.Family))
+                .Where(item => !item.IsDirectionless)
+                .Where(item => item.IsBullish == bullish)
+                .Where(item => IsCombinedTradeTriggerFamily(item.Family) ||
+                    string.Equals(item.Family, "technical", StringComparison.OrdinalIgnoreCase))
                 .OrderBy(item => GetTradeTriggerFamilyDisplayOrder(item.Family))
                 .ThenByDescending(item => item.Priority)
                 .ThenByDescending(item => item.HasCanonicalEvent ? item.CanonicalEvent.Score : 0)
                 .ToList();
             var familyOperands = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
             var distinctOperands = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var selected = (selectedOptions ?? Enumerable.Empty<StrategyCustomEventOption>())
+                .Where(option => option != StrategyCustomEventOption.Off)
+                .Distinct()
+                .ToList();
             foreach (var trigger in orderedTriggers)
             {
                 foreach (var rawPart in StripEventConfluenceSuffix(trigger.Name)
@@ -28376,7 +28432,16 @@ namespace cAlgo.Robots
                     var prefix = frameLabel + ".";
                     if (part.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                         part = part.Substring(prefix.Length);
+                    part = AddCombinedEventDirectionArrow(part, trigger.IsBullish);
                     if (string.IsNullOrWhiteSpace(part) || !distinctOperands.Add(part))
+                        continue;
+                    if (string.Equals(trigger.Family, "momentum", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(trigger.Family, "technical", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (!string.Equals(trigger.Family, "candle", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(trigger.Family, "structure", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (selected.Count > 0 && !selected.Any(option => TradeTriggerMatchesSelectedOption(trigger, option)))
                         continue;
                     List<string> operands;
                     if (!familyOperands.TryGetValue(trigger.Family ?? "", out operands))
@@ -28389,7 +28454,7 @@ namespace cAlgo.Robots
             }
 
             var representatives = new List<string>();
-            foreach (var family in new[] { "candle", "structure", "momentum" })
+            foreach (var family in new[] { "candle", "structure" })
             {
                 List<string> operands;
                 if (familyOperands.TryGetValue(family, out operands) && operands.Count > 0)
@@ -28397,16 +28462,97 @@ namespace cAlgo.Robots
             }
 
             if (representatives.Count == 0)
-                return frameLabel + ".event";
+                return "";
 
-            var totalEvidence = Math.Max(
-                distinctOperands.Count,
-                GetTradeTriggerGroupTotalCount(orderedTriggers));
-            var hiddenCount = Math.Max(0, totalEvidence - representatives.Count);
+            // Share the exact total with ApplyMinimumConfluenceFilter. Visible selected
+            // candle/structure representatives count for themselves; +N is every remaining
+            // hidden support (technical/momentum, undisplayed event, or artifact evidence).
+            var hiddenCount = Math.Max(
+                0,
+                GetTradeTriggerGroupTotalCount(orderedTriggers) - representatives.Count);
+
             return frameLabel + "." + string.Join(".", representatives) +
                 (hiddenCount > 0
                     ? " +" + hiddenCount.ToString(CultureInfo.InvariantCulture)
                     : "");
+        }
+
+        private void ValidateCombinedEventNameContracts()
+        {
+            var triggers = new[]
+            {
+                new TradeTriggerEvent { Name = "m5.eng↑", Family = "candle", Option = StrategyCustomEventOption.Eng_Engulfing, IsBullish = true, Priority = 80 },
+                new TradeTriggerEvent { Name = "m5.r.tl↓", Family = "structure", Option = StrategyCustomEventOption.RjTl_TrendlineRejection, IsBullish = false, Priority = 75 },
+                new TradeTriggerEvent { Name = "m5.x>vwap↑", Family = "technical", Option = StrategyCustomEventOption.Vwx_PriceVwapCross, IsBullish = true, Priority = 70 },
+                new TradeTriggerEvent { Name = "m5.rsi14.x<50↓", Family = "momentum", Option = StrategyCustomEventOption.R50_RsiMidlineCross, IsBullish = false, Priority = 65 }
+            };
+            var selected = new[]
+            {
+                StrategyCustomEventOption.__AnyStructureEvent,
+                StrategyCustomEventOption.__AnyCandlePattern
+            };
+            var label = BuildCombinedTradeTriggerEventName(TimeFrame.Minute5, triggers, selected, true);
+            if (!string.Equals(label, "m5.eng↑ +1", StringComparison.Ordinal))
+                throw new InvalidOperationException("Selected-trigger compact event-name contract failed: " + label);
+
+            var sharedEvidence = new[]
+            {
+                new TradeTriggerEvent { Name = "m5.pin↑", Family = "candle", Option = StrategyCustomEventOption.Pin_PinBar, IsBullish = true, Priority = 90 },
+                new TradeTriggerEvent { Name = "m5.r↑.tl", Family = "structure", Option = StrategyCustomEventOption.RjTl_TrendlineRejection, IsBullish = true, Priority = 80 },
+                new TradeTriggerEvent { Name = "m5.x>vwap↑", Family = "technical", Option = StrategyCustomEventOption.Vwx_PriceVwapCross, IsBullish = true, Priority = 70 },
+                new TradeTriggerEvent { Name = "m5.rsi14.x>50↑", Family = "momentum", Option = StrategyCustomEventOption.R50_RsiMidlineCross, IsBullish = true, Priority = 60 },
+                new TradeTriggerEvent { Name = "m5.macd.xsig↑", Family = "momentum", Option = StrategyCustomEventOption.Mdx_MacdSignalCross, IsBullish = true, Priority = 50 }
+            };
+            var sharedLabel = BuildCombinedTradeTriggerEventName(TimeFrame.Minute5, sharedEvidence, selected, true);
+            if (GetTradeTriggerGroupTotalCount(sharedEvidence) != 5 ||
+                !string.Equals(sharedLabel, "m5.pin↑.r↑.tl +3", StringComparison.Ordinal))
+                throw new InvalidOperationException("Shared minimum/name confluence contract failed: " + sharedLabel);
+
+            var artifactSupportedPin = new[]
+            {
+                new TradeTriggerEvent { Name = "m5.pin↑", Family = "candle", Option = StrategyCustomEventOption.Pin_PinBar, IsBullish = true, ConfluenceCount = 1, Priority = 90 }
+            };
+            var artifactLabel = BuildCombinedTradeTriggerEventName(TimeFrame.Minute5, artifactSupportedPin, selected, true);
+            if (GetTradeTriggerGroupTotalCount(artifactSupportedPin) != 2 ||
+                !string.Equals(artifactLabel, "m5.pin↑ +1", StringComparison.Ordinal))
+                throw new InvalidOperationException("Hidden artifact confluence contract failed: " + artifactLabel);
+
+            var technicalOnly = BuildCombinedTradeTriggerEventName(
+                TimeFrame.Minute5,
+                triggers.Where(trigger => trigger.Family == "technical" || trigger.Family == "momentum"),
+                selected,
+                true);
+            if (!string.IsNullOrWhiteSpace(technicalOnly))
+                throw new InvalidOperationException("Technical-only event must not produce a marker: " + technicalOnly);
+
+            var vwapEvent = new CanonicalMarketEvent
+            {
+                EventType = CanonicalEventType.Breakout,
+                Reason = CanonicalEventReason.VwapReclaim,
+                LevelKind = "VWAP"
+            };
+            if (!IsTechnicalCanonicalMarketEvent(vwapEvent) || IsStructuralCanonicalMarketEvent(vwapEvent))
+                throw new InvalidOperationException("VWAP canonical-family contract failed.");
+        }
+
+        private static string AddCombinedEventDirectionArrow(string operand, bool isBullish)
+        {
+            var compact = (operand ?? "").Trim().ToLowerInvariant()
+                .Replace("↑", "")
+                .Replace("↓", "");
+            if (string.IsNullOrWhiteSpace(compact))
+                return "";
+
+            var arrow = isBullish ? "↑" : "↓";
+            // For artifact reactions/crosses, the action is the directional sub-event and
+            // the following token identifies its artifact: r↓.tl, b↑.ob, xr↑.h4.sply.
+            foreach (var actionPrefix in new[] { "xr.", "r.", "b.", "x." })
+            {
+                if (compact.StartsWith(actionPrefix, StringComparison.OrdinalIgnoreCase))
+                    return compact.Insert(actionPrefix.Length - 1, arrow);
+            }
+
+            return compact + arrow;
         }
 
         private static int GetTradeTriggerFamilyDisplayOrder(string family)
@@ -28653,7 +28799,7 @@ namespace cAlgo.Robots
             if (option == StrategyCustomEventOption.__AnyStructureEvent)
             {
                 var matched = (eventsOnBar ?? Enumerable.Empty<CanonicalMarketEvent>())
-                    .Where(evt => IsStructureEventType(evt.EventType) && evt.IsBullish == bullishDirection)
+                    .Where(evt => IsStructuralCanonicalMarketEvent(evt) && evt.IsBullish == bullishDirection)
                     .OrderByDescending(evt => evt.Score)
                     .FirstOrDefault();
                 if (matched.EventKey == null)
@@ -32114,7 +32260,9 @@ namespace cAlgo.Robots
 
         private string NormalizeStrategyEventName(TimeFrame sourceTimeFrame, string eventName, bool bullish)
         {
-            var raw = string.IsNullOrWhiteSpace(eventName) ? "event" : eventName.Trim();
+            if (string.IsNullOrWhiteSpace(eventName))
+                return "";
+            var raw = eventName.Trim();
             var effectiveTimeFrame = sourceTimeFrame;
             var legacySeparator = raw.IndexOf('|');
             if (legacySeparator > 0)
@@ -32145,7 +32293,7 @@ namespace cAlgo.Robots
             }
             return normalized.Count > 0
                 ? string.Join("+", normalized.Distinct(StringComparer.OrdinalIgnoreCase))
-                : BuildCanonicalEventName(effectiveTimeFrame, "event", bullish);
+                : "";
         }
 
         private string BuildStrategyOrderConfluenceComment(string symbolName, TimeFrame sourceTimeFrame, double entryPrice, double stopLoss)
@@ -33750,6 +33898,12 @@ namespace cAlgo.Robots
                 signal.SourceTimeFrame,
                 signal.SourceLabel,
                 signal.TradeType == TradeType.Buy);
+            if (signal.StrategyMode == BacktestStrategyMode.CustomTrade &&
+                string.IsNullOrWhiteSpace(signal.SourceLabel))
+            {
+                LogStrategyReject(signal.StrategyId, symbolName, "missing_selected_candle_or_structure_event");
+                return;
+            }
 
             if (!IsBacktestingRuntime() && !IsStrategySignalTimeAlignedToSourceBar(symbolName, signal))
             {
