@@ -28332,13 +28332,16 @@ namespace cAlgo.Robots
             bool bullish)
         {
             var frameLabel = GetMiniChartLabel(sourceTimeFrame).Trim().ToLowerInvariant();
-            var operands = new List<string>();
-            foreach (var trigger in (triggerSequence ?? Enumerable.Empty<TradeTriggerEvent>())
+            var orderedTriggers = (triggerSequence ?? Enumerable.Empty<TradeTriggerEvent>())
                 .Where(item => !item.IsDirectionless && item.IsBullish == bullish)
                 .Where(item => IsCombinedTradeTriggerFamily(item.Family))
                 .OrderBy(item => GetTradeTriggerFamilyDisplayOrder(item.Family))
                 .ThenByDescending(item => item.Priority)
-                .ThenByDescending(item => item.HasCanonicalEvent ? item.CanonicalEvent.Score : 0))
+                .ThenByDescending(item => item.HasCanonicalEvent ? item.CanonicalEvent.Score : 0)
+                .ToList();
+            var familyOperands = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            var distinctOperands = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var trigger in orderedTriggers)
             {
                 foreach (var rawPart in StripEventConfluenceSuffix(trigger.Name)
                     .Split(new[] { '+' }, StringSplitOptions.RemoveEmptyEntries))
@@ -28347,22 +28350,44 @@ namespace cAlgo.Robots
                     var prefix = frameLabel + ".";
                     if (part.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                         part = part.Substring(prefix.Length);
-                    if (!string.IsNullOrWhiteSpace(part) &&
-                        !operands.Any(value => string.Equals(value, part, StringComparison.OrdinalIgnoreCase)))
-                        operands.Add(part.ToLowerInvariant());
+                    if (string.IsNullOrWhiteSpace(part) || !distinctOperands.Add(part))
+                        continue;
+                    List<string> operands;
+                    if (!familyOperands.TryGetValue(trigger.Family ?? "", out operands))
+                    {
+                        operands = new List<string>();
+                        familyOperands[trigger.Family ?? ""] = operands;
+                    }
+                    operands.Add(part.ToLowerInvariant());
                 }
             }
 
-            return operands.Count == 0
-                ? frameLabel + ".event"
-                : frameLabel + "." + string.Join(".", operands);
+            var representatives = new List<string>();
+            foreach (var family in new[] { "candle", "structure", "momentum" })
+            {
+                List<string> operands;
+                if (familyOperands.TryGetValue(family, out operands) && operands.Count > 0)
+                    representatives.Add(operands[0]);
+            }
+
+            if (representatives.Count == 0)
+                return frameLabel + ".event";
+
+            var totalEvidence = Math.Max(
+                distinctOperands.Count,
+                GetTradeTriggerGroupTotalCount(orderedTriggers));
+            var hiddenCount = Math.Max(0, totalEvidence - representatives.Count);
+            return frameLabel + "." + string.Join(".", representatives) +
+                (hiddenCount > 0
+                    ? " +" + hiddenCount.ToString(CultureInfo.InvariantCulture)
+                    : "");
         }
 
         private static int GetTradeTriggerFamilyDisplayOrder(string family)
         {
             if (string.Equals(family, "candle", StringComparison.OrdinalIgnoreCase)) return 0;
-            if (string.Equals(family, "momentum", StringComparison.OrdinalIgnoreCase)) return 1;
-            if (string.Equals(family, "structure", StringComparison.OrdinalIgnoreCase)) return 2;
+            if (string.Equals(family, "structure", StringComparison.OrdinalIgnoreCase)) return 1;
+            if (string.Equals(family, "momentum", StringComparison.OrdinalIgnoreCase)) return 2;
             return 3;
         }
 
