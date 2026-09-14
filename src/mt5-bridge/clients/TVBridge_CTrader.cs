@@ -22,7 +22,7 @@ namespace cAlgo.Robots
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class TVBridgeCBot : Robot
     {
-        private const string BuildVersion = "v2026.09.14 12:40 UTC - complete-event-name";
+        private const string BuildVersion = "v2026.09.14 13:02 UTC - selected-event-and-time-filter";
         private const string BridgeSourceId = "Ctrader";
         private const string BridgeSourceType = "ctrader_bridge";
         private const int TransientErrorLogThresholdCount = 10;
@@ -16166,6 +16166,7 @@ namespace cAlgo.Robots
             var visibleMarkers = _strategyChartMarkers
                 .Where(marker => string.Equals(marker.SymbolName, chartSymbolName, StringComparison.OrdinalIgnoreCase))
                 .Where(marker => marker.Time >= chartStartTime.AddDays(-2) && marker.Time <= chartEndTime.AddMinutes(5))
+                .Where(IsStrategyChartMarkerInsideCurrentTradingTime)
                 .OrderBy(marker => marker.Time)
                 .TakeLast(80)
                 .ToList();
@@ -16216,6 +16217,25 @@ namespace cAlgo.Robots
             }
 
             return objectIndex;
+        }
+
+        private bool IsStrategyChartMarkerInsideCurrentTradingTime(StrategyChartMarker marker)
+        {
+            if (marker.Time == DateTime.MinValue)
+                return false;
+
+            // TimeRange governs signal/entry eligibility. An exit may legitimately occur
+            // after the allowed entry window and remains part of the visible trade history.
+            if (marker.Kind == StrategyMarkerKind.Exit)
+                return true;
+
+            // Trigger timestamps identify the source bar OPEN. Execution and reconstructed
+            // chart events gate that bar at CLOSE, so persisted trigger arrows must do the
+            // same. Entry/exit timestamps are already execution timestamps.
+            var filterTime = marker.Kind == StrategyMarkerKind.Trigger && marker.SourceTimeFrame != null
+                ? ResolveSourceBarEndTime(null, marker.Time, marker.SourceTimeFrame)
+                : marker.Time;
+            return ShouldAllowChartSignalTime(filterTime);
         }
 
         private string GetClosedTradeVisualStateStamp()
@@ -19621,6 +19641,7 @@ namespace cAlgo.Robots
                 .Where(marker => marker.Kind == StrategyMarkerKind.Trigger)
                 .Where(marker => string.Equals(marker.SymbolName, symbolName, StringComparison.OrdinalIgnoreCase))
                 .Where(marker => marker.Time >= chartStartTime && marker.Time <= chartEndTime.AddMinutes(5))
+                .Where(IsStrategyChartMarkerInsideCurrentTradingTime)
                 .GroupBy(marker => marker.SourceTimeFrame != null ? TimeFrameToMinutes(marker.SourceTimeFrame) : TimeFrameToMinutes(Chart.TimeFrame))
                 .SelectMany(group => eventLimit < 0
                     ? group.OrderBy(marker => marker.Time)
@@ -28495,11 +28516,20 @@ namespace cAlgo.Robots
             bool bullish)
         {
             var frameLabel = GetMiniChartLabel(sourceTimeFrame).Trim().ToLowerInvariant();
+            var selected = (selectedOptions ?? Enumerable.Empty<StrategyCustomEventOption>())
+                .Where(option => option != StrategyCustomEventOption.Off)
+                .Distinct()
+                .ToList();
             var orderedTriggers = (triggerSequence ?? Enumerable.Empty<TradeTriggerEvent>())
                 .Where(item => !item.IsDirectionless)
                 .Where(item => item.IsBullish == bullish)
                 .Where(item => IsCombinedTradeTriggerFamily(item.Family) ||
                     string.Equals(item.Family, "technical", StringComparison.OrdinalIgnoreCase))
+                // A selected family is constrained by its selector. For example Pin_PinBar
+                // must not be replaced by a higher-priority Engulfing detection. A completely
+                // unselected companion family is still descriptive evidence and may appear.
+                .Where(item => !IsTradeTriggerFamilyExplicitlySelected(selected, item.Family) ||
+                    selected.Any(option => TradeTriggerMatchesSelectedOption(item, option)))
                 .OrderBy(item => GetTradeTriggerFamilyDisplayOrder(item.Family))
                 .ThenByDescending(item => item.Priority)
                 .ThenByDescending(item => item.HasCanonicalEvent ? item.CanonicalEvent.Score : 0)
@@ -28610,6 +28640,28 @@ namespace cAlgo.Robots
                 throw new InvalidOperationException(
                     "Combined event name must show candle and structure regardless of selected trigger.");
 
+            var competingCandleEvidence = new[]
+            {
+                new TradeTriggerEvent { Name = "m5.eng↑", Family = "candle", Option = StrategyCustomEventOption.Eng_Engulfing, IsBullish = true, Priority = 100 },
+                new TradeTriggerEvent { Name = "m5.pin↑", Family = "candle", Option = StrategyCustomEventOption.Pin_PinBar, IsBullish = true, Priority = 90 },
+                new TradeTriggerEvent { Name = "m5.r↑.tl", Family = "structure", Option = StrategyCustomEventOption.RjTl_TrendlineRejection, IsBullish = true, Priority = 80 }
+            };
+            var selectedPinLabel = BuildCombinedTradeTriggerEventName(
+                TimeFrame.Minute5,
+                competingCandleEvidence,
+                new[] { StrategyCustomEventOption.Pin_PinBar, StrategyCustomEventOption.__AnyStructureEvent },
+                true);
+            if (!string.Equals(selectedPinLabel, "m5.pin↑.r↑.tl", StringComparison.Ordinal))
+                throw new InvalidOperationException("Specific candle selection naming contract failed: " + selectedPinLabel);
+
+            var unselectedCandleFamilyLabel = BuildCombinedTradeTriggerEventName(
+                TimeFrame.Minute5,
+                competingCandleEvidence,
+                new[] { StrategyCustomEventOption.__AnyStructureEvent },
+                true);
+            if (!string.Equals(unselectedCandleFamilyLabel, "m5.eng↑.r↑.tl +1", StringComparison.Ordinal))
+                throw new InvalidOperationException("Unselected companion-family naming contract failed: " + unselectedCandleFamilyLabel);
+
             var artifactSupportedPin = new[]
             {
                 new TradeTriggerEvent { Name = "m5.pin↑", Family = "candle", Option = StrategyCustomEventOption.Pin_PinBar, IsBullish = true, ConfluenceCount = 1, Priority = 90 }
@@ -28635,6 +28687,28 @@ namespace cAlgo.Robots
             };
             if (!IsTechnicalCanonicalMarketEvent(vwapEvent) || IsStructuralCanonicalMarketEvent(vwapEvent))
                 throw new InvalidOperationException("VWAP canonical-family contract failed.");
+        }
+
+        private bool IsTradeTriggerFamilyExplicitlySelected(
+            IEnumerable<StrategyCustomEventOption> selectedOptions,
+            string family)
+        {
+            if (string.IsNullOrWhiteSpace(family))
+                return false;
+
+            foreach (var option in selectedOptions ?? Enumerable.Empty<StrategyCustomEventOption>())
+            {
+                if (string.Equals(family, "candle", StringComparison.OrdinalIgnoreCase) &&
+                    option == StrategyCustomEventOption.__AnyCandlePattern)
+                    return true;
+                if (string.Equals(family, "structure", StringComparison.OrdinalIgnoreCase) &&
+                    option == StrategyCustomEventOption.__AnyStructureEvent)
+                    return true;
+                if (string.Equals(GetTradeTriggerFamily(option), family, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
         }
 
         private static string AddCombinedEventDirectionArrow(string operand, bool isBullish)
