@@ -22,7 +22,7 @@ namespace cAlgo.Robots
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class TVBridgeCBot : Robot
     {
-        private const string BuildVersion = "v2026.09.13 20:05 UTC - inside-candle-filter";
+        private const string BuildVersion = "v2026.09.14 04:45 UTC - legacy-all-touch-bundle";
         private const string BridgeSourceId = "Ctrader";
         private const string BridgeSourceType = "ctrader_bridge";
         private const int TransientErrorLogThresholdCount = 10;
@@ -12365,10 +12365,13 @@ namespace cAlgo.Robots
                 .Where(trigger => IsHighQualityDirectionalTradeTrigger(symbolName, sourceBars, trigger))
                 .Where(trigger => PassesNamedConfluences(symbolName, sourceBars, trigger))
                 .ToList();
+            var useLegacyCandleAllTouchBundle = UsesLegacyCandleAllTouchBundle(selected);
             // Technical detections support an already resolved candle/structure/momentum
             // direction; they must not choose or reverse the direction themselves.
             var directionalCandidates = qualityMatches
-                .Where(trigger => IsCombinedTradeTriggerFamily(trigger.Family))
+                .Where(trigger => useLegacyCandleAllTouchBundle
+                    ? string.Equals(trigger.Family, "candle", StringComparison.OrdinalIgnoreCase)
+                    : IsCombinedTradeTriggerFamily(trigger.Family))
                 .ToList();
             var directionResolved = ResolveSingleDirectionTradeTriggers(
                 symbolName,
@@ -12377,13 +12380,42 @@ namespace cAlgo.Robots
                 directionalCandidates)
                 .Where(trigger => PassesBarDirectionConfluence(sourceBars, trigger))
                 .ToList();
+            if (useLegacyCandleAllTouchBundle && directionResolved.Count > 0)
+            {
+                var resolvedBullish = directionResolved[0].IsBullish;
+                List<CandleConfluenceMatch> touchMatches;
+                var hasDirectionalArtifactTouch = ShouldKeepCandlePatternInline(
+                    sourceBars,
+                    timeFrame,
+                    barIndex,
+                    resolvedBullish,
+                    out touchMatches,
+                    symbolName,
+                    ResolveLoadedSymbol(symbolName),
+                    CandleArtifactMatchMode.EarlyRejection,
+                    true);
+                if (!hasDirectionalArtifactTouch || touchMatches == null || touchMatches.Count == 0)
+                {
+                    directionResolved.Clear();
+                }
+                else
+                {
+                    for (var i = 0; i < directionResolved.Count; i++)
+                    {
+                        var trigger = directionResolved[i];
+                        trigger.ConfluenceCount = Math.Max(trigger.ConfluenceCount, touchMatches.Count);
+                        directionResolved[i] = trigger;
+                    }
+                }
+            }
             var resolvedDirectionKeys = new HashSet<string>(directionResolved.Select(trigger => string.Format(
                 CultureInfo.InvariantCulture,
                 "{0}|{1}",
                 trigger.BarTime.Ticks,
                 trigger.IsBullish ? "B" : "S")));
             var technicalSupports = qualityMatches
-                .Where(trigger => string.Equals(trigger.Family, "technical", StringComparison.OrdinalIgnoreCase))
+                .Where(trigger => string.Equals(trigger.Family, "technical", StringComparison.OrdinalIgnoreCase) ||
+                    (useLegacyCandleAllTouchBundle && string.Equals(trigger.Family, "momentum", StringComparison.OrdinalIgnoreCase)))
                 .Where(trigger => PassesBarDirectionConfluence(sourceBars, trigger))
                 .Where(trigger => resolvedDirectionKeys.Contains(string.Format(
                     CultureInfo.InvariantCulture,
@@ -12392,6 +12424,19 @@ namespace cAlgo.Robots
                     trigger.IsBullish ? "B" : "S")))
                 .ToList();
             return ApplyMinimumConfluenceFilter(directionResolved.Concat(technicalSupports));
+        }
+
+        private bool UsesLegacyCandleAllTouchBundle(IEnumerable<StrategyCustomEventOption> selectedOptions)
+        {
+            if (SelectedStrategyCustomEventsMode != StrategyCustomEventsMode.AND)
+                return false;
+
+            var selected = (selectedOptions ?? Enumerable.Empty<StrategyCustomEventOption>())
+                .Where(option => option != StrategyCustomEventOption.Off)
+                .Distinct()
+                .ToList();
+            return selected.Contains(StrategyCustomEventOption.__AnyCandlePattern) &&
+                selected.Contains(StrategyCustomEventOption.__AnyStructureEvent);
         }
 
         private static bool IsCombinedTradeTriggerFamily(string family)
@@ -28635,11 +28680,19 @@ namespace cAlgo.Robots
             List<TradeTriggerEvent> triggerSequence)
         {
             var states = new List<Tuple<StrategyCustomEventOption, string, bool, bool, bool>>();
-            foreach (var option in selectedOptions ?? Enumerable.Empty<StrategyCustomEventOption>())
+            var selected = (selectedOptions ?? Enumerable.Empty<StrategyCustomEventOption>()).ToList();
+            var useLegacyCandleAllTouchBundle = UsesLegacyCandleAllTouchBundle(selected);
+            foreach (var option in selected)
             {
-                var matches = (triggerSequence ?? new List<TradeTriggerEvent>())
-                    .Where(trigger => TradeTriggerMatchesSelectedOption(trigger, option))
-                    .ToList();
+                var matches = useLegacyCandleAllTouchBundle &&
+                    option == StrategyCustomEventOption.__AnyStructureEvent
+                    ? (triggerSequence ?? new List<TradeTriggerEvent>())
+                        .Where(trigger => string.Equals(trigger.Family, "candle", StringComparison.OrdinalIgnoreCase) &&
+                            trigger.ConfluenceCount > 0)
+                        .ToList()
+                    : (triggerSequence ?? new List<TradeTriggerEvent>())
+                        .Where(trigger => TradeTriggerMatchesSelectedOption(trigger, option))
+                        .ToList();
                 if (matches.Count == 0)
                     continue;
 
