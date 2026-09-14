@@ -22,7 +22,7 @@ namespace cAlgo.Robots
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class TVBridgeCBot : Robot
     {
-        private const string BuildVersion = "v2026.09.14 04:45 UTC - legacy-all-touch-bundle";
+        private const string BuildVersion = "v2026.09.14 12:40 UTC - complete-event-name";
         private const string BridgeSourceId = "Ctrader";
         private const string BridgeSourceType = "ctrader_bridge";
         private const int TransientErrorLogThresholdCount = 10;
@@ -28506,10 +28506,6 @@ namespace cAlgo.Robots
                 .ToList();
             var familyOperands = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
             var distinctOperands = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var selected = (selectedOptions ?? Enumerable.Empty<StrategyCustomEventOption>())
-                .Where(option => option != StrategyCustomEventOption.Off)
-                .Distinct()
-                .ToList();
             foreach (var trigger in orderedTriggers)
             {
                 foreach (var rawPart in StripEventConfluenceSuffix(trigger.Name)
@@ -28527,8 +28523,6 @@ namespace cAlgo.Robots
                         continue;
                     if (!string.Equals(trigger.Family, "candle", StringComparison.OrdinalIgnoreCase) &&
                         !string.Equals(trigger.Family, "structure", StringComparison.OrdinalIgnoreCase))
-                        continue;
-                    if (selected.Count > 0 && !selected.Any(option => TradeTriggerMatchesSelectedOption(trigger, option)))
                         continue;
                     List<string> operands;
                     if (!familyOperands.TryGetValue(trigger.Family ?? "", out operands))
@@ -28551,7 +28545,7 @@ namespace cAlgo.Robots
             if (representatives.Count == 0)
                 return "";
 
-            // Share the exact total with ApplyMinimumConfluenceFilter. Visible selected
+            // Share the exact total with ApplyMinimumConfluenceFilter. Visible detected
             // candle/structure representatives count for themselves; +N is every remaining
             // hidden support (technical/momentum, undisplayed event, or artifact evidence).
             var hiddenCount = Math.Max(
@@ -28600,6 +28594,21 @@ namespace cAlgo.Robots
             if (GetTradeTriggerGroupTotalCount(sharedEvidence) != 5 ||
                 !string.Equals(sharedLabel, "m5.pin↑.r↑.tl +3", StringComparison.Ordinal))
                 throw new InvalidOperationException("Shared minimum/name confluence contract failed: " + sharedLabel);
+
+            var candleOnlyLabel = BuildCombinedTradeTriggerEventName(
+                TimeFrame.Minute5,
+                sharedEvidence,
+                new[] { StrategyCustomEventOption.__AnyCandlePattern },
+                true);
+            var structureOnlyLabel = BuildCombinedTradeTriggerEventName(
+                TimeFrame.Minute5,
+                sharedEvidence,
+                new[] { StrategyCustomEventOption.__AnyStructureEvent },
+                true);
+            if (!string.Equals(candleOnlyLabel, sharedLabel, StringComparison.Ordinal) ||
+                !string.Equals(structureOnlyLabel, sharedLabel, StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    "Combined event name must show candle and structure regardless of selected trigger.");
 
             var artifactSupportedPin = new[]
             {
