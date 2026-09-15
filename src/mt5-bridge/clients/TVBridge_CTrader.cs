@@ -22,7 +22,7 @@ namespace cAlgo.Robots
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class TVBridgeCBot : Robot
     {
-        private const string BuildVersion = "v2026.09.14 13:02 UTC - selected-event-and-time-filter";
+        private const string BuildVersion = "v2026.09.15 04:30 UTC - compact-technical-event-names";
         private const string BridgeSourceId = "Ctrader";
         private const string BridgeSourceType = "ctrader_bridge";
         private const int TransientErrorLogThresholdCount = 10;
@@ -28545,13 +28545,27 @@ namespace cAlgo.Robots
                     var prefix = frameLabel + ".";
                     if (part.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                         part = part.Substring(prefix.Length);
+
+                    var isTechnicalOrMomentum =
+                        string.Equals(trigger.Family, "technical", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(trigger.Family, "momentum", StringComparison.OrdinalIgnoreCase);
+                    if (isTechnicalOrMomentum)
+                    {
+                        // Technical/momentum details such as ema9.x>ema21 and rsi14.x>50
+                        // are too long once combined. Show a compact indicator identity only
+                        // when that event was selected as a trigger; unselected same-bar
+                        // evidence remains represented by +N.
+                        if (!selected.Any(option => TradeTriggerMatchesSelectedOption(trigger, option)))
+                            continue;
+                        part = GetCompactTechnicalMomentumEventOperand(trigger.Option);
+                    }
+
                     part = AddCombinedEventDirectionArrow(part, trigger.IsBullish);
                     if (string.IsNullOrWhiteSpace(part) || !distinctOperands.Add(part))
                         continue;
-                    if (string.Equals(trigger.Family, "momentum", StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(trigger.Family, "technical", StringComparison.OrdinalIgnoreCase))
-                        continue;
                     if (!string.Equals(trigger.Family, "candle", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(trigger.Family, "technical", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(trigger.Family, "momentum", StringComparison.OrdinalIgnoreCase) &&
                         !string.Equals(trigger.Family, "structure", StringComparison.OrdinalIgnoreCase))
                         continue;
                     List<string> operands;
@@ -28565,11 +28579,17 @@ namespace cAlgo.Robots
             }
 
             var representatives = new List<string>();
-            foreach (var family in new[] { "candle", "structure" })
+            foreach (var family in new[] { "candle", "technical", "momentum", "structure" })
             {
                 List<string> operands;
                 if (familyOperands.TryGetValue(family, out operands) && operands.Count > 0)
-                    representatives.Add(operands[0]);
+                {
+                    if (string.Equals(family, "technical", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(family, "momentum", StringComparison.OrdinalIgnoreCase))
+                        representatives.AddRange(operands.Distinct(StringComparer.OrdinalIgnoreCase));
+                    else
+                        representatives.Add(operands[0]);
+                }
             }
 
             if (representatives.Count == 0)
@@ -28586,6 +28606,43 @@ namespace cAlgo.Robots
                 (hiddenCount > 0
                     ? " +" + hiddenCount.ToString(CultureInfo.InvariantCulture)
                     : "");
+        }
+
+        private string GetCompactTechnicalMomentumEventOperand(StrategyCustomEventOption option)
+        {
+            StrategyCustomEventOption baseOption;
+            StrategyEventFollowUpOutcome followUpOutcome;
+            if (!TryMapStrategyFollowUpEventOption(option, out baseOption, out followUpOutcome))
+                baseOption = option;
+
+            switch (baseOption)
+            {
+                case StrategyCustomEventOption.EmaPb_EMAPullbackReclaim:
+                case StrategyCustomEventOption.Pxe_PriceEmaCross:
+                case StrategyCustomEventOption.Emx_EmaFastMidCross:
+                case StrategyCustomEventOption.Emt_EmaMidSlowCross:
+                    return "ema";
+                case StrategyCustomEventOption.VwapCt_VWAPContinuationReclaim:
+                case StrategyCustomEventOption.Vwx_PriceVwapCross:
+                case StrategyCustomEventOption.Vwr_VwapRejection:
+                    return "vwap";
+                case StrategyCustomEventOption.Bbx_BollingerMidCross:
+                case StrategyCustomEventOption.Bbr_BollingerBandReject:
+                    return "bb";
+                case StrategyCustomEventOption.R50_RsiMidlineCross:
+                case StrategyCustomEventOption.Ros_RsiExitOversold:
+                case StrategyCustomEventOption.Rob_RsiExitOverbought:
+                case StrategyCustomEventOption.Div_Divergence:
+                    return "rsi";
+                case StrategyCustomEventOption.Stx_StochCross:
+                case StrategyCustomEventOption.Sto_StochExitExtreme:
+                    return "stoch";
+                case StrategyCustomEventOption.Mdx_MacdSignalCross:
+                case StrategyCustomEventOption.Md0_MacdZeroCross:
+                    return "macd";
+                default:
+                    return "tech";
+            }
         }
 
         private void ValidateCombinedEventNameContracts()
@@ -28611,6 +28668,25 @@ namespace cAlgo.Robots
             var label = BuildCombinedTradeTriggerEventName(TimeFrame.Minute5, triggers, selected, true);
             if (!string.Equals(label, "m5.eng↑ +1", StringComparison.Ordinal))
                 throw new InvalidOperationException("Selected-trigger compact event-name contract failed: " + label);
+
+            var selectedTechnicalMomentum = new[]
+            {
+                new TradeTriggerEvent { Name = "m5.ema9.x>ema21↑", Family = "technical", Option = StrategyCustomEventOption.Emx_EmaFastMidCross, IsBullish = true, Priority = 80 },
+                new TradeTriggerEvent { Name = "m5.rsi14.x>50↑", Family = "momentum", Option = StrategyCustomEventOption.R50_RsiMidlineCross, IsBullish = true, Priority = 70 },
+                new TradeTriggerEvent { Name = "m5.r↑.tl", Family = "structure", Option = StrategyCustomEventOption.RjTl_TrendlineRejection, IsBullish = true, Priority = 60 }
+            };
+            var selectedTechnicalMomentumLabel = BuildCombinedTradeTriggerEventName(
+                TimeFrame.Minute5,
+                selectedTechnicalMomentum,
+                new[]
+                {
+                    StrategyCustomEventOption.Emx_EmaFastMidCross,
+                    StrategyCustomEventOption.R50_RsiMidlineCross,
+                    StrategyCustomEventOption.__AnyStructureEvent
+                },
+                true);
+            if (!string.Equals(selectedTechnicalMomentumLabel, "m5.ema↑.rsi↑.r↑.tl", StringComparison.Ordinal))
+                throw new InvalidOperationException("Selected technical/momentum compact-name contract failed: " + selectedTechnicalMomentumLabel);
 
             var sharedEvidence = new[]
             {
