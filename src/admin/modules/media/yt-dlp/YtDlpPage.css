@@ -217,14 +217,53 @@
   display: inline-flex;
 }
 
+.yt-dlp-icon {
+  display: block;
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
+  flex: 0 0 auto;
+}
+
+.yt-dlp-icon--stroke {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.yt-dlp-icon__cutout {
+  fill: var(--surface);
+}
+
 .yt-dlp-platform-youtube {
-  color: #ff6b6b;
+  color: #ff3b30;
 }
 
 .yt-dlp-platform-facebook {
-  color: #7aa7ff;
-  font-family: Arial, sans-serif;
-  font-weight: 800;
+  color: #5b8def;
+}
+
+.yt-dlp-platform-tiktok {
+  color: var(--text);
+}
+
+.yt-dlp-platform-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.yt-dlp-delete-button {
+  color: var(--danger, #ef4444);
+  border-color: color-mix(in srgb, var(--danger, #ef4444) 45%, var(--border));
+}
+
+.yt-dlp-delete-button:hover {
+  color: #fff;
+  background: color-mix(in srgb, var(--danger, #ef4444) 72%, transparent);
+  border-color: var(--danger, #ef4444);
 }
 
 .yt-dlp-preview-detail {

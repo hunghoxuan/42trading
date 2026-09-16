@@ -52,6 +52,87 @@ function saveBlob({ blob, fileName }, fallbackName) {
   URL.revokeObjectURL(href);
 }
 
+function Icon({ children, viewBox = "0 0 24 24", className = "" }) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={["yt-dlp-icon", className].filter(Boolean).join(" ")}
+      viewBox={viewBox}
+      focusable="false"
+    >
+      {children}
+    </svg>
+  );
+}
+
+function PlayIcon() {
+  return <Icon><path d="m8 5 11 7-11 7V5Z" /></Icon>;
+}
+
+function DownloadIcon() {
+  return (
+    <Icon className="yt-dlp-icon--stroke">
+      <path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" />
+    </Icon>
+  );
+}
+
+function YoutubeIcon() {
+  return (
+    <Icon className="yt-dlp-icon--youtube">
+      <path d="M21.58 7.19a2.82 2.82 0 0 0-1.98-2C17.85 4.72 12 4.72 12 4.72s-5.85 0-7.6.47a2.82 2.82 0 0 0-1.98 2A29.4 29.4 0 0 0 2 12a29.4 29.4 0 0 0 .42 4.81 2.82 2.82 0 0 0 1.98 2c1.75.47 7.6.47 7.6.47s5.85 0 7.6-.47a2.82 2.82 0 0 0 1.98-2A29.4 29.4 0 0 0 22 12a29.4 29.4 0 0 0-.42-4.81Z" />
+      <path className="yt-dlp-icon__cutout" d="m10 15.25 5.2-3.25L10 8.75v6.5Z" />
+    </Icon>
+  );
+}
+
+function TikTokIcon() {
+  return (
+    <Icon className="yt-dlp-icon--tiktok">
+      <path d="M12.53.02h3.91c.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03a9.7 9.7 0 0 1-4.12-.99c-.54-.27-1.04-.62-1.53-.98-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94a7.23 7.23 0 0 1-5.91 3.21 7.3 7.3 0 0 1-4.08-1.03 7.4 7.4 0 0 1-3.65-5.71c-.02-.5-.03-1-.01-1.49a7.43 7.43 0 0 1 2.58-4.96 7.2 7.2 0 0 1 6.15-1.72c.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37a3.44 3.44 0 0 0-1.36 1.75c-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87a3.55 3.55 0 0 0 2.77-1.61c.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07Z" />
+    </Icon>
+  );
+}
+
+function FacebookIcon() {
+  return (
+    <Icon className="yt-dlp-icon--facebook">
+      <path d="M14.2 22v-9h3l.45-3.5H14.2V7.27c0-1.01.28-1.7 1.73-1.7h1.85V2.44a24.7 24.7 0 0 0-2.7-.14c-2.67 0-4.5 1.63-4.5 4.62V9.5H7.56V13h3.02v9h3.62Z" />
+    </Icon>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <Icon className="yt-dlp-icon--stroke">
+      <path d="M4 7h16M9 7V4h6v3m3 0-1 14H7L6 7m4 4v6m4-6v6" />
+    </Icon>
+  );
+}
+
+function CancelIcon() {
+  return (
+    <Icon className="yt-dlp-icon--stroke">
+      <circle cx="12" cy="12" r="9" />
+      <path d="m9 9 6 6m0-6-6 6" />
+    </Icon>
+  );
+}
+
+function RefreshIcon() {
+  return (
+    <Icon className="yt-dlp-icon--stroke">
+      <path d="M20 6v5h-5M4 18v-5h5m10.2-3A8 8 0 0 0 6 6.3L4 9m.8 6A8 8 0 0 0 18 17.7l2-2.7" />
+    </Icon>
+  );
+}
+
+function PlatformIcon({ platform }) {
+  if (platform === "youtube") return <YoutubeIcon />;
+  if (platform === "tiktok") return <TikTokIcon />;
+  return <FacebookIcon />;
+}
+
 export default function YtDlpPage() {
   const confirm = useConfirmDialog();
   const isMobile = useIsMobile();
@@ -340,30 +421,30 @@ export default function YtDlpPage() {
           <div className="yt-dlp-row-actions">
             {["queued", "running"].includes(job.status) && (
               <button type="button" className="secondary-button icon-button danger-text" onClick={() => cancel(job.sid)} aria-label="Cancel download" title="Cancel download">
-                <span aria-hidden="true">■</span>
+                <CancelIcon />
               </button>
             )}
             {(job.output_files || []).map((file, index) => (
               <span className="yt-dlp-file-actions" key={`${job.sid}-${index}`}>
                 <button type="button" className="secondary-button icon-button" onClick={() => openPreview(job, index)} aria-label={`Preview ${file.name}`} title={`Preview ${file.name}`}>
-                  <span aria-hidden="true">▶</span>
+                  <PlayIcon />
                 </button>
                 <button type="button" className="secondary-button icon-button" onClick={() => download(job, index)} aria-label={`Save ${file.name}`} title={`Choose where to save ${file.name} (${formatBytes(file.size)})`}>
-                  <span aria-hidden="true">↓</span>
+                  <DownloadIcon />
                 </button>
                 {job.media_kind === "video" && (
                   <>
                     <button type="button" className="secondary-button icon-button yt-dlp-platform-youtube" onClick={() => openPublish(job, index, "youtube")} aria-label="Upload to YouTube channel" title="Upload to YouTube channel">
-                      <span aria-hidden="true">▶</span>
+                      <YoutubeIcon />
                     </button>
                     {/[.](mp4|webm|mov)$/i.test(file.name) && (
                       <button type="button" className="secondary-button icon-button" onClick={() => openPublish(job, index, "tiktok")} aria-label="Upload to TikTok account" title="Upload to TikTok account">
-                        <span aria-hidden="true">♪</span>
+                        <TikTokIcon />
                       </button>
                     )}
                     {/[.](mp4|mov|mkv)$/i.test(file.name) && (
                       <button type="button" className="secondary-button icon-button yt-dlp-platform-facebook" onClick={() => openPublish(job, index, "facebook")} aria-label="Upload a Reel to Facebook Page" title="Upload a Reel to Facebook Page">
-                        <span aria-hidden="true">f</span>
+                        <FacebookIcon />
                       </button>
                     )}
                   </>
@@ -371,8 +452,8 @@ export default function YtDlpPage() {
               </span>
             ))}
             {!["queued", "running"].includes(job.status) && (
-              <button type="button" className="secondary-button icon-button danger-text" onClick={() => remove(job)} aria-label="Delete download" title="Delete history and module files">
-                <span aria-hidden="true">⌫</span>
+              <button type="button" className="secondary-button icon-button danger-text yt-dlp-delete-button" onClick={() => remove(job)} aria-label="Delete download" title="Delete history and module files">
+                <TrashIcon />
               </button>
             )}
           </div>
@@ -396,7 +477,7 @@ export default function YtDlpPage() {
               FFmpeg {runtime?.ffmpeg ? "ready" : "not found"}
             </span>
             <button type="button" className="secondary-button icon-button" onClick={() => load()} disabled={loading} aria-label="Refresh yt-dlp" title="Refresh">
-              <span aria-hidden="true">↻</span>
+              <RefreshIcon />
             </button>
           </div>
         }
@@ -502,7 +583,7 @@ export default function YtDlpPage() {
                 <label><input type="checkbox" checked={form.embed_metadata} onChange={(event) => setForm({ ...form, embed_metadata: event.target.checked })} /> Metadata</label>
               </div>
               <button type="submit" className="primary-button icon-button" disabled={submitting || !runtime?.installed} aria-label={submitting ? "Starting download" : "Download"} title={submitting ? "Starting…" : "Download"}>
-                <span aria-hidden="true">↓</span>
+                <DownloadIcon />
               </button>
             </form>
           ),
@@ -529,7 +610,7 @@ export default function YtDlpPage() {
                     { value: new Date(job.created_at).toLocaleString() },
                   ]],
                   getActions: (job) => (job.output_files || []).map((file, index) => ({
-                    label: "▶",
+                    label: <PlayIcon />,
                     onClick: () => openPreview(job, index),
                     className: "secondary-button icon-button",
                   })),
@@ -623,16 +704,16 @@ export default function YtDlpPage() {
               </dl>
               <div className="yt-dlp-preview-actions">
                 <button type="button" className="secondary-button icon-button" onClick={() => download(preview.job, preview.fileIndex)} aria-label="Save file" title="Choose where to save">
-                  <span aria-hidden="true">↓</span>
+                  <DownloadIcon />
                 </button>
                 {preview.mediaKind === "video" && (
                   <>
-                    <button type="button" className="secondary-button icon-button yt-dlp-platform-youtube" onClick={() => openPublish(preview.job, preview.fileIndex, "youtube")} aria-label="Upload to YouTube channel" title="Upload to YouTube channel"><span aria-hidden="true">▶</span></button>
+                    <button type="button" className="secondary-button icon-button yt-dlp-platform-youtube" onClick={() => openPublish(preview.job, preview.fileIndex, "youtube")} aria-label="Upload to YouTube channel" title="Upload to YouTube channel"><YoutubeIcon /></button>
                     {/[.](mp4|webm|mov)$/i.test(preview.name) && (
-                      <button type="button" className="secondary-button icon-button" onClick={() => openPublish(preview.job, preview.fileIndex, "tiktok")} aria-label="Upload to TikTok account" title="Upload to TikTok account"><span aria-hidden="true">♪</span></button>
+                      <button type="button" className="secondary-button icon-button" onClick={() => openPublish(preview.job, preview.fileIndex, "tiktok")} aria-label="Upload to TikTok account" title="Upload to TikTok account"><TikTokIcon /></button>
                     )}
                     {/[.](mp4|mov|mkv)$/i.test(preview.name) && (
-                      <button type="button" className="secondary-button icon-button yt-dlp-platform-facebook" onClick={() => openPublish(preview.job, preview.fileIndex, "facebook")} aria-label="Upload a Reel to Facebook Page" title="Upload a Reel to Facebook Page"><span aria-hidden="true">f</span></button>
+                      <button type="button" className="secondary-button icon-button yt-dlp-platform-facebook" onClick={() => openPublish(preview.job, preview.fileIndex, "facebook")} aria-label="Upload a Reel to Facebook Page" title="Upload a Reel to Facebook Page"><FacebookIcon /></button>
                     )}
                   </>
                 )}
@@ -652,12 +733,12 @@ export default function YtDlpPage() {
               <tbody>
                 {publishes.map((item) => (
                   <tr key={item.sid}>
-                    <td>{item.platform === "youtube" ? "▶ YouTube" : item.platform === "tiktok" ? "♪ TikTok" : "f Facebook"}<div className="minor-text">{item.account_label}</div></td>
+                    <td><span className={`yt-dlp-platform-label yt-dlp-platform-${item.platform}`}><PlatformIcon platform={item.platform} /> {item.platform === "youtube" ? "YouTube" : item.platform === "tiktok" ? "TikTok" : "Facebook"}</span><div className="minor-text">{item.account_label}</div></td>
                     <td>{item.title}</td>
                     <td><span className={`status-dot ${statusTone(item.status)}`} /> {item.status}{item.status === "uploading" ? ` ${Math.round(item.progress || 0)}%` : ""}</td>
                     <td>{new Date(item.scheduled_at).toLocaleString()}</td>
                     <td>{item.remote_url ? <a href={item.remote_url} target="_blank" rel="noreferrer">Open ↗</a> : item.remote_id || "—"}{item.error_message && <div className="msg-error">{item.error_message}</div>}</td>
-                    <td>{item.status === "scheduled" && <button type="button" className="secondary-button icon-button danger-text" onClick={() => cancelPublish(item.sid)} aria-label="Cancel scheduled upload" title="Cancel scheduled upload"><span aria-hidden="true">■</span></button>}</td>
+                    <td>{item.status === "scheduled" && <button type="button" className="secondary-button icon-button danger-text" onClick={() => cancelPublish(item.sid)} aria-label="Cancel scheduled upload" title="Cancel scheduled upload"><CancelIcon /></button>}</td>
                   </tr>
                 ))}
               </tbody>
