@@ -112,6 +112,25 @@ Each event carries a direction (bullish/bearish) except the trend-bias *against*
 
 Event combos combine via the **AND / OR** mode (`StrategyCustomEventsMode`). Default SL for a custom-trade signal = height of the related event (candle span / OB-FVG zone height); `M. risk/idea` caps total risk.
 
+## Stop-loss modes
+
+`Strategies › Enable Trade` controls live strategy order direction: `No` = signals/markers only, `Yes` = buy and sell, `Buy` = buy orders only, `Sell` = sell orders only. Manual chart orders remain available; the setting gates strategy-generated orders.
+
+The explicit WYSIWYG stop modes do not add spread, ATR, entry-distance, or one-tick buffers. The resulting price is only normalized to the symbol's valid price increment. If the requested price violates the broker minimum, the trade is rejected instead of silently widening the stop.
+
+| Mode | Level |
+|---|---|
+| `Wick05`, `Wick07`, `Wick11`, `Wick13`, `Wick15`, `Wick2` | Signal-candle wick length × `0.5`, `0.7`, `1.1`, `1.3`, `1.5`, or `2.0`; no additional buffer |
+| `Body` | Adverse edge of the signal candle body |
+| `ATR5`, `ATR12`, `ATR24`, `ATR48` | Entry ± one ATR calculated through the entry-decision candle on the signal timeframe |
+| `SwingLTF` / legacy `swing` | Most recent confirmed adverse swing within 20 signal-timeframe bars |
+| `SwingHTF` | Most recent confirmed adverse swing within 20 bars of the automatic higher timeframes |
+| `Swing15m`, `Swing1H`, `Swing4H` | Most recent confirmed adverse swing within 20 bars of the named fixed timeframe |
+
+Swing selection prioritizes the nearest time first, then the nearest price when candidates have the same timestamp.
+
+An explicit non-`Auto` value in the `SL` combo overrides the legacy `Wick`, `Event`, or `Swing` token embedded in a `1st/2nd/3rd Trade` chain name. Leaving `SL = Auto` preserves the chain preset's historical stop behavior.
+
 ## Chart Visuals combos
 
 All four master combos follow the same shape: `All | None | Per Item | <specific>` (`Per Item` = use the individual per-item params/toolbar toggles).

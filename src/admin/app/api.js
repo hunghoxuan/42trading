@@ -1081,6 +1081,7 @@ export const api = {
       `/api/media/yt-dlp/jobs/${encodeURIComponent(sid)}/file?index=${encodeURIComponent(index)}`,
     ),
   ytDlpPublishingStatus: () => get("/api/media/yt-dlp/publishing/status"),
+  ytDlpStartYoutubeOAuth: () => post("/api/media/yt-dlp/youtube/oauth/start", {}),
   ytDlpPublishes: (limit = 100) =>
     get(`/api/media/yt-dlp/publishes?limit=${encodeURIComponent(limit)}`),
   ytDlpCreatePublish: (payload = {}) =>

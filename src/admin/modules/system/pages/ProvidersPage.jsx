@@ -198,6 +198,7 @@ export default function ProvidersPage() {
   const [msg, setMsg] = useState("");
   const [selectedProvider, setSelectedProvider] = useState("GEMINI");
   const [saveBusy, setSaveBusy] = useState(false);
+  const [youtubeConnectBusy, setYoutubeConnectBusy] = useState(false);
   const [detailTab, setDetailTab] = useState("settings");
 
   // ── Derived ─────────────────────────────────────────────────────────────
@@ -267,12 +268,17 @@ export default function ProvidersPage() {
             ? currentProvider.data.key_entries.map((entry) => ({ ...entry }))
             : [createEmptyKeyRow()],
         remain_credits: currentProvider.data.remain_credits,
-        provider_data: Object.fromEntries(
-          (currentProvDef?.fields || []).map((field) => [
-            field.name,
-            String(currentProvider.data[field.name] || ""),
-          ]),
-        ),
+        provider_data: {
+          ...Object.fromEntries(
+            (currentProvDef?.fields || []).map((field) => [
+              field.name,
+              String(currentProvider.data[field.name] || ""),
+            ]),
+          ),
+          channels: Array.isArray(currentProvider.data.channels)
+            ? currentProvider.data.channels.map((channel) => ({ ...channel }))
+            : [],
+        },
       });
     }
   }, [selectedProvider, currentProvider, currentProvDef]);
@@ -402,6 +408,16 @@ export default function ProvidersPage() {
     loadData();
   }, []);
 
+  useEffect(() => {
+    const onMessage = (event) => {
+      if (event?.data?.type !== "yt-dlp-youtube-connected") return;
+      setMsg("YouTube channel connected and saved.");
+      loadData();
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+
   // ── Mutations ───────────────────────────────────────────────────────────
 
   const toggleModel = (model) => {
@@ -452,6 +468,21 @@ export default function ProvidersPage() {
       setMsg(errMsg);
     } finally {
       setSaveBusy(false);
+    }
+  }
+
+  async function connectYoutubeChannel() {
+    setYoutubeConnectBusy(true);
+    setMsg("");
+    try {
+      const result = await api.ytDlpStartYoutubeOAuth();
+      const popup = window.open(result.authorization_url, "42trade-youtube-connect", "popup,width=640,height=760");
+      if (!popup) throw new Error("Allow pop-ups, then select Connect YouTube channel again.");
+      setMsg("Google opened in a separate window. Select the YouTube channel you want to publish to and approve access.");
+    } catch (err) {
+      setMsg(err?.message || "Could not start the YouTube connection.");
+    } finally {
+      setYoutubeConnectBusy(false);
     }
   }
 
@@ -579,6 +610,17 @@ export default function ProvidersPage() {
                       <div className="minor-text">
                         Stored encrypted in the current user's Providers database record.
                       </div>
+                      {selectedProvider === "YOUTUBE" && (
+                        <div className="panel stack-layout" style={{ gap: 8, padding: 12 }}>
+                          <strong>Connect YouTube channel</strong>
+                          <div className="minor-text">Open Google, choose the personal or Brand channel, and approve upload access. The verified channel name is then added to the YT DLP destination picker.</div>
+                          <div>
+                            <button type="button" className="primary-button" onClick={connectYoutubeChannel} disabled={saveBusy || youtubeConnectBusy}>
+                              {youtubeConnectBusy ? "Opening Google…" : "Connect YouTube channel"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
                       {(currentProvDef.fields || []).map((field) => (
                         <label className="stack-layout" style={{ gap: 6 }} key={field.name}>
                           <span className="panel-label" style={{ fontSize: 10 }}>
@@ -617,7 +659,66 @@ export default function ProvidersPage() {
                         </label>
                       ))}
                       {selectedProvider === "YOUTUBE" && (
-                        <div className="minor-text">The refresh token needs the youtube.upload OAuth scope.</div>
+                        <>
+                          <div className="stack-layout" style={{ gap: 8 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                              <span className="panel-label" style={{ fontSize: 10 }}>ADDITIONAL YOUTUBE CHANNELS</span>
+                              <button
+                                type="button"
+                                className="secondary-button"
+                                onClick={connectYoutubeChannel}
+                                disabled={saveBusy || youtubeConnectBusy}
+                              >
+                                Connect channel
+                              </button>
+                            </div>
+                            {(form.provider_data.channels || []).map((channel, index) => (
+                              <div className="stack-layout panel" style={{ gap: 6, padding: 10 }} key={channel.id || index}>
+                                <div style={{ display: "flex", gap: 8 }}>
+                                  <input
+                                    value={channel.label || ""}
+                                    placeholder="Personal or Brand channel label"
+                                    onChange={(event) => setForm((prev) => ({
+                                      ...prev,
+                                      provider_data: {
+                                        ...prev.provider_data,
+                                        channels: prev.provider_data.channels.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item),
+                                      },
+                                    }))}
+                                    style={{ flex: 1 }}
+                                  />
+                                  <button
+                                    type="button"
+                                    className="secondary-button danger-text"
+                                    onClick={() => setForm((prev) => ({
+                                      ...prev,
+                                      provider_data: { ...prev.provider_data, channels: prev.provider_data.channels.filter((_, itemIndex) => itemIndex !== index) },
+                                    }))}
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                                {["client_id", "client_secret", "refresh_token"].map((key) => (
+                                  <input
+                                    key={key}
+                                    type={key === "client_id" ? "text" : "password"}
+                                    value={channel[key] || ""}
+                                    placeholder={key.replaceAll("_", " ")}
+                                    autoComplete="off"
+                                    onChange={(event) => setForm((prev) => ({
+                                      ...prev,
+                                      provider_data: {
+                                        ...prev.provider_data,
+                                        channels: prev.provider_data.channels.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: event.target.value } : item),
+                                      },
+                                    }))}
+                                  />
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+                          <div className="minor-text">Use Connect channel to choose a personal or Brand channel in Google. Each verified connection becomes selectable in Media → YT DLP.</div>
+                        </>
                       )}
                       {selectedProvider === "TIKTOK" && (
                         <div className="minor-text">Use video.upload permission. Client credentials and a refresh token enable long-running schedules.</div>

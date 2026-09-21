@@ -48,9 +48,21 @@ function sendFile(req, res, file, { inline = false } = {}) {
   else fs.createReadStream(file.path, { start, end }).pipe(res);
 }
 
-function createYtDlpHttpHandler({ service, json, readJson, getSession, requirePermission }) {
+function createYtDlpHttpHandler({ service, json, readJson, getSession, requirePermission, youtubeOAuth }) {
   return async function handleYtDlpRequest(req, res, url) {
     if (!url.pathname.startsWith("/v2/media/yt-dlp")) return false;
+    const oauthCallback = url.pathname === "/v2/media/yt-dlp/youtube/oauth/callback";
+    if (req.method === "GET" && oauthCallback) {
+      try {
+        const result = await youtubeOAuth.complete(url.searchParams.get("state"), url.searchParams.get("code"), url.searchParams.get("error"));
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+        res.end(`<!doctype html><title>YouTube connected</title><body><p>YouTube channel <strong>${String(result.label).replace(/[&<>\"]/g, "")}</strong> is connected. You can close this window.</p><script>window.opener&&window.opener.postMessage({type:'yt-dlp-youtube-connected'}, window.location.origin);window.close();</script></body>`);
+      } catch (error) {
+        res.writeHead(400, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+        res.end(`<!doctype html><title>YouTube connection failed</title><body><p>${String(error.message || error).replace(/[&<>\"]/g, "")}</p></body>`);
+      }
+      return true;
+    }
     const write = req.method !== "GET" && req.method !== "HEAD";
     if (!requirePermission(req, res, write ? "apis.media.yt_dlp.write" : "apis.media.yt_dlp.read")) {
       return true;
@@ -73,6 +85,11 @@ function createYtDlpHttpHandler({ service, json, readJson, getSession, requirePe
       }
       if (req.method === "GET" && url.pathname === "/v2/media/yt-dlp/publishing/status") {
         json(res, 200, { ok: true, platforms: await service.publishingStatus(userId) });
+        return true;
+      }
+      if (req.method === "POST" && url.pathname === "/v2/media/yt-dlp/youtube/oauth/start") {
+        const origin = `${url.protocol}//${url.host}`;
+        json(res, 200, { ok: true, authorization_url: await youtubeOAuth.start(userId, origin) });
         return true;
       }
       if (req.method === "GET" && url.pathname === "/v2/media/yt-dlp/publishes") {

@@ -22,7 +22,7 @@ namespace cAlgo.Robots
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class TVBridgeCBot : Robot
     {
-        private const string BuildVersion = "v2026.09.15 04:30 UTC - compact-technical-event-names";
+        private const string BuildVersion = "v2026.09.21 - shared-trend-bias-engine";
         private const string BridgeSourceId = "Ctrader";
         private const string BridgeSourceType = "ctrader_bridge";
         private const int TransientErrorLogThresholdCount = 10;
@@ -43,6 +43,7 @@ namespace cAlgo.Robots
         private const int IndicatorEventScanCacheMaxEntries = 16;
         private const int SharedPatternDetectionCacheMaxEntries = 2048;
         private const int CandleSwingReactionLookbackBars = 20;
+        private const int PremiumDiscountRangeBars = 24;
         private const int DefaultSurroundingBoxAlpha = 39;
         private const double InactiveOrHtfAlphaFactor = 0.80;
         private const int TrendlineFutureProjectionBars = 3;
@@ -199,6 +200,7 @@ namespace cAlgo.Robots
         private ChartIndicator _chartTickVolumeIndicator;
         private readonly HashSet<string> _managedDivergenceIndicatorObjectNames = new HashSet<string>(StringComparer.Ordinal);
         private string _chartOscillatorSignature = "";
+        private string _nativeIndicatorChartContextKey = "";
         // Native price-panel overlays (EMA / VWAP / Bollinger / Ichimoku). When these exist,
         // the expensive per-bar custom drawing is skipped; if an Add fails (null), the custom
         // path is kept as a fallback.
@@ -212,6 +214,7 @@ namespace cAlgo.Robots
         private string _lastAppliedDirectionalPaletteKey = "";
         private static readonly bool DisableTechnicalVisualRenderingForIsolation = false;
         private static readonly bool EnableBridgeDebugFileLogging = false;
+        private static readonly bool ValidateContractsOnLiveStartup = false;
         private bool _toggleFvgZones;
         private bool _toggleOrderBlocks;
         private bool _toggleHigherTimeframeZones;
@@ -239,6 +242,7 @@ namespace cAlgo.Robots
         private DateTime _lastStrategySchedulerWallUtc = DateTime.MinValue;
         private readonly Dictionary<long, StrategyPositionSnapshot> _trackedStrategyPositions = new Dictionary<long, StrategyPositionSnapshot>();
         private readonly List<StrategyChartMarker> _strategyChartMarkers = new List<StrategyChartMarker>();
+        private readonly HashSet<string> _loggedFullEventKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly List<ChartArtifactPriceBand> _drawnChartArtifactPriceBands = new List<ChartArtifactPriceBand>();
         private DateTime _lastStrategyPositionMarkerReconcileUtc = DateTime.MinValue;
         private string _visualAnalysisCacheKey = "";
@@ -274,6 +278,12 @@ namespace cAlgo.Robots
         private DateTime _lastMiniChartRedrawAtUtc = DateTime.MinValue;
         private DateTime _lastMiniChartAnchorBarTime = DateTime.MinValue;
         private DateTime _lastMiniChartStartTime = DateTime.MinValue;
+        // Cache: miniFrames list is stable between bar closes — don't rebuild every tick
+        private List<TimeFrame> _cachedMiniFrames = null;
+        private int _cachedMiniFrameChartTfMinutes = -1;
+        // Cache: lowerTfTokens is stable between bar closes
+        private List<string> _cachedLowerTfTokens = null;
+        private int _cachedLowerTfTokensChartMinutes = -1;
         private DateTime _lastTechOverlayRedrawAtUtc = DateTime.MinValue;
         private int _lastFullOverlayBarsCount = -1;
         private string _lastFullOverlayStateKey = "";
@@ -314,6 +324,38 @@ namespace cAlgo.Robots
         private static readonly bool RestoreHangingManOnlyForIsolation = false;
         private static readonly bool RestoreMorningStarOnlyForIsolation = false;
         private static readonly bool RestoreEveningStarOnlyForIsolation = false;
+        // ── Compiled Regex patterns (performance: compiled once at class load) ──────────
+        private static readonly Regex _rxSanitizeChartName   = new Regex(@"[^a-zA-Z0-9._-]",                             RegexOptions.Compiled);
+        private static readonly Regex _rxAllDots             = new Regex(@"^\.+$",                                       RegexOptions.Compiled);
+        internal static readonly Regex _rxWhitespace         = new Regex(@"\s+",                                         RegexOptions.Compiled);
+        private static readonly Regex _rxLocalhost           = new Regex(@"localhost",                                     RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private static readonly Regex _rxRrPrefix            = new Regex(@"^RR[0-9]",                                     RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private static readonly Regex _rxBracketContent      = new Regex(@"\[([^\]]*)\]",                              RegexOptions.Compiled);
+        private static readonly Regex _rxTrailingPlusNum     = new Regex(@"\s\+(\d+)\s*$",                            RegexOptions.Compiled);
+        private static readonly Regex _rxNonAlphaUpperNum    = new Regex(@"[^A-Z0-9]",                                    RegexOptions.Compiled);
+        private static readonly Regex _rxCommaSep            = new Regex(@"[,;\s]+",                                     RegexOptions.Compiled);
+        private static readonly Regex _rxJsonTpTargets       = new Regex(@"""tp_targets""\s*:\s*\[([^\]]*)\]",       RegexOptions.Compiled);
+        private static readonly Regex _rxDecimalNum          = new Regex(@"[\d]+\.?[\d]*",                             RegexOptions.Compiled);
+        private static readonly Regex _rxJsonPartialTps      = new Regex(@"""partial_tps""\s*:\s*\[(.*?)\]",          RegexOptions.Compiled | RegexOptions.Singleline);
+        private static readonly Regex _rxJsonObject          = new Regex(@"\{(.*?)\}",                                  RegexOptions.Compiled | RegexOptions.Singleline);
+        private static readonly Regex _rxJsonResults         = new Regex(@"""results""\s*:\s*\[(.*?)\]",              RegexOptions.Compiled | RegexOptions.Singleline);
+        private static readonly Regex _rxJsonTradeUpdates    = new Regex(@"""tradeUpdates""\s*:\s*\[(.*?)\]",         RegexOptions.Compiled | RegexOptions.Singleline);
+        private static readonly Regex _rxJsonClosedRows      = new Regex(@"""closedRows""\s*:\s*\[(.*?)\]",           RegexOptions.Compiled | RegexOptions.Singleline);
+        private static readonly Regex _rxNonAlphaNum         = new Regex(@"[^A-Za-z0-9]+",                               RegexOptions.Compiled);
+        private static readonly Regex _rxHasLetter           = new Regex(@"[A-Za-z]",                                    RegexOptions.Compiled);
+        private static readonly Regex _rxQuotedStr           = new Regex(@"""([^""]+)""",                                 RegexOptions.Compiled);
+        internal static readonly Regex _rxJsonInserted       = new Regex(@"""inserted""\s*:\s*(\d+)",                  RegexOptions.Compiled);
+        internal static readonly Regex _rxJsonDuplicated     = new Regex(@"""duplicated""\s*:\s*(\d+)",                RegexOptions.Compiled);
+        internal static readonly Regex _rxJsonError          = new Regex(@"""error""\s*:\s*""([^""]+)""",               RegexOptions.Compiled | RegexOptions.Singleline);
+        internal static readonly Regex _rxNotKeyword         = new Regex(@"^not\b",                                      RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        internal static readonly Regex _rxFunctionCall       = new Regex(@"^([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*)\)$",   RegexOptions.Compiled);
+        internal static readonly Regex _rxIdentifier         = new Regex(@"^[a-zA-Z_][a-zA-Z0-9_.]*$",                   RegexOptions.Compiled);
+        internal static readonly Regex _rxEmaNum             = new Regex(@"^ema_?(\d+)$",                                RegexOptions.Compiled);
+        internal static readonly Regex _rxSmaNum             = new Regex(@"^sma_?(\d+)$",                                RegexOptions.Compiled);
+        // Helper: checks whether a char qualifies as an identifier/dot char (replaces per-char Regex.IsMatch in hot path)
+        internal static bool IsIdentOrDotChar(char c) => char.IsLetterOrDigit(c) || c == '_' || c == '.';
+        // ──────────────────────────────────────────────────────────────────────────────────
+
         private const int LiteZoneRefreshEveryTicks = 5;
         // Hard cap on how often the heavier lite overlay families (detections, mini chart
         // strip, technical overlays) can remove+redraw. Their keys change once per completed
@@ -451,9 +493,18 @@ namespace cAlgo.Robots
         {
             Auto,
             Off,
-            E9_21_55,
-            E20_50_200,
-            E34_49
+            trend_9_21 = 5,
+            trend_20_50 = 6,
+            trend_50_200 = 7,
+            scalp_5_13 = 8,
+            scalp_8_21 = 9,
+            scalp_13_34 = 10,
+            swing_21_55 = 11,
+            swing_34_89 = 4,
+            swing_50_100 = 12,
+            triple_9_21_55 = 2,
+            triple_8_21_55 = 13,
+            triple_20_50_200 = 3
         }
 
         public enum VwapVisualMode
@@ -628,6 +679,7 @@ namespace cAlgo.Robots
             Lose,
             custom_trade,
             candle_pattern_trend,
+            wick_flip_continuation,
             follow_trend,
             follow_trend_big_candle,
             htf_event,
@@ -811,7 +863,7 @@ namespace cAlgo.Robots
 
         public RiskMode SelectedRiskMode { get; set; } = RiskMode.Risky;
 
-        public string OnSlTpError { get; set; } = "Adjust";  // "Reject" = cancel trade, "Adjust" = auto-widen to meet minimum, "Continue" = keep position without SL/TP
+        public string OnSlTpError { get; set; } = "Reject";  // Preserve the selected WYSIWYG level; never widen SL/TP silently.
 
         [Parameter("1st Trade", Group = "Trade Config", DefaultValue = StrategyTradeChainMode.Now_Wick_L0_R15)]
         public StrategyTradeChainMode FirstTradeMode { get; set; }
@@ -879,14 +931,14 @@ namespace cAlgo.Robots
             ArtifactSuggestedLevelsV1,
             ArtifactSuggestedLevelsV2,
             ArtifactSuggestedLevelsV2LimitBodyMid,
-            AiSnapshotContextV1
-        }
-
-        public enum StrategyFileMode
-        {
-            Off,
-            custom_trade,
-            candle_pattern_trend
+            AiSnapshotContextV1,
+            WickFlipContinuation,
+            candle_pattern_trend,
+            pinbar_structure_event,
+            engulfing_structure_event,
+            wick_flip,
+            reject_trendline,
+            sweep_reclaim
         }
 
         public enum StrategyCustomEventsMode
@@ -902,105 +954,109 @@ namespace cAlgo.Robots
             [Description("— Any Structure Event")]
             __AnyStructureEvent,
             [Description("choch - Change of Character")]
-            Choch_ChangeOfCharacter,
+            choch_ChangeOfCharacter,
             [Description("bos - Break of Structure")]
-            Bos_BreakOfStructure,
+            bos_BreakOfStructure,
             [Description("s - Sweep")]
-            Swp_Sweep,
+            s_Sweep,
+            [Description("sweep_reclaim - Sweep / Rejection / CHOCH / BOS / Candle")]
+            sweep_reclaim = 102,
             [Description("b - Breakout")]
-            Br_Breakout,
+            b_Breakout = 5,
             [Description("b.tl - Trendline Breakout")]
-            BrTl_TrendlineBreakout,
+            b_TrendlineBreakout,
             [Description("b.ob - Order Block Breakout")]
-            BrOb_OrderBlockBreakout,
+            b_OrderBlockBreakout,
             [Description("b.fvg - FVG Breakout")]
-            BrFvg_FVGBreakout,
+            b_FVGBreakout,
             [Description("b.sd - Supply/Demand Breakout")]
-            BrSd_SupplyDemandBreakout,
+            b_SupplyDemandBreakout,
             [Description("r - Key Level Rejection")]
-            Rj_KeyLevelRejection,
+            r_KeyLevelRejection,
             [Description("x - Cross")]
-            X_Cross = 100,
+            x_Cross = 100,
             [Description("xr - Early Rejection")]
-            Xr_EarlyRejection = 101,
+            xr_EarlyRejection = 101,
             [Description("r.tl - Trendline Rejection")]
             // Keep value 11 unused (the removed duplicate Tl_TrendlineConfirmation) so
             // persisted numeric enum values retain their historical meaning.
-            RjTl_TrendlineRejection = 12,
+            r_TrendlineRejection = 12,
             [Description("r.ob - Order Block Rejection")]
-            RjOb_OrderBlockRejection,
+            r_OrderBlockRejection,
             [Description("r.fvg - FVG Rejection")]
-            RjFvg_FVGRejection,
+            r_FVGRejection,
             [Description("r.sd - Supply/Demand Rejection")]
-            RjSd_SupplyDemandRejection,
+            r_SupplyDemandRejection,
             [Description("b.mom - Momentum Breakout")]
-            Im_ImpulseMomentumShift,
+            b_ImpulseMomentumShift,
             [Description("— Any Candle Pattern")]
             __AnyCandlePattern,
             [Description("mor - Morning Star")]
-            Mor_MorningStar,
+            mor_MorningStar,
             [Description("eve - Evening Star")]
-            Eve_EveningStar,
+            eve_EveningStar,
             [Description("tws - Three White Soldiers")]
-            Tws_ThreeWhiteSoldiers,
+            tws_ThreeWhiteSoldiers,
             [Description("tbc - Three Black Crows")]
-            Tbc_ThreeBlackCrows,
+            tbc_ThreeBlackCrows,
             [Description("eng - Engulfing")]
-            Eng_Engulfing,
+            eng_Engulfing,
             [Description("dcc - Dark Cloud Cover")]
-            Dcc_DarkCloudCover,
+            dcc_DarkCloudCover,
             [Description("prc - Piercing Line")]
-            Prc_PiercingLine,
+            prc_PiercingLine,
             [Description("pin - Pin Bar")]
-            Pin_PinBar,
+            pin_PinBar,
             [Description("ham - Hammer")]
-            Ham_Hammer,
+            ham_Hammer,
             [Description("sst - Shooting Star")]
-            Sst_ShootingStar,
+            sst_ShootingStar,
             [Description("ihm - Inverted Hammer")]
-            Ihm_InvertedHammer,
+            ihm_InvertedHammer,
             [Description("hgm - Hanging Man")]
-            Hgm_HangingMan,
+            hgm_HangingMan,
             [Description("big - Big Candle")]
-            Big_BigCandle,
+            big_BigCandle,
             [Description("har - Harami")]
-            Har_Harami,
+            har_Harami,
             [Description("— Any Momentum Event")]
             __AnyTechnicalEvent,
             [Description("r.ema - EMA Rejection")]
-            EmaPb_EMAPullbackReclaim,
+            ema_EMAPullbackReclaim,
             [Description("b.vwap - VWAP Breakout")]
-            VwapCt_VWAPContinuationReclaim,
+            vwap_VWAPContinuationReclaim,
             [Description("div.rsi - RSI Divergence")]
-            Div_Divergence,
-            [Description("px.ema - Price/EMA Cross")]
-            Pxe_PriceEmaCross,
+            rsi_Divergence,
+            [Description("px.ema.fast - Price/Fast EMA Cross")]
+            ema_PriceFastEmaCross,
+            [Description("px.ema.slow - Price/Slow EMA Cross")]
+            ema_PriceSlowEmaCross,
             [Description("ema.fast.mid - EMA Fast/Mid Cross")]
-            Emx_EmaFastMidCross,
+            ema_EmaFastMidCross,
             [Description("ema.mid.slow - EMA Mid/Slow Cross")]
-            Emt_EmaMidSlowCross,
+            ema_EmaMidSlowCross,
             [Description("px.vwap - Price/VWAP Cross")]
-            Vwx_PriceVwapCross,
+            vwap_PriceVwapCross,
             [Description("r.vwap - VWAP Rejection")]
-            Vwr_VwapRejection,
+            vwap_VwapRejection,
             [Description("bb.mid - Bollinger Mid Cross")]
-            Bbx_BollingerMidCross,
+            bb_BollingerMidCross,
             [Description("bb.band - Bollinger Band Rejection")]
-            Bbr_BollingerBandReject,
+            bb_BollingerBandReject,
             [Description("rsi.50 - RSI Midline Cross")]
-            R50_RsiMidlineCross,
+            rsi_RsiMidlineCross,
             [Description("rsi.exit.low - RSI Exit Oversold")]
-            Ros_RsiExitOversold,
+            rsi_RsiExitOversold,
             [Description("rsi.exit.high - RSI Exit Overbought")]
-            Rob_RsiExitOverbought,
+            rsi_RsiExitOverbought,
             [Description("stoch.cross - Stochastic Cross")]
-            Stx_StochCross,
+            stoch_StochCross,
             [Description("stoch.exit - Stochastic Exit Extreme")]
-            Sto_StochExitExtreme,
+            stoch_StochExitExtreme,
             [Description("macd.signal - MACD Signal Cross")]
-            Mdx_MacdSignalCross,
+            macd_MacdSignalCross,
             [Description("macd.zero - MACD Zero Cross")]
-            Md0_MacdZeroCross
+            macd_MacdZeroCross
         }
 
         private enum StrategyEventFollowUpOutcome
@@ -1099,24 +1155,45 @@ namespace cAlgo.Robots
         {
             No,
             Auto,
+            ATR5,
+            ATR12,
+            ATR24,
+            ATR48,
+            Body,
+            candle_body,
+            candle_extreme_5,
+            candle_extreme_10,
+            candle_range,
             candle_wick,
-            candle_range_5,
-            candle_range_10,
+            candle_wick_07,
             candle_wick_1_5,
             candle_wick_2,
+            candle_wick_13,
+            @event,
+            event_invalidation,
+            furthest_invalidation,
+            fvg_edge,
+            HTF_Key_levels,
+            ltf_Key_levels,
+            ob_edge,
             pattern,
             protective_swing,
-            furthest_invalidation,
-            swing,
-            ltf_Key_levels,
-            HTF_Key_levels,
-            event_invalidation,
-            ob_edge,
-            fvg_edge,
+            Range24,
             session_high_low,
-            @event,
+            structure,
+            swing,
+            Swing1H,
+            Swing4H,
+            Swing15m,
+            SwingHTF,
+            SwingLTF,
             wick,
-            structure
+            Wick05,
+            Wick07,
+            Wick11,
+            Wick13,
+            Wick15,
+            Wick2
         }
 
         public enum StrategyTakeProfitMode
@@ -1282,7 +1359,251 @@ namespace cAlgo.Robots
             Now_Wick_S01_R2,
             Now_Wick_S01_R25,
             Now_Wick_S01_R3,
-            Now_Event,
+
+            Now_Wick15,
+            Now_Wick15_R03,
+            Now_Wick15_R05,
+            Now_Wick15_R07,
+            Now_Wick15_R1,
+            Now_Wick15_R13,
+            Now_Wick15_R15,
+            Now_Wick15_R17,
+            Now_Wick15_R2,
+            Now_Wick15_R25,
+            Now_Wick15_R3,
+            Now_Wick15_L0,
+            Now_Wick15_L0_R03,
+            Now_Wick15_L0_R05,
+            Now_Wick15_L0_R07,
+            Now_Wick15_L0_R1,
+            Now_Wick15_L0_R13,
+            Now_Wick15_L0_R15,
+            Now_Wick15_L0_R17,
+            Now_Wick15_L0_R2,
+            Now_Wick15_L0_R25,
+            Now_Wick15_L0_R3,
+            Now_Wick15_L01,
+            Now_Wick15_L01_R03,
+            Now_Wick15_L01_R05,
+            Now_Wick15_L01_R07,
+            Now_Wick15_L01_R1,
+            Now_Wick15_L01_R13,
+            Now_Wick15_L01_R15,
+            Now_Wick15_L01_R17,
+            Now_Wick15_L01_R2,
+            Now_Wick15_L01_R25,
+            Now_Wick15_L01_R3,
+            Now_Wick15_L02,
+            Now_Wick15_L02_R03,
+            Now_Wick15_L02_R05,
+            Now_Wick15_L02_R07,
+            Now_Wick15_L02_R1,
+            Now_Wick15_L02_R13,
+            Now_Wick15_L02_R15,
+            Now_Wick15_L02_R17,
+            Now_Wick15_L02_R2,
+            Now_Wick15_L02_R25,
+            Now_Wick15_L02_R3,
+            Now_Wick15_L03,
+            Now_Wick15_L03_R03,
+            Now_Wick15_L03_R05,
+            Now_Wick15_L03_R07,
+            Now_Wick15_L03_R1,
+            Now_Wick15_L03_R13,
+            Now_Wick15_L03_R15,
+            Now_Wick15_L03_R17,
+            Now_Wick15_L03_R2,
+            Now_Wick15_L03_R25,
+            Now_Wick15_L03_R3,
+            Now_Wick15_L04,
+            Now_Wick15_L04_R03,
+            Now_Wick15_L04_R05,
+            Now_Wick15_L04_R07,
+            Now_Wick15_L04_R1,
+            Now_Wick15_L04_R13,
+            Now_Wick15_L04_R15,
+            Now_Wick15_L04_R17,
+            Now_Wick15_L04_R2,
+            Now_Wick15_L04_R25,
+            Now_Wick15_L04_R3,
+            Now_Wick15_L05,
+            Now_Wick15_L05_R03,
+            Now_Wick15_L05_R05,
+            Now_Wick15_L05_R07,
+            Now_Wick15_L05_R1,
+            Now_Wick15_L05_R13,
+            Now_Wick15_L05_R15,
+            Now_Wick15_L05_R17,
+            Now_Wick15_L05_R2,
+            Now_Wick15_L05_R25,
+            Now_Wick15_L05_R3,
+            Now_Wick15_L06,
+            Now_Wick15_L06_R03,
+            Now_Wick15_L06_R05,
+            Now_Wick15_L06_R07,
+            Now_Wick15_L06_R1,
+            Now_Wick15_L06_R13,
+            Now_Wick15_L06_R15,
+            Now_Wick15_L06_R17,
+            Now_Wick15_L06_R2,
+            Now_Wick15_L06_R25,
+            Now_Wick15_L06_R3,
+            Now_Wick15_L07,
+            Now_Wick15_L07_R03,
+            Now_Wick15_L07_R05,
+            Now_Wick15_L07_R07,
+            Now_Wick15_L07_R1,
+            Now_Wick15_L07_R13,
+            Now_Wick15_L07_R15,
+            Now_Wick15_L07_R17,
+            Now_Wick15_L07_R2,
+            Now_Wick15_L07_R25,
+            Now_Wick15_L07_R3,
+            Now_Wick15_L08,
+            Now_Wick15_L08_R03,
+            Now_Wick15_L08_R05,
+            Now_Wick15_L08_R07,
+            Now_Wick15_L08_R1,
+            Now_Wick15_L08_R13,
+            Now_Wick15_L08_R15,
+            Now_Wick15_L08_R17,
+            Now_Wick15_L08_R2,
+            Now_Wick15_L08_R25,
+            Now_Wick15_L08_R3,
+            Now_Wick15_S01,
+            Now_Wick15_S01_R03,
+            Now_Wick15_S01_R05,
+            Now_Wick15_S01_R07,
+            Now_Wick15_S01_R1,
+            Now_Wick15_S01_R13,
+            Now_Wick15_S01_R15,
+            Now_Wick15_S01_R17,
+            Now_Wick15_S01_R2,
+            Now_Wick15_S01_R25,
+            Now_Wick15_S01_R3,
+
+            Now_Wick20,
+            Now_Wick20_R03,
+            Now_Wick20_R05,
+            Now_Wick20_R07,
+            Now_Wick20_R1,
+            Now_Wick20_R13,
+            Now_Wick20_R15,
+            Now_Wick20_R17,
+            Now_Wick20_R2,
+            Now_Wick20_R25,
+            Now_Wick20_R3,
+            Now_Wick20_L0,
+            Now_Wick20_L0_R03,
+            Now_Wick20_L0_R05,
+            Now_Wick20_L0_R07,
+            Now_Wick20_L0_R1,
+            Now_Wick20_L0_R13,
+            Now_Wick20_L0_R15,
+            Now_Wick20_L0_R17,
+            Now_Wick20_L0_R2,
+            Now_Wick20_L0_R25,
+            Now_Wick20_L0_R3,
+            Now_Wick20_L01,
+            Now_Wick20_L01_R03,
+            Now_Wick20_L01_R05,
+            Now_Wick20_L01_R07,
+            Now_Wick20_L01_R1,
+            Now_Wick20_L01_R13,
+            Now_Wick20_L01_R15,
+            Now_Wick20_L01_R17,
+            Now_Wick20_L01_R2,
+            Now_Wick20_L01_R25,
+            Now_Wick20_L01_R3,
+            Now_Wick20_L02,
+            Now_Wick20_L02_R03,
+            Now_Wick20_L02_R05,
+            Now_Wick20_L02_R07,
+            Now_Wick20_L02_R1,
+            Now_Wick20_L02_R13,
+            Now_Wick20_L02_R15,
+            Now_Wick20_L02_R17,
+            Now_Wick20_L02_R2,
+            Now_Wick20_L02_R25,
+            Now_Wick20_L02_R3,
+            Now_Wick20_L03,
+            Now_Wick20_L03_R03,
+            Now_Wick20_L03_R05,
+            Now_Wick20_L03_R07,
+            Now_Wick20_L03_R1,
+            Now_Wick20_L03_R13,
+            Now_Wick20_L03_R15,
+            Now_Wick20_L03_R17,
+            Now_Wick20_L03_R2,
+            Now_Wick20_L03_R25,
+            Now_Wick20_L03_R3,
+            Now_Wick20_L04,
+            Now_Wick20_L04_R03,
+            Now_Wick20_L04_R05,
+            Now_Wick20_L04_R07,
+            Now_Wick20_L04_R1,
+            Now_Wick20_L04_R13,
+            Now_Wick20_L04_R15,
+            Now_Wick20_L04_R17,
+            Now_Wick20_L04_R2,
+            Now_Wick20_L04_R25,
+            Now_Wick20_L04_R3,
+            Now_Wick20_L05,
+            Now_Wick20_L05_R03,
+            Now_Wick20_L05_R05,
+            Now_Wick20_L05_R07,
+            Now_Wick20_L05_R1,
+            Now_Wick20_L05_R13,
+            Now_Wick20_L05_R15,
+            Now_Wick20_L05_R17,
+            Now_Wick20_L05_R2,
+            Now_Wick20_L05_R25,
+            Now_Wick20_L05_R3,
+            Now_Wick20_L06,
+            Now_Wick20_L06_R03,
+            Now_Wick20_L06_R05,
+            Now_Wick20_L06_R07,
+            Now_Wick20_L06_R1,
+            Now_Wick20_L06_R13,
+            Now_Wick20_L06_R15,
+            Now_Wick20_L06_R17,
+            Now_Wick20_L06_R2,
+            Now_Wick20_L06_R25,
+            Now_Wick20_L06_R3,
+            Now_Wick20_L07,
+            Now_Wick20_L07_R03,
+            Now_Wick20_L07_R05,
+            Now_Wick20_L07_R07,
+            Now_Wick20_L07_R1,
+            Now_Wick20_L07_R13,
+            Now_Wick20_L07_R15,
+            Now_Wick20_L07_R17,
+            Now_Wick20_L07_R2,
+            Now_Wick20_L07_R25,
+            Now_Wick20_L07_R3,
+            Now_Wick20_L08,
+            Now_Wick20_L08_R03,
+            Now_Wick20_L08_R05,
+            Now_Wick20_L08_R07,
+            Now_Wick20_L08_R1,
+            Now_Wick20_L08_R13,
+            Now_Wick20_L08_R15,
+            Now_Wick20_L08_R17,
+            Now_Wick20_L08_R2,
+            Now_Wick20_L08_R25,
+            Now_Wick20_L08_R3,
+            Now_Wick20_S01,
+            Now_Wick20_S01_R03,
+            Now_Wick20_S01_R05,
+            Now_Wick20_S01_R07,
+            Now_Wick20_S01_R1,
+            Now_Wick20_S01_R13,
+            Now_Wick20_S01_R15,
+            Now_Wick20_S01_R17,
+            Now_Wick20_S01_R2,
+            Now_Wick20_S01_R25,
+            Now_Wick20_S01_R3,
+
             Now_Event_R03,
             Now_Event_R05,
             Now_Event_R07,
@@ -2004,6 +2325,14 @@ namespace cAlgo.Robots
             _120m
         }
 
+        public enum EnableTradeMode
+        {
+            No,
+            Yes,
+            Buy,
+            Sell
+        }
+
         public enum TradeBlockScopeMode
         {
             No,
@@ -2036,31 +2365,40 @@ namespace cAlgo.Robots
             _2000usd
         }
 
-        [Parameter("Enable CBot Auto trade", Group = "Strategies", DefaultValue = true)]
-        public bool EnableLiveStrategyTrading { get; set; }
+        [Parameter("Enable Trade", Group = "Strategies", DefaultValue = EnableTradeMode.Yes)]
+        public EnableTradeMode EnableLiveStrategyTrading { get; set; }
 
-
-        [Parameter("Strategy", Group = "Strategies", DefaultValue = StrategyFileMode.custom_trade)]
-        public StrategyFileMode SelectedStrategyFile { get; set; }
-
-        public BacktestStrategyMode SelectedBacktestStrategy
+        private bool IsLiveTradeEnabled()
         {
-            get { return SelectedStrategyFile == StrategyFileMode.Off ? BacktestStrategyMode.Off : BacktestStrategyMode.CustomTrade; }
+            return EnableLiveStrategyTrading != EnableTradeMode.No;
         }
+
+        private bool AllowsLiveTradeDirection(TradeType tradeType)
+        {
+            return EnableLiveStrategyTrading == EnableTradeMode.Yes ||
+                (EnableLiveStrategyTrading == EnableTradeMode.Buy && tradeType == TradeType.Buy) ||
+                (EnableLiveStrategyTrading == EnableTradeMode.Sell && tradeType == TradeType.Sell);
+        }
+
+
+        [Parameter("Strategy", Group = "Strategies", DefaultValue = BacktestStrategyMode.CustomTrade)]
+        public BacktestStrategyMode SelectedBacktestStrategy { get; set; }
 
         private string GetPrimaryCustomStrategyId()
         {
-            return SelectedStrategyFile == StrategyFileMode.candle_pattern_trend
-                ? "candle_pattern_trend"
-                : "custom_trade";
+            return "custom_trade";
         }
 
+        [Parameter("Strategy 2", Group = "Strategies", DefaultValue = BacktestStrategyMode.Off)]
         public BacktestStrategyMode SelectedBacktestStrategy2 { get; set; } = BacktestStrategyMode.Off;
 
+        [Parameter("Strategy 3", Group = "Strategies", DefaultValue = BacktestStrategyMode.Off)]
         public BacktestStrategyMode SelectedBacktestStrategy3 { get; set; } = BacktestStrategyMode.Off;
 
+        [Parameter("Strategy 4", Group = "Strategies", DefaultValue = BacktestStrategyMode.Off)]
         public BacktestStrategyMode SelectedBacktestStrategy4 { get; set; } = BacktestStrategyMode.Off;
 
+        [Parameter("Strategy 5", Group = "Strategies", DefaultValue = BacktestStrategyMode.Off)]
         public BacktestStrategyMode SelectedBacktestStrategy5 { get; set; } = BacktestStrategyMode.Off;
 
         public string SharedStrategyConfigIds { get; set; }
@@ -2118,17 +2456,38 @@ namespace cAlgo.Robots
         [Parameter("Vol Surge", Group = "Confluences", DefaultValue = ConfluenceScopeMode.No)]
         public ConfluenceScopeMode ConfluenceVolumeSurge { get; set; }
 
-        [Parameter("Trend Bias", Group = "Confluences", DefaultValue = ConfluenceScopeMode.No)]
+        [Parameter("Structure", Group = "Trend/Bias Confluences", DefaultValue = ConfluenceScopeMode.Yes)]
+        public ConfluenceScopeMode TrendBiasStructure { get; set; }
+
+        [Parameter("EMA", Group = "Trend/Bias Confluences", DefaultValue = ConfluenceScopeMode.Yes)]
+        public ConfluenceScopeMode TrendBiasEma { get; set; }
+
+        [Parameter("RSI", Group = "Trend/Bias Confluences", DefaultValue = ConfluenceScopeMode.LTF)]
+        public ConfluenceScopeMode TrendBiasRsi { get; set; }
+
+        [Parameter("MACD", Group = "Trend/Bias Confluences", DefaultValue = ConfluenceScopeMode.LTF)]
+        public ConfluenceScopeMode TrendBiasMacd { get; set; }
+
+        [Parameter("ADX", Group = "Trend/Bias Confluences", DefaultValue = ConfluenceScopeMode.LTF)]
+        public ConfluenceScopeMode TrendBiasAdx { get; set; }
+
+        [Parameter("Trend/Bias Confluence", Group = "Confluences", DefaultValue = ConfluenceScopeMode.No)]
         public ConfluenceScopeMode ConfluenceTrendBias { get; set; }
 
         [Parameter("Premium/Discount", Group = "Confluences", DefaultValue = ConfluenceScopeMode.No)]
         public ConfluenceScopeMode ConfluencePremiumDiscount { get; set; }
+
+        [Parameter("Opposing Level Clearance", Group = "Confluences", DefaultValue = ConfluenceScopeMode.LTF)]
+        public ConfluenceScopeMode ConfluenceOpposingLevelClearance { get; set; }
 
         [Parameter("Bar Direction", Group = "Confluences", DefaultValue = true)]
         public bool ConfluenceBarDirection { get; set; }
 
         [Parameter("Swp - Sweep", Group = "Structure Events", DefaultValue = StructureEventToggleMode.Yes)]
         public StructureEventToggleMode DrawSweepDetections { get; set; }
+
+        [Parameter("Sweep Reclaim Chain", Group = "Structure Events", DefaultValue = ConfluenceScopeMode.No)]
+        public ConfluenceScopeMode DrawSweepReclaimChain { get; set; }
 
         [Parameter("Br - Breakout", Group = "Structure Events", DefaultValue = StructureEventToggleMode.Yes)]
         public StructureEventToggleMode DrawBreakoutDetections { get; set; }
@@ -2797,8 +3156,8 @@ namespace cAlgo.Robots
         private string SafePathPart(string value, string fallback)
         {
             var raw = string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
-            var safe = Regex.Replace(raw, "[^a-zA-Z0-9._-]", "_");
-            if (Regex.IsMatch(safe, "^\\.+$"))
+            var safe = _rxSanitizeChartName.Replace(raw, "_");
+            if (_rxAllDots.IsMatch(safe))
                 safe = "_";
             return string.IsNullOrWhiteSpace(safe) ? fallback : safe;
         }
@@ -2835,6 +3194,13 @@ namespace cAlgo.Robots
                 case BacktestStrategyMode.ArtifactSuggestedLevelsV2: return "artifact_suggested_levels_v2";
                 case BacktestStrategyMode.ArtifactSuggestedLevelsV2LimitBodyMid: return "artifact_suggested_levels_v2_limit_body_mid";
                 case BacktestStrategyMode.AiSnapshotContextV1: return "ai_snapshot_context_v1";
+                case BacktestStrategyMode.WickFlipContinuation: return "wick_flip_continuation";
+                case BacktestStrategyMode.candle_pattern_trend: return "candle_pattern_trend";
+                case BacktestStrategyMode.pinbar_structure_event: return "pinbar_structure_event";
+                case BacktestStrategyMode.engulfing_structure_event: return "engulfing_structure_event";
+                case BacktestStrategyMode.wick_flip: return "wick_flip";
+                case BacktestStrategyMode.sweep_reclaim: return "sweep_reclaim";
+                case BacktestStrategyMode.reject_trendline: return "reject_trendline";
                 case BacktestStrategyMode.Off:
                 default:
                     return "ctrader_backtest";
@@ -3104,14 +3470,34 @@ namespace cAlgo.Robots
             }
         }
 
+        private bool IsWickFlipOnlyStrategySelection()
+        {
+            var configured = GetConfiguredStrategyModes().ToList();
+            return configured.Count == 1 &&
+                (configured[0] == BacktestStrategyMode.WickFlipContinuation ||
+                 configured[0] == BacktestStrategyMode.wick_flip);
+        }
+
+        private string BuildConfiguredStrategyModesStateKey()
+        {
+            return string.Join(
+                ",",
+                new[]
+                {
+                    SelectedBacktestStrategy.ToString(),
+                    SelectedBacktestStrategy2.ToString(),
+                    SelectedBacktestStrategy3.ToString(),
+                    SelectedBacktestStrategy4.ToString(),
+                    SelectedBacktestStrategy5.ToString()
+                });
+        }
+
         private string GetBacktestStrategyModeDisplayName(BacktestStrategyMode mode)
         {
             switch (mode)
             {
                 case BacktestStrategyMode.CustomTrade:
-                    return SelectedStrategyFile == StrategyFileMode.candle_pattern_trend
-                        ? "CandlePatternTrend"
-                        : "CustomTrade";
+                    return "CustomTrade";
                 case BacktestStrategyMode.Trend:
                     return "Trend";
                 case BacktestStrategyMode.Impulse:
@@ -3120,11 +3506,145 @@ namespace cAlgo.Robots
                     return "HtfEventMarket";
                 case BacktestStrategyMode.LtfEventMarket:
                     return "LtfEventMarket";
+                case BacktestStrategyMode.WickFlipContinuation:
+                    return "WickFlipContinuation";
                 case BacktestStrategyMode.Off:
                     return "Off";
                 default:
                     return mode.ToString();
             }
+        }
+
+        private static bool TryGetFileBackedStrategyId(BacktestStrategyMode mode, out string strategyId)
+        {
+            strategyId = "";
+            switch (mode)
+            {
+                case BacktestStrategyMode.candle_pattern_trend:
+                    strategyId = "candle_pattern_trend";
+                    return true;
+                case BacktestStrategyMode.pinbar_structure_event:
+                    strategyId = "pinbar_structure_event";
+                    return true;
+                case BacktestStrategyMode.engulfing_structure_event:
+                    strategyId = "engulfing_structure_event";
+                    return true;
+                case BacktestStrategyMode.wick_flip:
+                    strategyId = "wick_flip";
+                    return true;
+                case BacktestStrategyMode.sweep_reclaim:
+                    strategyId = "sweep_reclaim";
+                    return true;
+                case BacktestStrategyMode.reject_trendline:
+                    strategyId = "reject_trendline";
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private List<BacktestStrategyMode> GetConfiguredFileBackedUnifiedEventMarkerModes()
+        {
+            return GetConfiguredStrategyModes()
+                .Where(mode => mode == BacktestStrategyMode.pinbar_structure_event ||
+                    mode == BacktestStrategyMode.engulfing_structure_event ||
+                    mode == BacktestStrategyMode.reject_trendline ||
+                    mode == BacktestStrategyMode.sweep_reclaim)
+                .Distinct()
+                .ToList();
+        }
+
+        private static List<StrategyCustomEventOption> GetFileBackedUnifiedEventMarkerOptions(
+            BacktestStrategyMode mode)
+        {
+            switch (mode)
+            {
+                case BacktestStrategyMode.sweep_reclaim:
+                    return new List<StrategyCustomEventOption> { StrategyCustomEventOption.sweep_reclaim };
+                case BacktestStrategyMode.pinbar_structure_event:
+                    return new List<StrategyCustomEventOption>
+                    {
+                        StrategyCustomEventOption.pin_PinBar,
+                        StrategyCustomEventOption.__AnyStructureEvent
+                    };
+                case BacktestStrategyMode.engulfing_structure_event:
+                    return new List<StrategyCustomEventOption>
+                    {
+                        StrategyCustomEventOption.eng_Engulfing,
+                        StrategyCustomEventOption.__AnyStructureEvent
+                    };
+                case BacktestStrategyMode.reject_trendline:
+                    return new List<StrategyCustomEventOption>
+                    {
+                        StrategyCustomEventOption.__AnyCandlePattern,
+                        StrategyCustomEventOption.r_TrendlineRejection
+                    };
+                default:
+                    return new List<StrategyCustomEventOption>();
+            }
+        }
+
+        private bool TryResolveConfiguredFileBackedUnifiedEventAtBar(
+            string symbolName,
+            TimeFrame sourceTimeFrame,
+            Bars sourceBars,
+            int barIndex,
+            int scanBars,
+            bool bullish,
+            IEnumerable<BacktestStrategyMode> configuredModes,
+            out List<StrategyCustomEventOption> matchedOptions)
+        {
+            matchedOptions = new List<StrategyCustomEventOption>();
+            if (!IsValidBarIndex(sourceBars, barIndex) || sourceTimeFrame == null)
+                return false;
+
+            var expectedTradeType = bullish ? TradeType.Buy : TradeType.Sell;
+            var expectedSignalTime = sourceBars.OpenTimes[barIndex];
+            foreach (var mode in configuredModes ?? Enumerable.Empty<BacktestStrategyMode>())
+            {
+                string strategyId;
+                if (!TryGetFileBackedStrategyId(mode, out strategyId))
+                    continue;
+
+                TradeType resolvedTradeType;
+                DateTime signalTime;
+                string sourceLabel;
+                string note;
+                double eventSlDistance;
+                if (!TryResolveSharedConfigStrategy(
+                    symbolName,
+                    sourceTimeFrame,
+                    sourceBars,
+                    barIndex,
+                    scanBars,
+                    false,
+                    strategyId,
+                    expectedTradeType,
+                    out resolvedTradeType,
+                    out signalTime,
+                    out sourceLabel,
+                    out note,
+                    out eventSlDistance) ||
+                    resolvedTradeType != expectedTradeType ||
+                    signalTime != expectedSignalTime ||
+                    !PassesResolvedStrategyMarkerFinalGates(
+                        symbolName,
+                        sourceTimeFrame,
+                        mode,
+                        strategyId,
+                        resolvedTradeType,
+                        signalTime,
+                        sourceLabel))
+                    continue;
+
+                matchedOptions.AddRange(GetFileBackedUnifiedEventMarkerOptions(mode));
+            }
+
+            matchedOptions = matchedOptions
+                .Where(option => option != StrategyCustomEventOption.Off)
+                .Distinct()
+                .ToList();
+            return matchedOptions.Count > 0;
         }
 
         private string GetBacktestTfStorageLabel()
@@ -3955,12 +4475,54 @@ namespace cAlgo.Robots
                     out resolvedNote,
                     out resolvedEventSlDistance) &&
                     resolvedSignalTime == barTime &&
-                    resolvedTradeType == (isBullish ? TradeType.Buy : TradeType.Sell);
+                    resolvedTradeType == (isBullish ? TradeType.Buy : TradeType.Sell) &&
+                    PassesResolvedStrategyMarkerFinalGates(
+                        symbolName,
+                        sourceTimeFrame,
+                        BacktestStrategyMode.CustomTrade,
+                        GetPrimaryCustomStrategyId(),
+                        resolvedTradeType,
+                        resolvedSignalTime,
+                        resolvedSourceLabel);
             }
 
             if (eligibilityCache != null)
                 eligibilityCache[cacheKey] = eligible;
             return eligible;
+        }
+
+        // A solid strategy marker means the setup reached the same final confluence and
+        // trading-time gates as live execution. Account/broker/risk gates remain execution
+        // concerns, and the Symbols allowlist intentionally controls orders rather than
+        // chart analysis on the currently viewed symbol.
+        private bool PassesResolvedStrategyMarkerFinalGates(
+            string symbolName,
+            TimeFrame sourceTimeFrame,
+            BacktestStrategyMode strategyMode,
+            string strategyId,
+            TradeType tradeType,
+            DateTime signalTime,
+            string sourceLabel)
+        {
+            if (sourceTimeFrame == null || signalTime == DateTime.MinValue)
+                return false;
+
+            var signal = new BacktestStrategySignal
+            {
+                IsValid = true,
+                StrategyId = strategyId ?? "",
+                StrategyMode = strategyMode,
+                SymbolName = symbolName ?? "",
+                SourceLabel = sourceLabel ?? "",
+                TradeType = tradeType,
+                SourceTimeFrame = sourceTimeFrame,
+                SignalTime = signalTime
+            };
+            string ignoredRejectReason;
+            if (!TryPassFinalStrategyConfluenceGate(symbolName, signal, out ignoredRejectReason))
+                return false;
+
+            return ShouldAllowChartSignalTime(ResolveStrategySignalExecutionTime(symbolName, signal));
         }
 
         private bool IsTimeWithinSession(TimeSpan timeOfDay, TimeSpan start, TimeSpan end)
@@ -4123,6 +4685,17 @@ namespace cAlgo.Robots
         private IEnumerable<StrategyExecutionTarget> ResolveStrategyExecutionTargets(string fallbackSymbolName, TimeFrame fallbackTimeFrame)
         {
             var symbols = ResolveSharedStrategySymbols(fallbackSymbolName).ToList();
+            // Symbols is the order-submission allowlist, not the visual-detection list.
+            // Always scan the attached chart symbol so an instance on an unlisted market can
+            // still show the exact qualified markers that would otherwise become trades.
+            var chartSymbol = NormalizeSymbolAlias(fallbackSymbolName);
+            string resolvedChartSymbol;
+            if (!string.IsNullOrWhiteSpace(chartSymbol) &&
+                TryResolveBrokerSymbol(chartSymbol, out resolvedChartSymbol) &&
+                !symbols.Any(value => string.Equals(value, resolvedChartSymbol, StringComparison.OrdinalIgnoreCase)))
+            {
+                symbols.Add(resolvedChartSymbol);
+            }
             var timeFrames = ResolveSharedStrategyTimeFrames(fallbackTimeFrame).ToList();
             var targets = new List<StrategyExecutionTarget>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -4178,6 +4751,11 @@ namespace cAlgo.Robots
             if (strategyModes.Contains(BacktestStrategyMode.LtfEventMarket))
                 framesToWarm.AddRange(GetBacktestStrategyCurrentTimeFrame(target.TimeFrame));
 
+            if (strategyModes.Contains(BacktestStrategyMode.pinbar_structure_event) ||
+                strategyModes.Contains(BacktestStrategyMode.engulfing_structure_event) ||
+                strategyModes.Contains(BacktestStrategyMode.reject_trendline))
+                framesToWarm.Add(target.TimeFrame);
+
             foreach (var frame in framesToWarm.Distinct())
             {
                 GetCanonicalEventsForSymbolTimeFrame(target.SymbolName, frame, 24);
@@ -4186,7 +4764,9 @@ namespace cAlgo.Robots
 
         private bool ShouldStrategyEngineRun()
         {
-            return IsBacktestingRuntime() || EnableLiveStrategyTrading;
+            // Signal detection and chart markers must remain active when automatic order
+            // submission is disabled. ShouldStrategySubmitOrders is the execution gate.
+            return true;
         }
 
         private bool IsStartupWarmupActive()
@@ -4214,7 +4794,18 @@ namespace cAlgo.Robots
 
         private bool ShouldStrategySubmitOrders()
         {
-            return IsBacktestingRuntime() || EnableLiveStrategyTrading;
+            return IsBacktestingRuntime() || IsLiveTradeEnabled();
+        }
+
+        private bool ShouldStrategySubmitOrdersForMarket(string symbolName, TimeFrame timeFrame)
+        {
+            return ShouldStrategySubmitOrders() && IsConfiguredStrategyMarketAllowed(symbolName, timeFrame);
+        }
+
+        private bool ShouldStrategySubmitOrdersForMarket(string symbolName, TimeFrame timeFrame, TradeType tradeType)
+        {
+            return ShouldStrategySubmitOrdersForMarket(symbolName, timeFrame) &&
+                (IsBacktestingRuntime() || AllowsLiveTradeDirection(tradeType));
         }
 
         private bool ShouldRunStrategiesOnMasterTimer()
@@ -4406,18 +4997,37 @@ namespace cAlgo.Robots
             var deleted = 0;
             try
             {
-                foreach (var filePath in Directory.EnumerateFiles(marketDataRoot, "*", SearchOption.AllDirectories))
+                // Cache=No must not make startup recursively walk every persisted bar and
+                // auxiliary market-data file. Only cache artifacts live directly under
+                // <symbol>/chart/<timeframe>, so visit those shallow folders and delete the
+                // three exact cache names (plus their atomic-write temp siblings).
+                foreach (var symbolDirectory in Directory.EnumerateDirectories(marketDataRoot))
                 {
-                    var fileName = Path.GetFileName(filePath);
-                    var isCacheFile = cacheFileNames.Any(value =>
-                        string.Equals(fileName, value, StringComparison.OrdinalIgnoreCase) ||
-                        (fileName.StartsWith(value + ".", StringComparison.OrdinalIgnoreCase) &&
-                         fileName.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)));
-                    if (!isCacheFile)
+                    var chartDirectory = Path.Combine(symbolDirectory, "chart");
+                    if (!Directory.Exists(chartDirectory))
                         continue;
 
-                    System.IO.File.Delete(filePath);
-                    deleted++;
+                    foreach (var timeFrameDirectory in Directory.EnumerateDirectories(chartDirectory))
+                    {
+                        foreach (var cacheFileName in cacheFileNames)
+                        {
+                            var exactPath = Path.Combine(timeFrameDirectory, cacheFileName);
+                            if (System.IO.File.Exists(exactPath))
+                            {
+                                System.IO.File.Delete(exactPath);
+                                deleted++;
+                            }
+
+                            foreach (var tempPath in Directory.EnumerateFiles(
+                                timeFrameDirectory,
+                                cacheFileName + ".*.tmp",
+                                SearchOption.TopDirectoryOnly))
+                            {
+                                System.IO.File.Delete(tempPath);
+                                deleted++;
+                            }
+                        }
+                    }
                 }
                 SafePrint("[AnalysisCache] files disabled; deleted={0} root={1}", deleted, marketDataRoot);
             }
@@ -5744,8 +6354,8 @@ namespace cAlgo.Robots
         private string BuildBrokerLabel(string strategy, string entryModel, string profileRaw, string tfRaw)
         {
             var parts = new List<string>();
-            var strategyValue = string.IsNullOrWhiteSpace(strategy) ? "" : Regex.Replace(strategy.Trim(), "\\s+", " ");
-            var entryModelValue = string.IsNullOrWhiteSpace(entryModel) ? "" : Regex.Replace(entryModel.Trim(), "\\s+", " ");
+            var strategyValue = string.IsNullOrWhiteSpace(strategy) ? "" : _rxWhitespace.Replace(strategy.Trim(), " ");
+            var entryModelValue = string.IsNullOrWhiteSpace(entryModel) ? "" : _rxWhitespace.Replace(entryModel.Trim(), " ");
             var profileValue = NormalizeTradeProfile(profileRaw, tfRaw);
             var tfValue = NormalizeTradeTfLabel(tfRaw);
             if (!string.IsNullOrEmpty(strategyValue)) parts.Add(strategyValue);
@@ -6960,7 +7570,7 @@ namespace cAlgo.Robots
             compact = compact.Replace("GatePassed", "Gate");
             compact = compact.Replace("Submitted", "Sub");
             compact = compact.Replace("Bars unavailable", "NoBars");
-            compact = Regex.Replace(compact, "\\s+", " ").Trim();
+            compact = _rxWhitespace.Replace(compact, " ").Trim();
             if (compact.Length > 110)
                 compact = compact.Substring(0, 110).TrimEnd() + "...";
             return compact;
@@ -7168,23 +7778,43 @@ namespace cAlgo.Robots
         {
             switch (mode)
             {
-                case EmaVisualMode.E9_21_55:
+                case EmaVisualMode.trend_9_21:
+                    return new EmaIndicatorConfig { PriceCrossPeriod = 9, FastPeriod = 9, MidPeriod = 21, SlowPeriod = 21 };
+                case EmaVisualMode.trend_20_50:
+                    return new EmaIndicatorConfig { PriceCrossPeriod = 20, FastPeriod = 20, MidPeriod = 50, SlowPeriod = 50 };
+                case EmaVisualMode.trend_50_200:
+                    return new EmaIndicatorConfig { PriceCrossPeriod = 50, FastPeriod = 50, MidPeriod = 200, SlowPeriod = 200 };
+                case EmaVisualMode.scalp_5_13:
+                    return new EmaIndicatorConfig { PriceCrossPeriod = 5, FastPeriod = 5, MidPeriod = 13, SlowPeriod = 13 };
+                case EmaVisualMode.scalp_8_21:
+                    return new EmaIndicatorConfig { PriceCrossPeriod = 8, FastPeriod = 8, MidPeriod = 21, SlowPeriod = 21 };
+                case EmaVisualMode.scalp_13_34:
+                    return new EmaIndicatorConfig { PriceCrossPeriod = 13, FastPeriod = 13, MidPeriod = 34, SlowPeriod = 34 };
+                case EmaVisualMode.swing_21_55:
+                    return new EmaIndicatorConfig { PriceCrossPeriod = 21, FastPeriod = 21, MidPeriod = 55, SlowPeriod = 55 };
+                case EmaVisualMode.swing_34_89:
+                    return new EmaIndicatorConfig { PriceCrossPeriod = 34, FastPeriod = 34, MidPeriod = 89, SlowPeriod = 89 };
+                case EmaVisualMode.swing_50_100:
+                    return new EmaIndicatorConfig { PriceCrossPeriod = 50, FastPeriod = 50, MidPeriod = 100, SlowPeriod = 100 };
+                case EmaVisualMode.triple_9_21_55:
                     return new EmaIndicatorConfig { PriceCrossPeriod = 9, FastPeriod = 9, MidPeriod = 21, SlowPeriod = 55 };
-                case EmaVisualMode.E20_50_200:
+                case EmaVisualMode.triple_8_21_55:
+                    return new EmaIndicatorConfig { PriceCrossPeriod = 8, FastPeriod = 8, MidPeriod = 21, SlowPeriod = 55 };
+                case EmaVisualMode.triple_20_50_200:
                     return new EmaIndicatorConfig { PriceCrossPeriod = 20, FastPeriod = 20, MidPeriod = 50, SlowPeriod = 200 };
-                case EmaVisualMode.E34_49:
-                    return new EmaIndicatorConfig { PriceCrossPeriod = 34, FastPeriod = 34, MidPeriod = 49, SlowPeriod = 49 };
                 case EmaVisualMode.Off:
                     return new EmaIndicatorConfig();
                 case EmaVisualMode.Auto:
-                    // Auto keeps the chart readable with the commonly used 20/50 pair.
+                    // Pair presets repeat the second EMA as SlowPeriod. The renderer avoids
+                    // drawing a duplicate line, while PriceSlowEmaCross and EMA confluence
+                    // still use the second configured EMA instead of an unavailable value.
                     return forEvents
-                        ? new EmaIndicatorConfig { PriceCrossPeriod = 20, FastPeriod = 9, MidPeriod = 21, SlowPeriod = 0 }
-                        : new EmaIndicatorConfig { PriceCrossPeriod = 20, FastPeriod = 20, MidPeriod = 50, SlowPeriod = 0 };
+                        ? new EmaIndicatorConfig { PriceCrossPeriod = 20, FastPeriod = 9, MidPeriod = 21, SlowPeriod = 21 }
+                        : new EmaIndicatorConfig { PriceCrossPeriod = 20, FastPeriod = 20, MidPeriod = 50, SlowPeriod = 50 };
                 default:
                     return forEvents
-                        ? new EmaIndicatorConfig { PriceCrossPeriod = 20, FastPeriod = 9, MidPeriod = 21, SlowPeriod = 0 }
-                        : new EmaIndicatorConfig { PriceCrossPeriod = 20, FastPeriod = 20, MidPeriod = 50, SlowPeriod = 0 };
+                        ? new EmaIndicatorConfig { PriceCrossPeriod = 20, FastPeriod = 9, MidPeriod = 21, SlowPeriod = 21 }
+                        : new EmaIndicatorConfig { PriceCrossPeriod = 20, FastPeriod = 20, MidPeriod = 50, SlowPeriod = 50 };
             }
         }
 
@@ -7350,6 +7980,8 @@ namespace cAlgo.Robots
                 "|",
                 new[]
                 {
+                    GetChartSymbolKey(),
+                    GetChartTimeFrameKey(),
                     DrawRsiMode.ToString(),
                     DrawStochasticMode.ToString(),
                     DrawMacdMode.ToString(),
@@ -7374,6 +8006,11 @@ namespace cAlgo.Robots
             var chartBars = GetCurrentChartVisualBars();
             if (chartBars == null || chartBars.Count < 5)
                 return;
+            // cTrader's ChartIndicators.Add() requires a DataSeries from the robot's own
+            // native Bars object. A DataSeries from MarketData.GetBars() (a different Bars
+            // instance) is silently rejected, returning null for the indicator. Always use
+            // Bars.ClosePrices when available; fall back to chartBars only as last resort.
+            var indicatorSeriesOsc = (Bars != null && Bars.Count >= 5) ? Bars.ClosePrices : chartBars.ClosePrices;
 
             var rsiEnabled =
                 EffectiveMomentumOscillatorEnabled(DrawRsiMode != RsiVisualMode.Off, MomentumTechnicalComboMode.Rsi) &&
@@ -7410,7 +8047,7 @@ namespace cAlgo.Robots
             {
                 _chartRsiIndicator = ChartIndicators.Add(
                     "Relative Strength Index",
-                    new object[] { chartBars.ClosePrices, _resolvedRsiEventConfig.Period });
+                    new object[] { indicatorSeriesOsc, _resolvedRsiEventConfig.Period });
                 if (_chartRsiIndicator != null)
                 {
                     _chartRsiIndicator.PanelIndex = sharedRsiStochasticPanelIndex;
@@ -7445,7 +8082,7 @@ namespace cAlgo.Robots
                     "Macd Histogram",
                     new object[]
                     {
-                        chartBars.ClosePrices,
+                        indicatorSeriesOsc,
                         _resolvedMacdEventConfig.SlowPeriod,
                         _resolvedMacdEventConfig.FastPeriod,
                         _resolvedMacdEventConfig.SignalPeriod
@@ -7639,8 +8276,16 @@ namespace cAlgo.Robots
 
         private void SyncChartTechnicalOverlays()
         {
-            if (ChartIndicators == null || Bars == null || Bars.Count < 5)
+            if (ChartIndicators == null)
                 return;
+            var chartBars = GetCurrentChartVisualBars();
+            if (chartBars == null || chartBars.Count < 5)
+                return;
+            // cTrader's ChartIndicators.Add() requires a DataSeries from the robot's own
+            // native Bars object. A DataSeries from MarketData.GetBars() (a different Bars
+            // instance) is silently rejected, returning null for the indicator. Always use
+            // Bars.ClosePrices when available; fall back to chartBars only as last resort.
+            var indicatorSeries = (Bars != null && Bars.Count >= 5) ? Bars.ClosePrices : chartBars.ClosePrices;
 
             var signature = BuildTechnicalOverlaySignature();
             if (string.Equals(_chartTechnicalOverlaySignature, signature, StringComparison.Ordinal))
@@ -7658,15 +8303,15 @@ namespace cAlgo.Robots
             {
                 _chartEmaFastIndicator = ChartIndicators.Add(
                     "Exponential Moving Average",
-                    new object[] { Bars.ClosePrices, _resolvedEmaOverlayConfig.FastPeriod });
+                    new object[] { indicatorSeries, _resolvedEmaOverlayConfig.FastPeriod });
                 _chartEmaMidIndicator = ChartIndicators.Add(
                     "Exponential Moving Average",
-                    new object[] { Bars.ClosePrices, _resolvedEmaOverlayConfig.MidPeriod });
+                    new object[] { indicatorSeries, _resolvedEmaOverlayConfig.MidPeriod });
                 if (_resolvedEmaOverlayConfig.SlowPeriod > 0 && _resolvedEmaOverlayConfig.SlowPeriod != _resolvedEmaOverlayConfig.MidPeriod)
                 {
                     _chartEmaSlowIndicator = ChartIndicators.Add(
                         "Exponential Moving Average",
-                        new object[] { Bars.ClosePrices, _resolvedEmaOverlayConfig.SlowPeriod });
+                        new object[] { indicatorSeries, _resolvedEmaOverlayConfig.SlowPeriod });
                 }
                 foreach (var ind in new[] { _chartEmaFastIndicator, _chartEmaMidIndicator, _chartEmaSlowIndicator })
                 {
@@ -7690,7 +8335,7 @@ namespace cAlgo.Robots
                     "Bollinger Bands",
                     new object[]
                     {
-                        Bars.ClosePrices,
+                        indicatorSeries,
                         _resolvedBollingerOverlayConfig.Period,
                         _resolvedBollingerOverlayConfig.StdDevMultiplier,
                         MovingAverageType.Simple
@@ -7957,6 +8602,8 @@ namespace cAlgo.Robots
         private string BuildTechnicalOverlaySignature()
         {
             return string.Join("|",
+                GetChartSymbolKey(),
+                GetChartTimeFrameKey(),
                 _toggleEmaOverlay,
                 ShouldUseNativeEmaOverlay(),
                 _resolvedEmaOverlayConfig.FastPeriod,
@@ -7975,6 +8622,41 @@ namespace cAlgo.Robots
                 _resolvedIchimokuOverlayConfig.BasePeriod,
                 _resolvedIchimokuOverlayConfig.SpanBPeriod,
                 BuildDirectionalPaletteStateKey());
+        }
+
+        // cTrader keeps ChartIndicator handles alive when the visible chart is switched to a
+        // different symbol or timeframe, but their output series can become detached from the
+        // new chart. The titles remain visible while every plotted value disappears. Detect that
+        // context transition and recreate the managed native indicators against the visible bars.
+        private bool SyncNativeIndicatorsForChartContextIfChanged()
+        {
+            if (Chart == null || ChartIndicators == null)
+                return false;
+
+            var contextKey = GetChartSymbolKey() + "|" + GetChartTimeFrameKey();
+            if (string.Equals(_nativeIndicatorChartContextKey, contextKey, StringComparison.Ordinal))
+                return false;
+
+            var chartBars = GetCurrentChartVisualBars();
+            if (chartBars == null || chartBars.Count < 5)
+                return false;
+
+            // Invalidate both signatures so a symbol/timeframe transition never takes the
+            // unchanged-config fast path with chart indicators owned by the previous context.
+            _chartOscillatorSignature = "";
+            _chartTechnicalOverlaySignature = "";
+            SyncChartOscillatorIndicators();
+            SyncChartTechnicalOverlays();
+
+            var synchronized =
+                string.Equals(_chartOscillatorSignature, BuildOscillatorPanelSignature(), StringComparison.Ordinal) &&
+                string.Equals(_chartTechnicalOverlaySignature, BuildTechnicalOverlaySignature(), StringComparison.Ordinal);
+            if (!synchronized)
+                return false;
+
+            _nativeIndicatorChartContextKey = contextKey;
+            _forceChartVisualsRefresh = true;
+            return true;
         }
 
         // Every visual cache key that renders directional colours must include this value.
@@ -8404,6 +9086,7 @@ namespace cAlgo.Robots
                     currentSymbol,
                     currentTimeFrame,
                     BuildDirectionalPaletteStateKey(),
+                    "strategies:" + BuildConfiguredStrategyModesStateKey(),
                     "mincfl:" + MinimumConfluences,
                     _toggleKillerZones ? "kz:on" : "kz:off",
                     _toggleFvgZones ? "fvg:on" : "fvg:off",
@@ -8463,6 +9146,7 @@ namespace cAlgo.Robots
                     currentSymbol,
                     currentTimeFrame,
                     BuildDirectionalPaletteStateKey(),
+                    "strategies:" + BuildConfiguredStrategyModesStateKey(),
                     "mincfl:" + MinimumConfluences,
                     "events:" + StructureEventsCombo,
                     ShouldDrawHtfBackground() ? "htfbg:on" : "htfbg:off",
@@ -8726,11 +9410,16 @@ namespace cAlgo.Robots
                 if (chartTfMinutes <= 0 || chartBars == null || chartBars.Count < 4)
                     return;
 
-                var miniFrames = GetEnabledAutoHigherTimeframes(chartTimeFrame)
-                    .Where(tf => TimeFrameToMinutes(tf) > chartTfMinutes)
-                    .OrderBy(tf => TimeFrameToMinutes(tf))
-                    .Take(2)
-                    .ToList();
+                if (_cachedMiniFrames == null || _cachedMiniFrameChartTfMinutes != chartTfMinutes)
+                {
+                    _cachedMiniFrames = GetEnabledAutoHigherTimeframes(chartTimeFrame)
+                        .Where(tf => TimeFrameToMinutes(tf) > chartTfMinutes)
+                        .OrderBy(tf => TimeFrameToMinutes(tf))
+                        .Take(2)
+                        .ToList();
+                    _cachedMiniFrameChartTfMinutes = chartTfMinutes;
+                }
+                var miniFrames = _cachedMiniFrames;
                 var futureOffsetBars = GetMiniChartLeadGapBars(chartTfMinutes);
                 foreach (var timeFrame in miniFrames)
                 {
@@ -8778,7 +9467,7 @@ namespace cAlgo.Robots
             var prefix = "MINI_LIVE_" + GetMiniChartLabel(timeFrame);
             Chart.RemoveObject(prefix + "_WU");
             Chart.RemoveObject(prefix + "_WL");
-            Chart.RemoveObject(prefix + "_BODY");
+            // "_BODY" rectangle is always redrawn via DrawRectangle (upsert) — no remove needed
 
             var high = sourceBars.HighPrices[liveIndex];
             var low = sourceBars.LowPrices[liveIndex];
@@ -8929,8 +9618,12 @@ namespace cAlgo.Robots
                     _drawnChartArtifactPriceBands.Clear();
                     RemoveChartObjectsByPrefixes(
                         "TRG_", "RAW_EVT_", "TRG_ART_", "PIN_", "ENG_", "BIG_", "PAT_", "TECH_", "STR_", "SEQ_", "CANDLE_CFL",
-                        "SWEEP_", "BOS_", "CHOCH_", "RJ_", "BR_", "PB_", "CT_", "IM_", "DIV_", "AUTO_PREVIEW_", "TRADE_PREVIEW_");
+                        "SWEEP_", "BOS_", "CHOCH_", "RJ_", "BR_", "PB_", "CT_", "IM_", "DIV_", "STRAT_", "TRADE_TRIGGER_", "TRADEH_",
+                        "AUTO_PREVIEW_", "TRADE_PREVIEW_");
                     objectIndex = DrawUnifiedTradeTriggerEventsOnChart(objectIndex);
+                    if (_toggleStrategyMarkers)
+                        objectIndex = DrawStrategyMarkersOnChart(objectIndex);
+                    objectIndex = DrawClosedTradesOnChart(objectIndex);
                     objectIndex = DrawLatestTradePreviews(objectIndex);
                     break;
                 case 1:
@@ -8978,11 +9671,16 @@ namespace cAlgo.Robots
                 return;
 
             var chartMinutes = Math.Max(1, TimeFrameToMinutes(Chart.TimeFrame));
-            var lowerTfTokens = GetDashboardEventTimeFrames()
-                .Where(tf => tf != null && TimeFrameToMinutes(tf) > 0 && TimeFrameToMinutes(tf) < chartMinutes)
-                .Select(tf => "_" + GetMiniChartLabel(tf) + "_")
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            if (_cachedLowerTfTokens == null || _cachedLowerTfTokensChartMinutes != chartMinutes)
+            {
+                _cachedLowerTfTokens = GetDashboardEventTimeFrames()
+                    .Where(tf => tf != null && TimeFrameToMinutes(tf) > 0 && TimeFrameToMinutes(tf) < chartMinutes)
+                    .Select(tf => "_" + GetMiniChartLabel(tf) + "_")
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                _cachedLowerTfTokensChartMinutes = chartMinutes;
+            }
+            var lowerTfTokens = _cachedLowerTfTokens;
             if (lowerTfTokens.Count == 0)
                 return;
 
@@ -10050,11 +10748,16 @@ namespace cAlgo.Robots
                 // HTF1 (lower TF) leads the strip and its first bar starts exactly on the
                 // day splitter; HTF2 follows after the divider. Order by TF size ascending
                 // so the finer frame is drawn first (HTF1 -> HTF2).
-                var miniFrames = GetEnabledAutoHigherTimeframes(chartTimeFrame)
-                    .Where(tf => TimeFrameToMinutes(tf) > chartTfMinutes)
-                    .OrderBy(tf => TimeFrameToMinutes(tf))
-                    .Take(2)
-                    .ToList();
+                if (_cachedMiniFrames == null || _cachedMiniFrameChartTfMinutes != chartTfMinutes)
+                {
+                    _cachedMiniFrames = GetEnabledAutoHigherTimeframes(chartTimeFrame)
+                        .Where(tf => TimeFrameToMinutes(tf) > chartTfMinutes)
+                        .OrderBy(tf => TimeFrameToMinutes(tf))
+                        .Take(2)
+                        .ToList();
+                    _cachedMiniFrameChartTfMinutes = chartTfMinutes;
+                }
+                var miniFrames = _cachedMiniFrames;
                 if (miniFrames.Count == 0)
                 {
                     SafePrint("[Mini] {0} chartTf={1} frames=none mode={2} auto1={3} auto2={4}", Chart != null ? Chart.SymbolName : "", chartTfMinutes, DrawHtfMiniChartMode, DrawAutoHtf1, DrawAutoHtf2);
@@ -11313,14 +12016,15 @@ namespace cAlgo.Robots
             var normalizedSymbol = NormalizeSymbolAlias(symbolName);
             var frameCacheKey = string.Format(
                 CultureInfo.InvariantCulture,
-                "FRAME|{0}|{1}|{2}|{3}|cfl:{4}|scan:{5}|raw:{6}",
+                "FRAME|{0}|{1}|{2}|{3}|cfl:{4}|scan:{5}|raw:{6}|strategies:{7}",
                 normalizedSymbol,
                 GetMiniChartLabel(timeFrame),
                 sourceBars.OpenTimes[latestClosedIndex].Ticks,
                 BuildDashboardAnalysisToggleKey(),
                 BuildNamedConfluenceCacheKey(),
                 scanBars,
-                includeRawDetections ? "1" : "0");
+                includeRawDetections ? "1" : "0",
+                BuildConfiguredStrategyModesStateKey());
             TimedCacheEntry<List<TradeTriggerEvent>> frameCached;
             if (_tradeTriggerFrameCache.TryGetValue(frameCacheKey, out frameCached) &&
                 frameCached != null && frameCached.Value != null)
@@ -11337,6 +12041,12 @@ namespace cAlgo.Robots
                 .ToList();
             var canonicalEventsByBarTime = IndexCanonicalEventsByBarTime(canonicalEvents);
             var noCanonicalEvents = new List<CanonicalMarketEvent>();
+            var configuredFileMarkerOptions = GetConfiguredFileBackedUnifiedEventMarkerModes()
+                .SelectMany(GetFileBackedUnifiedEventMarkerOptions)
+                .Distinct()
+                .ToList();
+            var fileStrategyNeedsStructureEvents = configuredFileMarkerOptions.Contains(
+                StrategyCustomEventOption.__AnyStructureEvent);
 
             for (var barIndex = latestClosedIndex; barIndex >= firstIndex; barIndex--)
             {
@@ -11350,9 +12060,12 @@ namespace cAlgo.Robots
 
                 foreach (StrategyCustomEventOption option in Enum.GetValues(typeof(StrategyCustomEventOption)))
                 {
+                    var requiredBySelectedFileStrategy = configuredFileMarkerOptions.Contains(option) ||
+                        (fileStrategyNeedsStructureEvents &&
+                         string.Equals(GetTradeTriggerFamily(option), "structure", StringComparison.OrdinalIgnoreCase));
                     if (option == StrategyCustomEventOption.Off ||
                         option.ToString().StartsWith("__Any", StringComparison.Ordinal) ||
-                        !IsDashboardEventOptionEnabled(option, timeFrame))
+                        (!IsDashboardEventOptionEnabled(option, timeFrame) && !requiredBySelectedFileStrategy))
                         continue;
 
                     bool bullish;
@@ -11391,23 +12104,29 @@ namespace cAlgo.Robots
             {
                 // Raw display deliberately stops before artifact, confluence, bar-direction,
                 // minimum-count and strategy-rule gates. It never feeds execution.
-                resolved = candidates
+                var rawDirectional = candidates
                     .Where(trigger => !trigger.IsDirectionless)
                     .ToList();
+                resolved = AttachOpposingEvidenceCounts(rawDirectional, rawDirectional);
             }
             else
             {
-                var qualityCandidates = candidates
+                var qualifiedEvidence = candidates
                     .Where(IsEnabledNamedArtifactTrigger)
                     .Where(trigger => IsCanonicalArtifactValidAtEventBar(sourceBars, trigger))
                     .Where(trigger => IsHighQualityDirectionalTradeTrigger(symbolName, sourceBars, trigger))
+                    .ToList();
+                var qualityCandidates = qualifiedEvidence
                     .Where(trigger => PassesNamedConfluences(symbolName, sourceBars, trigger))
                     .ToList();
                 var directionResolved = ResolveSingleDirectionTradeTriggers(symbolName, sourceBars, timeFrame, qualityCandidates);
                 // Bar colour validates the already-resolved trade direction. It must never choose
                 // the direction or remove the last reacted event before same-bar conflict resolution.
-                resolved = ApplyMinimumConfluenceFilter(directionResolved
-                    .Where(trigger => PassesBarDirectionConfluence(sourceBars, trigger)));
+                var alignedEvidence = directionResolved
+                    .Where(trigger => PassesBarDirectionConfluence(sourceBars, trigger))
+                    .ToList();
+                resolved = ApplyMinimumConfluenceFilter(
+                    AttachOpposingEvidenceCounts(alignedEvidence, qualifiedEvidence));
             }
             _tradeTriggerFrameCache[frameCacheKey] = new TimedCacheEntry<List<TradeTriggerEvent>>
             {
@@ -11474,7 +12193,13 @@ namespace cAlgo.Robots
                 ConfluenceDemand.ToString(),
                 ConfluenceVolumeSurge.ToString(),
                 ConfluenceTrendBias.ToString(),
+                TrendBiasStructure.ToString(),
+                TrendBiasEma.ToString(),
+                TrendBiasRsi.ToString(),
+                TrendBiasMacd.ToString(),
+                TrendBiasAdx.ToString(),
                 ConfluencePremiumDiscount.ToString(),
+                ConfluenceOpposingLevelClearance.ToString(),
                 ConfluenceBarDirection.ToString(),
                 ConfluenceEma.ToString(),
                 ConfluenceVwap.ToString(),
@@ -11491,6 +12216,7 @@ namespace cAlgo.Robots
             return ConfluenceVolumeSurge != ConfluenceScopeMode.No ||
                 ConfluenceTrendBias != ConfluenceScopeMode.No ||
                 ConfluencePremiumDiscount != ConfluenceScopeMode.No ||
+                ConfluenceOpposingLevelClearance != ConfluenceScopeMode.No ||
                 ConfluenceBarDirection ||
                 ConfluenceEma != ConfluenceScopeMode.No ||
                 ConfluenceVwap != ConfluenceScopeMode.No ||
@@ -11563,16 +12289,259 @@ namespace cAlgo.Robots
             // IsEnabledNamedArtifactTrigger. They must not also become a global AND gate:
             // requiring EMA pullback + key level + swing + OB + FVG on every trigger makes
             // the `All` visual preset effectively produce no events.
-            return PassesNamedConfluence(ConfluenceVolumeSurge, NamedConfluenceKind.VolumeSurge, symbolName, sourceBars, trigger) &&
-                PassesNamedConfluence(ConfluenceTrendBias, NamedConfluenceKind.TrendBias, symbolName, sourceBars, trigger) &&
-                PassesNamedConfluence(ConfluencePremiumDiscount, NamedConfluenceKind.PremiumDiscount, symbolName, sourceBars, trigger) &&
-                PassesNamedConfluence(ConfluenceEma, NamedConfluenceKind.Ema, symbolName, sourceBars, trigger) &&
-                PassesNamedConfluence(ConfluenceVwap, NamedConfluenceKind.Vwap, symbolName, sourceBars, trigger) &&
-                PassesNamedConfluence(ConfluenceBollinger, NamedConfluenceKind.Bollinger, symbolName, sourceBars, trigger) &&
-                PassesNamedConfluence(ConfluenceRsi, NamedConfluenceKind.Rsi, symbolName, sourceBars, trigger) &&
-                PassesNamedConfluence(ConfluenceStochastic, NamedConfluenceKind.Stochastic, symbolName, sourceBars, trigger) &&
-                PassesNamedConfluence(ConfluenceMacd, NamedConfluenceKind.Macd, symbolName, sourceBars, trigger) &&
-                PassesNamedConfluence(ConfluenceIchimoku, NamedConfluenceKind.Ichimoku, symbolName, sourceBars, trigger);
+            return GetFailedNamedConfluences(symbolName, sourceBars, trigger).Count == 0;
+        }
+
+        private List<string> GetFailedNamedConfluences(
+            string symbolName,
+            Bars sourceBars,
+            TradeTriggerEvent trigger)
+        {
+            var failures = new List<string>();
+            AddNamedConfluenceFailure(failures, "volume_surge", ConfluenceVolumeSurge, NamedConfluenceKind.VolumeSurge, symbolName, sourceBars, trigger);
+            AddNamedConfluenceFailure(failures, "trend_bias", ConfluenceTrendBias, NamedConfluenceKind.TrendBias, symbolName, sourceBars, trigger);
+            AddNamedConfluenceFailure(failures, "premium_discount", ConfluencePremiumDiscount, NamedConfluenceKind.PremiumDiscount, symbolName, sourceBars, trigger);
+            if (ConfluenceOpposingLevelClearance != ConfluenceScopeMode.No &&
+                !PassesOpposingLevelClearance(symbolName, sourceBars, trigger))
+            {
+                failures.Add("opposing_level_clearance(" + ConfluenceOpposingLevelClearance + ")");
+            }
+            AddNamedConfluenceFailure(failures, "ema", ConfluenceEma, NamedConfluenceKind.Ema, symbolName, sourceBars, trigger);
+            AddNamedConfluenceFailure(failures, "vwap", ConfluenceVwap, NamedConfluenceKind.Vwap, symbolName, sourceBars, trigger);
+            AddNamedConfluenceFailure(failures, "bollinger", ConfluenceBollinger, NamedConfluenceKind.Bollinger, symbolName, sourceBars, trigger);
+            AddNamedConfluenceFailure(failures, "rsi", ConfluenceRsi, NamedConfluenceKind.Rsi, symbolName, sourceBars, trigger);
+            AddNamedConfluenceFailure(failures, "stochastic", ConfluenceStochastic, NamedConfluenceKind.Stochastic, symbolName, sourceBars, trigger);
+            AddNamedConfluenceFailure(failures, "macd", ConfluenceMacd, NamedConfluenceKind.Macd, symbolName, sourceBars, trigger);
+            AddNamedConfluenceFailure(failures, "ichimoku", ConfluenceIchimoku, NamedConfluenceKind.Ichimoku, symbolName, sourceBars, trigger);
+            return failures;
+        }
+
+        private void AddNamedConfluenceFailure(
+            List<string> failures,
+            string label,
+            ConfluenceScopeMode scope,
+            NamedConfluenceKind kind,
+            string symbolName,
+            Bars sourceBars,
+            TradeTriggerEvent trigger)
+        {
+            if (failures == null || scope == ConfluenceScopeMode.No)
+                return;
+            if (!PassesNamedConfluence(scope, kind, symbolName, sourceBars, trigger))
+                failures.Add(label + "(" + scope + ")");
+        }
+
+        private bool PassesOpposingLevelClearance(
+            string symbolName,
+            Bars sourceBars,
+            TradeTriggerEvent trigger)
+        {
+            var scope = ConfluenceOpposingLevelClearance;
+            if (scope == ConfluenceScopeMode.No)
+                return true;
+            if (sourceBars == null || trigger.SourceTimeFrame == null || trigger.BarTime == DateTime.MinValue)
+                return false;
+
+            var triggerIndex = ResolveSourceBarIndex(sourceBars, trigger.BarTime);
+            if (!IsValidBarIndex(sourceBars, triggerIndex))
+                return false;
+            var signalLow = sourceBars.LowPrices[triggerIndex];
+            var signalHigh = sourceBars.HighPrices[triggerIndex];
+            var signalClose = sourceBars.ClosePrices[triggerIndex];
+            if (!IsFiniteNumber(signalLow) || !IsFiniteNumber(signalHigh) ||
+                !IsFiniteNumber(signalClose) || signalLow <= 0 || signalHigh < signalLow || signalClose <= 0)
+                return false;
+
+            var decisionTime = ResolveSourceBarEndTime(sourceBars, trigger.BarTime, trigger.SourceTimeFrame);
+            var frames = ResolveNamedConfluenceTimeFrames(scope, trigger.SourceTimeFrame);
+            foreach (var frame in frames)
+            {
+                if (HasOpposingLevelObstacleAtDecisionTime(
+                    symbolName,
+                    frame,
+                    decisionTime,
+                    signalLow,
+                    signalHigh,
+                    signalClose,
+                    trigger.IsBullish))
+                    return false;
+            }
+            return true;
+        }
+
+        private bool HasOpposingLevelObstacleAtDecisionTime(
+            string symbolName,
+            TimeFrame timeFrame,
+            DateTime decisionTime,
+            double signalLow,
+            double signalHigh,
+            double signalClose,
+            bool bullish)
+        {
+            Bars bars;
+            try { bars = GetBarsForCurrentMasterTimer(timeFrame, symbolName); }
+            catch { bars = null; }
+            if (bars == null || bars.Count < 4)
+                return false;
+
+            var decisionBarIndex = ResolveConfluenceClosedBarIndex(bars, timeFrame, decisionTime);
+            var knowledgeIndex = decisionBarIndex - 1;
+            if (knowledgeIndex < 2)
+                return false;
+
+            var symbol = ResolveLoadedSymbol(symbolName) ?? Symbol;
+            if (symbol == null)
+                return false;
+            var clearance = ResolveOpposingLevelClearanceDistance(symbol, bars, decisionBarIndex);
+            var epsilon = Math.Max(symbol.TickSize > 0 ? symbol.TickSize : 0, 0.0000001);
+
+            // Only levels confirmed before the signal decision are eligible. A bullish
+            // signal is blocked by overhead swing highs; a bearish signal by swing lows.
+            var hasOpposingSwing = CollectConfirmedSwings(
+                    bars,
+                    ResolveWorkingSwingLookbackBars(bars, timeFrame),
+                    knowledgeIndex)
+                .Where(swing => bullish ? swing.IsHigh : !swing.IsHigh)
+                .TakeLast(12)
+                .Any(swing => IsOpposingLineObstacle(
+                    signalLow,
+                    signalHigh,
+                    signalClose,
+                    swing.Price,
+                    clearance,
+                    epsilon,
+                    bullish));
+            if (hasOpposingSwing)
+                return true;
+
+            var opposingZoneKind = bullish ? ScoredPriceZoneKind.Supply : ScoredPriceZoneKind.Demand;
+            var hasOpposingZone = DetectScoredPriceZones(
+                    bars,
+                    symbol,
+                    ResolveWorkingLookbackBars(bars, timeFrame),
+                    timeFrame,
+                    knowledgeIndex)
+                .Where(zone => zone.Kind == opposingZoneKind)
+                .Any(zone => IsOpposingZoneWithinClearance(
+                    signalLow,
+                    signalHigh,
+                    signalClose,
+                    zone.Low,
+                    zone.High,
+                    clearance,
+                    epsilon,
+                    bullish));
+            if (hasOpposingZone)
+                return true;
+
+            // Project only trendlines whose two anchors were confirmed before the decision
+            // candle. Any line immediately overhead is resistance for a BUY; any line
+            // immediately underneath is support for a SELL.
+            var hasOpposingTrendline = CollectTrendlineLevelCandidatesAtBar(
+                    bars,
+                    timeFrame,
+                    decisionBarIndex)
+                .Any(level => IsOpposingLineObstacle(
+                    signalLow,
+                    signalHigh,
+                    signalClose,
+                    level.Price,
+                    clearance,
+                    epsilon,
+                    bullish));
+            if (hasOpposingTrendline)
+                return true;
+
+            // Match the configured chart EMA family. When the overlay is disabled, retain
+            // the resolved event EMA family so Opposing Level Clearance remains deterministic.
+            var emaConfig = _toggleEmaOverlay ? _resolvedEmaOverlayConfig : _resolvedEmaEventConfig;
+            var emaPeriods = new[] { emaConfig.FastPeriod, emaConfig.MidPeriod, emaConfig.SlowPeriod }
+                .Where(period => period > 0)
+                .Distinct();
+            return emaPeriods
+                .Select(period => ComputeEmaAtIndex(bars, period, decisionBarIndex))
+                .Where(IsFiniteNumber)
+                .Any(level => IsOpposingLineObstacle(
+                    signalLow,
+                    signalHigh,
+                    signalClose,
+                    level,
+                    clearance,
+                    epsilon,
+                    bullish));
+        }
+
+        private static bool IsOpposingLineObstacle(
+            double candleLow,
+            double candleHigh,
+            double close,
+            double level,
+            double clearance,
+            double epsilon,
+            bool bullish)
+        {
+            if (double.IsNaN(candleLow) || double.IsInfinity(candleLow) ||
+                double.IsNaN(candleHigh) || double.IsInfinity(candleHigh) ||
+                double.IsNaN(close) || double.IsInfinity(close) ||
+                double.IsNaN(level) || double.IsInfinity(level) ||
+                !(candleLow > 0) || candleHigh < candleLow || !(close > 0) || !(level > 0))
+                return false;
+
+            var safeClearance = Math.Max(0.0, clearance);
+            var touchedOrCrossed = candleHigh >= level - epsilon && candleLow <= level + epsilon;
+            if (bullish)
+            {
+                var immediatelyOverhead = level + epsilon >= close && level - close <= safeClearance;
+                var clearlyClosedAbove = close > level + safeClearance;
+                return immediatelyOverhead || (touchedOrCrossed && !clearlyClosedAbove);
+            }
+
+            var immediatelyBelow = level - epsilon <= close && close - level <= safeClearance;
+            var clearlyClosedBelow = close < level - safeClearance;
+            return immediatelyBelow || (touchedOrCrossed && !clearlyClosedBelow);
+        }
+
+        private static bool IsOpposingZoneWithinClearance(
+            double candleLow,
+            double candleHigh,
+            double close,
+            double zoneLow,
+            double zoneHigh,
+            double clearance,
+            double epsilon,
+            bool bullish)
+        {
+            var low = Math.Min(zoneLow, zoneHigh);
+            var high = Math.Max(zoneLow, zoneHigh);
+            if (double.IsNaN(candleLow) || double.IsInfinity(candleLow) ||
+                double.IsNaN(candleHigh) || double.IsInfinity(candleHigh) ||
+                double.IsNaN(close) || double.IsInfinity(close) ||
+                double.IsNaN(low) || double.IsInfinity(low) ||
+                double.IsNaN(high) || double.IsInfinity(high) ||
+                !(candleLow > 0) || candleHigh < candleLow || !(close > 0) || !(low > 0) || high < low)
+                return false;
+
+            var safeClearance = Math.Max(0.0, clearance);
+            var touchedOrCrossed = candleHigh >= low - epsilon && candleLow <= high + epsilon;
+            if (bullish)
+            {
+                var immediatelyOverhead = close <= high + epsilon && close >= low - safeClearance;
+                var clearlyClosedAbove = close > high + safeClearance;
+                return immediatelyOverhead || (touchedOrCrossed && !clearlyClosedAbove);
+            }
+
+            var immediatelyBelow = close >= low - epsilon && close <= high + safeClearance;
+            var clearlyClosedBelow = close < low - safeClearance;
+            return immediatelyBelow || (touchedOrCrossed && !clearlyClosedBelow);
+        }
+
+        private double ResolveOpposingLevelClearanceDistance(Symbol symbol, Bars bars, int barIndex)
+        {
+            if (symbol == null)
+                return 0.0000001;
+            var pipFloor = Math.Max(symbol.PipSize * 2.0, symbol.TickSize > 0 ? symbol.TickSize * 2.0 : 0.0);
+            var atr = ComputeAverageTrueRangeAtIndex(bars, barIndex, 14);
+            return Math.Max(Math.Max(pipFloor, atr > 0 ? atr * 0.10 : 0.0), 0.0000001);
         }
 
         private bool PassesBarDirectionConfluence(Bars sourceBars, TradeTriggerEvent trigger)
@@ -11708,17 +12677,22 @@ namespace cAlgo.Robots
             if (string.IsNullOrWhiteSpace(symbolName) || sourceTimeFrame == null || decisionTime == DateTime.MinValue)
                 return false;
 
-            var ltfScore = GetTrendBiasScoreAtDecisionTime(symbolName, sourceTimeFrame, decisionTime);
-            var ltfAligned = bullish ? ltfScore >= 2 : ltfScore <= -2;
+            var ltfDirection = ResolveTrendBiasDirectionAtDecisionTime(
+                symbolName,
+                sourceTimeFrame,
+                decisionTime);
+            var ltfAligned = bullish ? ltfDirection > 0 : ltfDirection < 0;
             if (scope == ConfluenceScopeMode.LTF)
                 return PassesNamedConfluenceScope(scope, ltfAligned, false);
+
             var htfFrames = ResolveNamedConfluenceTimeFrames(ConfluenceScopeMode.HTF, sourceTimeFrame);
             if (htfFrames.Count == 0)
                 return false;
-            var htfScore = AggregateStrategyTrendBiasScoreAt(symbolName, htfFrames, decisionTime);
-            var htfAligned = bullish ? htfScore >= 2 : htfScore <= -2;
-            // Yes means agreement, evaluated as-of the event close: the event timeframe and
-            // the aggregate of its automatic higher timeframes must point the same way.
+            var htfDirection = ResolveDirectionalConsensus(htfFrames.Select(frame =>
+                ResolveTrendBiasDirectionAtDecisionTime(symbolName, frame, decisionTime)));
+            var htfAligned = bullish ? htfDirection > 0 : htfDirection < 0;
+            // The dashboard and this trade gate deliberately share the same detector.
+            // Scope only chooses which base timeframe(s) must agree with the trade.
             return PassesNamedConfluenceScope(scope, ltfAligned, htfAligned);
         }
 
@@ -11973,56 +12947,29 @@ namespace cAlgo.Robots
         private bool MatchesPremiumDiscountConfluence(ConfluenceEvaluationContext context)
         {
             if (context == null || context.Bars == null || context.TimeFrame == null ||
-                context.BarIndex < 2 || !context.RequireBullishDirection.HasValue)
+                context.BarIndex < PremiumDiscountRangeBars - 1 || !context.RequireBullishDirection.HasValue)
                 return false;
 
             var bullish = context.RequireBullishDirection.Value;
-            var swings = CollectConfirmedSwings(
+            double rangeLow;
+            double rangeHigh;
+            if (!TryResolveRollingHighLow(
                     context.Bars,
-                    ResolveWorkingSwingLookbackBars(context.Bars, context.TimeFrame),
-                    context.BarIndex - 1)
-                .OrderBy(swing => swing.BarIndex)
-                .ToList();
-            if (swings.Count < 2)
+                    context.BarIndex,
+                    PremiumDiscountRangeBars,
+                    out rangeLow,
+                    out rangeHigh))
                 return false;
 
-            // Use the latest completed directional leg. The origin is the nearest opposite
-            // confirmed swing in sequence, never the price-nearest point or a rolling range.
-            var endpoint = swings.LastOrDefault(swing => bullish ? swing.IsHigh : !swing.IsHigh);
-            if (endpoint.Time == DateTime.MinValue)
-                return false;
-            var origin = swings
-                .Where(swing => swing.BarIndex < endpoint.BarIndex && swing.IsHigh != endpoint.IsHigh)
-                .OrderByDescending(swing => swing.BarIndex)
-                .FirstOrDefault();
-            if (origin.Time == DateTime.MinValue)
-                return false;
-
-            var rangeLow = bullish ? origin.Price : endpoint.Price;
-            var rangeHigh = bullish ? endpoint.Price : origin.Price;
             var rangeSize = rangeHigh - rangeLow;
-            if (!(rangeLow > 0) || !(rangeHigh > rangeLow))
-                return false;
-
             var symbol = ResolveLoadedSymbol(context.SymbolName) ?? Symbol;
             var pipTolerance = Math.Max(symbol != null ? symbol.PipSize * 2.0 : 0.0, 0.0000001);
-            var endpointIndex = Math.Max(1, Math.Min(context.BarIndex - 1, endpoint.BarIndex));
-            var medianRange = ComputeMedianRange(context.Bars, endpointIndex, 14);
-            var minimumLegSize = Math.Max(pipTolerance * 5.0, medianRange > 0 ? medianRange * 1.5 : 0.0);
-            if (rangeSize < minimumLegSize)
+            if (!(rangeSize > pipTolerance))
                 return false;
 
-            // A close through the originating boundary invalidates the dealing range. Scan
-            // only closed candles after the origin and before the decision candle.
-            for (var index = origin.BarIndex + 1; index < context.BarIndex; index++)
-            {
-                var invalidated = bullish
-                    ? context.Bars.ClosePrices[index] < rangeLow - pipTolerance
-                    : context.Bars.ClosePrices[index] > rangeHigh + pipTolerance;
-                if (invalidated)
-                    return false;
-            }
-
+            // The completed trigger candle belongs to the rolling window. A new 24-bar low
+            // can therefore confirm bullish Discount, and a new 24-bar high can confirm
+            // bearish Premium, without relying on an older confirmed swing leg.
             var equilibriumTolerance = Math.Max(pipTolerance, rangeSize * 0.005);
             return IsPremiumDiscountLocation(
                 context.Bars.ClosePrices[context.BarIndex],
@@ -12030,6 +12977,40 @@ namespace cAlgo.Robots
                 rangeHigh,
                 equilibriumTolerance,
                 bullish);
+        }
+
+        private static bool TryResolveRollingHighLow(
+            Bars bars,
+            int endIndex,
+            int period,
+            out double rangeLow,
+            out double rangeHigh)
+        {
+            rangeLow = 0;
+            rangeHigh = 0;
+            if (bars == null || period < 1 || endIndex < period - 1 || endIndex >= bars.Count)
+                return false;
+
+            var low = double.MaxValue;
+            var high = double.MinValue;
+            var startIndex = endIndex - period + 1;
+            for (var index = startIndex; index <= endIndex; index++)
+            {
+                var barLow = bars.LowPrices[index];
+                var barHigh = bars.HighPrices[index];
+                if (double.IsNaN(barLow) || double.IsInfinity(barLow) ||
+                    double.IsNaN(barHigh) || double.IsInfinity(barHigh) ||
+                    !(barLow > 0) || !(barHigh >= barLow))
+                    return false;
+                low = Math.Min(low, barLow);
+                high = Math.Max(high, barHigh);
+            }
+
+            if (!(low > 0) || !(high > low))
+                return false;
+            rangeLow = low;
+            rangeHigh = high;
+            return true;
         }
 
         private static bool IsPremiumDiscountLocation(
@@ -12054,8 +13035,13 @@ namespace cAlgo.Robots
 
         private bool MatchesTrendBiasConfluence(ConfluenceEvaluationContext context)
         {
-            var score = GetTrendBiasScoreAt(context);
-            return context.RequireBullishDirection.Value ? score >= 2 : score <= -2;
+            if (context == null || !context.RequireBullishDirection.HasValue)
+                return false;
+            var direction = ResolveTrendBiasDirectionAtDecisionTime(
+                context.SymbolName,
+                context.TimeFrame,
+                context.DecisionTime);
+            return context.RequireBullishDirection.Value ? direction > 0 : direction < 0;
         }
 
         private bool MatchesEmaConfluence(ConfluenceEvaluationContext context)
@@ -12359,10 +13345,12 @@ namespace cAlgo.Robots
                 .Where(trigger => IsCombinedTradeTriggerFamily(trigger.Family) ||
                     string.Equals(trigger.Family, "technical", StringComparison.OrdinalIgnoreCase))
                 .ToList();
-            var qualityMatches = matching
+            var qualifiedEvidence = matching
                 .Where(IsEnabledNamedArtifactTrigger)
                 .Where(trigger => IsCanonicalArtifactValidAtEventBar(sourceBars, trigger))
                 .Where(trigger => IsHighQualityDirectionalTradeTrigger(symbolName, sourceBars, trigger))
+                .ToList();
+            var qualityMatches = qualifiedEvidence
                 .Where(trigger => PassesNamedConfluences(symbolName, sourceBars, trigger))
                 .ToList();
             var useLegacyCandleAllTouchBundle = UsesLegacyCandleAllTouchBundle(selected);
@@ -12404,6 +13392,10 @@ namespace cAlgo.Robots
                     {
                         var trigger = directionResolved[i];
                         trigger.ConfluenceCount = Math.Max(trigger.ConfluenceCount, touchMatches.Count);
+                        trigger.SupportEventNames = BuildCandleConfluenceSupportEventNames(
+                            timeFrame,
+                            touchMatches,
+                            resolvedBullish);
                         directionResolved[i] = trigger;
                     }
                 }
@@ -12423,7 +13415,12 @@ namespace cAlgo.Robots
                     trigger.BarTime.Ticks,
                     trigger.IsBullish ? "B" : "S")))
                 .ToList();
-            return ApplyMinimumConfluenceFilter(directionResolved.Concat(technicalSupports));
+            return ApplyMinimumConfluenceFilter(AttachOpposingEvidenceCounts(
+                directionResolved.Concat(technicalSupports),
+                qualifiedEvidence,
+                symbolName,
+                sourceBars,
+                timeFrame));
         }
 
         private bool UsesLegacyCandleAllTouchBundle(IEnumerable<StrategyCustomEventOption> selectedOptions)
@@ -12507,11 +13504,11 @@ namespace cAlgo.Robots
 
         private static bool RequiresDirectionalReversalWick(StrategyCustomEventOption option)
         {
-            return option == StrategyCustomEventOption.Pin_PinBar ||
-                option == StrategyCustomEventOption.Ham_Hammer ||
-                option == StrategyCustomEventOption.Hgm_HangingMan ||
-                option == StrategyCustomEventOption.Sst_ShootingStar ||
-                option == StrategyCustomEventOption.Ihm_InvertedHammer;
+            return option == StrategyCustomEventOption.pin_PinBar ||
+                option == StrategyCustomEventOption.ham_Hammer ||
+                option == StrategyCustomEventOption.hgm_HangingMan ||
+                option == StrategyCustomEventOption.sst_ShootingStar ||
+                option == StrategyCustomEventOption.ihm_InvertedHammer;
         }
 
         private List<TradeTriggerEvent> ResolveSingleDirectionTradeTriggers(
@@ -12677,6 +13674,142 @@ namespace cAlgo.Robots
             return 1 + supportingCount;
         }
 
+        private List<TradeTriggerEvent> AttachOpposingEvidenceCounts(
+            IEnumerable<TradeTriggerEvent> alignedTriggers,
+            IEnumerable<TradeTriggerEvent> allQualifiedEvidence,
+            string symbolName = null,
+            Bars sourceBars = null,
+            TimeFrame sourceTimeFrame = null)
+        {
+            var aligned = (alignedTriggers ?? Enumerable.Empty<TradeTriggerEvent>()).ToList();
+            var allEvidence = (allQualifiedEvidence ?? Enumerable.Empty<TradeTriggerEvent>())
+                .Where(trigger => !trigger.IsDirectionless)
+                .ToList();
+            if (aligned.Count == 0 || allEvidence.Count == 0)
+                return aligned;
+
+            var proximityEvidence = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+            for (var index = 0; index < aligned.Count; index++)
+            {
+                var trigger = aligned[index];
+                var opposing = allEvidence
+                    .Where(candidate => candidate.BarTime == trigger.BarTime)
+                    .Where(candidate => candidate.IsBullish != trigger.IsBullish)
+                    .ToList();
+                var opposingEventNames = CollectNamedOpposingEventEvidence(opposing);
+                var proximityKey = string.Format(
+                    CultureInfo.InvariantCulture,
+                    "{0}|{1}",
+                    trigger.BarTime.Ticks,
+                    trigger.IsBullish ? "B" : "S");
+                List<string> opposingProximityNames;
+                if (!proximityEvidence.TryGetValue(proximityKey, out opposingProximityNames))
+                {
+                    opposingProximityNames = CollectOpposingProximityEvidence(
+                        symbolName,
+                        sourceBars,
+                        sourceTimeFrame,
+                        trigger.BarTime,
+                        trigger.IsBullish);
+                    proximityEvidence[proximityKey] = opposingProximityNames;
+                }
+                // Proximity artifacts can be the source of an opposing structure event, so
+                // retain the stronger named audit rather than summing and double-counting one
+                // level. The displayed -N now always has exactly N names in the full log.
+                var selectedOpposingNames = opposingEventNames.Count >= opposingProximityNames.Count
+                    ? opposingEventNames
+                    : opposingProximityNames;
+                trigger.OpposingEvidenceNames = selectedOpposingNames;
+                trigger.OpposingEvidenceCount = selectedOpposingNames.Count;
+                aligned[index] = trigger;
+            }
+
+            return aligned;
+        }
+
+        private List<string> CollectNamedOpposingEventEvidence(IEnumerable<TradeTriggerEvent> opposing)
+        {
+            var names = new List<string>();
+            foreach (var trigger in opposing ?? Enumerable.Empty<TradeTriggerEvent>())
+            {
+                var eventName = StripEventConfluenceSuffix(trigger.Name);
+                if (!string.IsNullOrWhiteSpace(eventName))
+                    names.Add(eventName.Trim());
+                names.AddRange((trigger.SupportEventNames ?? new List<string>())
+                    .Where(value => !string.IsNullOrWhiteSpace(value))
+                    .Select(value => value.Trim()));
+            }
+            return names.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        private List<string> CollectOpposingProximityEvidence(
+            string symbolName,
+            Bars sourceBars,
+            TimeFrame sourceTimeFrame,
+            DateTime barTime,
+            bool resolvedBullish)
+        {
+            if (sourceBars == null || sourceTimeFrame == null || barTime == DateTime.MinValue)
+                return new List<string>();
+
+            var barIndex = ResolveSourceBarIndex(sourceBars, barTime);
+            if (!IsValidBarIndex(sourceBars, barIndex))
+                return new List<string>();
+
+            var resolvedSymbol = ResolveLoadedSymbol(symbolName);
+            if (resolvedSymbol == null)
+                return new List<string>();
+
+            List<CandleConfluenceMatch> opposingArtifacts;
+            ShouldKeepCandlePatternInline(
+                sourceBars,
+                sourceTimeFrame,
+                barIndex,
+                !resolvedBullish,
+                out opposingArtifacts,
+                symbolName,
+                resolvedSymbol,
+                CandleArtifactMatchMode.EarlyRejection,
+                false,
+                true);
+            var names = BuildCandleConfluenceSupportEventNames(
+                sourceTimeFrame,
+                opposingArtifacts,
+                !resolvedBullish);
+
+            var snapshot = BuildSharedIndicatorSnapshot(sourceBars, barIndex);
+            var barLow = sourceBars.LowPrices[barIndex];
+            var barHigh = sourceBars.HighPrices[barIndex];
+            var close = sourceBars.ClosePrices[barIndex];
+            var tolerance = Math.Max(
+                resolvedSymbol.PipSize * 6.0,
+                Math.Max(barHigh - barLow, resolvedSymbol.PipSize * 4.0) * 0.25);
+            if (snapshot != null)
+            {
+                var nearestOpposingEma = new[]
+                    {
+                        Tuple.Create(snapshot.EmaFast, Math.Max(1, _resolvedEmaEventConfig.FastPeriod)),
+                        Tuple.Create(snapshot.EmaMid, Math.Max(1, _resolvedEmaEventConfig.MidPeriod)),
+                        Tuple.Create(snapshot.EmaSlow, Math.Max(1, _resolvedEmaEventConfig.SlowPeriod))
+                    }
+                    .Where(item => IsFiniteNumber(item.Item1))
+                    .Where(item => resolvedBullish
+                        ? item.Item1 >= close - tolerance && item.Item1 <= barHigh + tolerance
+                        : item.Item1 <= close + tolerance && item.Item1 >= barLow - tolerance)
+                    .OrderBy(item => Math.Abs(item.Item1 - close))
+                    .FirstOrDefault();
+                if (nearestOpposingEma != null)
+                {
+                    names.Add(BuildCanonicalEventName(
+                        sourceTimeFrame,
+                        "EMA" + nearestOpposingEma.Item2.ToString(CultureInfo.InvariantCulture),
+                        !resolvedBullish));
+                }
+            }
+
+            return names.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
         private static string StripEventConfluenceSuffix(string name)
         {
             var value = (name ?? "").Trim();
@@ -12742,6 +13875,7 @@ namespace cAlgo.Robots
             var canonical = default(CanonicalMarketEvent);
             var specialEventName = "";
             var specialConfluenceCount = 0;
+            var specialSupportEventNames = new List<string>();
             List<CanonicalMarketEvent> canonicalEventsOnBar;
             if (hasCanonicalType &&
                 canonicalEventsByBarTime != null &&
@@ -12752,8 +13886,8 @@ namespace cAlgo.Robots
                 {
                     if (candidate.EventType != canonicalType || (!directionless && candidate.IsBullish != bullish))
                         continue;
-                    if ((baseOption == StrategyCustomEventOption.Rj_KeyLevelRejection ||
-                         baseOption == StrategyCustomEventOption.Br_Breakout) &&
+                    if ((baseOption == StrategyCustomEventOption.r_KeyLevelRejection ||
+                         baseOption == StrategyCustomEventOption.b_Breakout) &&
                         IsTechnicalCanonicalMarketEvent(candidate))
                         continue;
                     if (hasRequiredCanonicalReason && candidate.Reason != requiredCanonicalReason)
@@ -12769,11 +13903,11 @@ namespace cAlgo.Robots
             }
 
             if (!directionless &&
-                (baseOption == StrategyCustomEventOption.X_Cross ||
-                 baseOption == StrategyCustomEventOption.Xr_EarlyRejection))
+                (baseOption == StrategyCustomEventOption.x_Cross ||
+                 baseOption == StrategyCustomEventOption.xr_EarlyRejection))
             {
                 List<CandleConfluenceMatch> specialMatches;
-                var matched = baseOption == StrategyCustomEventOption.X_Cross
+                var matched = baseOption == StrategyCustomEventOption.x_Cross
                     ? TryResolveFullArtifactCross(symbolName, sourceBars, timeFrame, barIndex, bullish, out specialMatches)
                     : TryResolveEarlyArtifactReaction(symbolName, sourceBars, timeFrame, barIndex, bullish, out specialMatches);
                 var match = matched ? specialMatches.FirstOrDefault() : null;
@@ -12782,11 +13916,11 @@ namespace cAlgo.Robots
                     var isZone = match.High > match.Low;
                     // X/XR are specialized reasons within the established five canonical
                     // action groups; they are not additional canonical action groups.
-                    var isCross = baseOption == StrategyCustomEventOption.X_Cross;
+                    var isCross = baseOption == StrategyCustomEventOption.x_Cross;
                     var eventType = isCross
                         ? CanonicalEventType.Breakout
                         : CanonicalEventType.Rejection;
-                    var reason = baseOption == StrategyCustomEventOption.X_Cross
+                    var reason = baseOption == StrategyCustomEventOption.x_Cross
                         ? CanonicalEventReason.ArtifactCross
                         : CanonicalEventReason.EarlyPatternReaction;
                     canonical = BuildCanonicalMarketEvent(
@@ -12806,6 +13940,10 @@ namespace cAlgo.Robots
                         BuildArtifactId(match.Kind, match.OriginTime, match.Low, match.High),
                         match.OriginTime);
                     specialConfluenceCount = specialMatches.Count;
+                    specialSupportEventNames = BuildCandleConfluenceSupportEventNames(
+                        timeFrame,
+                        specialMatches,
+                        bullish);
                     specialEventName = FormatEarlyArtifactEventName(
                         timeFrame,
                         isCross ? "x" : "xr",
@@ -12863,6 +14001,7 @@ namespace cAlgo.Robots
                 HasCanonicalEvent = hasCanonical,
                 CanonicalEvent = canonical,
                 ConfluenceCount = confluenceCount,
+                SupportEventNames = specialSupportEventNames,
                 StopDistance = stopDistance,
                 Priority = GetEventLabelPriorityScore(normalizedLabel)
             };
@@ -12876,11 +14015,11 @@ namespace cAlgo.Robots
                 baseOption = option;
             // These reuse canonical structure records internally, but remain standalone
             // technical triggers rather than momentum events.
-            if (baseOption == StrategyCustomEventOption.EmaPb_EMAPullbackReclaim ||
-                baseOption == StrategyCustomEventOption.VwapCt_VWAPContinuationReclaim)
+            if (baseOption == StrategyCustomEventOption.ema_EMAPullbackReclaim ||
+                baseOption == StrategyCustomEventOption.vwap_VWAPContinuationReclaim)
                 return "technical";
-            if (baseOption == StrategyCustomEventOption.X_Cross ||
-                baseOption == StrategyCustomEventOption.Xr_EarlyRejection)
+            if (baseOption == StrategyCustomEventOption.x_Cross ||
+                baseOption == StrategyCustomEventOption.xr_EarlyRejection)
                 return "structure";
             CanonicalEventType canonicalType;
             string label;
@@ -12897,14 +14036,14 @@ namespace cAlgo.Robots
         {
             switch (option)
             {
-                case StrategyCustomEventOption.R50_RsiMidlineCross:
-                case StrategyCustomEventOption.Ros_RsiExitOversold:
-                case StrategyCustomEventOption.Rob_RsiExitOverbought:
-                case StrategyCustomEventOption.Stx_StochCross:
-                case StrategyCustomEventOption.Sto_StochExitExtreme:
-                case StrategyCustomEventOption.Mdx_MacdSignalCross:
-                case StrategyCustomEventOption.Md0_MacdZeroCross:
-                case StrategyCustomEventOption.Div_Divergence:
+                case StrategyCustomEventOption.rsi_RsiMidlineCross:
+                case StrategyCustomEventOption.rsi_RsiExitOversold:
+                case StrategyCustomEventOption.rsi_RsiExitOverbought:
+                case StrategyCustomEventOption.stoch_StochCross:
+                case StrategyCustomEventOption.stoch_StochExitExtreme:
+                case StrategyCustomEventOption.macd_MacdSignalCross:
+                case StrategyCustomEventOption.macd_MacdZeroCross:
+                case StrategyCustomEventOption.rsi_Divergence:
                     return true;
                 default:
                     return false;
@@ -12919,7 +14058,7 @@ namespace cAlgo.Robots
             StrategyEventFollowUpOutcome outcome;
             if (!TryMapStrategyFollowUpEventOption(trigger.Option, out baseOption, out outcome))
                 baseOption = trigger.Option;
-            return baseOption != StrategyCustomEventOption.EmaPb_EMAPullbackReclaim ||
+            return baseOption != StrategyCustomEventOption.ema_EMAPullbackReclaim ||
                 IsHigherTimeFrameVisual(trigger.SourceTimeFrame);
         }
 
@@ -12937,7 +14076,8 @@ namespace cAlgo.Robots
         {
             return string.Join("-", new[]
             {
-                "v4",
+                "v5",
+                DrawSweepReclaimChain.ToString(),
                 _toggleChochDetections ? "1" : "0",
                 _toggleBosDetections ? "1" : "0",
                 _toggleSweepDetections ? "1" : "0",
@@ -12966,7 +14106,7 @@ namespace cAlgo.Robots
             // The persisted file has one path per symbol/timeframe. Reuse it only for the
             // complete, maximum-artifact configuration; scoped/limited WYSIWYG views must be
             // recomputed so a file produced under different controls cannot leak events.
-            return AreAllCanonicalStructureEventsEnabled() &&
+            return DrawSweepReclaimChain == ConfluenceScopeMode.No && AreAllCanonicalStructureEventsEnabled() &&
                 ZoneMaxCount == ZoneMaxCountPreset.Max &&
                 DrawKeyLevels == ConfluenceScopeMode.Yes &&
                 DrawLiquidityLevels == ConfluenceScopeMode.Yes &&
@@ -12987,6 +14127,8 @@ namespace cAlgo.Robots
         {
             switch (eventType)
             {
+                case CanonicalEventType.SweepReclaimChain:
+                    return DrawSweepReclaimChain != ConfluenceScopeMode.No;
                 case CanonicalEventType.Choch:
                     return _toggleChochDetections;
                 case CanonicalEventType.Bos:
@@ -13019,7 +14161,7 @@ namespace cAlgo.Robots
             string artifactId = "",
             DateTime artifactOriginTime = default(DateTime))
         {
-            var eventSuffix = reason == CanonicalEventReason.ArtifactCross
+            var eventSuffix = eventType == CanonicalEventType.SweepReclaimChain ? "sweep_reclaim_chain" : reason == CanonicalEventReason.ArtifactCross
                 ? "cross"
                 : reason == CanonicalEventReason.EarlyPatternReaction
                     ? "early_rejection"
@@ -13138,7 +14280,6 @@ namespace cAlgo.Robots
 
             Func<StructureZoneV2, bool> activeAt = zone =>
                 zone.ConfirmationBarIndex <= asOf &&
-                (zone.TouchBarIndex < 0 || zone.TouchBarIndex > asOf) &&
                 (zone.InvalidationBarIndex < 0 || zone.InvalidationBarIndex > asOf);
 
             if (_toggleFvgZones && IsScopeEnabledForTimeFrame(DrawFvgZones, sourceTimeFrame) &&
@@ -14385,6 +15526,107 @@ namespace cAlgo.Robots
             return events;
         }
 
+        // Replay a bounded, closed-bar state machine. No future bar is consulted by a
+        // transition; replay restores incomplete chains after restart without placing orders.
+        private List<CanonicalMarketEvent> CollectSweepReclaimChains(
+            string symbolName, Symbol symbol, Bars bars, TimeFrame timeFrame, int lookbackBars)
+        {
+            var result = new List<CanonicalMarketEvent>();
+            if (bars == null || symbol == null || bars.Count < 8)
+                return result;
+            var snapshot = BuildStructureSnapshotV2(bars, lookbackBars + 32);
+            var last = Math.Min(snapshot.LastClosedBarIndex, bars.Count - 2);
+            var first = Math.Max(1, last - lookbackBars);
+            var eventsByIndex = snapshot.Events
+                .Where(e => e.ConfirmationBarIndex <= last)
+                .GroupBy(e => e.ConfirmationBarIndex)
+                .ToDictionary(g => g.Key, g => g.ToList());
+            var emitted = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var sweep in snapshot.Events.Where(e => e.Type == StructureEventTypeV2.Sweep))
+            {
+                var start = sweep.TriggerBarIndex;
+                var reclaimed = sweep.ConfirmationBarIndex;
+                if (start < 1 || start > reclaimed || reclaimed > last || start < first - 20 ||
+                    sweep.ReferenceSwingIndex < 0 || sweep.ReferenceSwingIndex + 2 >= start)
+                    continue;
+                var bullish = sweep.IsBullish;
+                var low = Enumerable.Range(start, reclaimed - start + 1).Min(i => bars.LowPrices[i]);
+                var high = Enumerable.Range(start, reclaimed - start + 1).Max(i => bars.HighPrices[i]);
+                // Require a literal sweep and close back through the known liquidity level.
+                if (bullish ? low >= sweep.ReferencePrice || bars.ClosePrices[reclaimed] <= sweep.ReferencePrice
+                            : high <= sweep.ReferencePrice || bars.ClosePrices[reclaimed] >= sweep.ReferencePrice)
+                    continue;
+                var rejection = -1;
+                var choch = -1;
+                var bos = -1;
+                var end = Math.Min(last, start + 20);
+                for (var i = reclaimed; i <= end; i++)
+                {
+                    if (bullish ? bars.ClosePrices[i] < low : bars.ClosePrices[i] > high)
+                        break;
+                    List<StructureEventV2> atBar;
+                    if (!eventsByIndex.TryGetValue(i, out atBar))
+                        atBar = new List<StructureEventV2>();
+                    if (choch >= 0 && atBar.Any(e => e.Type == StructureEventTypeV2.Choch && e.IsBullish != bullish))
+                        break;
+                    if (rejection < 0)
+                    {
+                        if (i - reclaimed > 3) break;
+                        var patterns = GetDetectedSharedRulePatternSet(bars, timeFrame, i);
+                        var tolerance = Math.Max(symbol.PipSize * 2, 0.0000001);
+                        int span;
+                        var rejected = bullish
+                            ? TryMatchBullishLevelRejection(bars, i, sweep.ReferencePrice, tolerance,
+                                bars.HighPrices[i] - bars.LowPrices[i], patterns, bars.OpenPrices[i - 1], bars.ClosePrices[i - 1], out span)
+                            : TryMatchBearishLevelRejection(bars, i, sweep.ReferencePrice, tolerance,
+                                bars.HighPrices[i] - bars.LowPrices[i], patterns, bars.OpenPrices[i - 1], bars.ClosePrices[i - 1], out span);
+                        if (rejected) rejection = i;
+                        continue;
+                    }
+                    if (choch < 0)
+                    {
+                        if (i - rejection > 6) break;
+                        if (atBar.Any(e => e.Type == StructureEventTypeV2.Choch && e.IsBullish == bullish))
+                            choch = i;
+                        continue;
+                    }
+                    if (bos < 0)
+                    {
+                        if (i - choch > 10) break;
+                        // New structure must form AFTER the CHOCH. Re-breaking its old
+                        // reference swing is not a second confirmation of the reversal.
+                        if (atBar.Any(e => e.Type == StructureEventTypeV2.Bos && e.IsBullish == bullish &&
+                            e.ReferenceSwingIndex >= choch && e.ReferenceSwingIndex < i))
+                            bos = i;
+                        continue;
+                    }
+                    if (i - bos > 3) break;
+                    var confirmations = GetDetectedSharedRulePatternSet(bars, timeFrame, i);
+                    var confirmed = bullish
+                        ? confirmations.Any(p => p.StartsWith("bullish_", StringComparison.OrdinalIgnoreCase))
+                        : confirmations.Any(p => p.StartsWith("bearish_", StringComparison.OrdinalIgnoreCase) ||
+                            p == "shooting_star" || p == "hanging_man");
+                    if (!confirmed || (bullish ? bars.ClosePrices[i] <= bars.OpenPrices[i] : bars.ClosePrices[i] >= bars.OpenPrices[i]))
+                        continue;
+                    if (i >= first)
+                    {
+                        var identity = bars.OpenTimes[start].Ticks + "|" + bullish + "|" + bars.OpenTimes[sweep.ReferenceSwingIndex].Ticks;
+                        if (!emitted.Add(identity)) break;
+                        var evt = BuildCanonicalMarketEvent(symbolName, timeFrame, CanonicalEventType.SweepReclaimChain,
+                            bullish, CanonicalEventReason.LiquiditySweep,
+                            bullish ? CanonicalEventAction.Buy : CanonicalEventAction.Sell,
+                            bars.OpenTimes[i], sweep.ReferencePrice, 5, 80,
+                            artifactId: "chain|" + identity, artifactOriginTime: bars.OpenTimes[sweep.ReferenceSwingIndex]);
+                        evt.ChainStartTime = bars.OpenTimes[start];
+                        evt.EventKey += "_" + bars.OpenTimes[start].Ticks;
+                        result.Add(evt);
+                    }
+                    break; // A chain completes once, never once per subsequent candle.
+                }
+            }
+            return result;
+        }
+
         private List<CanonicalMarketEvent> GetCanonicalEventsForSymbolTimeFrame(string symbolName, TimeFrame timeFrame, int maxEvents = 3, int lookbackBars = 180)
         {
             var empty = new List<CanonicalMarketEvent>();
@@ -14392,6 +15634,7 @@ namespace cAlgo.Robots
                 return empty;
 
             var anyStructureEventEnabled =
+                DrawSweepReclaimChain != ConfluenceScopeMode.No ||
                 _toggleChochDetections ||
                 _toggleBosDetections ||
                 _toggleSweepDetections ||
@@ -14521,6 +15764,9 @@ namespace cAlgo.Robots
                         _toggleBreakoutDetections));
                     LogSlowChartStep("CanonicalEvents.Phase", phaseStarted, string.Format(CultureInfo.InvariantCulture, "{0} {1} -> {2}", normalizedSymbol, GetMiniChartLabel(timeFrame), canonical.Count));
                 }
+
+                if (IsScopeEnabledForTimeFrame(DrawSweepReclaimChain, timeFrame))
+                    canonical.AddRange(CollectSweepReclaimChains(normalizedSymbol, symbol, bars, timeFrame, resolvedLookbackBars));
 
                 var normalizeStarted = Stopwatch.StartNew();
                 canonical = canonical
@@ -14663,9 +15909,9 @@ namespace cAlgo.Robots
                 var sourceTimeFrame = Chart != null ? Chart.TimeFrame : TimeFrame.Minute;
                 var color = GetTimeFrameStructureColor(sourceTimeFrame);
                 var fillColor = WithAlpha(color, 18);
-                var endTime = zone.VisitCount > 1
-                    ? ResolveBufferedArtifactEndTime(Bars, sourceTimeFrame, zone.LastTouchBarIndex, liveEndTime)
-                    : liveEndTime;
+                // Touches and rejections do not consume a zone. Keep projecting it while
+                // it remains part of the active rolling supply/demand analysis.
+                var endTime = liveEndTime;
 
                 var rect = Chart.DrawRectangle("PZ_" + objectIndex.ToString(CultureInfo.InvariantCulture), zone.StartTime, zone.High, endTime, zone.Low, fillColor);
                 TrySetPropertyValue(rect, "IsFilled", true);
@@ -15148,6 +16394,31 @@ namespace cAlgo.Robots
             Bearish
         }
 
+        [Flags]
+        private enum TrendBiasComponentMask
+        {
+            None = 0,
+            Structure = 1,
+            EmaAlignment = 2,
+            Rsi = 4,
+            Macd = 8,
+            AdxStrength = 16
+        }
+
+        private struct TrendBiasConfluenceScore
+        {
+            public TrendBiasComponentMask EnabledMask;
+            public TrendBiasComponentMask BullishMask;
+            public TrendBiasComponentMask BearishMask;
+            public int LtfStructureScore;
+            public int HtfStructureScore;
+            public string StructureDetail;
+            public string EmaDetail;
+            public string RsiDetail;
+            public string MacdDetail;
+            public string AdxDetail;
+        }
+
         private struct StructureEvent
         {
             public string Label;
@@ -15189,7 +16460,6 @@ namespace cAlgo.Robots
         private enum StructureZoneStateV2
         {
             Active,
-            Touched,
             Invalidated
         }
 
@@ -15201,6 +16471,7 @@ namespace cAlgo.Robots
             public int OriginBarIndex;
             public int ConfirmationBarIndex;
             public int TouchBarIndex;
+            public int TouchCount;
             public int InvalidationBarIndex;
             public double Low;
             public double High;
@@ -15220,7 +16491,8 @@ namespace cAlgo.Robots
             Bos,
             SweepReclaim,
             Rejection,
-            Breakout
+            Breakout,
+            SweepReclaimChain
         }
 
         private enum CanonicalEventReason
@@ -15273,6 +16545,8 @@ namespace cAlgo.Robots
             public string LevelKind;
             public string ArtifactId;
             public DateTime ArtifactOriginTime;
+            // Chain identity uses time, not an index that shifts when history is loaded.
+            public DateTime ChainStartTime;
         }
 
         private struct TradeTriggerEvent
@@ -15291,6 +16565,15 @@ namespace cAlgo.Robots
             // Number of active/visible artifacts supporting the primary movement. The total
             // evidence shown to the user is the main event (1) plus this supporting count.
             public int ConfluenceCount;
+            // Concrete names for supporting artifacts that are not emitted as independent
+            // trigger records. This prevents known evidence from appearing only as "+1".
+            public List<string> SupportEventNames;
+            // Qualified same-bar evidence pointing against the resolved signal. It is
+            // diagnostic only and never contributes to Min. Confluences or direction choice.
+            public int OpposingEvidenceCount;
+            // Exact names behind -N. Never retain a count without retaining the names that
+            // produced it, otherwise a historical trade cannot be audited truthfully.
+            public List<string> OpposingEvidenceNames;
             public double StopDistance;
             public int Priority;
         }
@@ -15457,6 +16740,7 @@ namespace cAlgo.Robots
             public double Pnl;
             public bool IsWinning;
             public string Text;
+            public int PatternSpan;
         }
 
         private sealed class DirectionalPatternMarkerAggregate
@@ -15938,6 +17222,7 @@ namespace cAlgo.Robots
             public DateTime SignalTime;
             public DateTime EntryConfirmationTime;
             public int PatternToEntryBars;
+            public int PatternSpan;
             public string WaitConfirmActionKey;
             public double OriginalEntryReference;
             public double OriginalRiskDistance;
@@ -15945,12 +17230,19 @@ namespace cAlgo.Robots
             public int TradeChainSlot;
             public StrategyTradeChainMode TradeChainModeOverride;
             public StrategyEntryType? EntryModeOverride;
+            public StrategyStopLossMode? StopLossModeOverride;
+            public StrategyTakeProfitMode? TakeProfitModeOverride;
+            public StrategyOrderCountMode? OrderCountModeOverride;
             public bool UseLimitOrder;
             public double EntryPrice;
             public double SecondaryEntryPrice;
             public List<double> PreferredSplitEntries;
             public double StopLoss;
             public double TakeProfit;
+            // Optional strategy-defined target. When it is on the profitable side of
+            // entry, execution uses the nearer target between this price and the
+            // normally resolved TP (for example RR1 versus the first candle open).
+            public double TakeProfitLimitPrice;
             public string StopLossSourceCode;
             public string TakeProfitSourceCode;
             public double EventCandleLow;
@@ -16157,7 +17449,11 @@ namespace cAlgo.Robots
 
         private int DrawStrategyMarkersOnChart(int objectIndex)
         {
-            if (!ShouldDrawChartMarkers() || Chart == null || Bars == null || _strategyChartMarkers.Count == 0)
+            if (!ShouldDrawChartMarkers() || Chart == null || Bars == null)
+                return objectIndex;
+
+            EnsureHistoricalWickFlipMarkers();
+            if (_strategyChartMarkers.Count == 0)
                 return objectIndex;
 
             var chartSymbolName = Chart.SymbolName ?? "";
@@ -16175,25 +17471,83 @@ namespace cAlgo.Robots
             {
                 var isTrigger = marker.Kind == StrategyMarkerKind.Trigger;
                 var isEntry = marker.Kind == StrategyMarkerKind.Entry;
-                var iconColor = isTrigger || isEntry
-                    ? (marker.TradeType == TradeType.Buy ? Color.LimeGreen : Color.OrangeRed)
+                var isWickFlipTrigger = isTrigger && IsWickFlipMarkerLabel(marker.Text);
+                // Custom-trade triggers are already rendered by the unified event renderer.
+                // Drawing them here again produced two labels with different alpha/formatting
+                // and a stray triangle on the same bar. WFC has no canonical event renderer,
+                // so it remains here but adopts the exact same label/box visual language.
+                if (isTrigger && !isWickFlipTrigger)
+                    continue;
+
+                var iconColor = isTrigger
+                    ? WithAlpha(GetDirectionalEventColor(marker.TradeType == TradeType.Buy), 255)
+                    : isEntry
+                        ? (marker.TradeType == TradeType.Buy ? Color.LimeGreen : Color.OrangeRed)
                     : (marker.IsWinning ? Color.LimeGreen : Color.OrangeRed);
                 var iconType = marker.TradeType == TradeType.Buy ? ChartIconType.UpArrow : ChartIconType.DownArrow;
                 var anchorPrice = ResolveStrategyMarkerAnchorPrice(marker);
                 var textY = marker.TradeType == TradeType.Buy
                     ? anchorPrice - Math.Max(Symbol.PipSize * 6.0, 0.0000001)
                     : anchorPrice + Math.Max(Symbol.PipSize * 6.0, 0.0000001);
+                var triggerLabelTime = marker.Time;
+                var triggerLabelPrice = textY;
+                var triggerLabelFontSize = marker.SourceTimeFrame != null
+                    ? ResolveChartMarkerFontSize(marker.SourceTimeFrame)
+                    : GetChartMarkerFontSize();
+
+                if ((isTrigger || isEntry) && marker.SourceTimeFrame != null)
+                {
+                    try
+                    {
+                        var sourceBars = GetBarsForCurrentMasterTimer(marker.SourceTimeFrame, marker.SymbolName);
+                        var strategyBarIndex = ResolveSourceBarIndex(sourceBars, marker.Time);
+                        if (IsValidBarIndex(sourceBars, strategyBarIndex))
+                        {
+                            DrawPatternRangeBox(
+                                "STRAT_POINT_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                                sourceBars,
+                                marker.SourceTimeFrame,
+                                strategyBarIndex,
+                                Math.Max(1, marker.PatternSpan),
+                                iconColor,
+                                13);
+                            if (isTrigger)
+                            {
+                                var barStart = sourceBars.OpenTimes[strategyBarIndex];
+                                var barEnd = ResolveSourceBarEndTime(sourceBars, barStart, marker.SourceTimeFrame);
+                                triggerLabelTime = barStart.AddTicks(Math.Max(0L, (barEnd - barStart).Ticks / 2));
+                                var wickPrice = marker.TradeType == TradeType.Buy
+                                    ? sourceBars.LowPrices[strategyBarIndex]
+                                    : sourceBars.HighPrices[strategyBarIndex];
+                                var eventBarRange = Math.Max(
+                                    sourceBars.HighPrices[strategyBarIndex] - sourceBars.LowPrices[strategyBarIndex],
+                                    Symbol.PipSize * 8.0);
+                                triggerLabelPrice = ResolveConsistentEventLabelPrice(
+                                    marker.TradeType == TradeType.Buy,
+                                    wickPrice,
+                                    triggerLabelFontSize,
+                                    eventBarRange);
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        // A strategy marker must remain visible even while HTF history is loading.
+                    }
+                }
 
                 if (isTrigger)
                 {
-                    var triggerIcon = Chart.DrawText(
-                        "STRAT_TRIGGER_" + objectIndex.ToString(CultureInfo.InvariantCulture),
-                        marker.TradeType == TradeType.Buy ? "▲" : "▼",
-                        marker.Time,
-                        anchorPrice,
+                    var triggerLabel = Chart.DrawText(
+                        "STRAT_TRIGGER_TXT_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                        string.IsNullOrWhiteSpace(marker.Text) ? "strategy" : marker.Text,
+                        triggerLabelTime,
+                        triggerLabelPrice,
                         iconColor);
-                    TryStyleChartText(triggerIcon, GetChartMarkerFontSize() + 1, "Courier New", true);
-                    TrySetPropertyValue(triggerIcon, "ZIndex", 15);
+                    TryStyleChartText(triggerLabel, triggerLabelFontSize, "Courier New", true);
+                    TrySetEnumPropertyValue(triggerLabel, "HorizontalAlignment", "Center");
+                    TrySetEnumPropertyValue(triggerLabel, "VerticalAlignment", "Center");
+                    TrySetPropertyValue(triggerLabel, "ZIndex", 12);
                     objectIndex++;
                     continue;
                 }
@@ -16217,6 +17571,77 @@ namespace cAlgo.Robots
             }
 
             return objectIndex;
+        }
+
+        private void EnsureHistoricalWickFlipMarkers()
+        {
+            if (!_toggleStrategyMarkers || Chart == null || Bars == null || Bars.Count < 3 ||
+                !GetConfiguredStrategyModes().Any(mode =>
+                    mode == BacktestStrategyMode.WickFlipContinuation ||
+                    mode == BacktestStrategyMode.wick_flip))
+                return;
+
+            // Multi-candle WFC is reconstructed directly from completed chart bars. Runtime
+            // position tracking only knows about signals created after the cBot starts;
+            // without this bounded scan, restarting cTrader makes historical boxes disappear.
+            var lastCompletedIndex = Bars.Count - 2;
+            // Keep enough completed M5 history for the prior trading day. The former
+            // 240-bar limit covered only 20 hours, so a valid 16 Sep evening pattern was
+            // already outside reconstruction by 17 Sep evening and could not be displayed.
+            const int maximumHistoricalWfcBars = 480;
+            var firstSecondIndex = Math.Max(1, lastCompletedIndex - (maximumHistoricalWfcBars - 1));
+            var sourceTimeFrame = Chart.TimeFrame;
+
+            // Reconstructed candle geometry is the canonical WFC visual source. Position
+            // audit markers created by an older detector can otherwise coexist at the same
+            // timestamp with the opposite direction; the stale marker is then drawn first
+            // and claims the shared box range, hiding the corrected marker or its colour.
+            _strategyChartMarkers.RemoveAll(marker =>
+                marker.Kind == StrategyMarkerKind.Trigger &&
+                string.Equals(marker.SymbolName, Chart.SymbolName, StringComparison.OrdinalIgnoreCase) &&
+                marker.SourceTimeFrame != null &&
+                TimeFrameToMinutes(marker.SourceTimeFrame) == TimeFrameToMinutes(sourceTimeFrame) &&
+                IsWickFlipMarkerLabel(marker.Text));
+
+            for (var secondIndex = firstSecondIndex; secondIndex <= lastCompletedIndex; secondIndex++)
+            {
+                TradeType direction;
+                int patternStartIndex;
+                int firstWickIndex;
+                if (!CTraderStrategyEngine.TryResolveMultiCandleWickFlipContinuationPattern(
+                        Bars,
+                        secondIndex,
+                        out direction,
+                        out patternStartIndex,
+                        out firstWickIndex))
+                    continue;
+
+                var signalTime = Bars.OpenTimes[secondIndex];
+                var patternSpan = secondIndex - patternStartIndex + 1;
+                var label = GetMiniChartLabel(sourceTimeFrame) + ".mwfc" +
+                    patternSpan.ToString(CultureInfo.InvariantCulture) +
+                    (direction == TradeType.Buy ? "↑" : "↓");
+                AddStrategyChartMarker(new StrategyChartMarker
+                {
+                    PositionId = BuildVisualStrategyMarkerId(
+                        Chart.SymbolName,
+                        BacktestStrategyMode.WickFlipContinuation,
+                        direction,
+                        signalTime),
+                    SymbolName = Chart.SymbolName,
+                    SourceTimeFrame = sourceTimeFrame,
+                    TradeType = direction,
+                    Kind = StrategyMarkerKind.Trigger,
+                    Time = signalTime,
+                    Price = direction == TradeType.Buy
+                        ? Bars.LowPrices[secondIndex]
+                        : Bars.HighPrices[secondIndex],
+                    Pnl = 0,
+                    IsWinning = false,
+                    Text = label,
+                    PatternSpan = patternSpan
+                });
+            }
         }
 
         private bool IsStrategyChartMarkerInsideCurrentTradingTime(StrategyChartMarker marker)
@@ -16372,7 +17797,6 @@ namespace cAlgo.Robots
                 .OrderBy(item => item.CloseTime)
                 .TakeLast(120)
                 .ToList();
-            var drawnTriggerKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var item in visibleClosedTrades)
             {
@@ -16387,29 +17811,6 @@ namespace cAlgo.Robots
                 var iconColor = netProfit >= 0 ? Color.LimeGreen : Color.OrangeRed;
                 var iconText = isBuy ? "▲" : "▼";
                 var pad = Math.Max(chartSymbol != null ? chartSymbol.PipSize * 5.0 : 0.0000001, 0.0000001);
-                DateTime triggerBarTime;
-                string triggerEventLabel;
-                if (TryParseStrategyTriggerAudit(item.Deal.Label, item.Deal.Comment, item.Deal.SymbolName, out triggerBarTime, out triggerEventLabel))
-                {
-                    var triggerKey = string.Format(
-                        CultureInfo.InvariantCulture,
-                        "{0}|{1}|{2}",
-                        triggerBarTime.Ticks,
-                        isBuy ? "B" : "S",
-                        triggerEventLabel);
-                    var triggerIndex = ResolveSourceBarIndex(Bars, triggerBarTime);
-                    if (drawnTriggerKeys.Add(triggerKey) && IsValidBarIndex(Bars, triggerIndex))
-                    {
-                        var triggerPrice = isBuy ? Bars.LowPrices[triggerIndex] - pad : Bars.HighPrices[triggerIndex] + pad;
-                        var trigger = Chart.DrawText(
-                            "TRADE_TRIGGER_" + objectIndex.ToString(CultureInfo.InvariantCulture),
-                            isBuy ? "▲" : "▼",
-                            Bars.OpenTimes[triggerIndex],
-                            triggerPrice,
-                            isBuy ? Color.LimeGreen : Color.OrangeRed);
-                        TryStyleChartText(trigger, GetChartMarkerFontSize(), "Courier New", true);
-                    }
-                }
                 var anchorPrice = isBuy ? closePrice - pad : closePrice + pad;
                 var marker = Chart.DrawText(
                     "TRADEH_" + objectIndex.ToString(CultureInfo.InvariantCulture),
@@ -17152,10 +18553,11 @@ namespace cAlgo.Robots
             string symbolNameOverride = null,
             Symbol symbolOverride = null,
             CandleArtifactMatchMode matchMode = CandleArtifactMatchMode.ConfirmedMovement,
-            bool forceTouch = false)
+            bool forceTouch = false,
+            bool forceAllNear = false)
         {
             matches = new List<CandleConfluenceMatch>();
-            if (CandleConfluenceWith == CandleConfluenceMode.None && !forceTouch)
+            if (CandleConfluenceWith == CandleConfluenceMode.None && !forceTouch && !forceAllNear)
                 return true;
 
             var confluenceSymbol = symbolOverride ?? Symbol;
@@ -17176,7 +18578,7 @@ namespace cAlgo.Robots
             var barSpan = Math.Max(barHigh - barLow, confluenceSymbol.PipSize * 4.0);
             var priceTolerance = Math.Max(confluenceSymbol.PipSize * 6.0, barSpan * 0.25);
             var requireTouch = forceTouch || CandleConfluenceWith == CandleConfluenceMode.All_touch;
-            var includeAll = CandleConfluenceWith == CandleConfluenceMode.All_near || requireTouch;
+            var includeAll = forceAllNear || CandleConfluenceWith == CandleConfluenceMode.All_near || requireTouch;
             var chartProfile = GetChartTradeProfileRaw(ReadChartTradeTypeComboSelection());
             var patternEndTime = barIndex + 1 < sourceBars.Count
                 ? sourceBars.OpenTimes[barIndex + 1]
@@ -17819,8 +19221,7 @@ namespace cAlgo.Robots
             var zones = BuildStructureSnapshotV2(sourceBars, 80, snapshotEndIndex).Zones
                 .Where(value => (value.Type == StructureZoneTypeV2.Fvg || value.Type == StructureZoneTypeV2.InverseFvg) &&
                                 value.ConfirmationBarIndex < snapshotEndIndex &&
-                                (value.TouchBarIndex < 0 || value.TouchBarIndex >= snapshotEndIndex) &&
-                                (value.InvalidationBarIndex < 0 || value.InvalidationBarIndex >= snapshotEndIndex) &&
+                                (value.InvalidationBarIndex < 0 || value.InvalidationBarIndex > snapshotEndIndex) &&
                                 value.IsBullish == isBullish)
                 .OrderByDescending(value => value.ConfirmationBarIndex)
                 .Take(Math.Max(1, ResolveZoneMaxCount(ZoneMaxCount)));
@@ -17851,8 +19252,7 @@ namespace cAlgo.Robots
             var zones = BuildStructureSnapshotV2(sourceBars, 80, snapshotEndIndex).Zones
                 .Where(value => (value.Type == StructureZoneTypeV2.OrderBlock || value.Type == StructureZoneTypeV2.BreakerBlock) &&
                                 value.ConfirmationBarIndex < snapshotEndIndex &&
-                                (value.TouchBarIndex < 0 || value.TouchBarIndex >= snapshotEndIndex) &&
-                                (value.InvalidationBarIndex < 0 || value.InvalidationBarIndex >= snapshotEndIndex) &&
+                                (value.InvalidationBarIndex < 0 || value.InvalidationBarIndex > snapshotEndIndex) &&
                                 value.IsBullish == isBullish)
                 .OrderByDescending(value => value.ConfirmationBarIndex)
                 .Take(Math.Max(1, ResolveZoneMaxCount(ZoneMaxCount)));
@@ -18349,8 +19749,10 @@ namespace cAlgo.Robots
 
             if (_toggleEmaEvents)
             {
-                definitions.Add(new IndicatorEventDefinition { ShortLabel = "pxe", IsBullish = true, SlotIndex = slotIndex++, Match = (bars, index, previous, current) => MatchBullishPriceCrossesEmaSnapshot(bars, index, previous, current) });
-                definitions.Add(new IndicatorEventDefinition { ShortLabel = "pxe", IsBullish = false, SlotIndex = slotIndex++, Match = (bars, index, previous, current) => MatchBearishPriceCrossesEmaSnapshot(bars, index, previous, current) });
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "pxf", IsBullish = true, SlotIndex = slotIndex++, Match = (bars, index, previous, current) => MatchBullishPriceCrossesFastEmaSnapshot(bars, index, previous, current) });
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "pxf", IsBullish = false, SlotIndex = slotIndex++, Match = (bars, index, previous, current) => MatchBearishPriceCrossesFastEmaSnapshot(bars, index, previous, current) });
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "pxs", IsBullish = true, SlotIndex = slotIndex++, Match = (bars, index, previous, current) => MatchBullishPriceCrossesSlowEmaSnapshot(bars, index, previous, current) });
+                definitions.Add(new IndicatorEventDefinition { ShortLabel = "pxs", IsBullish = false, SlotIndex = slotIndex++, Match = (bars, index, previous, current) => MatchBearishPriceCrossesSlowEmaSnapshot(bars, index, previous, current) });
                 definitions.Add(new IndicatorEventDefinition { ShortLabel = "emx", IsBullish = true, SlotIndex = slotIndex++, Match = (bars, index, previous, current) => MatchBullishEmaFastMidCrossSnapshot(bars, index, previous, current) });
                 definitions.Add(new IndicatorEventDefinition { ShortLabel = "emx", IsBullish = false, SlotIndex = slotIndex++, Match = (bars, index, previous, current) => MatchBearishEmaFastMidCrossSnapshot(bars, index, previous, current) });
                 if (emaConfig.SlowPeriod > 0 && emaConfig.SlowPeriod != emaConfig.MidPeriod)
@@ -19037,8 +20439,13 @@ namespace cAlgo.Robots
                 case "SWING": return "s";
                 case "EQH": return "eqh";
                 case "EQL": return "eql";
+                case "TL":
+                case "TRENDLINE": return "tl";
+                case "ORDER BLOCK":
                 case "OB": return "ob";
                 case "FVG": return "fvg";
+                case "SD":
+                case "SUPPLY DEMAND": return "sd";
                 default: return "lvl";
             }
         }
@@ -19149,7 +20556,8 @@ namespace cAlgo.Robots
                 case "BIG": display = "big"; break;
                 case "HAR": display = "har"; break;
 
-                case "PXE": display = "x>ema" + Math.Max(1, _resolvedEmaEventConfig.PriceCrossPeriod); break;
+                case "PXF": display = "x>ema" + Math.Max(1, _resolvedEmaEventConfig.FastPeriod); break;
+                case "PXS": display = "x>ema" + Math.Max(1, _resolvedEmaEventConfig.SlowPeriod); break;
                 case "EMX": display = "ema" + Math.Max(1, _resolvedEmaEventConfig.FastPeriod) + ".x>ema" + Math.Max(1, _resolvedEmaEventConfig.MidPeriod); break;
                 case "EMT": display = "ema" + Math.Max(1, _resolvedEmaEventConfig.MidPeriod) + ".x>ema" + Math.Max(1, _resolvedEmaEventConfig.SlowPeriod); break;
                 case "VWX": display = "x>vwap"; break;
@@ -19213,7 +20621,8 @@ namespace cAlgo.Robots
             string expression;
             switch (key)
             {
-                case "PXE": expression = cross + "ema" + Math.Max(1, ema.PriceCrossPeriod); break;
+                case "PXF": expression = cross + "ema" + Math.Max(1, ema.FastPeriod); break;
+                case "PXS": expression = cross + "ema" + Math.Max(1, ema.SlowPeriod); break;
                 case "EMX": expression = "ema" + Math.Max(1, ema.FastPeriod) + "." + cross + "ema" + Math.Max(1, ema.MidPeriod); break;
                 case "EMT": expression = "ema" + Math.Max(1, ema.MidPeriod) + "." + cross + "ema" + Math.Max(1, ema.SlowPeriod); break;
                 case "VWX": expression = cross + "vwap"; break;
@@ -19383,10 +20792,23 @@ namespace cAlgo.Robots
             if (!ShouldDrawChartMarkers() || Chart == null || Bars == null || Symbol == null)
                 return objectIndex;
 
+            // Strategy markers follow the configured strategy slots. When WFC is the only
+            // selected strategy, candle/structure events from the independent unified event
+            // renderer must not leak onto the chart; WFC is reconstructed by its own renderer.
+            if (IsWickFlipOnlyStrategySelection())
+                return objectIndex;
+
+            var configuredFileBackedMarkerModes = GetConfiguredFileBackedUnifiedEventMarkerModes();
+            var fileBackedMarkerOptions = configuredFileBackedMarkerModes
+                .SelectMany(GetFileBackedUnifiedEventMarkerOptions)
+                .Distinct()
+                .ToList();
+            var hasFileBackedEventMarkers = configuredFileBackedMarkerModes.Count > 0;
             var showRawEvents = StructureEventsCombo != StructureEventComboMode.No &&
                 StructureEventsCombo != StructureEventComboMode.Trades;
             var showTradeEvents = StructureEventsCombo == StructureEventComboMode.All ||
-                StructureEventsCombo == StructureEventComboMode.Trades;
+                StructureEventsCombo == StructureEventComboMode.Trades ||
+                hasFileBackedEventMarkers;
             if (!showRawEvents && !showTradeEvents)
                 return objectIndex;
 
@@ -19432,20 +20854,18 @@ namespace cAlgo.Robots
                     continue;
 
                 var visualLookbackBars = ResolveWorkingLookbackBars(sourceBars, sourceTimeFrame);
-                var rawTriggers = showRawEvents
-                    ? CollectTradeTriggerCandidates(symbolName, sourceTimeFrame, visualLookbackBars, true)
-                        .Where(trigger => !trigger.IsDirectionless)
-                        .ToList()
-                    : new List<TradeTriggerEvent>();
+                var detectedTriggers = CollectTradeTriggerCandidates(symbolName, sourceTimeFrame, visualLookbackBars, true)
+                    .Where(trigger => !trigger.IsDirectionless)
+                    .ToList();
                 var selectedRawTriggers = showTradeEvents
-                    ? CollectTradeTriggerCandidates(symbolName, sourceTimeFrame, visualLookbackBars, true)
-                        .Where(trigger => !trigger.IsDirectionless)
-                        .Where(trigger => selectedOptions.Count == 0 ||
-                            selectedOptions.Any(option => TradeTriggerMatchesSelectedOption(trigger, option)))
+                    ? detectedTriggers
+                        .Where(trigger => (selectedOptions.Count == 0 && fileBackedMarkerOptions.Count == 0) ||
+                            selectedOptions.Any(option => TradeTriggerMatchesSelectedOption(trigger, option)) ||
+                            fileBackedMarkerOptions.Any(option => TradeTriggerMatchesSelectedOption(trigger, option)))
                         .ToList()
                     : new List<TradeTriggerEvent>();
                 var visibleTriggers = showRawEvents
-                    ? rawTriggers.Concat(selectedRawTriggers).ToList()
+                    ? detectedTriggers
                     : selectedRawTriggers;
                 var strategyEvaluationBudget = eventLimit < 0
                     ? 24
@@ -19466,7 +20886,7 @@ namespace cAlgo.Robots
                     .OrderByDescending(group => group[0].BarTime)
                     .ToList();
 
-                var renderGroups = new List<Tuple<List<TradeTriggerEvent>, bool>>();
+                var renderGroups = new List<Tuple<List<TradeTriggerEvent>, bool, List<StrategyCustomEventOption>>>();
                 foreach (var rawGroup in candidateGroups)
                 {
                     var primaryRaw = rawGroup[0];
@@ -19476,7 +20896,18 @@ namespace cAlgo.Robots
                         primaryRaw.BarTime.Ticks,
                         primaryRaw.IsBullish ? "B" : "S");
                     var rawBarIndex = ResolveSourceBarIndex(sourceBars, primaryRaw.BarTime);
-                    var qualifiedGroup = showTradeEvents && IsValidBarIndex(sourceBars, rawBarIndex)
+                    var matchedFileBackedOptions = new List<StrategyCustomEventOption>();
+                    var isFileBackedStrategyEvent = showTradeEvents &&
+                        TryResolveConfiguredFileBackedUnifiedEventAtBar(
+                            symbolName,
+                            sourceTimeFrame,
+                            sourceBars,
+                            rawBarIndex,
+                            visualLookbackBars,
+                            primaryRaw.IsBullish,
+                            configuredFileBackedMarkerModes,
+                            out matchedFileBackedOptions);
+                    var manuallyQualifiedGroup = showTradeEvents && IsValidBarIndex(sourceBars, rawBarIndex)
                         ? CollectSelectedStrategyTriggerCandidatesAtBar(
                             symbolName,
                             sourceTimeFrame,
@@ -19487,7 +20918,7 @@ namespace cAlgo.Robots
                             .Where(trigger => trigger.IsBullish == primaryRaw.IsBullish)
                             .ToList()
                         : new List<TradeTriggerEvent>();
-                    var isTradeEvent = qualifiedGroup.Count > 0 &&
+                    var isManualTradeEvent = manuallyQualifiedGroup.Count > 0 &&
                         ShouldDisplayResolvedStrategySignalBar(
                             symbolName,
                             sourceBars,
@@ -19496,10 +20927,19 @@ namespace cAlgo.Robots
                             primaryRaw.IsBullish,
                             visualLookbackBars,
                             strategyEligibilityCache);
+                    var isTradeEvent = isFileBackedStrategyEvent || isManualTradeEvent;
                     if (isTradeEvent)
-                        renderGroups.Add(Tuple.Create(qualifiedGroup, true));
+                    {
+                        var qualifiedGroup = isFileBackedStrategyEvent
+                            ? rawGroup
+                            : manuallyQualifiedGroup;
+                        var namingOptions = isFileBackedStrategyEvent
+                            ? matchedFileBackedOptions
+                            : selectedOptions;
+                        renderGroups.Add(Tuple.Create(qualifiedGroup, true, namingOptions));
+                    }
                     else if (showRawEvents)
-                        renderGroups.Add(Tuple.Create(rawGroup, false));
+                        renderGroups.Add(Tuple.Create(rawGroup, false, selectedOptions));
                 }
 
                 var triggers = eventLimit < 0
@@ -19510,6 +20950,7 @@ namespace cAlgo.Robots
                 {
                     var sameBarTriggers = renderGroup.Item1;
                     var isTradeEvent = renderGroup.Item2;
+                    var namingOptions = renderGroup.Item3;
                     var primary = sameBarTriggers[0];
                     var triggerKey = string.Format(
                         CultureInfo.InvariantCulture,
@@ -19532,17 +20973,27 @@ namespace cAlgo.Robots
                             barIndex,
                             visualLookbackBars,
                             sameBarTriggers,
-                            selectedOptions,
+                            namingOptions,
                             primary.IsBullish)
                         : BuildCombinedTradeTriggerEventName(
                             sourceTimeFrame,
                             sameBarTriggers,
-                            selectedOptions,
+                            namingOptions,
                             primary.IsBullish);
                     // No synthetic fallback: without an actual selected candle or structure
                     // representative, this is not a displayable event.
                     if (string.IsNullOrWhiteSpace(labelText))
                         continue;
+
+                    LogFullTradeTriggerEventsOnce(
+                        triggerKey,
+                        symbolName,
+                        sourceTimeFrame,
+                        primary.BarTime,
+                        primary.IsBullish,
+                        isTradeEvent,
+                        labelText,
+                        sameBarTriggers);
 
                     var color = WithAlpha(GetDirectionalEventColor(primary.IsBullish), isTradeEvent ? 255 : 179);
                     if (isTradeEvent)
@@ -19558,6 +21009,13 @@ namespace cAlgo.Robots
                         }
                     }
                     var markerPrefix = isTradeEvent ? "TRG_" : "RAW_EVT_";
+                    var chainStart = sameBarTriggers
+                        .Where(t => t.HasCanonicalEvent && t.CanonicalEvent.EventType == CanonicalEventType.SweepReclaimChain &&
+                            t.CanonicalEvent.ChainStartTime != DateTime.MinValue)
+                        .Select(t => ResolveSourceBarIndex(sourceBars, t.CanonicalEvent.ChainStartTime))
+                        .Where(index => index >= 0 && index <= barIndex)
+                        .DefaultIfEmpty(barIndex).Min();
+                    var surroundingSpan = barIndex - chainStart + 1;
                     if (isTradeEvent)
                     {
                         DrawPatternRangeBox(
@@ -19565,7 +21023,7 @@ namespace cAlgo.Robots
                             sourceBars,
                             sourceTimeFrame,
                             barIndex,
-                            1,
+                            surroundingSpan,
                             color,
                             8);
                     }
@@ -19578,7 +21036,7 @@ namespace cAlgo.Robots
                             sourceBars,
                             sourceTimeFrame,
                             barIndex,
-                            1,
+                            surroundingSpan,
                             color,
                             7,
                             rawFillAlpha,
@@ -20183,22 +21641,40 @@ namespace cAlgo.Robots
             return mean - (stddev * stddevMultiplier);
         }
 
-        private bool MatchBullishPriceCrossesEmaSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
+        private bool MatchBullishPriceCrossesFastEmaSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
         {
             return sourceBars != null &&
                    index > 0 &&
                    previous != null &&
                    current != null &&
-                   CrossesAbove(sourceBars.ClosePrices[index - 1], sourceBars.ClosePrices[index], previous.EmaPrice, current.EmaPrice);
+                   CrossesAbove(sourceBars.ClosePrices[index - 1], sourceBars.ClosePrices[index], previous.EmaFast, current.EmaFast);
         }
 
-        private bool MatchBearishPriceCrossesEmaSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
+        private bool MatchBearishPriceCrossesFastEmaSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
         {
             return sourceBars != null &&
                    index > 0 &&
                    previous != null &&
                    current != null &&
-                   CrossesBelow(sourceBars.ClosePrices[index - 1], sourceBars.ClosePrices[index], previous.EmaPrice, current.EmaPrice);
+                   CrossesBelow(sourceBars.ClosePrices[index - 1], sourceBars.ClosePrices[index], previous.EmaFast, current.EmaFast);
+        }
+
+        private bool MatchBullishPriceCrossesSlowEmaSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
+        {
+            return sourceBars != null &&
+                   index > 0 &&
+                   previous != null &&
+                   current != null &&
+                   CrossesAbove(sourceBars.ClosePrices[index - 1], sourceBars.ClosePrices[index], previous.EmaSlow, current.EmaSlow);
+        }
+
+        private bool MatchBearishPriceCrossesSlowEmaSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
+        {
+            return sourceBars != null &&
+                   index > 0 &&
+                   previous != null &&
+                   current != null &&
+                   CrossesBelow(sourceBars.ClosePrices[index - 1], sourceBars.ClosePrices[index], previous.EmaSlow, current.EmaSlow);
         }
 
         private bool MatchBullishEmaFastMidCrossSnapshot(Bars sourceBars, int index, SharedIndicatorSnapshot previous, SharedIndicatorSnapshot current)
@@ -21479,13 +22955,7 @@ namespace cAlgo.Robots
 
             var lifecycleBarIndex = -1;
             if (zone.State == StructureZoneStateV2.Invalidated)
-            {
-                lifecycleBarIndex = Math.Max(zone.TouchBarIndex, zone.InvalidationBarIndex);
-            }
-            else if (zone.State == StructureZoneStateV2.Touched)
-            {
-                lifecycleBarIndex = zone.TouchBarIndex;
-            }
+                lifecycleBarIndex = zone.InvalidationBarIndex;
 
             return lifecycleBarIndex >= 0
                 ? ResolveBufferedArtifactEndTime(sourceBars, sourceTimeFrame, lifecycleBarIndex, chartEndTime)
@@ -22254,7 +23724,7 @@ namespace cAlgo.Robots
                 { "engine_version", "ctrader.backtest.v1" },
                 { "params", new Dictionary<string, object>
                     {
-                        { "live_trade_mode", EnableLiveStrategyTrading },
+                        { "live_trade_mode", IsLiveTradeEnabled() },
                         { "strategy_slots", GetConfiguredStrategyModes().Select(GetBacktestStrategyModeDisplayName).ToArray() },
                         { "strategy_symbol", string.Join(",", ResolveSharedStrategySymbols(Symbol != null ? Symbol.Name : "")) },
                         { "strategy_timeframe", string.Join(",", ResolveSharedStrategyTimeFrames(Chart != null ? Chart.TimeFrame : TimeFrame.Minute).Select(GetMiniChartLabel).ToArray()) },
@@ -24535,12 +26005,18 @@ namespace cAlgo.Robots
 
         protected override void OnStart()
         {
-            ValidateStructureEngineV2Contracts();
-            ValidateStrategyEngineContracts();
-            ValidateCombinedEventNameContracts();
-            ValidateExecutionEngineContracts();
-            ValidateSyncEngineContracts();
-            ValidateChartEngineContracts();
+            // These large self-test methods are useful in dedicated validation runs, but
+            // forcing the live algo host to JIT all of them before OnStart returns can exceed
+            // cTrader's responsiveness watchdog. Release compilation is the live gate.
+            if (ValidateContractsOnLiveStartup)
+            {
+                ValidateStructureEngineV2Contracts();
+                ValidateStrategyEngineContracts();
+                ValidateCombinedEventNameContracts();
+                ValidateExecutionEngineContracts();
+                ValidateSyncEngineContracts();
+                ValidateChartEngineContracts();
+            }
             _startedAtUtc = DateTime.UtcNow;
             // A backtest can simulate days before 12 wall-clock seconds elapse. Applying the
             // live startup warmup there suppresses every historical strategy evaluation.
@@ -24587,12 +26063,7 @@ namespace cAlgo.Robots
                 !string.IsNullOrWhiteSpace(ServerBaseUrl) &&
                 ServerBaseUrl.IndexOf("localhost", StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                ServerBaseUrl = Regex.Replace(
-                    ServerBaseUrl,
-                    "localhost",
-                    "127.0.0.1",
-                    RegexOptions.IgnoreCase
-                );
+                ServerBaseUrl = _rxLocalhost.Replace(ServerBaseUrl, "127.0.0.1");
                 SafePrint("[Bridge] Normalized ServerBaseUrl to {0}", ServerBaseUrl);
             }
             _serverStatus = Is42TradeServerSyncEnabled() ? "BOOTING" : "OFF";
@@ -24719,6 +26190,11 @@ namespace cAlgo.Robots
             }
             SafePrint("[Bridge] Started. MasterTimer={0}s Ver={1}", interval, BuildVersion);
             SafePrint(
+                "[Confluences] PremiumDiscount={0} range={1} bars; OpposingLevelClearance={2} artifacts=swing,zone,trendline,ema candle=wick+close",
+                ConfluencePremiumDiscount,
+                PremiumDiscountRangeBars,
+                ConfluenceOpposingLevelClearance);
+            SafePrint(
                 "[RiskTpl] Active={0} Effective: MaxRisk={1}% MaxOpenRisk={2}% MaxDayLoss={3}% MaxDD={4}%",
                 SelectedRiskTemplate,
                 FormatDashboardPercent(effectiveMaxRiskPercent),
@@ -24733,13 +26209,10 @@ namespace cAlgo.Robots
                 "[AnalysisCache] files={0}; max_recent_bars={1}",
                 IsAnalysisFileCacheEnabled() ? "enabled" : "disabled",
                 GetCachedFileMaxBars());
-            if (!isBacktesting && AreChartVisualsEnabled())
-            {
-                // Render as soon as OnStart releases the chart UI instead of waiting for the
-                // warm-up/indicator timer phases to finish.
-                _forceChartVisualsRefresh = true;
-                RunOnMainThread(DrawChartVisualOverlays);
-            }
+            // The queued post-OnStart callback above is the single startup render. Do not
+            // enqueue a second full overlay rebuild here: on large BTC/indices histories this
+            // duplicate synchronous chart pass can monopolize cTrader's robot thread long
+            // enough for the platform watchdog to terminate the instance as unresponsive.
             WriteBridgeDebugLog("OnStart: complete");
         }
 
@@ -24979,6 +26452,9 @@ namespace cAlgo.Robots
 
         protected override void OnBarClosed()
         {
+            // Invalidate tick-cached data that depends on bar state
+            _cachedMiniFrames = null;
+            _cachedLowerTfTokens = null;
             if (DisableBridgeRuntimeForIsolation)
                 return;
 
@@ -25605,6 +27081,14 @@ namespace cAlgo.Robots
             if (_liveStrategyLastProcessedBarTicks.TryGetValue(liveBarKey, out lastTicks) && lastTicks == barTime.Ticks)
                 return false;
 
+            // Reconstruct historical chain markers on attach, but do not submit the most
+            // recent historical completion as a fresh live order after a restart.
+            if (mode == BacktestStrategyMode.sweep_reclaim && !_liveStrategyLastProcessedBarTicks.ContainsKey(liveBarKey))
+            {
+                _liveStrategyLastProcessedBarTicks[liveBarKey] = barTime.Ticks;
+                return false;
+            }
+
             return true;
         }
 
@@ -25779,8 +27263,8 @@ namespace cAlgo.Robots
 
         private string BuildStrategyScanDashboardText()
         {
-            if (!IsBacktestingRuntime() && !EnableLiveStrategyTrading)
-                return "disabled (Enable CBot Auto trade=No)";
+            if (!IsBacktestingRuntime() && !IsLiveTradeEnabled())
+                return "signals only (Enable Trade=No)";
 
             var staleAfterSeconds = Math.Max(15, Math.Max(StrategyScanSeconds * 2, GetEffectiveMasterTimerSeconds() * 3));
             if (!IsBacktestingRuntime() && _lastTimerTickSeen != DateTime.MinValue)
@@ -26596,6 +28080,9 @@ namespace cAlgo.Robots
 
         private void LogStrategyInfoOnce(string strategyId, string symbolName, string message)
         {
+            // Normal non-matches are not rejected trades and should not spam every bar.
+            if (IsRoutineStrategyNoSignalMessage(message))
+                return;
             var barTime = Bars != null && Bars.Count > 0 ? Bars.OpenTimes[Math.Max(0, Bars.Count - 1)] : Server.Time;
             var eventKey = string.Format(CultureInfo.InvariantCulture, "INFO|{0}|{1}|{2}|{3}|{4}", GetStrategyRuntimeTag(), strategyId, symbolName.ToUpperInvariant(), message, barTime.Ticks);
             if (_backtestStrategyHandledEventKeys.Contains(eventKey))
@@ -26612,12 +28099,7 @@ namespace cAlgo.Robots
 
             // REJECT-level messages may be hidden by cTrader's active log filter. A strategy
             // gate is normal runtime information, so make it visible in the standard log.
-            SafePrint(
-                "[{0}] Reject {1} {2}: {3}",
-                GetStrategyRuntimeTag(),
-                strategyId,
-                symbolName,
-                string.IsNullOrWhiteSpace(message) ? "unspecified strategy gate" : message);
+            LogStrategyRejectionDetails(strategyId, symbolName, message);
         }
 
         private void LogStrategyReject(string strategyId, string symbolName, string message)
@@ -26625,7 +28107,61 @@ namespace cAlgo.Robots
             if (TryLogActiveManualTradeStatus(strategyId, "NOT_CREATED", message))
                 return;
 
-            SafePrint("[{0}] Reject {1} {2}: {3}", GetStrategyRuntimeTag(), strategyId, symbolName, message);
+            LogStrategyRejectionDetails(strategyId, symbolName, message);
+        }
+
+        private static bool IsRoutineStrategyNoSignalMessage(string message)
+        {
+            var value = (message ?? "").Trim();
+            return value.StartsWith("no matching file-backed strategy signal", StringComparison.OrdinalIgnoreCase) ||
+                value.StartsWith("no multi-candle", StringComparison.OrdinalIgnoreCase) ||
+                value.StartsWith("no signal", StringComparison.OrdinalIgnoreCase) ||
+                value.StartsWith("no BR ", StringComparison.OrdinalIgnoreCase) ||
+                value.StartsWith("no recent eligible", StringComparison.OrdinalIgnoreCase) ||
+                value.StartsWith("custom event gate miss", StringComparison.OrdinalIgnoreCase) ||
+                value.StartsWith("latest HTF event did not close", StringComparison.OrdinalIgnoreCase) ||
+                value.StartsWith("latest LTF event is not from", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void LogStrategyRejectionDetails(string strategyId, string symbolName, string message)
+        {
+            foreach (var detail in (message ?? "").Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                // Confluence details include the signal bar, so repeat chain slots/timer
+                // evaluations do not print the same rejection again for that setup.
+                if (detail.StartsWith("trigger=", StringComparison.Ordinal) && detail.Contains("; failed="))
+                {
+                    var key = "CONFLUENCE_REJECT|" + strategyId + "|" + symbolName + "|" + detail;
+                    if (!_backtestStrategyHandledEventKeys.Add(key))
+                        continue;
+                }
+                SafePrint("[{0}] Reject {1} {2}: {3}", GetStrategyRuntimeTag(), strategyId, symbolName, detail);
+            }
+        }
+
+        private static string DescribeFailedNamedConfluence(string failure)
+        {
+            var name = (failure ?? "").Split('(')[0];
+            var detailStart = (failure ?? "").IndexOf('(');
+            var detail = detailStart >= 0 && (failure ?? "").EndsWith(")", StringComparison.Ordinal)
+                ? failure.Substring(detailStart + 1, failure.Length - detailStart - 2)
+                : "required condition not met";
+            switch (name)
+            {
+                case "trend_bias": return "Trend/Bias Confluence failed: scope=" + detail;
+                case "trend_bias_S": return "Structure bias failed: " + detail;
+                case "trend_bias_E": return "EMA Trend Alignment failed: " + detail;
+                case "trend_bias_R": return "RSI bias failed: " + detail;
+                case "trend_bias_M": return "MACD bias failed: " + detail;
+                case "trend_bias_A": return "ADX trend strength failed: " + detail;
+                case "ema": return "EMA Confluence failed: scope=" + detail;
+                case "rsi": return "RSI Confluence failed: scope=" + detail;
+                case "macd": return "MACD Confluence failed: scope=" + detail;
+                case "opposing_level_clearance": return failure + ": insufficient clearance from an opposing level";
+                case "premium_discount": return failure + ": price not in the required half of the range";
+                case "bar_direction": return "Bar Direction: candle close direction opposes trade";
+                default: return failure + ": required condition not met";
+            }
         }
 
         private bool TryLogActiveManualTradeStatus(string strategyId, string status, string reason)
@@ -26821,7 +28357,8 @@ namespace cAlgo.Robots
                         Price = position.EntryPrice,
                         Pnl = 0,
                         IsWinning = false,
-                        Text = triggerEventLabel
+                        Text = triggerEventLabel,
+                        PatternSpan = ResolveStrategyMarkerPatternSpan(triggerEventLabel)
                     });
                 }
 
@@ -27027,7 +28564,7 @@ namespace cAlgo.Robots
 
         private void EnforceLiveStrategyProtectionSafety()
         {
-            if (IsBacktestingRuntime() || !EnableLiveStrategyTrading)
+            if (IsBacktestingRuntime() || !IsLiveTradeEnabled())
                 return;
 
             foreach (var position in GetCurrentPositionsSnapshot())
@@ -27168,6 +28705,7 @@ namespace cAlgo.Robots
             return eventType == CanonicalEventType.Choch ||
                    eventType == CanonicalEventType.Bos ||
                    eventType == CanonicalEventType.SweepReclaim ||
+                   eventType == CanonicalEventType.SweepReclaimChain ||
                    eventType == CanonicalEventType.Rejection ||
                    eventType == CanonicalEventType.Breakout;
         }
@@ -27352,35 +28890,39 @@ namespace cAlgo.Robots
             shortLabel = "";
             switch (option)
             {
-                case StrategyCustomEventOption.Choch_ChangeOfCharacter:
+                case StrategyCustomEventOption.sweep_reclaim:
+                    eventType = CanonicalEventType.SweepReclaimChain;
+                    shortLabel = "sweep_reclaim";
+                    return true;
+                case StrategyCustomEventOption.choch_ChangeOfCharacter:
                     eventType = CanonicalEventType.Choch;
                     shortLabel = "CHOCH";
                     return true;
-                case StrategyCustomEventOption.Bos_BreakOfStructure:
+                case StrategyCustomEventOption.bos_BreakOfStructure:
                     eventType = CanonicalEventType.Bos;
                     shortLabel = "BOS";
                     return true;
-                case StrategyCustomEventOption.Swp_Sweep:
+                case StrategyCustomEventOption.s_Sweep:
                     eventType = CanonicalEventType.SweepReclaim;
                     shortLabel = "S";
                     return true;
-                case StrategyCustomEventOption.Rj_KeyLevelRejection:
+                case StrategyCustomEventOption.r_KeyLevelRejection:
                     eventType = CanonicalEventType.Rejection;
                     shortLabel = "R";
                     return true;
-                case StrategyCustomEventOption.Br_Breakout:
+                case StrategyCustomEventOption.b_Breakout:
                     eventType = CanonicalEventType.Breakout;
                     shortLabel = "B";
                     return true;
-                case StrategyCustomEventOption.EmaPb_EMAPullbackReclaim:
+                case StrategyCustomEventOption.ema_EMAPullbackReclaim:
                     eventType = CanonicalEventType.Rejection;
                     shortLabel = "R";
                     return true;
-                case StrategyCustomEventOption.VwapCt_VWAPContinuationReclaim:
+                case StrategyCustomEventOption.vwap_VWAPContinuationReclaim:
                     eventType = CanonicalEventType.Breakout;
                     shortLabel = "B";
                     return true;
-                case StrategyCustomEventOption.Im_ImpulseMomentumShift:
+                case StrategyCustomEventOption.b_ImpulseMomentumShift:
                     eventType = CanonicalEventType.Breakout;
                     shortLabel = "B";
                     return true;
@@ -27400,14 +28942,14 @@ namespace cAlgo.Robots
             shortLabel = "";
             switch (option)
             {
-                case StrategyCustomEventOption.RjTl_TrendlineRejection: levelKind = "TL"; shortLabel = "RJTL"; return true;
-                case StrategyCustomEventOption.RjOb_OrderBlockRejection: levelKind = "OB"; shortLabel = "RJOB"; return true;
-                case StrategyCustomEventOption.RjFvg_FVGRejection: levelKind = "FVG"; shortLabel = "RJFVG"; return true;
-                case StrategyCustomEventOption.RjSd_SupplyDemandRejection: levelKind = "SD"; shortLabel = "RJSD"; return true;
-                case StrategyCustomEventOption.BrTl_TrendlineBreakout: eventType = CanonicalEventType.Breakout; levelKind = "TL"; shortLabel = "BRTL"; return true;
-                case StrategyCustomEventOption.BrOb_OrderBlockBreakout: eventType = CanonicalEventType.Breakout; levelKind = "OB"; shortLabel = "BROB"; return true;
-                case StrategyCustomEventOption.BrFvg_FVGBreakout: eventType = CanonicalEventType.Breakout; levelKind = "FVG"; shortLabel = "BRFVG"; return true;
-                case StrategyCustomEventOption.BrSd_SupplyDemandBreakout: eventType = CanonicalEventType.Breakout; levelKind = "SD"; shortLabel = "BRSD"; return true;
+                case StrategyCustomEventOption.r_TrendlineRejection: levelKind = "TL"; shortLabel = "RJTL"; return true;
+                case StrategyCustomEventOption.r_OrderBlockRejection: levelKind = "OB"; shortLabel = "RJOB"; return true;
+                case StrategyCustomEventOption.r_FVGRejection: levelKind = "FVG"; shortLabel = "RJFVG"; return true;
+                case StrategyCustomEventOption.r_SupplyDemandRejection: levelKind = "SD"; shortLabel = "RJSD"; return true;
+                case StrategyCustomEventOption.b_TrendlineBreakout: eventType = CanonicalEventType.Breakout; levelKind = "TL"; shortLabel = "BRTL"; return true;
+                case StrategyCustomEventOption.b_OrderBlockBreakout: eventType = CanonicalEventType.Breakout; levelKind = "OB"; shortLabel = "BROB"; return true;
+                case StrategyCustomEventOption.b_FVGBreakout: eventType = CanonicalEventType.Breakout; levelKind = "FVG"; shortLabel = "BRFVG"; return true;
+                case StrategyCustomEventOption.b_SupplyDemandBreakout: eventType = CanonicalEventType.Breakout; levelKind = "SD"; shortLabel = "BRSD"; return true;
                 default: return false;
             }
         }
@@ -27419,16 +28961,16 @@ namespace cAlgo.Robots
             reason = CanonicalEventReason.StructureBreak;
             switch (option)
             {
-                case StrategyCustomEventOption.Rj_KeyLevelRejection:
+                case StrategyCustomEventOption.r_KeyLevelRejection:
                     reason = CanonicalEventReason.KeyLevelRejection;
                     return true;
-                case StrategyCustomEventOption.EmaPb_EMAPullbackReclaim:
+                case StrategyCustomEventOption.ema_EMAPullbackReclaim:
                     reason = CanonicalEventReason.EmaReclaim;
                     return true;
-                case StrategyCustomEventOption.VwapCt_VWAPContinuationReclaim:
+                case StrategyCustomEventOption.vwap_VWAPContinuationReclaim:
                     reason = CanonicalEventReason.VwapReclaim;
                     return true;
-                case StrategyCustomEventOption.Im_ImpulseMomentumShift:
+                case StrategyCustomEventOption.b_ImpulseMomentumShift:
                     reason = CanonicalEventReason.MomentumShift;
                     return true;
                 default:
@@ -27760,7 +29302,7 @@ namespace cAlgo.Robots
             matchesDirectionless = false;
             shortLabel = "";
 
-            if (option == StrategyCustomEventOption.X_Cross)
+            if (option == StrategyCustomEventOption.x_Cross)
             {
                 shortLabel = "X";
                 List<CandleConfluenceMatch> bullishMatches;
@@ -27772,7 +29314,7 @@ namespace cAlgo.Robots
                 return matchesBullish || matchesBearish;
             }
 
-            if (option == StrategyCustomEventOption.Xr_EarlyRejection)
+            if (option == StrategyCustomEventOption.xr_EarlyRejection)
             {
                 shortLabel = "XR";
                 bool patternBullish;
@@ -27805,8 +29347,8 @@ namespace cAlgo.Robots
                 var hasRequiredReason = TryGetRequiredCanonicalEventReason(option, out requiredReason);
                 var matchingEvents = (eventsOnBar ?? new List<CanonicalMarketEvent>())
                     .Where(evt => evt.EventType == canonicalType &&
-                        !((option == StrategyCustomEventOption.Rj_KeyLevelRejection ||
-                           option == StrategyCustomEventOption.Br_Breakout) &&
+                        !((option == StrategyCustomEventOption.r_KeyLevelRejection ||
+                           option == StrategyCustomEventOption.b_Breakout) &&
                           IsTechnicalCanonicalMarketEvent(evt)) &&
                         (!hasRequiredReason || evt.Reason == requiredReason))
                     .ToList();
@@ -27867,14 +29409,14 @@ namespace cAlgo.Robots
                 // interactions remain individually selectable technical events.
                 var technicalOptions = new[]
                 {
-                    StrategyCustomEventOption.R50_RsiMidlineCross,
-                    StrategyCustomEventOption.Ros_RsiExitOversold,
-                    StrategyCustomEventOption.Rob_RsiExitOverbought,
-                    StrategyCustomEventOption.Stx_StochCross,
-                    StrategyCustomEventOption.Sto_StochExitExtreme,
-                    StrategyCustomEventOption.Mdx_MacdSignalCross,
-                    StrategyCustomEventOption.Md0_MacdZeroCross,
-                    StrategyCustomEventOption.Div_Divergence
+                    StrategyCustomEventOption.rsi_RsiMidlineCross,
+                    StrategyCustomEventOption.rsi_RsiExitOversold,
+                    StrategyCustomEventOption.rsi_RsiExitOverbought,
+                    StrategyCustomEventOption.stoch_StochCross,
+                    StrategyCustomEventOption.stoch_StochExitExtreme,
+                    StrategyCustomEventOption.macd_MacdSignalCross,
+                    StrategyCustomEventOption.macd_MacdZeroCross,
+                    StrategyCustomEventOption.rsi_Divergence
                 };
                 var bullishLabels = new List<string>();
                 var bearishLabels = new List<string>();
@@ -27917,130 +29459,135 @@ namespace cAlgo.Robots
 
             switch (option)
             {
-                case StrategyCustomEventOption.Pxe_PriceEmaCross:
-                    shortLabel = "pxe";
-                    matchesBullish = MatchBullishPriceCrossesEmaSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
-                    matchesBearish = MatchBearishPriceCrossesEmaSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
+                case StrategyCustomEventOption.ema_PriceFastEmaCross:
+                    shortLabel = "pxf";
+                    matchesBullish = MatchBullishPriceCrossesFastEmaSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
+                    matchesBearish = MatchBearishPriceCrossesFastEmaSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
                     return true;
-                case StrategyCustomEventOption.Emx_EmaFastMidCross:
+                case StrategyCustomEventOption.ema_PriceSlowEmaCross:
+                    shortLabel = "pxs";
+                    matchesBullish = MatchBullishPriceCrossesSlowEmaSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
+                    matchesBearish = MatchBearishPriceCrossesSlowEmaSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
+                    return true;
+                case StrategyCustomEventOption.ema_EmaFastMidCross:
                     shortLabel = "emx";
                     matchesBullish = MatchBullishEmaFastMidCrossSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
                     matchesBearish = MatchBearishEmaFastMidCrossSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
                     return true;
-                case StrategyCustomEventOption.Emt_EmaMidSlowCross:
+                case StrategyCustomEventOption.ema_EmaMidSlowCross:
                     shortLabel = "emt";
                     matchesBullish = MatchBullishEmaMidSlowCrossSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
                     matchesBearish = MatchBearishEmaMidSlowCrossSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
                     return true;
-                case StrategyCustomEventOption.Vwx_PriceVwapCross:
+                case StrategyCustomEventOption.vwap_PriceVwapCross:
                     shortLabel = "vwx";
                     matchesBullish = MatchBullishPriceCrossesVwapSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
                     matchesBearish = MatchBearishPriceCrossesVwapSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
                     return true;
-                case StrategyCustomEventOption.Vwr_VwapRejection:
+                case StrategyCustomEventOption.vwap_VwapRejection:
                     shortLabel = "vwr";
                     matchesBullish = MatchBullishVwapRejectionSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
                     matchesBearish = MatchBearishVwapRejectionSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
                     return true;
-                case StrategyCustomEventOption.Bbx_BollingerMidCross:
+                case StrategyCustomEventOption.bb_BollingerMidCross:
                     shortLabel = "bbx";
                     matchesBullish = MatchBullishPriceCrossesBollingerMidSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
                     matchesBearish = MatchBearishPriceCrossesBollingerMidSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
                     return true;
-                case StrategyCustomEventOption.Bbr_BollingerBandReject:
+                case StrategyCustomEventOption.bb_BollingerBandReject:
                     shortLabel = "bbr";
                     matchesBullish = MatchBullishBollingerRejectionSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
                     matchesBearish = MatchBearishBollingerRejectionSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
                     return true;
-                case StrategyCustomEventOption.R50_RsiMidlineCross:
+                case StrategyCustomEventOption.rsi_RsiMidlineCross:
                     shortLabel = "r50";
                     matchesBullish = MatchBullishRsiCrossSnapshot(sourceBars, index, previousSnapshot, currentSnapshot, _resolvedRsiEventConfig.Midline);
                     matchesBearish = MatchBearishRsiCrossSnapshot(sourceBars, index, previousSnapshot, currentSnapshot, _resolvedRsiEventConfig.Midline);
                     return true;
-                case StrategyCustomEventOption.Ros_RsiExitOversold:
+                case StrategyCustomEventOption.rsi_RsiExitOversold:
                     shortLabel = "ros";
                     matchesBullish = MatchBullishRsiOversoldSnapshot(sourceBars, index, previousSnapshot, currentSnapshot, _resolvedRsiEventConfig.Oversold);
                     return true;
-                case StrategyCustomEventOption.Rob_RsiExitOverbought:
+                case StrategyCustomEventOption.rsi_RsiExitOverbought:
                     shortLabel = "rob";
                     matchesBearish = MatchBearishRsiOverboughtSnapshot(sourceBars, index, previousSnapshot, currentSnapshot, _resolvedRsiEventConfig.Overbought);
                     return true;
-                case StrategyCustomEventOption.Stx_StochCross:
+                case StrategyCustomEventOption.stoch_StochCross:
                     shortLabel = "stx";
                     matchesBullish = MatchBullishStochasticCrossSnapshot(sourceBars, index, previousSnapshot, currentSnapshot, _resolvedStochasticEventConfig.OversoldLevel);
                     matchesBearish = MatchBearishStochasticCrossSnapshot(sourceBars, index, previousSnapshot, currentSnapshot, _resolvedStochasticEventConfig.OverboughtLevel);
                     return true;
-                case StrategyCustomEventOption.Sto_StochExitExtreme:
+                case StrategyCustomEventOption.stoch_StochExitExtreme:
                     shortLabel = "sto";
                     matchesBullish = MatchBullishStochasticExitOversoldSnapshot(sourceBars, index, previousSnapshot, currentSnapshot, _resolvedStochasticEventConfig.OversoldLevel);
                     matchesBearish = MatchBearishStochasticExitOverboughtSnapshot(sourceBars, index, previousSnapshot, currentSnapshot, _resolvedStochasticEventConfig.OverboughtLevel);
                     return true;
-                case StrategyCustomEventOption.Mdx_MacdSignalCross:
+                case StrategyCustomEventOption.macd_MacdSignalCross:
                     shortLabel = "mdx";
                     matchesBullish = MatchBullishMacdCrossSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
                     matchesBearish = MatchBearishMacdCrossSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
                     return true;
-                case StrategyCustomEventOption.Md0_MacdZeroCross:
+                case StrategyCustomEventOption.macd_MacdZeroCross:
                     shortLabel = "md0";
                     matchesBullish = MatchBullishMacdZeroCrossSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
                     matchesBearish = MatchBearishMacdZeroCrossSnapshot(sourceBars, index, previousSnapshot, currentSnapshot);
                     return true;
-                case StrategyCustomEventOption.Pin_PinBar:
+                case StrategyCustomEventOption.pin_PinBar:
                     shortLabel = "PIN";
                     matchesBullish = MatchBullishPinBar(sourceBars, index);
                     matchesBearish = MatchBearishPinBar(sourceBars, index);
                     return true;
-                case StrategyCustomEventOption.Eng_Engulfing:
+                case StrategyCustomEventOption.eng_Engulfing:
                     shortLabel = "ENG";
                     matchesBullish = MatchBullishEngulfingAtIndex(sourceBars, index);
                     matchesBearish = MatchBearishEngulfingAtIndex(sourceBars, index);
                     return true;
-                case StrategyCustomEventOption.Big_BigCandle:
+                case StrategyCustomEventOption.big_BigCandle:
                     shortLabel = "BIG";
                     matchesBullish = MatchBullishBigCandle(sourceBars, index);
                     matchesBearish = MatchBearishBigCandle(sourceBars, index);
                     return true;
-                case StrategyCustomEventOption.Mor_MorningStar:
+                case StrategyCustomEventOption.mor_MorningStar:
                     shortLabel = "MOR";
                     matchesBullish = sharedPatterns.Contains("bullish_morning_star");
                     return true;
-                case StrategyCustomEventOption.Eve_EveningStar:
+                case StrategyCustomEventOption.eve_EveningStar:
                     shortLabel = "EVE";
                     matchesBearish = sharedPatterns.Contains("bearish_evening_star");
                     return true;
-                case StrategyCustomEventOption.Ham_Hammer:
+                case StrategyCustomEventOption.ham_Hammer:
                     shortLabel = "HAM";
                     matchesBullish = sharedPatterns.Contains("bullish_hammer");
                     return true;
-                case StrategyCustomEventOption.Hgm_HangingMan:
+                case StrategyCustomEventOption.hgm_HangingMan:
                     shortLabel = "HGM";
                     matchesBearish = sharedPatterns.Contains("hanging_man");
                     return true;
-                case StrategyCustomEventOption.Sst_ShootingStar:
+                case StrategyCustomEventOption.sst_ShootingStar:
                     shortLabel = "SST";
                     matchesBearish = sharedPatterns.Contains("shooting_star");
                     return true;
-                case StrategyCustomEventOption.Ihm_InvertedHammer:
+                case StrategyCustomEventOption.ihm_InvertedHammer:
                     shortLabel = "IHM";
                     matchesBullish = sharedPatterns.Contains("bullish_inverted_hammer");
                     return true;
-                case StrategyCustomEventOption.Prc_PiercingLine:
+                case StrategyCustomEventOption.prc_PiercingLine:
                     shortLabel = "PRC";
                     matchesBullish = sharedPatterns.Contains("bullish_piercing_line");
                     return true;
-                case StrategyCustomEventOption.Dcc_DarkCloudCover:
+                case StrategyCustomEventOption.dcc_DarkCloudCover:
                     shortLabel = "DCC";
                     matchesBearish = sharedPatterns.Contains("bearish_dark_cloud_cover");
                     return true;
-                case StrategyCustomEventOption.Tws_ThreeWhiteSoldiers:
-                    shortLabel = "3WS";
+                case StrategyCustomEventOption.tws_ThreeWhiteSoldiers:
+                    shortLabel = "TWS";
                     matchesBullish = sharedPatterns.Contains("bullish_three_white_soldiers");
                     return true;
-                case StrategyCustomEventOption.Tbc_ThreeBlackCrows:
-                    shortLabel = "3BC";
+                case StrategyCustomEventOption.tbc_ThreeBlackCrows:
+                    shortLabel = "TBC";
                     matchesBearish = sharedPatterns.Contains("bearish_three_black_crows");
                     return true;
-                case StrategyCustomEventOption.Har_Harami:
+                case StrategyCustomEventOption.har_Harami:
                     shortLabel = "HAR";
                     matchesBullish = sharedPatterns.Contains("bullish_harami");
                     matchesBearish = sharedPatterns.Contains("bearish_harami");
@@ -28077,7 +29624,7 @@ namespace cAlgo.Robots
                     shortLabel = string.Join("+", bullishCodes.Concat(bearishCodes).Distinct());
                     return true;
                 }
-                case StrategyCustomEventOption.Div_Divergence:
+                case StrategyCustomEventOption.rsi_Divergence:
                     shortLabel = "DIV";
                     bool divBullish;
                     bool divBearish;
@@ -28097,6 +29644,7 @@ namespace cAlgo.Robots
         {
             switch (eventType)
             {
+                case CanonicalEventType.SweepReclaimChain:
                 case CanonicalEventType.Choch:
                 case CanonicalEventType.Bos:
                 case CanonicalEventType.SweepReclaim:
@@ -28127,6 +29675,8 @@ namespace cAlgo.Robots
         {
             switch (eventType)
             {
+                case CanonicalEventType.SweepReclaimChain:
+                    return "sweep_reclaim";
                 case CanonicalEventType.Choch:
                     return "CHOCH";
                 case CanonicalEventType.Bos:
@@ -28294,9 +29844,6 @@ namespace cAlgo.Robots
                 strategyBarIndex < 1 || strategyBarIndex > sourceBars.Count - 2)
                 return false;
 
-            if (!IsConfiguredStrategyMarketAllowed(symbolName, strategyTimeFrame))
-                return false;
-
             // Evaluate completed candles at their close, exactly as live execution does.
             // This covers Days, Trade TimeRange, Overnight block and Weekend block.
             var strategyExecutionTime = ResolveSourceBarEndTime(
@@ -28305,23 +29852,6 @@ namespace cAlgo.Robots
                 strategyTimeFrame);
             if (!ShouldAllowChartSignalTime(strategyExecutionTime))
                 return false;
-
-            if (!string.IsNullOrWhiteSpace(SharedStrategyConfigIds))
-            {
-                return TryResolveSharedConfigStrategy(
-                    symbolName,
-                    strategyTimeFrame,
-                    sourceBars,
-                    strategyBarIndex,
-                    scanBars,
-                    logRejections,
-                    preferredTradeType,
-                    out resolvedTradeType,
-                    out signalTime,
-                    out sourceLabel,
-                    out note,
-                    out eventSlDistance);
-            }
 
             var previousSnapshot = BuildSharedIndicatorSnapshot(sourceBars, strategyBarIndex - 1);
             var currentSnapshot = BuildSharedIndicatorSnapshot(sourceBars, strategyBarIndex);
@@ -28516,16 +30046,22 @@ namespace cAlgo.Robots
             bool bullish)
         {
             var frameLabel = GetMiniChartLabel(sourceTimeFrame).Trim().ToLowerInvariant();
+            var allTriggers = (triggerSequence ?? Enumerable.Empty<TradeTriggerEvent>()).ToList();
+            var opposingCount = allTriggers
+                .Where(item => !item.IsDirectionless && item.IsBullish == bullish)
+                .Select(item => Math.Max(0, item.OpposingEvidenceCount))
+                .DefaultIfEmpty(0)
+                .Max();
             var selected = (selectedOptions ?? Enumerable.Empty<StrategyCustomEventOption>())
                 .Where(option => option != StrategyCustomEventOption.Off)
                 .Distinct()
                 .ToList();
-            var orderedTriggers = (triggerSequence ?? Enumerable.Empty<TradeTriggerEvent>())
+            var orderedTriggers = allTriggers
                 .Where(item => !item.IsDirectionless)
                 .Where(item => item.IsBullish == bullish)
                 .Where(item => IsCombinedTradeTriggerFamily(item.Family) ||
                     string.Equals(item.Family, "technical", StringComparison.OrdinalIgnoreCase))
-                // A selected family is constrained by its selector. For example Pin_PinBar
+                // A selected family is constrained by its selector. For example pin_PinBar
                 // must not be replaced by a higher-priority Engulfing detection. A completely
                 // unselected companion family is still descriptive evidence and may appear.
                 .Where(item => !IsTradeTriggerFamilyExplicitlySelected(selected, item.Family) ||
@@ -28592,6 +30128,27 @@ namespace cAlgo.Robots
                 }
             }
 
+            // If multiple concrete detections exist, show at least two actual operands.
+            // First use a second same-family event, then a named artifact attached to the
+            // primary event (the common `m30.ham +1` case).
+            if (representatives.Count < 2)
+            {
+                var additionalOperands = new List<string>();
+                foreach (var family in new[] { "candle", "technical", "momentum", "structure" })
+                {
+                    List<string> operands;
+                    if (familyOperands.TryGetValue(family, out operands))
+                        additionalOperands.AddRange(operands);
+                }
+                additionalOperands.AddRange(orderedTriggers
+                    .SelectMany(trigger => trigger.SupportEventNames ?? new List<string>())
+                    .Where(value => !string.IsNullOrWhiteSpace(value)));
+                var secondOperand = additionalOperands.FirstOrDefault(operand =>
+                    !representatives.Contains(operand, StringComparer.OrdinalIgnoreCase));
+                if (!string.IsNullOrWhiteSpace(secondOperand))
+                    representatives.Add(secondOperand.ToLowerInvariant());
+            }
+
             if (representatives.Count == 0)
                 return "";
 
@@ -28602,10 +30159,125 @@ namespace cAlgo.Robots
                 0,
                 GetTradeTriggerGroupTotalCount(orderedTriggers) - representatives.Count);
 
+            var evidenceSuffix = "";
+            if (hiddenCount > 0)
+                evidenceSuffix += "+" + hiddenCount.ToString(CultureInfo.InvariantCulture);
+            if (opposingCount > 0)
+                evidenceSuffix += "-" + opposingCount.ToString(CultureInfo.InvariantCulture);
+
             return frameLabel + "." + string.Join(".", representatives) +
-                (hiddenCount > 0
-                    ? " +" + hiddenCount.ToString(CultureInfo.InvariantCulture)
-                    : "");
+                (string.IsNullOrWhiteSpace(evidenceSuffix) ? "" : " " + evidenceSuffix);
+        }
+
+        private string FormatFullTradeTriggerEventLog(
+            IEnumerable<TradeTriggerEvent> triggerSequence,
+            bool bullish)
+        {
+            var rows = (triggerSequence ?? Enumerable.Empty<TradeTriggerEvent>())
+                .Where(trigger => !trigger.IsDirectionless && trigger.IsBullish == bullish)
+                .Where(trigger => IsCombinedTradeTriggerFamily(trigger.Family) ||
+                    string.Equals(trigger.Family, "technical", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(trigger => GetTradeTriggerFamilyDisplayOrder(trigger.Family))
+                .ThenByDescending(trigger => trigger.Priority)
+                .ThenBy(trigger => trigger.Name)
+                .Select(trigger =>
+                {
+                    var namedSupports = (trigger.SupportEventNames ?? new List<string>())
+                        .Where(value => !string.IsNullOrWhiteSpace(value))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                    var unresolvedSupportCount = Math.Max(0, trigger.ConfluenceCount - namedSupports.Count);
+                    var supportDetail = namedSupports.Count > 0
+                        ? string.Join(",", namedSupports)
+                        : "none";
+                    if (unresolvedSupportCount > 0)
+                        supportDetail += ",unresolved=" + unresolvedSupportCount.ToString(CultureInfo.InvariantCulture);
+                    var opposingNames = (trigger.OpposingEvidenceNames ?? new List<string>())
+                        .Where(value => !string.IsNullOrWhiteSpace(value))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                    var opposingDetail = opposingNames.Count > 0
+                        ? string.Join(",", opposingNames)
+                        : "none";
+                    return string.Format(
+                        CultureInfo.InvariantCulture,
+                        "{0}:{1}[option={2},supports={3},against={4}[{5}]]",
+                        string.IsNullOrWhiteSpace(trigger.Family) ? "unknown" : trigger.Family.Trim().ToLowerInvariant(),
+                        string.IsNullOrWhiteSpace(trigger.Name) ? "event.?" : trigger.Name.Trim(),
+                        trigger.Option,
+                        supportDetail,
+                        Math.Max(0, trigger.OpposingEvidenceCount),
+                        opposingDetail);
+                })
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            return rows.Count > 0 ? string.Join(" | ", rows) : "none";
+        }
+
+        private List<string> BuildCandleConfluenceSupportEventNames(
+            TimeFrame eventTimeFrame,
+            IEnumerable<CandleConfluenceMatch> matches,
+            bool bullish)
+        {
+            var eventMinutes = TimeFrameToMinutes(eventTimeFrame);
+            return (matches ?? Enumerable.Empty<CandleConfluenceMatch>())
+                .Where(match => match != null)
+                .Select(match =>
+                {
+                    var movement = match.IsSweep
+                        ? "s"
+                        : (match.MovementCode ?? "").Trim().ToLowerInvariant();
+                    if (movement != "r" && movement != "b" && movement != "x" && movement != "xr")
+                        movement = "r";
+                    var artifactTimeFrame = TimeFrameToMinutes(match.SourceTimeFrame) == eventMinutes
+                        ? ""
+                        : GetArtifactDisplayTimeFrameLabel(match.SourceTimeFrame) + ".";
+                    return AddCombinedEventDirectionArrow(
+                        movement + "." + artifactTimeFrame + GetCanonicalLevelOperand(match.Kind),
+                        bullish);
+                })
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private void LogFullTradeTriggerEventsOnce(
+            string eventKey,
+            string symbolName,
+            TimeFrame sourceTimeFrame,
+            DateTime barTime,
+            bool bullish,
+            bool isTradeEvent,
+            string displayLabel,
+            IEnumerable<TradeTriggerEvent> triggerSequence)
+        {
+            var fullEvents = FormatFullTradeTriggerEventLog(triggerSequence, bullish);
+            var logKey = string.Format(
+                CultureInfo.InvariantCulture,
+                "{0}|{1}|{2}",
+                eventKey ?? "",
+                isTradeEvent ? "TRADE" : "RAW",
+                fullEvents);
+            if (!_loggedFullEventKeys.Add(logKey))
+                return;
+
+            // Bound diagnostic memory in long-running cBot sessions. A reset can only cause
+            // old events to be printed again; it cannot affect detection or trade execution.
+            if (_loggedFullEventKeys.Count > 5000)
+            {
+                _loggedFullEventKeys.Clear();
+                _loggedFullEventKeys.Add(logKey);
+            }
+
+            SafePrint(
+                "[EventDebug] status={0} symbol={1} tf={2} bar={3:yyyy-MM-dd HH:mm} side={4} display={5} full_events={6}",
+                isTradeEvent ? "TRADE" : "RAW",
+                symbolName,
+                GetTimeFrameShortLabel(sourceTimeFrame),
+                barTime,
+                bullish ? "BUY" : "SELL",
+                displayLabel,
+                fullEvents);
         }
 
         private string GetCompactTechnicalMomentumEventOperand(StrategyCustomEventOption option)
@@ -28617,28 +30289,33 @@ namespace cAlgo.Robots
 
             switch (baseOption)
             {
-                case StrategyCustomEventOption.EmaPb_EMAPullbackReclaim:
-                case StrategyCustomEventOption.Pxe_PriceEmaCross:
-                case StrategyCustomEventOption.Emx_EmaFastMidCross:
-                case StrategyCustomEventOption.Emt_EmaMidSlowCross:
+                case StrategyCustomEventOption.b_ImpulseMomentumShift:
+                    return "b.mom";
+                case StrategyCustomEventOption.ema_EMAPullbackReclaim:
+                case StrategyCustomEventOption.ema_EmaFastMidCross:
+                case StrategyCustomEventOption.ema_EmaMidSlowCross:
                     return "ema";
-                case StrategyCustomEventOption.VwapCt_VWAPContinuationReclaim:
-                case StrategyCustomEventOption.Vwx_PriceVwapCross:
-                case StrategyCustomEventOption.Vwr_VwapRejection:
+                case StrategyCustomEventOption.ema_PriceFastEmaCross:
+                    return "ema.fast";
+                case StrategyCustomEventOption.ema_PriceSlowEmaCross:
+                    return "ema.slow";
+                case StrategyCustomEventOption.vwap_VWAPContinuationReclaim:
+                case StrategyCustomEventOption.vwap_PriceVwapCross:
+                case StrategyCustomEventOption.vwap_VwapRejection:
                     return "vwap";
-                case StrategyCustomEventOption.Bbx_BollingerMidCross:
-                case StrategyCustomEventOption.Bbr_BollingerBandReject:
+                case StrategyCustomEventOption.bb_BollingerMidCross:
+                case StrategyCustomEventOption.bb_BollingerBandReject:
                     return "bb";
-                case StrategyCustomEventOption.R50_RsiMidlineCross:
-                case StrategyCustomEventOption.Ros_RsiExitOversold:
-                case StrategyCustomEventOption.Rob_RsiExitOverbought:
-                case StrategyCustomEventOption.Div_Divergence:
+                case StrategyCustomEventOption.rsi_RsiMidlineCross:
+                case StrategyCustomEventOption.rsi_RsiExitOversold:
+                case StrategyCustomEventOption.rsi_RsiExitOverbought:
+                case StrategyCustomEventOption.rsi_Divergence:
                     return "rsi";
-                case StrategyCustomEventOption.Stx_StochCross:
-                case StrategyCustomEventOption.Sto_StochExitExtreme:
+                case StrategyCustomEventOption.stoch_StochCross:
+                case StrategyCustomEventOption.stoch_StochExitExtreme:
                     return "stoch";
-                case StrategyCustomEventOption.Mdx_MacdSignalCross:
-                case StrategyCustomEventOption.Md0_MacdZeroCross:
+                case StrategyCustomEventOption.macd_MacdSignalCross:
+                case StrategyCustomEventOption.macd_MacdZeroCross:
                     return "macd";
                 default:
                     return "tech";
@@ -28655,10 +30332,10 @@ namespace cAlgo.Robots
 
             var triggers = new[]
             {
-                new TradeTriggerEvent { Name = "m5.eng↑", Family = "candle", Option = StrategyCustomEventOption.Eng_Engulfing, IsBullish = true, Priority = 80 },
-                new TradeTriggerEvent { Name = "m5.r.tl↓", Family = "structure", Option = StrategyCustomEventOption.RjTl_TrendlineRejection, IsBullish = false, Priority = 75 },
-                new TradeTriggerEvent { Name = "m5.x>vwap↑", Family = "technical", Option = StrategyCustomEventOption.Vwx_PriceVwapCross, IsBullish = true, Priority = 70 },
-                new TradeTriggerEvent { Name = "m5.rsi14.x<50↓", Family = "momentum", Option = StrategyCustomEventOption.R50_RsiMidlineCross, IsBullish = false, Priority = 65 }
+                new TradeTriggerEvent { Name = "m5.eng↑", Family = "candle", Option = StrategyCustomEventOption.eng_Engulfing, IsBullish = true, Priority = 80 },
+                new TradeTriggerEvent { Name = "m5.r.tl↓", Family = "structure", Option = StrategyCustomEventOption.r_TrendlineRejection, IsBullish = false, Priority = 75 },
+                new TradeTriggerEvent { Name = "m5.x>vwap↑", Family = "technical", Option = StrategyCustomEventOption.vwap_PriceVwapCross, IsBullish = true, Priority = 70 },
+                new TradeTriggerEvent { Name = "m5.rsi14.x<50↓", Family = "momentum", Option = StrategyCustomEventOption.rsi_RsiMidlineCross, IsBullish = false, Priority = 65 }
             };
             var selected = new[]
             {
@@ -28671,17 +30348,17 @@ namespace cAlgo.Robots
 
             var selectedTechnicalMomentum = new[]
             {
-                new TradeTriggerEvent { Name = "m5.ema9.x>ema21↑", Family = "technical", Option = StrategyCustomEventOption.Emx_EmaFastMidCross, IsBullish = true, Priority = 80 },
-                new TradeTriggerEvent { Name = "m5.rsi14.x>50↑", Family = "momentum", Option = StrategyCustomEventOption.R50_RsiMidlineCross, IsBullish = true, Priority = 70 },
-                new TradeTriggerEvent { Name = "m5.r↑.tl", Family = "structure", Option = StrategyCustomEventOption.RjTl_TrendlineRejection, IsBullish = true, Priority = 60 }
+                new TradeTriggerEvent { Name = "m5.ema9.x>ema21↑", Family = "technical", Option = StrategyCustomEventOption.ema_EmaFastMidCross, IsBullish = true, Priority = 80 },
+                new TradeTriggerEvent { Name = "m5.rsi14.x>50↑", Family = "momentum", Option = StrategyCustomEventOption.rsi_RsiMidlineCross, IsBullish = true, Priority = 70 },
+                new TradeTriggerEvent { Name = "m5.r↑.tl", Family = "structure", Option = StrategyCustomEventOption.r_TrendlineRejection, IsBullish = true, Priority = 60 }
             };
             var selectedTechnicalMomentumLabel = BuildCombinedTradeTriggerEventName(
                 TimeFrame.Minute5,
                 selectedTechnicalMomentum,
                 new[]
                 {
-                    StrategyCustomEventOption.Emx_EmaFastMidCross,
-                    StrategyCustomEventOption.R50_RsiMidlineCross,
+                    StrategyCustomEventOption.ema_EmaFastMidCross,
+                    StrategyCustomEventOption.rsi_RsiMidlineCross,
                     StrategyCustomEventOption.__AnyStructureEvent
                 },
                 true);
@@ -28690,16 +30367,24 @@ namespace cAlgo.Robots
 
             var sharedEvidence = new[]
             {
-                new TradeTriggerEvent { Name = "m5.pin↑", Family = "candle", Option = StrategyCustomEventOption.Pin_PinBar, IsBullish = true, Priority = 90 },
-                new TradeTriggerEvent { Name = "m5.r↑.tl", Family = "structure", Option = StrategyCustomEventOption.RjTl_TrendlineRejection, IsBullish = true, Priority = 80 },
-                new TradeTriggerEvent { Name = "m5.x>vwap↑", Family = "technical", Option = StrategyCustomEventOption.Vwx_PriceVwapCross, IsBullish = true, Priority = 70 },
-                new TradeTriggerEvent { Name = "m5.rsi14.x>50↑", Family = "momentum", Option = StrategyCustomEventOption.R50_RsiMidlineCross, IsBullish = true, Priority = 60 },
-                new TradeTriggerEvent { Name = "m5.macd.xsig↑", Family = "momentum", Option = StrategyCustomEventOption.Mdx_MacdSignalCross, IsBullish = true, Priority = 50 }
+                new TradeTriggerEvent { Name = "m5.pin↑", Family = "candle", Option = StrategyCustomEventOption.pin_PinBar, IsBullish = true, Priority = 90 },
+                new TradeTriggerEvent { Name = "m5.r↑.tl", Family = "structure", Option = StrategyCustomEventOption.r_TrendlineRejection, IsBullish = true, Priority = 80 },
+                new TradeTriggerEvent { Name = "m5.x>vwap↑", Family = "technical", Option = StrategyCustomEventOption.vwap_PriceVwapCross, IsBullish = true, Priority = 70 },
+                new TradeTriggerEvent { Name = "m5.rsi14.x>50↑", Family = "momentum", Option = StrategyCustomEventOption.rsi_RsiMidlineCross, IsBullish = true, Priority = 60 },
+                new TradeTriggerEvent { Name = "m5.macd.xsig↑", Family = "momentum", Option = StrategyCustomEventOption.macd_MacdSignalCross, IsBullish = true, Priority = 50 }
             };
             var sharedLabel = BuildCombinedTradeTriggerEventName(TimeFrame.Minute5, sharedEvidence, selected, true);
             if (GetTradeTriggerGroupTotalCount(sharedEvidence) != 5 ||
                 !string.Equals(sharedLabel, "m5.pin↑.r↑.tl +3", StringComparison.Ordinal))
                 throw new InvalidOperationException("Shared minimum/name confluence contract failed: " + sharedLabel);
+            var sharedFullEventLog = FormatFullTradeTriggerEventLog(sharedEvidence, true);
+            if (sharedFullEventLog.Contains(" +3") ||
+                !sharedFullEventLog.Contains("candle:m5.pin↑") ||
+                !sharedFullEventLog.Contains("structure:m5.r↑.tl") ||
+                !sharedFullEventLog.Contains("technical:m5.x>vwap↑") ||
+                !sharedFullEventLog.Contains("momentum:m5.rsi14.x>50↑") ||
+                !sharedFullEventLog.Contains("momentum:m5.macd.xsig↑"))
+                throw new InvalidOperationException("Full event debug-log contract failed: " + sharedFullEventLog);
 
             var candleOnlyLabel = BuildCombinedTradeTriggerEventName(
                 TimeFrame.Minute5,
@@ -28718,14 +30403,14 @@ namespace cAlgo.Robots
 
             var competingCandleEvidence = new[]
             {
-                new TradeTriggerEvent { Name = "m5.eng↑", Family = "candle", Option = StrategyCustomEventOption.Eng_Engulfing, IsBullish = true, Priority = 100 },
-                new TradeTriggerEvent { Name = "m5.pin↑", Family = "candle", Option = StrategyCustomEventOption.Pin_PinBar, IsBullish = true, Priority = 90 },
-                new TradeTriggerEvent { Name = "m5.r↑.tl", Family = "structure", Option = StrategyCustomEventOption.RjTl_TrendlineRejection, IsBullish = true, Priority = 80 }
+                new TradeTriggerEvent { Name = "m5.eng↑", Family = "candle", Option = StrategyCustomEventOption.eng_Engulfing, IsBullish = true, Priority = 100 },
+                new TradeTriggerEvent { Name = "m5.pin↑", Family = "candle", Option = StrategyCustomEventOption.pin_PinBar, IsBullish = true, Priority = 90 },
+                new TradeTriggerEvent { Name = "m5.r↑.tl", Family = "structure", Option = StrategyCustomEventOption.r_TrendlineRejection, IsBullish = true, Priority = 80 }
             };
             var selectedPinLabel = BuildCombinedTradeTriggerEventName(
                 TimeFrame.Minute5,
                 competingCandleEvidence,
-                new[] { StrategyCustomEventOption.Pin_PinBar, StrategyCustomEventOption.__AnyStructureEvent },
+                new[] { StrategyCustomEventOption.pin_PinBar, StrategyCustomEventOption.__AnyStructureEvent },
                 true);
             if (!string.Equals(selectedPinLabel, "m5.pin↑.r↑.tl", StringComparison.Ordinal))
                 throw new InvalidOperationException("Specific candle selection naming contract failed: " + selectedPinLabel);
@@ -28740,12 +30425,47 @@ namespace cAlgo.Robots
 
             var artifactSupportedPin = new[]
             {
-                new TradeTriggerEvent { Name = "m5.pin↑", Family = "candle", Option = StrategyCustomEventOption.Pin_PinBar, IsBullish = true, ConfluenceCount = 1, Priority = 90 }
+                new TradeTriggerEvent
+                {
+                    Name = "m5.pin↑",
+                    Family = "candle",
+                    Option = StrategyCustomEventOption.pin_PinBar,
+                    IsBullish = true,
+                    ConfluenceCount = 1,
+                    SupportEventNames = new List<string> { "r↑.tl" },
+                    Priority = 90
+                }
             };
             var artifactLabel = BuildCombinedTradeTriggerEventName(TimeFrame.Minute5, artifactSupportedPin, selected, true);
             if (GetTradeTriggerGroupTotalCount(artifactSupportedPin) != 2 ||
-                !string.Equals(artifactLabel, "m5.pin↑ +1", StringComparison.Ordinal))
-                throw new InvalidOperationException("Hidden artifact confluence contract failed: " + artifactLabel);
+                !string.Equals(artifactLabel, "m5.pin↑.r↑.tl", StringComparison.Ordinal))
+                throw new InvalidOperationException("Named artifact confluence contract failed: " + artifactLabel);
+
+            var directionalConflictEvidence = new[]
+            {
+                new TradeTriggerEvent { Name = "m5.pin↑", Family = "candle", Option = StrategyCustomEventOption.pin_PinBar, IsBullish = true, Priority = 90 },
+                new TradeTriggerEvent { Name = "m5.r↑.tl", Family = "structure", Option = StrategyCustomEventOption.r_TrendlineRejection, IsBullish = true, Priority = 80 },
+                new TradeTriggerEvent { Name = "m5.eng↓", Family = "candle", Option = StrategyCustomEventOption.eng_Engulfing, IsBullish = false, Priority = 85 },
+                new TradeTriggerEvent { Name = "m5.ema↓", Family = "technical", Option = StrategyCustomEventOption.ema_EmaFastMidCross, IsBullish = false, Priority = 70 }
+            };
+            var conflictAligned = AttachOpposingEvidenceCounts(
+                directionalConflictEvidence.Where(trigger => trigger.IsBullish),
+                directionalConflictEvidence);
+            var conflictLabel = BuildCombinedTradeTriggerEventName(
+                TimeFrame.Minute5,
+                conflictAligned,
+                selected,
+                true);
+            if (!string.Equals(conflictLabel, "m5.pin↑.r↑.tl -2", StringComparison.Ordinal) ||
+                conflictAligned.Any(trigger => trigger.OpposingEvidenceCount != 2) ||
+                conflictAligned.Any(trigger => trigger.OpposingEvidenceNames == null ||
+                    !trigger.OpposingEvidenceNames.Contains("m5.eng↓") ||
+                    !trigger.OpposingEvidenceNames.Contains("m5.ema↓")) ||
+                GetTradeTriggerGroupTotalCount(conflictAligned) != 2)
+                throw new InvalidOperationException("Directional opposition naming contract failed: " + conflictLabel);
+            var conflictFullLog = FormatFullTradeTriggerEventLog(conflictAligned, true);
+            if (!conflictFullLog.Contains("against=2[m5.eng↓,m5.ema↓]"))
+                throw new InvalidOperationException("Named directional opposition log contract failed: " + conflictFullLog);
 
             var technicalOnly = BuildCombinedTradeTriggerEventName(
                 TimeFrame.Minute5,
@@ -29133,22 +30853,22 @@ namespace cAlgo.Robots
         {
             switch (option)
             {
-                case StrategyCustomEventOption.Pin_PinBar:
-                case StrategyCustomEventOption.Ham_Hammer:
-                case StrategyCustomEventOption.Hgm_HangingMan:
-                case StrategyCustomEventOption.Sst_ShootingStar:
-                case StrategyCustomEventOption.Ihm_InvertedHammer:
-                case StrategyCustomEventOption.Big_BigCandle:
+                case StrategyCustomEventOption.pin_PinBar:
+                case StrategyCustomEventOption.ham_Hammer:
+                case StrategyCustomEventOption.hgm_HangingMan:
+                case StrategyCustomEventOption.sst_ShootingStar:
+                case StrategyCustomEventOption.ihm_InvertedHammer:
+                case StrategyCustomEventOption.big_BigCandle:
                     return 1;
-                case StrategyCustomEventOption.Eng_Engulfing:
-                case StrategyCustomEventOption.Prc_PiercingLine:
-                case StrategyCustomEventOption.Dcc_DarkCloudCover:
+                case StrategyCustomEventOption.eng_Engulfing:
+                case StrategyCustomEventOption.prc_PiercingLine:
+                case StrategyCustomEventOption.dcc_DarkCloudCover:
                     return 2;
-                case StrategyCustomEventOption.Mor_MorningStar:
-                case StrategyCustomEventOption.Eve_EveningStar:
-                case StrategyCustomEventOption.Tws_ThreeWhiteSoldiers:
-                case StrategyCustomEventOption.Tbc_ThreeBlackCrows:
-                case StrategyCustomEventOption.Har_Harami:
+                case StrategyCustomEventOption.mor_MorningStar:
+                case StrategyCustomEventOption.eve_EveningStar:
+                case StrategyCustomEventOption.tws_ThreeWhiteSoldiers:
+                case StrategyCustomEventOption.tbc_ThreeBlackCrows:
+                case StrategyCustomEventOption.har_Harami:
                 case StrategyCustomEventOption.__AnyCandlePattern:
                     return 3;
                 default:
@@ -29160,23 +30880,24 @@ namespace cAlgo.Robots
         {
             switch (option)
             {
-                case StrategyCustomEventOption.Pxe_PriceEmaCross:
-                case StrategyCustomEventOption.Emx_EmaFastMidCross:
-                case StrategyCustomEventOption.Emt_EmaMidSlowCross:
-                case StrategyCustomEventOption.Vwx_PriceVwapCross:
-                case StrategyCustomEventOption.Vwr_VwapRejection:
-                case StrategyCustomEventOption.Bbx_BollingerMidCross:
-                case StrategyCustomEventOption.Bbr_BollingerBandReject:
-                case StrategyCustomEventOption.R50_RsiMidlineCross:
-                case StrategyCustomEventOption.Ros_RsiExitOversold:
-                case StrategyCustomEventOption.Rob_RsiExitOverbought:
-                case StrategyCustomEventOption.Stx_StochCross:
-                case StrategyCustomEventOption.Sto_StochExitExtreme:
-                case StrategyCustomEventOption.Mdx_MacdSignalCross:
-                case StrategyCustomEventOption.Md0_MacdZeroCross:
-                case StrategyCustomEventOption.EmaPb_EMAPullbackReclaim:
-                case StrategyCustomEventOption.VwapCt_VWAPContinuationReclaim:
-                case StrategyCustomEventOption.Div_Divergence:
+                case StrategyCustomEventOption.ema_PriceFastEmaCross:
+                case StrategyCustomEventOption.ema_PriceSlowEmaCross:
+                case StrategyCustomEventOption.ema_EmaFastMidCross:
+                case StrategyCustomEventOption.ema_EmaMidSlowCross:
+                case StrategyCustomEventOption.vwap_PriceVwapCross:
+                case StrategyCustomEventOption.vwap_VwapRejection:
+                case StrategyCustomEventOption.bb_BollingerMidCross:
+                case StrategyCustomEventOption.bb_BollingerBandReject:
+                case StrategyCustomEventOption.rsi_RsiMidlineCross:
+                case StrategyCustomEventOption.rsi_RsiExitOversold:
+                case StrategyCustomEventOption.rsi_RsiExitOverbought:
+                case StrategyCustomEventOption.stoch_StochCross:
+                case StrategyCustomEventOption.stoch_StochExitExtreme:
+                case StrategyCustomEventOption.macd_MacdSignalCross:
+                case StrategyCustomEventOption.macd_MacdZeroCross:
+                case StrategyCustomEventOption.ema_EMAPullbackReclaim:
+                case StrategyCustomEventOption.vwap_VWAPContinuationReclaim:
+                case StrategyCustomEventOption.rsi_Divergence:
                 case StrategyCustomEventOption.__AnyTechnicalEvent:
                     return true;
                 default:
@@ -29201,7 +30922,13 @@ namespace cAlgo.Robots
 
             signal.SignalTime = signalTime;
             InitializeRelatedOfficialZoneFromCustomTrigger(symbolName, strategyTimeFrame, ref signal);
-            if (string.IsNullOrWhiteSpace(signal.SourceLabel))
+            // CustomTrade is already built from this exact custom-event bundle. Appending the
+            // same label a second time turns a suffix such as `+2-2` into a fake `m5.2-2`
+            // event when NormalizeStrategyEventName splits and re-prefixes the duplicate.
+            if (signal.StrategyMode == BacktestStrategyMode.CustomTrade &&
+                !string.IsNullOrWhiteSpace(customLabel))
+                signal.SourceLabel = customLabel;
+            else if (string.IsNullOrWhiteSpace(signal.SourceLabel))
                 signal.SourceLabel = customLabel;
             else if (!string.IsNullOrWhiteSpace(customLabel))
                 signal.SourceLabel = string.Format(CultureInfo.InvariantCulture, "{0}+{1}", signal.SourceLabel, customLabel);
@@ -29553,16 +31280,40 @@ namespace cAlgo.Robots
 
         private bool TryPassSelectedStrategyCustomRules(string symbolName, Bars sourceBars, TimeFrame strategyTimeFrame, int latestClosedIndex, SharedIndicatorSnapshot previousSnapshot, SharedIndicatorSnapshot currentSnapshot, bool? requireBullishDirection = null)
         {
+            string ignoredFailureReason;
+            return TryPassSelectedStrategyCustomRules(
+                symbolName,
+                sourceBars,
+                strategyTimeFrame,
+                latestClosedIndex,
+                previousSnapshot,
+                currentSnapshot,
+                requireBullishDirection,
+                out ignoredFailureReason);
+        }
+
+        private bool TryPassSelectedStrategyCustomRules(
+            string symbolName,
+            Bars sourceBars,
+            TimeFrame strategyTimeFrame,
+            int latestClosedIndex,
+            SharedIndicatorSnapshot previousSnapshot,
+            SharedIndicatorSnapshot currentSnapshot,
+            bool? requireBullishDirection,
+            out string failureReason)
+        {
+            var failedRules = new List<string>();
             foreach (var rule in GetSelectedStrategyCustomRuleOptions())
             {
                 bool matches;
                 string shortLabel;
-                if (!TryEvaluateStrategyCustomRuleOption(rule, symbolName, sourceBars, strategyTimeFrame, latestClosedIndex, previousSnapshot, currentSnapshot, requireBullishDirection, out matches, out shortLabel))
-                    return false;
-                if (!matches)
-                    return false;
+                if (!TryEvaluateStrategyCustomRuleOption(rule, symbolName, sourceBars, strategyTimeFrame, latestClosedIndex, previousSnapshot, currentSnapshot, requireBullishDirection, out matches, out shortLabel) || !matches)
+                    failedRules.Add(rule.ToString());
             }
-            return true;
+            failureReason = failedRules.Count > 0
+                ? "selected_confluence_failed=" + string.Join(",", failedRules)
+                : "";
+            return failedRules.Count == 0;
         }
 
         private bool IsStrategySoftConfluenceRule(StrategyCustomRuleOption option)
@@ -30727,6 +32478,130 @@ namespace cAlgo.Robots
             return Enum.TryParse(normalized, true, out option);
         }
 
+        private bool TryBuildFileBackedStrategySignal(
+            BacktestStrategyMode strategyMode,
+            string strategyId,
+            string symbolName,
+            TimeFrame strategyTimeFrame,
+            out BacktestStrategySignal signal)
+        {
+            signal = default(BacktestStrategySignal);
+            Symbol symbol;
+            Bars sourceBars;
+            int signalIndex;
+            int previousIndex;
+            if (!TryGetBacktestStrategyBars(symbolName, strategyTimeFrame, out symbol, out sourceBars, out signalIndex, out previousIndex))
+                return false;
+
+            TradeType tradeType;
+            DateTime signalTime;
+            string sourceLabel;
+            string note;
+            double eventSlDistance;
+            if (!TryResolveSharedConfigStrategy(
+                symbolName,
+                strategyTimeFrame,
+                sourceBars,
+                signalIndex,
+                0,
+                true,
+                strategyId,
+                null,
+                out tradeType,
+                out signalTime,
+                out sourceLabel,
+                out note,
+                out eventSlDistance))
+                return false;
+
+            EnsureSharedConfigCatalogLoaded();
+            Dictionary<string, object> strategy;
+            if (!_sharedStrategyCatalog.TryGetValue(strategyId, out strategy) || strategy == null)
+                return false;
+
+            var referenceEntry = sourceBars.ClosePrices[signalIndex];
+            var seedStopLoss = tradeType == TradeType.Buy
+                ? sourceBars.LowPrices[signalIndex]
+                : sourceBars.HighPrices[signalIndex];
+            var seedRisk = Math.Abs(referenceEntry - seedStopLoss);
+            if (!(referenceEntry > 0) || !(seedStopLoss > 0) || !(seedRisk > 0))
+                return false;
+
+            signal = new BacktestStrategySignal
+            {
+                IsValid = true,
+                StrategyId = strategyId,
+                StrategyMode = strategyMode,
+                SymbolName = symbolName,
+                SourceLabel = sourceLabel,
+                TradeType = tradeType,
+                SourceTimeFrame = strategyTimeFrame,
+                SignalTime = signalTime,
+                PatternToEntryBars = 1,
+                UseLimitOrder = false,
+                EntryPrice = 0,
+                OriginalEntryReference = referenceEntry,
+                StopLoss = NormalizePriceToSymbol(symbol, seedStopLoss),
+                TakeProfit = NormalizePriceToSymbol(
+                    symbol,
+                    tradeType == TradeType.Buy ? referenceEntry + seedRisk : referenceEntry - seedRisk),
+                EventCandleLow = sourceBars.LowPrices[signalIndex],
+                EventCandleHigh = sourceBars.HighPrices[signalIndex],
+                OriginalPatternLow = sourceBars.LowPrices[signalIndex],
+                OriginalPatternHigh = sourceBars.HighPrices[signalIndex],
+                RelatedStopLevels = new List<double> { sourceBars.LowPrices[signalIndex], sourceBars.HighPrices[signalIndex] },
+                EventSlDistance = eventSlDistance,
+                Note = note
+            };
+            if (strategyMode == BacktestStrategyMode.sweep_reclaim)
+            {
+                var chain = GetCanonicalEventsForSymbolTimeFrame(symbolName, strategyTimeFrame, 512, 180)
+                    .FirstOrDefault(e => e.EventType == CanonicalEventType.SweepReclaimChain &&
+                        e.BarTime == signalTime && e.IsBullish == (tradeType == TradeType.Buy));
+                var start = ResolveSourceBarIndex(sourceBars, chain.ChainStartTime);
+                if (chain.ChainStartTime == DateTime.MinValue || start < 0 || start > signalIndex)
+                    return false;
+                signal.SourceLabel = BuildCanonicalMarketEventName(chain);
+                signal.PatternSpan = signalIndex - start + 1;
+                var patternSpan = signal.PatternSpan;
+                signal.OriginalPatternLow = Enumerable.Range(start, patternSpan).Min(i => sourceBars.LowPrices[i]);
+                signal.OriginalPatternHigh = Enumerable.Range(start, patternSpan).Max(i => sourceBars.HighPrices[i]);
+                signal.Note += " [chain_start=" + chain.ChainStartTime.ToString("O", CultureInfo.InvariantCulture) +
+                    ";chain_end=" + signalTime.ToString("O", CultureInfo.InvariantCulture) + ";sweep>rejection>choch>bos>candle]";
+            }
+            return ApplySharedStrategyTradePreset(strategy, ref signal);
+        }
+
+        private bool ApplySharedStrategyTradePreset(
+            Dictionary<string, object> strategy,
+            ref BacktestStrategySignal signal)
+        {
+            var trade = GetStrategyPresetSection(strategy, "trade_config");
+            if (trade == null)
+                return true;
+
+            StrategyTradeChainMode chainMode;
+            if (TryGetStrategyPresetEnum(trade, "first_trade", out chainMode))
+            {
+                if (chainMode == StrategyTradeChainMode.No)
+                    return false;
+                signal.TradeChainModeOverride = chainMode;
+            }
+            StrategyEntryType entryMode;
+            if (TryGetStrategyPresetEnum(trade, "entry", out entryMode))
+                signal.EntryModeOverride = entryMode;
+            StrategyStopLossMode stopLossMode;
+            if (TryGetStrategyPresetEnum(trade, "sl", out stopLossMode))
+                signal.StopLossModeOverride = stopLossMode;
+            StrategyTakeProfitMode takeProfitMode;
+            if (TryGetStrategyPresetEnum(trade, "tp", out takeProfitMode))
+                signal.TakeProfitModeOverride = takeProfitMode;
+            StrategyOrderCountMode orderCountMode;
+            if (TryGetStrategyPresetEnum(trade, "trade_count", out orderCountMode))
+                signal.OrderCountModeOverride = orderCountMode;
+            return true;
+        }
+
         private bool TryBuildCustomTradeSignal(string symbolName, TimeFrame strategyTimeFrame, out BacktestStrategySignal signal)
         {
             signal = default(BacktestStrategySignal);
@@ -30786,13 +32661,39 @@ namespace cAlgo.Robots
             InitializeRelatedOfficialZoneFromCustomTrigger(symbolName, strategyTimeFrame, ref signal);
             InitializeWaitConfirmReference(symbolName, strategyTimeFrame, ref signal);
             ApplyStrategyConfluenceSizing(symbolName, strategyTimeFrame, ref signal);
+            var fullEventLogTriggers = new List<TradeTriggerEvent>();
+            try
+            {
+                var fullEventLogBars = GetBarsForCurrentMasterTimer(strategyTimeFrame, symbolName);
+                var fullEventLogBarIndex = ResolveSourceBarIndex(fullEventLogBars, signalTime);
+                if (IsValidBarIndex(fullEventLogBars, fullEventLogBarIndex))
+                {
+                    fullEventLogTriggers = CollectSelectedStrategyTriggerCandidatesAtBar(
+                        symbolName,
+                        strategyTimeFrame,
+                        fullEventLogBars,
+                        fullEventLogBarIndex,
+                        GetSelectedStrategyCustomEventOptions(),
+                        0);
+                }
+            }
+            catch
+            {
+                fullEventLogTriggers.Clear();
+            }
             SafePrint(
-                "[StrategyTrigger] CustomTrade NOW symbol={0} tf={1} side={2} label={3} signal={4:yyyy-MM-dd HH:mm} audit={5}",
+                "[StrategyTrigger] CustomTrade NOW symbol={0} tf={1} side={2} label={3} signal={4:yyyy-MM-dd HH:mm} full_events={5} audit={6}",
                 symbolName,
                 GetTimeFrameShortLabel(strategyTimeFrame),
                 signal.TradeType == TradeType.Buy ? "BUY" : "SELL",
                 signal.SourceLabel,
                 signal.SignalTime,
+                FormatFullTradeTriggerEventLog(
+                    fullEventLogTriggers.Count > 0
+                        ? fullEventLogTriggers
+                        : CollectTradeTriggerCandidates(symbolName, strategyTimeFrame)
+                            .Where(trigger => trigger.BarTime == signalTime),
+                    tradeType == TradeType.Buy),
                 BuildRecentCandlePatternTriggerAudit(symbolName, strategyTimeFrame, 4));
             return true;
         }
@@ -31668,7 +33569,7 @@ namespace cAlgo.Robots
                 return;
             }
 
-            if (!ShouldStrategySubmitOrders())
+            if (!ShouldStrategySubmitOrdersForMarket(symbolName, strategyEvent.SourceTimeFrame, tradeType))
             {
                 SafePrint(
                     "[Strategy] Signal {0} {1} {2} from {3} {4} @ {5:F5} SL={6:F5} TP={7:F5} risk={8:F2}",
@@ -31681,6 +33582,7 @@ namespace cAlgo.Robots
                     approvedSl,
                     approvedTp,
                     approvedRiskMoney);
+                AddCustomTradeTriggerMarker(symbolName, finalGateSignal);
                 _backtestStrategyHandledEventKeys.Add(eventKey);
                 return;
             }
@@ -32173,6 +34075,36 @@ namespace cAlgo.Robots
                 symbol, signal.TradeType, entryPrice, stopLoss, targetRewardRisk, multiplier);
         }
 
+        private void ApplyStrategySignalTakeProfitLimit(
+            Symbol symbol,
+            ref BacktestStrategySignal signal,
+            double entryPrice,
+            double stopLoss,
+            ref double takeProfit)
+        {
+            if (signal.TakeProfitLimitPrice <= 0 || !(entryPrice > 0) || !(stopLoss > 0))
+                return;
+
+            var riskDistance = Math.Abs(entryPrice - stopLoss);
+            if (!(riskDistance > 0))
+                return;
+            var rrOneTarget = signal.TradeType == TradeType.Buy
+                ? entryPrice + riskDistance
+                : entryPrice - riskDistance;
+            var selected = CTraderStrategyEngine.ResolveNearestDirectionalTarget(
+                signal.TradeType,
+                entryPrice,
+                rrOneTarget,
+                signal.TakeProfitLimitPrice);
+            if (!(selected > 0))
+                return;
+
+            takeProfit = NormalizePriceToSymbol(symbol, selected);
+            signal.TakeProfitSourceCode = AttachStrategyProtectionSourceDetail(
+                "WFT",
+                "Min(RR1,1stOpen)");
+        }
+
         private string BuildStrategyOrderComment(Symbol symbol, string sid, int legNumber, string symbolName, TimeFrame sourceTimeFrame, string eventName, double entryPrice = 0, double takeProfit = 0, double stopLoss = 0, string riskComment = "", string entryMode = "", bool isLimitOrder = false, int patternToEntryBars = 1, DateTime triggerBarTime = default(DateTime), string protectionComment = "", bool includeConfluence = true, BacktestStrategySignal signal = default(BacktestStrategySignal))
         {
             if (sourceTimeFrame == null)
@@ -32197,8 +34129,12 @@ namespace cAlgo.Robots
             var protectionCodes = (protectionComment ?? "").Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
             var tpSourceCode = protectionCodes.Length > 0 ? protectionCodes[0] : signal.TakeProfitSourceCode;
             var slSourceCode = protectionCodes.Length > 1 ? protectionCodes[1] : signal.StopLossSourceCode;
-            var tpArtifact = ResolveStrategyProtectionArtifactLabel(symbol, symbolName, sourceTimeFrame, signal, takeProfit, tpSourceCode, false, eventLabel, rewardRiskComment);
-            var slArtifact = ResolveStrategyProtectionArtifactLabel(symbol, symbolName, sourceTimeFrame, signal, stopLoss, slSourceCode, true, eventLabel, rewardRiskComment);
+            var tpArtifact = IsDetailedStrategyProtectionComment(tpSourceCode)
+                ? tpSourceCode.Trim().ToLowerInvariant()
+                : ResolveStrategyProtectionArtifactLabel(symbol, symbolName, sourceTimeFrame, signal, takeProfit, tpSourceCode, false, eventLabel, rewardRiskComment);
+            var slArtifact = IsDetailedStrategyProtectionComment(slSourceCode)
+                ? slSourceCode.Trim().ToLowerInvariant()
+                : ResolveStrategyProtectionArtifactLabel(symbol, symbolName, sourceTimeFrame, signal, stopLoss, slSourceCode, true, eventLabel, rewardRiskComment);
             sb.Append("|TP:");
             if (!string.IsNullOrWhiteSpace(tpArtifact))
                 sb.Append(tpArtifact).Append(' ');
@@ -32273,6 +34209,9 @@ namespace cAlgo.Robots
 
         private string ResolveStrategyProtectionArtifactLabel(Symbol symbol, string symbolName, TimeFrame sourceTimeFrame, BacktestStrategySignal signal, double price, string sourceCode, bool isStopLoss, string eventLabel, string rewardRiskComment)
         {
+            var detail = ExtractStrategyProtectionSourceDetail(sourceCode);
+            if (!string.IsNullOrWhiteSpace(detail))
+                return detail.ToLowerInvariant();
             var code = NormalizeStrategyProtectionSourceCode(sourceCode);
             var tf = GetMiniChartLabel(sourceTimeFrame);
             switch (code)
@@ -32292,7 +34231,24 @@ namespace cAlgo.Robots
                 case "PT": return NormalizeStrategyArtifactLabel(eventLabel, sourceTimeFrame, "pattern");
                 case "CW":
                 case "CW15":
-                case "CW2": return tf + ".wick";
+                case "CW2":
+                case "W05":
+                case "W07":
+                case "W11":
+                case "W13":
+                case "W15":
+                case "W2": return tf + ".wick";
+                case "BDY": return tf + ".body";
+                case "AT5": return "atr5";
+                case "AT12": return "atr12";
+                case "AT24": return "atr24";
+                case "AT48": return "atr48";
+                case "R24": return "range24";
+                case "SLTF": return tf + ".swing";
+                case "SHTF": return "htf.swing";
+                case "S15": return "m15.swing";
+                case "S1H": return "h1.swing";
+                case "S4H": return "h4.swing";
                 case "MIN":
                 case "MS": return "";
                 case "ATR1":
@@ -32302,6 +34258,17 @@ namespace cAlgo.Robots
                     var matched = ResolveNearestStrategyLevelArtifact(symbol, symbolName, price, new[] { sourceTimeFrame });
                     return string.IsNullOrWhiteSpace(matched) ? (string.IsNullOrWhiteSpace(code) ? "" : code.ToLowerInvariant()) : matched;
             }
+        }
+
+        private bool IsDetailedStrategyProtectionComment(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return false;
+            return value.IndexOf('>') >= 0 ||
+                value.IndexOf('*') >= 0 ||
+                value.IndexOf('+') >= 0 ||
+                value.IndexOf('~') >= 0 ||
+                _rxRrPrefix.IsMatch(value.Trim());
         }
 
         private string ResolveNearestStrategyLevelArtifact(Symbol symbol, string symbolName, double price, IEnumerable<TimeFrame> timeFrames)
@@ -32340,13 +34307,13 @@ namespace cAlgo.Robots
             if (string.IsNullOrWhiteSpace(text) || string.Equals(text.Trim(), "none", StringComparison.OrdinalIgnoreCase))
                 return 0;
             var count = 0;
-            foreach (Match match in Regex.Matches(text, @"\[([^\]]*)\]"))
+            foreach (Match match in _rxBracketContent.Matches(text))
             {
                 var content = match.Groups[1].Value;
                 if (!string.IsNullOrWhiteSpace(content))
                     count += content.Split(new[] { " | " }, StringSplitOptions.RemoveEmptyEntries).Length;
             }
-            var hidden = Regex.Match(text, @"\s\+(\d+)\s*$");
+            var hidden = _rxTrailingPlusNum.Match(text);
             int hiddenCount;
             if (hidden.Success && int.TryParse(hidden.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out hiddenCount))
                 count += Math.Max(0, hiddenCount);
@@ -32400,22 +34367,56 @@ namespace cAlgo.Robots
                 ? Math.Max(symbol.PipSize * 0.05, 0.00000001)
                 : 0.00000001;
             if (requestedStopLoss > 0 && approvedStopLoss > 0 && Math.Abs(requestedStopLoss - approvedStopLoss) > tolerance)
-                finalSignal.StopLossSourceCode = "MS";
+                finalSignal.StopLossSourceCode = AppendStrategyProtectionAdjustment(finalSignal.StopLossSourceCode, "min");
             if (requestedTakeProfit > 0 && approvedTakeProfit > 0 && Math.Abs(requestedTakeProfit - approvedTakeProfit) > tolerance)
-                finalSignal.TakeProfitSourceCode = "MS";
+                finalSignal.TakeProfitSourceCode = AppendStrategyProtectionAdjustment(finalSignal.TakeProfitSourceCode, "min");
             return BuildStrategyProtectionSourceComment(finalSignal, approvedStopLoss, approvedTakeProfit);
+        }
+
+        private string AppendStrategyProtectionAdjustment(string sourceCode, string adjustment)
+        {
+            var code = NormalizeStrategyProtectionSourceCode(sourceCode);
+            if (string.IsNullOrWhiteSpace(code))
+                code = "MS";
+            var detail = ExtractStrategyProtectionSourceDetail(sourceCode);
+            if (string.IsNullOrWhiteSpace(detail))
+                detail = FormatStrategyProtectionCommentCode(code);
+            return AttachStrategyProtectionSourceDetail(
+                code,
+                detail + "~" + (string.IsNullOrWhiteSpace(adjustment) ? "adjusted" : adjustment.Trim()));
         }
 
         private string FormatStrategyProtectionCommentCode(string code)
         {
+            var detail = ExtractStrategyProtectionSourceDetail(code);
+            if (!string.IsNullOrWhiteSpace(detail))
+                return detail;
             var normalized = NormalizeStrategyProtectionSourceCode(code);
             switch (normalized)
             {
-                case "CR5": return "5BAR";
-                case "CR10": return "10BAR";
+                case "CR": return "RANGE";
+                case "CE5": return "5BAR-EXTREME";
+                case "CE10": return "10BAR-EXTREME";
                 case "CW": return "WICK";
                 case "CW15": return "WICK15";
                 case "CW2": return "WICK2";
+                case "W05": return "WICK05";
+                case "W07": return "WICK07";
+                case "W11": return "WICK11";
+                case "W13": return "WICK13";
+                case "W15": return "WICK15";
+                case "W2": return "WICK2";
+                case "BDY": return "BODY";
+                case "AT5": return "ATR5";
+                case "AT12": return "ATR12";
+                case "AT24": return "ATR24";
+                case "AT48": return "ATR48";
+                case "R24": return "RANGE24";
+                case "SLTF": return "SWINGLTF";
+                case "SHTF": return "SWINGHTF";
+                case "S15": return "SWING15M";
+                case "S1H": return "SWING1H";
+                case "S4H": return "SWING4H";
                 case "PT": return "PAT";
                 case "MS": return "MIN";
                 default: return normalized;
@@ -32427,8 +34428,28 @@ namespace cAlgo.Robots
             var value = string.IsNullOrWhiteSpace(code) ? "" : code.Trim().ToUpperInvariant();
             if (string.IsNullOrWhiteSpace(value))
                 return "";
-            value = Regex.Replace(value, "[^A-Z0-9]", "");
+            var detailSeparator = value.IndexOf('@');
+            if (detailSeparator >= 0)
+                value = value.Substring(0, detailSeparator);
+            value = _rxNonAlphaUpperNum.Replace(value, "");
             return value.Length <= 4 ? value : value.Substring(0, 4);
+        }
+
+        private string ExtractStrategyProtectionSourceDetail(string code)
+        {
+            var value = string.IsNullOrWhiteSpace(code) ? "" : code.Trim();
+            var separator = value.IndexOf('@');
+            return separator >= 0 && separator + 1 < value.Length
+                ? value.Substring(separator + 1).Trim()
+                : "";
+        }
+
+        private string AttachStrategyProtectionSourceDetail(string sourceCode, string detail)
+        {
+            var normalized = NormalizeStrategyProtectionSourceCode(sourceCode);
+            return string.IsNullOrWhiteSpace(normalized) || string.IsNullOrWhiteSpace(detail)
+                ? normalized
+                : normalized + "@" + detail.Trim();
         }
 
         private bool IsWaitConfirmAddOnSignal(BacktestStrategySignal signal)
@@ -32932,9 +34953,17 @@ namespace cAlgo.Robots
                     IsBullish = signal.TradeType == TradeType.Buy,
                     IsDirectionless = false
                 };
-                if (!PassesNamedConfluences(symbolName, sourceBars, namedTrigger))
+                var failedNamedConfluences = GetFailedNamedConfluences(symbolName, sourceBars, namedTrigger);
+                if (ConfluenceBarDirection && !PassesBarDirectionConfluence(sourceBars, namedTrigger))
+                    failedNamedConfluences.Add("bar_direction");
+                if (failedNamedConfluences.Count > 0)
                 {
-                    rejectReason = "named_confluence_failed scopes=" + BuildNamedConfluenceCacheKey();
+                    var context = string.Format(CultureInfo.InvariantCulture,
+                        "trigger={0}; {1} {2}; bar={3:yyyy-MM-dd HH:mm:ss}; failed=",
+                        signal.SourceLabel, signal.TradeType == TradeType.Buy ? "BUY" : "SELL",
+                        GetMiniChartLabel(signal.SourceTimeFrame), sourceBars.OpenTimes[confluenceIndex]);
+                    rejectReason = string.Join(Environment.NewLine, failedNamedConfluences
+                        .Distinct().Select(failure => context + DescribeFailedNamedConfluence(failure)));
                     return false;
                 }
             }
@@ -33636,13 +35665,23 @@ namespace cAlgo.Robots
             if (TryResolveStrategyTradeChainEntryMode(name, out entryMode))
                 result.EntryMode = entryMode;
 
-            if (HasStrategyTradeChainToken(name, "Event"))
-                result.StopLossMode = StrategyStopLossMode.@event;
-            else if (HasStrategyTradeChainToken(name, "Wick"))
-                result.StopLossMode = StrategyStopLossMode.wick;
-            else if (HasStrategyTradeChainToken(name, "Swing"))
+            // Wick15/Wick20 in a Trade 1/2/3 preset are explicit per-leg SL choices.
+            // They intentionally override the global SL selection, so separate trade legs
+            // can use different wick distances from the same signal.
+            StrategyStopLossMode chainStopLossMode;
+            if (TryResolveStrategyTradeChainStopLossMode(name, out chainStopLossMode))
             {
-                result.StopLossMode = StrategyStopLossMode.structure;
+                result.StopLossMode = chainStopLossMode;
+            }
+            // The original Wick/Event/Swing presets retain their legacy Auto behaviour.
+            else if (SelectedStrategyStopLossMode == StrategyStopLossMode.Auto)
+            {
+                if (HasStrategyTradeChainToken(name, "Event"))
+                    result.StopLossMode = StrategyStopLossMode.@event;
+                else if (HasStrategyTradeChainToken(name, "Wick"))
+                    result.StopLossMode = StrategyStopLossMode.wick;
+                else if (HasStrategyTradeChainToken(name, "Swing"))
+                    result.StopLossMode = StrategyStopLossMode.structure;
             }
 
             StrategyTakeProfitMode takeProfitMode;
@@ -33688,6 +35727,26 @@ namespace cAlgo.Robots
                 : StrategyEntryType.market;
         }
 
+        private static bool TryResolveStrategyTradeChainStopLossMode(
+            string modeName,
+            out StrategyStopLossMode stopLossMode)
+        {
+            stopLossMode = StrategyStopLossMode.Auto;
+            var tokens = (modeName ?? "")
+                .Split(new[] { '_' }, StringSplitOptions.RemoveEmptyEntries);
+            if (tokens.Any(token => string.Equals(token, "Wick15", StringComparison.OrdinalIgnoreCase)))
+            {
+                stopLossMode = StrategyStopLossMode.Wick15;
+                return true;
+            }
+            if (tokens.Any(token => string.Equals(token, "Wick20", StringComparison.OrdinalIgnoreCase)))
+            {
+                stopLossMode = StrategyStopLossMode.Wick2;
+                return true;
+            }
+            return false;
+        }
+
         private static bool TryResolveStrategyTradeChainTakeProfitMode(string modeName, out StrategyTakeProfitMode takeProfitMode)
         {
             takeProfitMode = StrategyTakeProfitMode.Auto;
@@ -33712,6 +35771,22 @@ namespace cAlgo.Robots
 
         private ResolvedTradeChainPreset ResolveStrategyTradeChainPreset(BacktestStrategySignal signal)
         {
+            if (signal.StrategyMode == BacktestStrategyMode.WickFlipContinuation)
+            {
+                return new ResolvedTradeChainPreset
+                {
+                    RawMode = StrategyTradeChainMode.Now,
+                    Timing = StrategyTradeTiming.Now,
+                    EntryMode = StrategyEntryType.market,
+                    StopLossMode = StrategyStopLossMode.candle_wick,
+                    // WickFlip fixes its entry and SL model, but TP remains user-configured.
+                    // Do not silently replace the Trade Config TP selection with RR_1.
+                    TakeProfitMode = SelectedStrategyTakeProfitMode,
+                    OrderCountMode = StrategyOrderCountMode._1,
+                    NumberOfTrades = 1,
+                    OverridesGlobalModes = true
+                };
+            }
             var result = signal.TradeChainModeOverride != StrategyTradeChainMode.No
                 ? ResolveStrategyTradeChainPreset(signal.TradeChainModeOverride)
                 : ResolveStrategyTradeChainPreset(signal.TradeChainSlot);
@@ -33720,6 +35795,15 @@ namespace cAlgo.Robots
                 // Entry overrides are shared by Wick, Event and Swing; their SL source
                 // distinguishes the presets for the same setup.
                 result.EntryMode = signal.EntryModeOverride.Value;
+            }
+            if (signal.StopLossModeOverride.HasValue)
+                result.StopLossMode = signal.StopLossModeOverride.Value;
+            if (signal.TakeProfitModeOverride.HasValue)
+                result.TakeProfitMode = signal.TakeProfitModeOverride.Value;
+            if (signal.OrderCountModeOverride.HasValue)
+            {
+                result.OrderCountMode = signal.OrderCountModeOverride.Value;
+                result.NumberOfTrades = ResolveStrategyOrderCount(signal.OrderCountModeOverride.Value);
             }
             return result;
         }
@@ -34372,7 +36456,11 @@ namespace cAlgo.Robots
             signal.TakeProfitSourceCode = takeProfitSourceCode;
             ApplyStrategySignalRewardRisk(symbol, signal, effectiveEntryPrice, sl, tradePreset.TakeProfitMode, ref tp);
             if (CTraderStrategyEngine.IsRewardRiskMode(tradePreset.TakeProfitMode))
-                signal.TakeProfitSourceCode = "RR";
+                signal.TakeProfitSourceCode = AttachStrategyProtectionSourceDetail(
+                    "RR",
+                    "RR" + CTraderStrategyEngine.ResolveRewardRisk(tradePreset.TakeProfitMode)
+                        .ToString("0.##", CultureInfo.InvariantCulture));
+            ApplyStrategySignalTakeProfitLimit(symbol, ref signal, effectiveEntryPrice, sl, ref tp);
             string waitConfirmRiskRejectReason;
             if (!TryValidateFinalWaitConfirmRisk(signal, effectiveEntryPrice, sl, out waitConfirmRiskRejectReason))
             {
@@ -34478,7 +36566,7 @@ namespace cAlgo.Robots
                         FormatPriceShort(sl));
                 }
             }
-            var legsPerSignal = effectiveUseLimitOrder
+            var legsPerSignal = effectiveUseLimitOrder || effectiveUseStopOrder
                 ? Math.Max(1, splitEntries.Count)
                 : Math.Max(1, 1 + splitEntries.Count);
             splitWeights = BuildStrategyChainRiskWeights(legsPerSignal, signal.TradeChainSlot);
@@ -34593,7 +36681,7 @@ namespace cAlgo.Robots
                 effectiveRewardRisk);
             SafePrint("[RiskSizing] {0} {1} {2}: {3}", signal.StrategyId, action, symbolName, riskLogDetail);
 
-            if (!signal.IsManualExecution && !ShouldStrategySubmitOrders())
+            if (!signal.IsManualExecution && !ShouldStrategySubmitOrdersForMarket(symbolName, signal.SourceTimeFrame, signal.TradeType))
             {
                 SafePrint(
                     "[Strategy] Signal {0} {1} {2} {3} event={4} @ {5:F5} SL={6:F5} TP={7:F5} risk={8:F2}{9}",
@@ -34607,6 +36695,7 @@ namespace cAlgo.Robots
                     approvedTp,
                     approvedRiskMoney,
                     string.IsNullOrWhiteSpace(signal.Note) ? "" : " " + signal.Note);
+                AddCustomTradeTriggerMarker(symbolName, signal);
                 _backtestStrategyHandledEventKeys.Add(eventKey);
                 return;
             }
@@ -34879,14 +36968,21 @@ namespace cAlgo.Robots
                     if (recovered)
                     {
                         AddCustomTradeTriggerMarker(symbolName, signal);
-                        _backtestStrategyHandledEventKeys.Add(eventKey);
                     }
+                    // Always mark the group handled once a pending order was placed,
+                    // even if protection failed, to prevent a duplicate order on the
+                    // next bar-close evaluation of the same source bar.
+                    _backtestStrategyHandledEventKeys.Add(eventKey);
                     return;
                 }
             }
 
             if (result != null && result.IsSuccessful)
             {
+                // Mark this group handled immediately so that any exception in the
+                // post-trade processing block below cannot cause a duplicate trade on
+                // the next OnBarClosed evaluation of the same source bar.
+                _backtestStrategyHandledEventKeys.Add(eventKey);
                 var finalApprovedSl = approvedSl;
                 var finalApprovedTp = approvedTp;
                 if (result.Position != null)
@@ -34904,6 +37000,7 @@ namespace cAlgo.Robots
                             finalApprovedSl,
                             tradePreset.TakeProfitMode,
                             ref finalApprovedTp);
+                        ApplyStrategySignalTakeProfitLimit(symbol, ref signal, result.Position.EntryPrice, finalApprovedSl, ref finalApprovedTp);
                     }
                     string protectionError;
                     if (!TryEnsureStrategyPositionProtection(result.Position, symbol, action, finalApprovedSl, finalApprovedTp, out protectionError))
@@ -35592,8 +37689,9 @@ namespace cAlgo.Robots
                     TradeType direction;
                     if (CTraderStrategyEngine.TryResolveCrossDirection(fastPrev, fastCurrent, slowPrev, slowCurrent, out direction))
                         signal = CTraderStrategyEngine.CreateSignal("ema_cross_v1", BacktestStrategyMode.Off, "", GetMiniChartLabel(sourceTimeFrame) + (direction == TradeType.Buy ? ".ema9.x>ema21" : ".ema9.x<ema21"), direction, sourceTimeFrame, barTime);
-                    return signal.IsValid;
-                }
+            return signal.IsValid;
+        }
+
                 case BacktestStrategyMode.SmaCrossV1:
                 {
                     var fastPrev = ComputeSimpleMovingAverage(sourceBars, previousIndex, 20);
@@ -35724,6 +37822,93 @@ namespace cAlgo.Robots
             }
 
             return false;
+        }
+
+        private bool TryBuildWickFlipContinuationSignal(
+            string symbolName,
+            TimeFrame strategyTimeFrame,
+            out BacktestStrategySignal signal)
+        {
+            signal = default(BacktestStrategySignal);
+
+            Symbol symbol;
+            Bars sourceBars;
+            int secondIndex;
+            int previousIndex;
+            if (!TryGetBacktestStrategyBars(symbolName, strategyTimeFrame, out symbol, out sourceBars, out secondIndex, out previousIndex))
+                return false;
+
+            var secondRange = sourceBars.HighPrices[secondIndex] - sourceBars.LowPrices[secondIndex];
+            if (!(secondRange > 0))
+                return false;
+
+            TradeType tradeType;
+            int patternStartIndex;
+            int firstWickIndex;
+            if (!CTraderStrategyEngine.TryResolveMultiCandleWickFlipContinuationPattern(
+                    sourceBars,
+                    secondIndex,
+                    out tradeType,
+                    out patternStartIndex,
+                    out firstWickIndex))
+                return false;
+
+            var patternSpan = secondIndex - patternStartIndex + 1;
+            var bridgeCandles = secondIndex - firstWickIndex - 1;
+            var approachCandles = firstWickIndex - patternStartIndex;
+
+            var referenceEntry = sourceBars.ClosePrices[secondIndex];
+            var stopLoss = tradeType == TradeType.Buy ? sourceBars.LowPrices[secondIndex] : sourceBars.HighPrices[secondIndex];
+            if (!(referenceEntry > 0) || !(stopLoss > 0) ||
+                (tradeType == TradeType.Buy ? stopLoss >= referenceEntry : stopLoss <= referenceEntry))
+                return false;
+
+            var riskDistance = Math.Abs(referenceEntry - stopLoss);
+            // This seed target is replaced by the selected TP mode during execution. Keep it
+            // at 1R and do not cap it at the first candle's open: that old hidden cap produced
+            // TP:minr comments and silently overrode the user's configured RR.
+            var takeProfit = tradeType == TradeType.Buy
+                ? referenceEntry + riskDistance
+                : referenceEntry - riskDistance;
+
+            signal = new BacktestStrategySignal
+            {
+                IsValid = true,
+                StrategyId = "wick_flip_continuation",
+                StrategyMode = BacktestStrategyMode.WickFlipContinuation,
+                SymbolName = symbolName,
+                SourceLabel = GetMiniChartLabel(strategyTimeFrame) + ".mwfc" +
+                    patternSpan.ToString(CultureInfo.InvariantCulture) +
+                    (tradeType == TradeType.Buy ? "↑" : "↓"),
+                TradeType = tradeType,
+                SourceTimeFrame = strategyTimeFrame,
+                SignalTime = sourceBars.OpenTimes[secondIndex],
+                PatternToEntryBars = 1,
+                PatternSpan = patternSpan,
+                UseLimitOrder = false,
+                EntryPrice = 0,
+                OriginalEntryReference = referenceEntry,
+                StopLoss = NormalizePriceToSymbol(symbol, stopLoss),
+                TakeProfit = NormalizePriceToSymbol(symbol, takeProfit),
+                TakeProfitLimitPrice = 0,
+                StopLossSourceCode = "CW",
+                TakeProfitSourceCode = "WFT",
+                EventCandleLow = sourceBars.LowPrices[secondIndex],
+                EventCandleHigh = sourceBars.HighPrices[secondIndex],
+                OriginalPatternLow = Enumerable.Range(patternStartIndex, patternSpan).Min(index => sourceBars.LowPrices[index]),
+                OriginalPatternHigh = Enumerable.Range(patternStartIndex, patternSpan).Max(index => sourceBars.HighPrices[index]),
+                RelatedStopLevels = new List<double> { sourceBars.LowPrices[secondIndex], sourceBars.HighPrices[secondIndex] },
+                EventSlDistance = riskDistance,
+                Note = string.Format(CultureInfo.InvariantCulture,
+                    "[MWFC span={0};approach={1};bridge={2};wick1=long_{3};wick2=long_{4};path=directional_no_sideways;wick/range>=0.40;wick/(body+minor_wick)>=0.70;opposite_wick/range<=0.15;final_wick/body>=1.50;direction=fades_wick2;entry_ref=final_close;SL=final_wick;TP=configured_RR]",
+                    patternSpan,
+                    approachCandles,
+                    bridgeCandles,
+                    tradeType == TradeType.Buy ? "upper" : "lower",
+                    tradeType == TradeType.Buy ? "lower" : "upper")
+            };
+            ApplyStrategyConfluenceSizing(symbolName, strategyTimeFrame, ref signal);
+            return signal.IsValid;
         }
 
         private bool TryBuildPriceActionTriggerSignal(string symbolName, TimeFrame strategyTimeFrame, string strategyId, bool useSuggestedLevels, int slRank, int tpRank, bool useLimitBodyMidEntry, out BacktestStrategySignal signal)
@@ -35880,7 +38065,8 @@ namespace cAlgo.Robots
                     return true;
                 _lastStrategyEngineScanUtc = DateTime.UtcNow;
                 EnsureSharedConfigCatalogLoaded();
-                ProcessSharedPositionRuleActions();
+                if (ShouldStrategySubmitOrders())
+                    ProcessSharedPositionRuleActions();
                 if (configuredStrategies.Count == 0)
                     return true;
                 var isBacktesting = IsBacktestingRuntime();
@@ -35920,13 +38106,8 @@ namespace cAlgo.Robots
 
                     try
                     {
-                    CancelInvalidateOrders(target.SymbolName, target.TimeFrame);
-                    SafePrint(
-                        "[StrategyProcess] start at={0:yyyy-MM-dd HH:mm:ss} symbol={1} tf={2} closed={3:yyyy-MM-dd HH:mm:ss}",
-                        Server != null ? Server.Time : DateTime.UtcNow,
-                        target.SymbolName,
-                        GetTimeFrameShortLabel(target.TimeFrame),
-                        ResolveLatestClosedBarTime(target.SymbolName, target.TimeFrame));
+                    if (ShouldStrategySubmitOrdersForMarket(target.SymbolName, target.TimeFrame))
+                        CancelInvalidateOrders(target.SymbolName, target.TimeFrame);
                     PreloadCanonicalEventsForStrategyTarget(target, configuredStrategies);
 
                     foreach (var strategyMode in configuredStrategies)
@@ -35948,10 +38129,6 @@ namespace cAlgo.Robots
                                     string ruleRejectReason;
                                     if (TryGetCustomTradeRuleRejectReason(target.SymbolName, target.TimeFrame, out ruleRejectReason))
                                         LogStrategySkip(GetPrimaryCustomStrategyId(), target.SymbolName, ruleRejectReason);
-                                    SafePrint(
-                                        "[Strategy] Trigger audit {0}: {1}",
-                                        target.SymbolName,
-                                        BuildCustomTradeTriggerAudit(target.SymbolName, target.TimeFrame));
                                 }
                                 for (var tradeChainSlot = 1; tradeChainSlot <= 3; tradeChainSlot++)
                                 {
@@ -35963,6 +38140,45 @@ namespace cAlgo.Robots
                                         out waitConfirmSignal))
                                         ExecuteBacktestStrategySignal(target.SymbolName, waitConfirmSignal, false);
                                 }
+                                MarkLiveStrategyBarProcessed(strategyMode, target.SymbolName, target.TimeFrame);
+                                break;
+                            }
+                            case BacktestStrategyMode.candle_pattern_trend:
+                            case BacktestStrategyMode.pinbar_structure_event:
+                            case BacktestStrategyMode.engulfing_structure_event:
+                            case BacktestStrategyMode.wick_flip:
+                            case BacktestStrategyMode.reject_trendline:
+                            case BacktestStrategyMode.sweep_reclaim:
+                            {
+                                if (!ShouldRunLiveStrategyForNewClosedBar(strategyMode, target.SymbolName, target.TimeFrame))
+                                    break;
+                                string strategyId;
+                                BacktestStrategySignal fileSignal;
+                                if (TryGetFileBackedStrategyId(strategyMode, out strategyId) &&
+                                    TryBuildFileBackedStrategySignal(strategyMode, strategyId, target.SymbolName, target.TimeFrame, out fileSignal))
+                                {
+                                    ExecuteBacktestStrategySignal(target.SymbolName, fileSignal, false);
+                                }
+                                else
+                                {
+                                    LogStrategyInfoOnce(
+                                        string.IsNullOrWhiteSpace(strategyId) ? strategyMode.ToString() : strategyId,
+                                        target.SymbolName,
+                                        "no matching file-backed strategy signal on " + NormalizeTradeTfLabel(GetMiniChartLabel(target.TimeFrame)));
+                                }
+                                MarkLiveStrategyBarProcessed(strategyMode, target.SymbolName, target.TimeFrame);
+                                break;
+                            }
+                            case BacktestStrategyMode.WickFlipContinuation:
+                            {
+                                if (!ShouldRunLiveStrategyForNewClosedBar(strategyMode, target.SymbolName, target.TimeFrame))
+                                    break;
+
+                                BacktestStrategySignal wickFlipSignal;
+                                if (TryBuildWickFlipContinuationSignal(target.SymbolName, target.TimeFrame, out wickFlipSignal))
+                                    ExecuteBacktestStrategySignal(target.SymbolName, wickFlipSignal, false);
+                                else
+                                    LogStrategyInfoOnce("wick_flip_continuation", target.SymbolName, "no multi-candle V with opposite long wicks and directional bridge on " + NormalizeTradeTfLabel(GetMiniChartLabel(target.TimeFrame)));
                                 MarkLiveStrategyBarProcessed(strategyMode, target.SymbolName, target.TimeFrame);
                                 break;
                             }
@@ -36266,6 +38482,12 @@ namespace cAlgo.Robots
                 _chartIndicatorInitializationPhase++;
                 return;
             }
+            if (!isBacktesting && AreChartVisualsEnabled() && SyncNativeIndicatorsForChartContextIfChanged())
+            {
+                // Rebuild chart objects once after the native indicator panels have rebound to
+                // the newly visible symbol/timeframe. The normal dirty keys handle later bars.
+                DrawChartVisualOverlays();
+            }
             if (!isBacktesting && AreChartVisualsEnabled() && SyncDirectionalPaletteIfChanged())
             {
                 // Parameter edits must be visible immediately; do not wait for the normal
@@ -36284,7 +38506,7 @@ namespace cAlgo.Robots
                     SafeLog("ERROR", "[Bridge] Chart UI bootstrap failed: {0}", ex.Message);
                 }
             }
-            if (EnableLiveStrategyTrading && !isBacktesting && _masterTickCount <= 2)
+            if (IsLiveTradeEnabled() && !isBacktesting && _masterTickCount <= 2)
             {
                 var timerSymbol = ResolveSharedStrategySymbol(
                     Chart != null ? Chart.SymbolName : (Symbol != null ? Symbol.Name : ""));
@@ -36330,7 +38552,7 @@ namespace cAlgo.Robots
 
             if (_masterTickCount % 60 == 0) CleanupOldEntries();
 
-            if (!DisableMasterTimerNetworkForIsolation && Is42TradeServerSyncEnabled() && EnableLiveStrategyTrading)
+            if (!DisableMasterTimerNetworkForIsolation && Is42TradeServerSyncEnabled() && IsLiveTradeEnabled())
                 TriggerNewsGateRefreshIfNeeded();
 
             EnforceLiveStrategyProtectionSafety();
@@ -36454,7 +38676,7 @@ namespace cAlgo.Robots
             var syms = _trackedSymbols.Count > 0 ? new List<string>(_trackedSymbols) : new List<string>();
             if (syms.Count == 0)
             {
-                foreach (var configured in Regex.Split(StrategySymbols ?? "", "[,;\\s]+"))
+                foreach (var configured in _rxCommaSep.Split(StrategySymbols ?? ""))
                     if (!string.IsNullOrWhiteSpace(configured) && !syms.Contains(configured.Trim(), StringComparer.OrdinalIgnoreCase))
                         syms.Add(configured.Trim());
                 foreach (var pos in GetCurrentPositionsSnapshot())
@@ -36596,6 +38818,7 @@ namespace cAlgo.Robots
                                 { "origin_bar_time", originTime },
                                 { "confirmation_bar_time", confirmationTime },
                                 { "touch_bar_time", zone.TouchBarIndex >= 0 && zone.TouchBarIndex < sourceBars.Count ? ToUnixSecondsSafe(sourceBars.OpenTimes[zone.TouchBarIndex]) : (object)null },
+                                { "touch_count", Math.Max(0, zone.TouchCount) },
                                 { "invalidation_bar_time", zone.InvalidationBarIndex >= 0 && zone.InvalidationBarIndex < sourceBars.Count ? ToUnixSecondsSafe(sourceBars.OpenTimes[zone.InvalidationBarIndex]) : (object)null }
                             }
                         }
@@ -37139,7 +39362,7 @@ namespace cAlgo.Robots
                 SafePrint(
                     "[BotStop] OnStop reason={0} live={1} backtest={2} uptime_sec={3} symbol={4} tf={5}",
                     string.IsNullOrWhiteSpace(_lastStopReason) ? "external_or_unknown" : _lastStopReason,
-                    EnableLiveStrategyTrading,
+                    IsLiveTradeEnabled(),
                     IsBacktestingRuntime(),
                     uptimeSeconds,
                     Chart != null ? Chart.SymbolName : (Symbol != null ? Symbol.Name : ""),
@@ -37896,10 +40119,9 @@ namespace cAlgo.Robots
                 var scores = new List<int>();
                 foreach (var timeFrame in uniqueFrames)
                 {
-                    var bars = MarketData.GetBars(timeFrame, symbolName);
-                    var score = bars != null && bars.Count >= 10
-                        ? DetectPointInTimeStructureBiasScore(bars, timeFrame, 180)
-                        : 0;
+                    // Keep this compact dashboard on the same Trend/Bias engine used by
+                    // the trade confluence gate and the Trend/Bias Confluences settings.
+                    var score = GetSymbolTrendBiasForTimeFrame(symbolName, timeFrame);
                     scores.Add(score);
                 }
 
@@ -37940,9 +40162,19 @@ namespace cAlgo.Robots
 
                 var started = Stopwatch.StartNew();
                 var bars = MarketData.GetBars(timeFrame, normalizedSymbol);
-                var score = bars != null && bars.Count >= 10
-                    ? DetectPointInTimeStructureBiasScore(bars, timeFrame, 180)
-                    : 0;
+                var score = 0;
+                if (bars != null && bars.Count >= 10)
+                {
+                    var latestClosedIndex = bars.Count - 2;
+                    var decisionTime = ResolveSourceBarEndTime(
+                        bars,
+                        bars.OpenTimes[latestClosedIndex],
+                        timeFrame);
+                    score = ResolveTrendBiasSignedScoreAtDecisionTime(
+                        normalizedSymbol,
+                        timeFrame,
+                        decisionTime);
+                }
                 _symbolTrendBiasTimeFrameCache[cacheKey] = new TimedCacheEntry<int>
                 {
                     CreatedAtUtc = DateTime.UtcNow,
@@ -38040,6 +40272,469 @@ namespace cAlgo.Robots
                 context.SymbolName,
                 GetBacktestStrategyHigherTimeFrames(context.TimeFrame),
                 context.DecisionTime);
+        }
+
+        private TrendBiasComponentMask GetEnabledTrendBiasComponentMask()
+        {
+            var mask = TrendBiasComponentMask.None;
+            if (TrendBiasStructure != ConfluenceScopeMode.No) mask |= TrendBiasComponentMask.Structure;
+            if (TrendBiasEma != ConfluenceScopeMode.No) mask |= TrendBiasComponentMask.EmaAlignment;
+            if (TrendBiasRsi != ConfluenceScopeMode.No) mask |= TrendBiasComponentMask.Rsi;
+            if (TrendBiasMacd != ConfluenceScopeMode.No) mask |= TrendBiasComponentMask.Macd;
+            if (TrendBiasAdx != ConfluenceScopeMode.No) mask |= TrendBiasComponentMask.AdxStrength;
+            return mask;
+        }
+
+        private TrendBiasConfluenceScore BuildTrendBiasConfluenceScoreAt(
+            string symbolName,
+            TimeFrame strategyTimeFrame,
+            DateTime decisionTime)
+        {
+            var score = new TrendBiasConfluenceScore
+            {
+                EnabledMask = GetEnabledTrendBiasComponentMask(),
+                BullishMask = TrendBiasComponentMask.None,
+                BearishMask = TrendBiasComponentMask.None,
+                LtfStructureScore = 0,
+                HtfStructureScore = 0,
+                StructureDetail = "unavailable",
+                EmaDetail = "unavailable",
+                RsiDetail = "unavailable",
+                MacdDetail = "unavailable",
+                AdxDetail = "unavailable"
+            };
+            if (string.IsNullOrWhiteSpace(symbolName) || strategyTimeFrame == null || decisionTime == DateTime.MinValue)
+                return score;
+
+            var ltfStructureBullish = false;
+            var ltfStructureBearish = false;
+            var ltfEmaBullish = false;
+            var ltfEmaBearish = false;
+            var ltfRsiBullish = false;
+            var ltfRsiBearish = false;
+            var ltfMacdBullish = false;
+            var ltfMacdBearish = false;
+            var ltfAdxStrong = false;
+            var ltfEmaDetail = "unavailable";
+            var ltfRsiDetail = "unavailable";
+            var ltfMacdDetail = "unavailable";
+            var ltfAdxDetail = "unavailable";
+            ConfluenceEvaluationContext ltfContext;
+            if (TryCreateConfluenceEvaluationContextAtDecisionTime(
+                symbolName,
+                strategyTimeFrame,
+                decisionTime,
+                null,
+                out ltfContext))
+            {
+                score.LtfStructureScore = GetTrendBiasScoreAt(ltfContext);
+                ltfStructureBullish = score.LtfStructureScore >= 2;
+                ltfStructureBearish = score.LtfStructureScore <= -2;
+                EvaluateEmaTrendAlignment(ltfContext, 9, 21, out ltfEmaBullish, out ltfEmaBearish, out ltfEmaDetail);
+
+                var ltfRsi = ComputeRelativeStrengthIndex(ltfContext.Bars, ltfContext.BarIndex, 14);
+                ltfRsiBullish = MatchesRsiTrendBias(ltfRsi, true);
+                ltfRsiBearish = MatchesRsiTrendBias(ltfRsi, false);
+                ltfRsiDetail = "RSI14=" + FormatTrendBiasValue(ltfRsi) +
+                    " (bull>=50 & <70,bear<=50 & >30)";
+
+                double macdLine;
+                double macdSignal;
+                if (TryComputeMacdValues(ltfContext.Bars, ltfContext.BarIndex, 12, 26, 9, out macdLine, out macdSignal))
+                {
+                    ltfMacdBullish = macdLine > macdSignal;
+                    ltfMacdBearish = macdLine < macdSignal;
+                    ltfMacdDetail = "MACD12/26/9=" + FormatTrendBiasValue(macdLine) +
+                        "/" + FormatTrendBiasValue(macdSignal);
+                }
+
+                var ltfAdx = ComputeAverageDirectionalIndex(ltfContext.Bars, ltfContext.BarIndex, 14);
+                ltfAdxStrong = IsFiniteNumber(ltfAdx) && ltfAdx >= 25.0;
+                ltfAdxDetail = "ADX14=" + FormatTrendBiasValue(ltfAdx) + " (min=25)";
+            }
+
+            var htfStructureScores = new List<int>();
+            var htfStructureStates = new List<int>();
+            var htfEmaStates = new List<int>();
+            var htfRsiStates = new List<int>();
+            var htfMacdStates = new List<int>();
+            var htfAdxStates = new List<bool>();
+            var htfEmaDetails = new List<string>();
+            var htfRsiDetails = new List<string>();
+            var htfMacdDetails = new List<string>();
+            var htfAdxDetails = new List<string>();
+            foreach (var htf in GetBacktestStrategyHigherTimeFrames(strategyTimeFrame))
+            {
+                ConfluenceEvaluationContext htfContext;
+                if (!TryCreateConfluenceEvaluationContextAtDecisionTime(
+                    symbolName,
+                    htf,
+                    decisionTime,
+                    null,
+                    out htfContext))
+                    continue;
+                var structureScore = GetTrendBiasScoreAt(htfContext);
+                htfStructureScores.Add(structureScore);
+                htfStructureStates.Add(structureScore >= 2 ? 1 : structureScore <= -2 ? -1 : 0);
+                var htfLabel = NormalizeTradeTfLabel(GetMiniChartLabel(htf));
+
+                bool htfEmaBullish;
+                bool htfEmaBearish;
+                string htfEmaDetail;
+                EvaluateEmaTrendAlignment(htfContext, 20, 50, out htfEmaBullish, out htfEmaBearish, out htfEmaDetail);
+                htfEmaStates.Add(htfEmaBullish ? 1 : htfEmaBearish ? -1 : 0);
+                htfEmaDetails.Add(htfLabel + "[" + htfEmaDetail + "]");
+
+                var htfRsi = ComputeRelativeStrengthIndex(htfContext.Bars, htfContext.BarIndex, 14);
+                htfRsiStates.Add(MatchesRsiTrendBias(htfRsi, true)
+                    ? 1
+                    : MatchesRsiTrendBias(htfRsi, false) ? -1 : 0);
+                htfRsiDetails.Add(htfLabel + "=" + FormatTrendBiasValue(htfRsi));
+
+                double htfMacdLine;
+                double htfMacdSignal;
+                if (TryComputeMacdValues(htfContext.Bars, htfContext.BarIndex, 12, 26, 9, out htfMacdLine, out htfMacdSignal))
+                {
+                    htfMacdStates.Add(htfMacdLine > htfMacdSignal ? 1 : htfMacdLine < htfMacdSignal ? -1 : 0);
+                    htfMacdDetails.Add(htfLabel + "=" + FormatTrendBiasValue(htfMacdLine) + "/" + FormatTrendBiasValue(htfMacdSignal));
+                }
+
+                var htfAdx = ComputeAverageDirectionalIndex(htfContext.Bars, htfContext.BarIndex, 14);
+                var htfAdxStrong = IsFiniteNumber(htfAdx) && htfAdx >= 25.0;
+                htfAdxStates.Add(htfAdxStrong);
+                htfAdxDetails.Add(htfLabel + "=" + FormatTrendBiasValue(htfAdx));
+            }
+            score.HtfStructureScore = AggregateStrategyTrendBiasScores(htfStructureScores);
+            var htfStructureState = ResolveDirectionalConsensus(htfStructureStates);
+            var htfEmaState = ResolveDirectionalConsensus(htfEmaStates);
+            var htfRsiState = ResolveDirectionalConsensus(htfRsiStates);
+            var htfMacdState = ResolveDirectionalConsensus(htfMacdStates);
+            var htfAdxConsensusStrong = ResolveStrengthConsensus(htfAdxStates);
+
+            ApplyTrendBiasScopeComponent(ref score, TrendBiasComponentMask.Structure, TrendBiasStructure,
+                ltfStructureBullish, ltfStructureBearish, htfStructureState > 0, htfStructureState < 0);
+            ApplyTrendBiasScopeComponent(ref score, TrendBiasComponentMask.EmaAlignment, TrendBiasEma,
+                ltfEmaBullish, ltfEmaBearish, htfEmaState > 0, htfEmaState < 0);
+            ApplyTrendBiasScopeComponent(ref score, TrendBiasComponentMask.Rsi, TrendBiasRsi,
+                ltfRsiBullish, ltfRsiBearish, htfRsiState > 0, htfRsiState < 0);
+            ApplyTrendBiasScopeComponent(ref score, TrendBiasComponentMask.Macd, TrendBiasMacd,
+                ltfMacdBullish, ltfMacdBearish, htfMacdState > 0, htfMacdState < 0);
+            ApplyTrendBiasScopeComponent(ref score, TrendBiasComponentMask.AdxStrength, TrendBiasAdx,
+                ltfAdxStrong, ltfAdxStrong, htfAdxConsensusStrong, htfAdxConsensusStrong);
+
+            score.StructureDetail = "scope=" + TrendBiasStructure + "; LTF=" + score.LtfStructureScore +
+                "; HTF=" + score.HtfStructureScore;
+            score.EmaDetail = "scope=" + TrendBiasEma + "; LTF[" + ltfEmaDetail + "]; HTF[" +
+                (htfEmaDetails.Count == 0 ? "unavailable" : string.Join(",", htfEmaDetails)) + "]";
+            score.RsiDetail = "scope=" + TrendBiasRsi + "; LTF[" + ltfRsiDetail + "]; HTF[" +
+                (htfRsiDetails.Count == 0 ? "unavailable" : string.Join(",", htfRsiDetails)) + "]";
+            score.MacdDetail = "scope=" + TrendBiasMacd + "; LTF[" + ltfMacdDetail + "]; HTF[" +
+                (htfMacdDetails.Count == 0 ? "unavailable" : string.Join(",", htfMacdDetails)) + "]";
+            score.AdxDetail = "scope=" + TrendBiasAdx + "; LTF[" + ltfAdxDetail + "]; HTF[" +
+                (htfAdxDetails.Count == 0 ? "unavailable" : string.Join(",", htfAdxDetails)) + "]";
+            return score;
+        }
+
+        private int ResolveTrendBiasDirectionAtDecisionTime(
+            string symbolName,
+            TimeFrame strategyTimeFrame,
+            DateTime decisionTime)
+        {
+            return ResolveTrendBiasDirection(BuildTrendBiasConfluenceScoreAt(
+                symbolName,
+                strategyTimeFrame,
+                decisionTime));
+        }
+
+        private int ResolveTrendBiasSignedScoreAtDecisionTime(
+            string symbolName,
+            TimeFrame strategyTimeFrame,
+            DateTime decisionTime)
+        {
+            return ResolveTrendBiasSignedScore(BuildTrendBiasConfluenceScoreAt(
+                symbolName,
+                strategyTimeFrame,
+                decisionTime));
+        }
+
+        private static int ResolveTrendBiasDirection(TrendBiasConfluenceScore score)
+        {
+            return Math.Sign(ResolveTrendBiasSignedScore(score));
+        }
+
+        private static int ResolveTrendBiasSignedScore(TrendBiasConfluenceScore score)
+        {
+            const TrendBiasComponentMask directionalComponents =
+                TrendBiasComponentMask.Structure |
+                TrendBiasComponentMask.EmaAlignment |
+                TrendBiasComponentMask.Rsi |
+                TrendBiasComponentMask.Macd;
+            var enabledDirectional = score.EnabledMask & directionalComponents;
+            var enabledCount = CountTrendBiasComponents(enabledDirectional);
+            if (enabledCount == 0)
+                return 0;
+
+            // ADX carries strength, not direction. When selected it qualifies the majority
+            // direction instead of casting an artificial bullish and bearish vote.
+            if ((score.EnabledMask & TrendBiasComponentMask.AdxStrength) != 0 &&
+                (score.BullishMask & TrendBiasComponentMask.AdxStrength) == 0)
+                return 0;
+
+            var bullishVotes = CountTrendBiasComponents(score.BullishMask & enabledDirectional);
+            var bearishVotes = CountTrendBiasComponents(score.BearishMask & enabledDirectional);
+            var requiredVotes = (enabledCount / 2) + 1;
+            if (bullishVotes >= requiredVotes && bullishVotes > bearishVotes)
+                return Math.Max(2, bullishVotes);
+            if (bearishVotes >= requiredVotes && bearishVotes > bullishVotes)
+                return -Math.Max(2, bearishVotes);
+            return 0;
+        }
+
+        private static int CountTrendBiasComponents(TrendBiasComponentMask mask)
+        {
+            var count = 0;
+            foreach (var component in new[]
+            {
+                TrendBiasComponentMask.Structure,
+                TrendBiasComponentMask.EmaAlignment,
+                TrendBiasComponentMask.Rsi,
+                TrendBiasComponentMask.Macd,
+                TrendBiasComponentMask.AdxStrength
+            })
+            {
+                if ((mask & component) != 0)
+                    count++;
+            }
+            return count;
+        }
+
+        private bool MatchesRsiTrendBias(double value, bool bullish)
+        {
+            if (!IsFiniteNumber(value))
+                return false;
+            return bullish
+                ? value >= 50.0 && value < 70.0
+                : value <= 50.0 && value > 30.0;
+        }
+
+        private void EvaluateEmaTrendAlignment(
+            ConfluenceEvaluationContext context,
+            int fastPeriod,
+            int slowPeriod,
+            out bool bullish,
+            out bool bearish,
+            out string detail)
+        {
+            bullish = false;
+            bearish = false;
+            detail = "unavailable";
+            if (context == null || context.Bars == null || context.BarIndex < 1)
+                return;
+
+            var fast = ComputeExponentialMovingAverage(context.Bars, context.BarIndex, fastPeriod);
+            var slow = ComputeExponentialMovingAverage(context.Bars, context.BarIndex, slowPeriod);
+            var previousSlow = ComputeExponentialMovingAverage(context.Bars, context.BarIndex - 1, slowPeriod);
+            var atr = ComputeAverageTrueRangeAtIndex(context.Bars, context.BarIndex, 14);
+            var close = context.Bars.ClosePrices[context.BarIndex];
+            if (!IsFiniteNumber(fast) || !IsFiniteNumber(slow) || !IsFiniteNumber(previousSlow) ||
+                !IsFiniteNumber(atr) || !(atr > 0) || !IsFiniteNumber(close))
+                return;
+
+            var spreadAtr = Math.Abs(fast - slow) / atr;
+            var slopeAtr = (slow - previousSlow) / atr;
+            var closeFromSlowAtr = (close - slow) / atr;
+            var separated = spreadAtr >= 0.05;
+            bullish = fast > slow && slopeAtr > 0 && separated && closeFromSlowAtr >= -0.10;
+            bearish = fast < slow && slopeAtr < 0 && separated && closeFromSlowAtr <= 0.10;
+            detail = string.Format(
+                CultureInfo.InvariantCulture,
+                "EMA{0}={1},EMA{2}={3},spread={4:F3}ATR,slope={5:F3}ATR,close={6:F3}ATR",
+                fastPeriod,
+                FormatTrendBiasValue(fast),
+                slowPeriod,
+                FormatTrendBiasValue(slow),
+                spreadAtr,
+                slopeAtr,
+                closeFromSlowAtr);
+        }
+
+        private static void ApplyTrendBiasScopeComponent(
+            ref TrendBiasConfluenceScore score,
+            TrendBiasComponentMask component,
+            ConfluenceScopeMode scope,
+            bool ltfBullish,
+            bool ltfBearish,
+            bool htfBullish,
+            bool htfBearish)
+        {
+            if (scope == ConfluenceScopeMode.No)
+                return;
+            score.EnabledMask |= component;
+            if (PassesTrendBiasScope(scope, ltfBullish, htfBullish))
+                score.BullishMask |= component;
+            if (PassesTrendBiasScope(scope, ltfBearish, htfBearish))
+                score.BearishMask |= component;
+        }
+
+        private static bool PassesTrendBiasScope(ConfluenceScopeMode scope, bool ltfPass, bool htfPass)
+        {
+            switch (scope)
+            {
+                case ConfluenceScopeMode.LTF: return ltfPass;
+                case ConfluenceScopeMode.HTF: return htfPass;
+                case ConfluenceScopeMode.Yes: return ltfPass && htfPass;
+                default: return true;
+            }
+        }
+
+        private static bool ResolveStrengthConsensus(IEnumerable<bool> sourceStates)
+        {
+            var states = (sourceStates ?? Enumerable.Empty<bool>()).ToList();
+            return states.Any(value => value);
+        }
+
+        private static int ResolveDirectionalConsensus(IEnumerable<int> sourceStates)
+        {
+            var states = (sourceStates ?? Enumerable.Empty<int>()).ToList();
+            if (states.Count == 0)
+                return 0;
+            var bullish = states.Count(value => value > 0);
+            var bearish = states.Count(value => value < 0);
+            if (bullish > bearish) return 1;
+            if (bearish > bullish) return -1;
+            return 0;
+        }
+
+        private static string GetTrendBiasComponentCode(TrendBiasComponentMask component)
+        {
+            switch (component)
+            {
+                case TrendBiasComponentMask.Structure: return "S";
+                case TrendBiasComponentMask.EmaAlignment: return "E";
+                case TrendBiasComponentMask.Rsi: return "R";
+                case TrendBiasComponentMask.Macd: return "M";
+                case TrendBiasComponentMask.AdxStrength: return "A";
+                default: return "-";
+            }
+        }
+
+        private static string FormatTrendBiasMask(TrendBiasComponentMask mask)
+        {
+            return ((int)mask).ToString("X", CultureInfo.InvariantCulture);
+        }
+
+        private static string FormatTrendBiasMaskComponents(TrendBiasComponentMask mask)
+        {
+            var parts = new List<string>();
+            foreach (var component in new[]
+            {
+                TrendBiasComponentMask.Structure,
+                TrendBiasComponentMask.EmaAlignment,
+                TrendBiasComponentMask.Rsi,
+                TrendBiasComponentMask.Macd,
+                TrendBiasComponentMask.AdxStrength
+            })
+            {
+                if ((mask & component) != 0)
+                    parts.Add(GetTrendBiasComponentCode(component));
+            }
+            return parts.Count == 0 ? "-" : string.Join("", parts);
+        }
+
+        private static string GetTrendBiasComponentDetail(
+            TrendBiasConfluenceScore score,
+            TrendBiasComponentMask component)
+        {
+            switch (component)
+            {
+                case TrendBiasComponentMask.Structure: return score.StructureDetail ?? "unavailable";
+                case TrendBiasComponentMask.EmaAlignment: return score.EmaDetail ?? "unavailable";
+                case TrendBiasComponentMask.Rsi: return score.RsiDetail ?? "unavailable";
+                case TrendBiasComponentMask.Macd: return score.MacdDetail ?? "unavailable";
+                case TrendBiasComponentMask.AdxStrength: return score.AdxDetail ?? "unavailable";
+                default: return "unavailable";
+            }
+        }
+
+        private static string FormatTrendBiasValue(double value)
+        {
+            return double.IsNaN(value) || double.IsInfinity(value)
+                ? "n/a"
+                : value.ToString("G8", CultureInfo.InvariantCulture);
+        }
+
+        private static string FormatTrendBiasConfluenceScore(TrendBiasConfluenceScore score)
+        {
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "B:{0}/S:{1}/E:{2}",
+                FormatTrendBiasMask(score.BullishMask),
+                FormatTrendBiasMask(score.BearishMask),
+                FormatTrendBiasMask(score.EnabledMask));
+        }
+
+        private double ComputeAverageDirectionalIndex(Bars sourceBars, int endIndex, int period)
+        {
+            if (sourceBars == null || period < 2 || endIndex < period * 2 || endIndex >= sourceBars.Count)
+                return double.NaN;
+
+            var startIndex = Math.Max(1, endIndex - period * 8);
+            if (endIndex - startIndex + 1 < period * 2)
+                return double.NaN;
+
+            var smoothedTr = 0.0;
+            var smoothedPlusDm = 0.0;
+            var smoothedMinusDm = 0.0;
+            var initializationEnd = startIndex + period - 1;
+            for (var index = startIndex; index <= initializationEnd; index++)
+            {
+                var previousClose = sourceBars.ClosePrices[index - 1];
+                var trueRange = Math.Max(
+                    sourceBars.HighPrices[index] - sourceBars.LowPrices[index],
+                    Math.Max(
+                        Math.Abs(sourceBars.HighPrices[index] - previousClose),
+                        Math.Abs(sourceBars.LowPrices[index] - previousClose)));
+                var upMove = sourceBars.HighPrices[index] - sourceBars.HighPrices[index - 1];
+                var downMove = sourceBars.LowPrices[index - 1] - sourceBars.LowPrices[index];
+                smoothedTr += trueRange;
+                smoothedPlusDm += upMove > downMove && upMove > 0 ? upMove : 0;
+                smoothedMinusDm += downMove > upMove && downMove > 0 ? downMove : 0;
+            }
+
+            var dxValues = new List<double>();
+            for (var index = initializationEnd; index <= endIndex; index++)
+            {
+                if (index > initializationEnd)
+                {
+                    var previousClose = sourceBars.ClosePrices[index - 1];
+                    var trueRange = Math.Max(
+                        sourceBars.HighPrices[index] - sourceBars.LowPrices[index],
+                        Math.Max(
+                            Math.Abs(sourceBars.HighPrices[index] - previousClose),
+                            Math.Abs(sourceBars.LowPrices[index] - previousClose)));
+                    var upMove = sourceBars.HighPrices[index] - sourceBars.HighPrices[index - 1];
+                    var downMove = sourceBars.LowPrices[index - 1] - sourceBars.LowPrices[index];
+                    var plusDm = upMove > downMove && upMove > 0 ? upMove : 0;
+                    var minusDm = downMove > upMove && downMove > 0 ? downMove : 0;
+                    smoothedTr = smoothedTr - smoothedTr / period + trueRange;
+                    smoothedPlusDm = smoothedPlusDm - smoothedPlusDm / period + plusDm;
+                    smoothedMinusDm = smoothedMinusDm - smoothedMinusDm / period + minusDm;
+                }
+                if (!(smoothedTr > 0))
+                    continue;
+                var plusDi = 100.0 * smoothedPlusDm / smoothedTr;
+                var minusDi = 100.0 * smoothedMinusDm / smoothedTr;
+                var denominator = plusDi + minusDi;
+                if (denominator > 0)
+                    dxValues.Add(100.0 * Math.Abs(plusDi - minusDi) / denominator);
+            }
+            if (dxValues.Count < period)
+                return double.NaN;
+
+            var adx = dxValues.Take(period).Average();
+            for (var index = period; index < dxValues.Count; index++)
+                adx = ((adx * (period - 1)) + dxValues[index]) / period;
+            return adx;
         }
 
         private int AggregateStrategyTrendBiasScoreAt(
@@ -38999,7 +41694,12 @@ namespace cAlgo.Robots
         // (keeps the current single-order behavior), 1..5 = fixed number of orders.
         private int ResolveStrategyOrderCount()
         {
-            switch (StrategyOrderCount)
+            return ResolveStrategyOrderCount(StrategyOrderCount);
+        }
+
+        private static int ResolveStrategyOrderCount(StrategyOrderCountMode orderCountMode)
+        {
+            switch (orderCountMode)
             {
                 case StrategyOrderCountMode._1: return 1;
                 case StrategyOrderCountMode._2: return 2;
@@ -39066,7 +41766,12 @@ namespace cAlgo.Robots
             Bars protectionBars;
             try { protectionBars = signal.SourceTimeFrame != null ? GetBarsForCurrentMasterTimer(signal.SourceTimeFrame, symbolName) : null; }
             catch { protectionBars = null; }
-            var buffer = ResolveStrategyProtectionBuffer(symbol, 0, protectionBars);
+            // Legacy Auto/Event modes retain their adaptive protection. Explicit Wick,
+            // Body, ATR and Swing modes below resolve their displayed level directly.
+            var shortBuffer = ResolveStrategyProtectionBuffer(symbol, 0, protectionBars, 0);
+            var structuralBuffer = ResolveStrategyProtectionBuffer(symbol, 0, protectionBars, 48);
+            // Non-SL protection modes keep the short, non-ATR buffer.
+            var buffer = shortBuffer;
 
             switch (stopLossMode)
             {
@@ -39078,7 +41783,7 @@ namespace cAlgo.Robots
                     {
                         double resolved;
                         string sourceCode;
-                        if (TryResolveStrategyAutoStopLoss(symbol, symbolName, signal, entryPrice, buffer, out resolved, out sourceCode))
+                        if (TryResolveStrategyAutoStopLoss(symbol, symbolName, signal, entryPrice, shortBuffer, structuralBuffer, out resolved, out sourceCode))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = sourceCode;
@@ -39095,7 +41800,7 @@ namespace cAlgo.Robots
                         double resolved;
                         // Event uses the reacted box-zone edge. Line reactions deliberately
                         // delegate to Wick because a line has no zone width or far edge.
-                        if (TryResolveStrategyLtfEventStopLoss(symbol, signal, entryPrice, buffer, out resolved))
+                        if (TryResolveStrategyLtfEventStopLoss(symbol, signal, entryPrice, shortBuffer, out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = "EV";
@@ -39111,8 +41816,8 @@ namespace cAlgo.Robots
                     {
                         double resolved;
                         // Wick uses the pattern/trigger candle boundary; it never substitutes
-                        // a reacted zone/artifact edge.
-                        if (TryResolveStrategyWickStopLoss(symbol, signal, entryPrice, buffer, out resolved))
+                        // a reacted zone/artifact edge or adds a hidden execution buffer.
+                        if (TryResolveStrategyWickStopLoss(symbol, signal, entryPrice, 0, out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = "CW";
@@ -39127,9 +41832,7 @@ namespace cAlgo.Robots
                 case StrategyStopLossMode.structure:
                     {
                         double resolved;
-                        // Swing presets use the nearest confirmed adverse swing on the
-                        // signal/LTF frame. HTF swings belong to explicit HTF modes only.
-                        if (TryResolveStrategyNearestLtfSwingStopLoss(symbol, symbolName, signal, entryPrice, buffer, out resolved))
+                        if (TryResolveStrategySwingStopLoss(symbol, symbolName, signal, entryPrice, GetStrategyLtfProtectionFrames(signal), out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = "ST";
@@ -39144,7 +41847,7 @@ namespace cAlgo.Robots
                 case StrategyStopLossMode.candle_wick:
                     {
                         double resolved;
-                        if (TryResolveStrategyCandleWickStopLoss(symbol, symbolName, signal, entryPrice, 1.0, buffer, out resolved))
+                        if (TryResolveStrategyCandleWickStopLoss(symbol, symbolName, signal, entryPrice, 1.0, 0, out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = "CW";
@@ -39156,13 +41859,13 @@ namespace cAlgo.Robots
                         }
                         break;
                     }
-                case StrategyStopLossMode.candle_range_5:
+                case StrategyStopLossMode.candle_extreme_5:
                     {
                         double resolved;
-                        if (TryResolveStrategyCandleStopLoss(symbol, symbolName, signal, entryPrice, 5, buffer, out resolved))
+                        if (TryResolveStrategyCandleExtremeStopLoss(symbol, symbolName, signal, entryPrice, 5, shortBuffer, out resolved))
                         {
                             stopLoss = resolved;
-                            stopLossSourceCode = "CR5";
+                            stopLossSourceCode = "CE5";
                         }
                         else
                         {
@@ -39171,13 +41874,28 @@ namespace cAlgo.Robots
                         }
                         break;
                     }
-                case StrategyStopLossMode.candle_range_10:
+                case StrategyStopLossMode.candle_extreme_10:
                     {
                         double resolved;
-                        if (TryResolveStrategyCandleStopLoss(symbol, symbolName, signal, entryPrice, 10, buffer, out resolved))
+                        if (TryResolveStrategyCandleExtremeStopLoss(symbol, symbolName, signal, entryPrice, 10, shortBuffer, out resolved))
                         {
                             stopLoss = resolved;
-                            stopLossSourceCode = "CR10";
+                            stopLossSourceCode = "CE10";
+                        }
+                        else
+                        {
+                            stopLoss = 0;
+                            stopLossSourceCode = "";
+                        }
+                        break;
+                    }
+                case StrategyStopLossMode.candle_range:
+                    {
+                        double resolved;
+                        if (TryResolveStrategyCandleRangeStopLoss(symbol, symbolName, signal, entryPrice, out resolved))
+                        {
+                            stopLoss = resolved;
+                            stopLossSourceCode = "CR";
                         }
                         else
                         {
@@ -39189,7 +41907,7 @@ namespace cAlgo.Robots
                 case StrategyStopLossMode.candle_wick_1_5:
                     {
                         double resolved;
-                        if (TryResolveStrategyCandleWickStopLoss(symbol, symbolName, signal, entryPrice, 1.5, buffer, out resolved))
+                        if (TryResolveStrategyCandleWickStopLoss(symbol, symbolName, signal, entryPrice, 1.5, 0, out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = "CW15";
@@ -39204,7 +41922,7 @@ namespace cAlgo.Robots
                 case StrategyStopLossMode.candle_wick_2:
                     {
                         double resolved;
-                        if (TryResolveStrategyCandleWickStopLoss(symbol, symbolName, signal, entryPrice, 2.0, buffer, out resolved))
+                        if (TryResolveStrategyCandleWickStopLoss(symbol, symbolName, signal, entryPrice, 2.0, 0, out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = "CW2";
@@ -39219,7 +41937,7 @@ namespace cAlgo.Robots
                 case StrategyStopLossMode.pattern:
                     {
                         double resolved;
-                        if (TryResolveStrategyPatternStopLoss(symbol, signal, entryPrice, buffer, out resolved))
+                        if (TryResolveStrategyPatternStopLoss(symbol, signal, entryPrice, shortBuffer, out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = "PT";
@@ -39234,7 +41952,7 @@ namespace cAlgo.Robots
                 case StrategyStopLossMode.protective_swing:
                     {
                         double resolved;
-                        if (TryResolveStrategyProtectiveSwingStopLoss(symbol, symbolName, signal, entryPrice, buffer, out resolved))
+                        if (TryResolveStrategyProtectiveSwingStopLoss(symbol, symbolName, signal, entryPrice, structuralBuffer, out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = "SW";
@@ -39249,7 +41967,7 @@ namespace cAlgo.Robots
                 case StrategyStopLossMode.furthest_invalidation:
                     {
                         double resolved;
-                        if (TryResolveStrategyFurthestInvalidationStopLoss(symbol, signal, entryPrice, buffer, out resolved))
+                        if (TryResolveStrategyFurthestInvalidationStopLoss(symbol, signal, entryPrice, shortBuffer, out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = "FI";
@@ -39262,12 +41980,113 @@ namespace cAlgo.Robots
                         break;
                     }
                 case StrategyStopLossMode.swing:
+                case StrategyStopLossMode.SwingLTF:
                     {
                         double resolved;
-                        if (TryResolveStrategyKeyLevelProtection(symbol, symbolName, signal.TradeType, entryPrice, true, GetStrategyLtfProtectionFrames(signal), out resolved))
+                        if (TryResolveStrategySwingStopLoss(symbol, symbolName, signal, entryPrice, GetStrategyLtfProtectionFrames(signal), out resolved))
                         {
-                            stopLoss = AddStrategyProtectionBuffer(symbol, signal.TradeType, resolved, true, buffer);
-                            stopLossSourceCode = "KL";
+                            stopLoss = resolved;
+                            stopLossSourceCode = "SLTF";
+                        }
+                        else
+                        {
+                            stopLoss = 0;
+                            stopLossSourceCode = "";
+                        }
+                        break;
+                    }
+                case StrategyStopLossMode.candle_wick_07:
+                case StrategyStopLossMode.candle_wick_13:
+                case StrategyStopLossMode.Wick05:
+                case StrategyStopLossMode.Wick07:
+                case StrategyStopLossMode.Wick11:
+                case StrategyStopLossMode.Wick13:
+                case StrategyStopLossMode.Wick15:
+                case StrategyStopLossMode.Wick2:
+                    {
+                        double resolved;
+                        var wickMultiplier = ResolveStrategyWickMultiplier(stopLossMode);
+                        if (TryResolveStrategyCandleWickStopLoss(symbol, symbolName, signal, entryPrice, wickMultiplier, 0, out resolved))
+                        {
+                            stopLoss = resolved;
+                            stopLossSourceCode = ResolveStrategyWickSourceCode(stopLossMode);
+                        }
+                        else
+                        {
+                            stopLoss = 0;
+                            stopLossSourceCode = "";
+                        }
+                        break;
+                    }
+                case StrategyStopLossMode.candle_body:
+                case StrategyStopLossMode.Body:
+                    {
+                        double resolved;
+                        bool usedWickFallback;
+                        if (TryResolveStrategyCandleBodyStopLoss(symbol, symbolName, signal, entryPrice, out resolved, out usedWickFallback))
+                        {
+                            stopLoss = resolved;
+                            stopLossSourceCode = usedWickFallback ? "CW" : "BDY";
+                        }
+                        else
+                        {
+                            stopLoss = 0;
+                            stopLossSourceCode = "";
+                        }
+                        break;
+                    }
+                case StrategyStopLossMode.ATR5:
+                case StrategyStopLossMode.ATR12:
+                case StrategyStopLossMode.ATR24:
+                case StrategyStopLossMode.ATR48:
+                    {
+                        double resolved;
+                        var atrPeriod = ResolveStrategyAtrPeriod(stopLossMode);
+                        if (TryResolveStrategyAtrStopLoss(symbol, symbolName, signal, entryPrice, atrPeriod, out resolved))
+                        {
+                            stopLoss = resolved;
+                            stopLossSourceCode = "AT" + atrPeriod.ToString(CultureInfo.InvariantCulture);
+                        }
+                        else
+                        {
+                            stopLoss = 0;
+                            stopLossSourceCode = "";
+                        }
+                        break;
+                    }
+                case StrategyStopLossMode.Range24:
+                    {
+                        double resolved;
+                        if (TryResolveStrategyCandleExtremeStopLoss(
+                                symbol,
+                                symbolName,
+                                signal,
+                                entryPrice,
+                                PremiumDiscountRangeBars,
+                                shortBuffer,
+                                out resolved))
+                        {
+                            stopLoss = resolved;
+                            stopLossSourceCode = "R24";
+                        }
+                        else
+                        {
+                            stopLoss = 0;
+                            stopLossSourceCode = "";
+                        }
+                        break;
+                    }
+                case StrategyStopLossMode.SwingHTF:
+                case StrategyStopLossMode.Swing15m:
+                case StrategyStopLossMode.Swing1H:
+                case StrategyStopLossMode.Swing4H:
+                    {
+                        double resolved;
+                        var swingFrames = ResolveStrategySwingFrames(stopLossMode, signal);
+                        if (TryResolveStrategySwingStopLoss(symbol, symbolName, signal, entryPrice, swingFrames, out resolved))
+                        {
+                            stopLoss = resolved;
+                            stopLossSourceCode = ResolveStrategySwingSourceCode(stopLossMode);
                         }
                         else
                         {
@@ -39281,7 +42100,7 @@ namespace cAlgo.Robots
                         double resolved;
                         if (TryResolveStrategyKeyLevelProtection(symbol, symbolName, signal.TradeType, entryPrice, true, GetStrategyLtfProtectionFrames(signal), out resolved))
                         {
-                            stopLoss = AddStrategyProtectionBuffer(symbol, signal.TradeType, resolved, true, buffer);
+                            stopLoss = AddStrategyProtectionBuffer(symbol, signal.TradeType, resolved, true, shortBuffer);
                             stopLossSourceCode = "LK";
                         }
                         else
@@ -39296,7 +42115,7 @@ namespace cAlgo.Robots
                         double resolved;
                         if (TryResolveStrategyKeyLevelProtection(symbol, symbolName, signal.TradeType, entryPrice, true, GetStrategyHtfProtectionFrames(signal), out resolved))
                         {
-                            stopLoss = AddStrategyProtectionBuffer(symbol, signal.TradeType, resolved, true, buffer);
+                            stopLoss = AddStrategyProtectionBuffer(symbol, signal.TradeType, resolved, true, shortBuffer);
                             stopLossSourceCode = "HK";
                         }
                         else
@@ -39309,7 +42128,7 @@ namespace cAlgo.Robots
                 case StrategyStopLossMode.event_invalidation:
                     {
                         double resolved;
-                        if (TryResolveStrategyEventInvalidationStopLoss(symbol, signal, entryPrice, buffer, out resolved))
+                        if (TryResolveStrategyEventInvalidationStopLoss(symbol, signal, entryPrice, shortBuffer, out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = "EI";
@@ -39604,12 +42423,237 @@ namespace cAlgo.Robots
 
             stopLoss = stopLoss > 0 ? NormalizePriceToSymbol(symbol, stopLoss) : 0;
             takeProfit = takeProfit > 0 ? NormalizePriceToSymbol(symbol, takeProfit) : 0;
+            stopLossSourceCode = BuildStrategyStopLossSourceExpression(
+                symbol,
+                signal,
+                entryPrice,
+                stopLoss,
+                stopLossMode,
+                stopLossSourceCode,
+                shortBuffer,
+                structuralBuffer);
+            takeProfitSourceCode = BuildStrategyTakeProfitSourceExpression(
+                symbol,
+                entryPrice,
+                stopLoss,
+                takeProfit,
+                takeProfitMode,
+                takeProfitSourceCode,
+                shortBuffer);
             string reason;
             if (stopLoss > 0 && !TryValidateProtectionPrices(symbol, action, entryPrice, stopLoss, takeProfit, out reason))
                 SafePrint("[Strategy] Protection mode warning {0} {1}: {2}", signal.StrategyId, symbolName, reason);
         }
 
-        private double ResolveStrategyProtectionBuffer(Symbol symbol, double entrySlDistance = 0, Bars sourceBars = null)
+        private string BuildStrategyStopLossSourceExpression(
+            Symbol symbol,
+            BacktestStrategySignal signal,
+            double entryPrice,
+            double stopLoss,
+            StrategyStopLossMode mode,
+            string sourceCode,
+            double shortBuffer,
+            double structuralBuffer)
+        {
+            var code = NormalizeStrategyProtectionSourceCode(sourceCode);
+            if (string.IsNullOrWhiteSpace(code))
+                return "";
+
+            var label = GetStrategyProtectionSourceDisplayName(code, true);
+            var offset = shortBuffer;
+            if (code == "ST" || code == "SW" || code == "KL")
+                offset = structuralBuffer;
+
+            if (mode == StrategyStopLossMode.candle_wick_07 ||
+                mode == StrategyStopLossMode.candle_wick_13 ||
+                mode == StrategyStopLossMode.Wick05 ||
+                mode == StrategyStopLossMode.Wick07 ||
+                mode == StrategyStopLossMode.Wick11 ||
+                mode == StrategyStopLossMode.Wick13 ||
+                mode == StrategyStopLossMode.Wick15 ||
+                mode == StrategyStopLossMode.Wick2)
+            {
+                label = "Wick*" + ResolveStrategyWickMultiplier(mode).ToString("0.0#", CultureInfo.InvariantCulture);
+            }
+            else if ((mode == StrategyStopLossMode.candle_body || mode == StrategyStopLossMode.Body) && code == "BDY")
+            {
+                label = "Body";
+            }
+            else if ((mode == StrategyStopLossMode.candle_body || mode == StrategyStopLossMode.Body) && code == "CW")
+            {
+                label = "Body>Wick";
+            }
+            else if (mode == StrategyStopLossMode.ATR5 ||
+                mode == StrategyStopLossMode.ATR12 ||
+                mode == StrategyStopLossMode.ATR24 ||
+                mode == StrategyStopLossMode.ATR48)
+            {
+                label = "ATR" + ResolveStrategyAtrPeriod(mode).ToString(CultureInfo.InvariantCulture);
+            }
+            else if (mode == StrategyStopLossMode.Range24)
+            {
+                label = "Range24" + FormatStrategyProtectionOffset(symbol, shortBuffer, "+");
+            }
+            else if (mode == StrategyStopLossMode.SwingLTF || mode == StrategyStopLossMode.swing || mode == StrategyStopLossMode.structure)
+            {
+                label = "SwingLTF";
+            }
+            else if (mode == StrategyStopLossMode.SwingHTF)
+            {
+                label = "SwingHTF";
+            }
+            else if (mode == StrategyStopLossMode.Swing15m)
+            {
+                label = "Swing15m";
+            }
+            else if (mode == StrategyStopLossMode.Swing1H)
+            {
+                label = "Swing1H";
+            }
+            else if (mode == StrategyStopLossMode.Swing4H)
+            {
+                label = "Swing4H";
+            }
+            else if (code == "CW" || code == "CW15" || code == "CW2")
+            {
+                if (code == "CW15" || mode == StrategyStopLossMode.candle_wick_1_5)
+                    label = "Wick*1.5";
+                else if (code == "CW2" || mode == StrategyStopLossMode.candle_wick_2)
+                    label = "Wick*2";
+                else
+                    label = "Wick";
+
+                // The plain Wick mode uses an entry-aware max buffer. Derive the actual
+                // selected offset from the final stop instead of reporting only its base.
+                if (mode == StrategyStopLossMode.wick && stopLoss > 0)
+                {
+                    var rawWick = signal.TradeType == TradeType.Buy
+                        ? (signal.OriginalPatternLow > 0 ? signal.OriginalPatternLow : signal.EventCandleLow)
+                        : (signal.OriginalPatternHigh > 0 ? signal.OriginalPatternHigh : signal.EventCandleHigh);
+                    if (rawWick > 0)
+                        offset = Math.Abs(stopLoss - rawWick);
+                }
+                label += FormatStrategyProtectionOffset(symbol, offset, "+");
+            }
+            else if (mode == StrategyStopLossMode.furthest_invalidation)
+            {
+                label = "Furthest>" + label;
+            }
+
+            if (mode == StrategyStopLossMode.Auto)
+            {
+                if (code != "CW" && offset > 0)
+                    label += FormatStrategyProtectionOffset(symbol, offset, "+");
+                label = "Auto>" + label;
+            }
+
+            return AttachStrategyProtectionSourceDetail(code, label);
+        }
+
+        private string BuildStrategyTakeProfitSourceExpression(
+            Symbol symbol,
+            double entryPrice,
+            double stopLoss,
+            double takeProfit,
+            StrategyTakeProfitMode mode,
+            string sourceCode,
+            double buffer)
+        {
+            var code = NormalizeStrategyProtectionSourceCode(sourceCode);
+            if (string.IsNullOrWhiteSpace(code))
+                return "";
+
+            string label;
+            switch (code)
+            {
+                case "ATR1": label = "ATR14*1"; break;
+                case "ATR2": label = "ATR14*2"; break;
+                case "ATR3": label = "ATR14*3"; break;
+                case "RR":
+                    var actualRisk = Math.Abs(entryPrice - stopLoss);
+                    var actualRewardRisk = actualRisk > 0
+                        ? Math.Abs(takeProfit - entryPrice) / actualRisk
+                        : CTraderStrategyEngine.ResolveRewardRisk(mode);
+                    label = "RR" + actualRewardRisk.ToString("0.##", CultureInfo.InvariantCulture);
+                    break;
+                default:
+                    label = GetStrategyProtectionSourceDisplayName(code, false);
+                    break;
+            }
+
+            if (mode == StrategyTakeProfitMode.Auto)
+            {
+                if (code != "RR" && buffer > 0)
+                    label += FormatStrategyProtectionOffset(symbol, buffer, "-");
+                label = "Auto>" + label;
+            }
+            return AttachStrategyProtectionSourceDetail(code, label);
+        }
+
+        private string GetStrategyProtectionSourceDisplayName(string code, bool isStopLoss)
+        {
+            switch (NormalizeStrategyProtectionSourceCode(code))
+            {
+                case "EI": return "EventInvalidation";
+                case "EV": return "Event";
+                case "SW": return "ProtectiveSwing";
+                case "ST": return "Swing";
+                case "PT": return "Pattern";
+                case "CW": return "Wick";
+                case "CW15": return "Wick*1.5";
+                case "CW2": return "Wick*2";
+                case "W05": return "Wick*0.5";
+                case "W07": return "Wick*0.7";
+                case "W11": return "Wick*1.1";
+                case "W13": return "Wick*1.3";
+                case "W15": return "Wick*1.5";
+                case "W2": return "Wick*2";
+                case "BDY": return "Body";
+                case "WFT": return "Min(RR1,1stOpen)";
+                case "AT5": return "ATR5";
+                case "AT12": return "ATR12";
+                case "AT24": return "ATR24";
+                case "AT48": return "ATR48";
+                case "R24": return "Range24";
+                case "SLTF": return "SwingLTF";
+                case "SHTF": return "SwingHTF";
+                case "S15": return "Swing15m";
+                case "S1H": return "Swing1H";
+                case "S4H": return "Swing4H";
+                case "CR": return "CandleRange";
+                case "CE5": return "CandleExtreme5";
+                case "CE10": return "CandleExtreme10";
+                case "FI": return "EventLevel";
+                case "LQ": return "Liquidity";
+                case "HK": return "HTFKey";
+                case "LK":
+                case "KL": return "LTFKey";
+                case "SH": return "Session";
+                case "OB": return "OB";
+                case "FG": return "FVG";
+                case "VWAP": return "VWAP";
+                case "EMA": return "EMA";
+                case "CD": return "Candle";
+                case "TRL": return "Trail";
+                default: return string.IsNullOrWhiteSpace(code) ? (isStopLoss ? "SL" : "TP") : code;
+            }
+        }
+
+        private string FormatStrategyProtectionOffset(Symbol symbol, double offset, string operation)
+        {
+            if (symbol == null || !(symbol.PipSize > 0) || !(offset > 0))
+                return "";
+            var pips = offset / symbol.PipSize;
+            if (!(pips > 0))
+                return "";
+            return (operation ?? "+") + pips.ToString("0.##", CultureInfo.InvariantCulture) + "p";
+        }
+
+        private double ResolveStrategyProtectionBuffer(
+            Symbol symbol,
+            double entrySlDistance = 0,
+            Bars sourceBars = null,
+            int atrPeriod = 0)
         {
             if (symbol == null || symbol.PipSize <= 0)
                 return 0;
@@ -39617,13 +42661,15 @@ namespace cAlgo.Robots
             var riskFactor = SelectedRiskMode == RiskMode.Risky ? 3.0 : 5.0;
             var entrySlDistancePips = Math.Max(0, entrySlDistance) / symbol.PipSize;
             var spreadPips = ResolveSpreadPips(symbol);
-            var atr24Pips = ResolveAtrPips(symbol, sourceBars, 24);
+            var atrPips = atrPeriod > 0 ? ResolveAtrPips(symbol, sourceBars, atrPeriod) : 0;
             var bufferPips = CTraderStrategyEngine.ResolveProtectionBufferPips(
                 riskFactor,
                 entrySlDistancePips,
                 spreadPips,
-                atr24Pips);
-            return bufferPips * symbol.PipSize;
+                atrPips);
+            return Math.Max(
+                bufferPips * symbol.PipSize,
+                symbol.TickSize > 0 ? symbol.TickSize : 0);
         }
 
         private double ResolveEntryAwareProtectionBuffer(Symbol symbol, double baseBuffer, double entrySlDistance)
@@ -39644,7 +42690,7 @@ namespace cAlgo.Robots
                 case CTraderStrategyStopSource.ProtectiveSwing: return "SW";
                 case CTraderStrategyStopSource.Pattern: return "PT";
                 case CTraderStrategyStopSource.CandleWick: return "CW";
-                case CTraderStrategyStopSource.CandleRange5: return "CR5";
+                case CTraderStrategyStopSource.CandleExtreme5: return "CE5";
                 default: return "";
             }
         }
@@ -39674,7 +42720,8 @@ namespace cAlgo.Robots
             string symbolName,
             BacktestStrategySignal signal,
             double entryPrice,
-            double buffer,
+            double shortBuffer,
+            double structuralBuffer,
             out double stopLoss,
             out string sourceCode)
         {
@@ -39685,8 +42732,8 @@ namespace cAlgo.Robots
 
             double eventInvalidation;
             double protectiveSwing;
-            var hasEventInvalidation = TryResolveStrategyEventInvalidationStopLoss(symbol, signal, entryPrice, buffer, out eventInvalidation);
-            var hasProtectiveSwing = TryResolveStrategyProtectiveSwingStopLoss(symbol, symbolName, signal, entryPrice, buffer, out protectiveSwing);
+            var hasEventInvalidation = TryResolveStrategyEventInvalidationStopLoss(symbol, signal, entryPrice, structuralBuffer, out eventInvalidation);
+            var hasProtectiveSwing = TryResolveStrategyProtectiveSwingStopLoss(symbol, symbolName, signal, entryPrice, structuralBuffer, out protectiveSwing);
             if (hasProtectiveSwing)
             {
                 if (hasEventInvalidation)
@@ -39723,13 +42770,13 @@ namespace cAlgo.Robots
                         found = false;
                         break;
                     case CTraderStrategyStopSource.Pattern:
-                        found = TryResolveStrategyPatternStopLoss(symbol, signal, entryPrice, buffer, out resolved);
+                        found = TryResolveStrategyPatternStopLoss(symbol, signal, entryPrice, shortBuffer, out resolved);
                         break;
                     case CTraderStrategyStopSource.CandleWick:
-                        found = TryResolveStrategyCandleWickStopLoss(symbol, symbolName, signal, entryPrice, 1.0, buffer, out resolved);
+                        found = TryResolveStrategyCandleWickStopLoss(symbol, symbolName, signal, entryPrice, 1.0, shortBuffer, out resolved);
                         break;
-                    case CTraderStrategyStopSource.CandleRange5:
-                        found = TryResolveStrategyCandleStopLoss(symbol, symbolName, signal, entryPrice, 5, buffer, out resolved);
+                    case CTraderStrategyStopSource.CandleExtreme5:
+                        found = TryResolveStrategyCandleExtremeStopLoss(symbol, symbolName, signal, entryPrice, 5, shortBuffer, out resolved);
                         break;
                     default:
                         resolved = 0;
@@ -39840,7 +42887,75 @@ namespace cAlgo.Robots
                 .ToList();
         }
 
-        private bool TryResolveStrategyCandleStopLoss(
+        private static double ResolveStrategyWickMultiplier(StrategyStopLossMode mode)
+        {
+            switch (mode)
+            {
+                case StrategyStopLossMode.candle_wick_07: return 0.7;
+                case StrategyStopLossMode.candle_wick_13: return 1.3;
+                case StrategyStopLossMode.Wick05: return 0.5;
+                case StrategyStopLossMode.Wick07: return 0.7;
+                case StrategyStopLossMode.Wick11: return 1.1;
+                case StrategyStopLossMode.Wick13: return 1.3;
+                case StrategyStopLossMode.Wick15: return 1.5;
+                case StrategyStopLossMode.Wick2: return 2.0;
+                default: return 1.0;
+            }
+        }
+
+        private static string ResolveStrategyWickSourceCode(StrategyStopLossMode mode)
+        {
+            switch (mode)
+            {
+                case StrategyStopLossMode.candle_wick_07: return "W07";
+                case StrategyStopLossMode.candle_wick_13: return "W13";
+                case StrategyStopLossMode.Wick05: return "W05";
+                case StrategyStopLossMode.Wick07: return "W07";
+                case StrategyStopLossMode.Wick11: return "W11";
+                case StrategyStopLossMode.Wick13: return "W13";
+                case StrategyStopLossMode.Wick15: return "W15";
+                case StrategyStopLossMode.Wick2: return "W2";
+                default: return "CW";
+            }
+        }
+
+        private static int ResolveStrategyAtrPeriod(StrategyStopLossMode mode)
+        {
+            switch (mode)
+            {
+                case StrategyStopLossMode.ATR5: return 5;
+                case StrategyStopLossMode.ATR12: return 12;
+                case StrategyStopLossMode.ATR24: return 24;
+                case StrategyStopLossMode.ATR48: return 48;
+                default: return 0;
+            }
+        }
+
+        private List<TimeFrame> ResolveStrategySwingFrames(StrategyStopLossMode mode, BacktestStrategySignal signal)
+        {
+            switch (mode)
+            {
+                case StrategyStopLossMode.SwingHTF: return GetStrategyHtfProtectionFrames(signal);
+                case StrategyStopLossMode.Swing15m: return new List<TimeFrame> { TimeFrame.Minute15 };
+                case StrategyStopLossMode.Swing1H: return new List<TimeFrame> { TimeFrame.Hour };
+                case StrategyStopLossMode.Swing4H: return new List<TimeFrame> { TimeFrame.Hour4 };
+                default: return GetStrategyLtfProtectionFrames(signal);
+            }
+        }
+
+        private static string ResolveStrategySwingSourceCode(StrategyStopLossMode mode)
+        {
+            switch (mode)
+            {
+                case StrategyStopLossMode.SwingHTF: return "SHTF";
+                case StrategyStopLossMode.Swing15m: return "S15";
+                case StrategyStopLossMode.Swing1H: return "S1H";
+                case StrategyStopLossMode.Swing4H: return "S4H";
+                default: return "SLTF";
+            }
+        }
+
+        private bool TryResolveStrategyCandleExtremeStopLoss(
             Symbol symbol,
             string symbolName,
             BacktestStrategySignal signal,
@@ -39859,7 +42974,8 @@ namespace cAlgo.Robots
             if (sourceBars == null || sourceBars.Count < 2)
                 return false;
 
-            // A range stop is defined by the latest closed range at the actual entry decision.
+            // A multi-candle extreme stop is defined by the latest closed lookback window
+            // at the actual entry decision.
             // For Now-1 / WaitConfirm this is the confirmation bar, not the older trigger bar;
             // otherwise an obsolete low/high can remain in the 5/10-bar window and place the
             // stop much farther away than the candles visible at entry.
@@ -39918,6 +43034,192 @@ namespace cAlgo.Robots
             return CTraderStrategyEngine.TryResolveCandleWickStopLoss(
                 symbol, signal.TradeType, entryPrice,
                 open, high, low, close, wickMultiplier, buffer, out stopLoss);
+        }
+
+        private bool TryResolveStrategyCandleRangeStopLoss(
+            Symbol symbol,
+            string symbolName,
+            BacktestStrategySignal signal,
+            double entryPrice,
+            out double stopLoss)
+        {
+            stopLoss = 0;
+            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || entryPrice <= 0)
+                return false;
+
+            Bars sourceBars;
+            try { sourceBars = MarketData.GetBars(signal.SourceTimeFrame, symbolName); }
+            catch { sourceBars = null; }
+            if (sourceBars == null || sourceBars.Count < 2)
+                return false;
+
+            var sourceIndex = ResolveSourceBarIndex(sourceBars, signal.SignalTime);
+            if (!IsValidBarIndex(sourceBars, sourceIndex))
+                sourceIndex = sourceBars.Count - 2;
+            if (!IsValidBarIndex(sourceBars, sourceIndex))
+                return false;
+
+            return CTraderStrategyEngine.TryResolveCandleRangeStopLoss(
+                symbol,
+                signal.TradeType,
+                entryPrice,
+                sourceBars.HighPrices[sourceIndex],
+                sourceBars.LowPrices[sourceIndex],
+                out stopLoss);
+        }
+
+        private bool TryResolveStrategyCandleBodyStopLoss(
+            Symbol symbol,
+            string symbolName,
+            BacktestStrategySignal signal,
+            double entryPrice,
+            out double stopLoss,
+            out bool usedWickFallback)
+        {
+            stopLoss = 0;
+            usedWickFallback = false;
+            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || !(entryPrice > 0))
+                return false;
+
+            Bars sourceBars;
+            try { sourceBars = GetBarsForCurrentMasterTimer(signal.SourceTimeFrame, symbolName); }
+            catch { sourceBars = null; }
+            if (sourceBars == null || sourceBars.Count < 2)
+                return false;
+
+            var sourceIndex = ResolveSourceBarIndex(sourceBars, signal.SignalTime);
+            if (!IsValidBarIndex(sourceBars, sourceIndex))
+                sourceIndex = sourceBars.Count - 2;
+            if (!IsValidBarIndex(sourceBars, sourceIndex))
+                return false;
+
+            var open = sourceBars.OpenPrices[sourceIndex];
+            var close = sourceBars.ClosePrices[sourceIndex];
+            var high = sourceBars.HighPrices[sourceIndex];
+            var low = sourceBars.LowPrices[sourceIndex];
+            var raw = signal.TradeType == TradeType.Buy
+                ? Math.Min(open, close)
+                : Math.Max(open, close);
+            var bodySize = Math.Abs(close - open);
+            var candleRange = Math.Max(0, high - low);
+            var minimumDistance = Math.Max(symbol.TickSize, ResolveMinStopPips(symbol, sourceBars) * symbol.PipSize);
+            var bodyStopValid = raw > 0 &&
+                (signal.TradeType == TradeType.Buy ? raw < entryPrice : raw > entryPrice);
+            var bodyTooSmall = candleRange <= 0 ||
+                bodySize < candleRange * 0.30 ||
+                !bodyStopValid ||
+                Math.Abs(entryPrice - raw) < minimumDistance;
+
+            if (!bodyTooSmall)
+            {
+                stopLoss = NormalizePriceToSymbol(symbol, raw);
+                return stopLoss > 0;
+            }
+
+            usedWickFallback = true;
+            return CTraderStrategyEngine.TryResolveCandleWickStopLoss(
+                symbol, signal.TradeType, entryPrice,
+                open, high, low, close, 1.0, 0, out stopLoss);
+        }
+
+        private bool TryResolveStrategyAtrStopLoss(
+            Symbol symbol,
+            string symbolName,
+            BacktestStrategySignal signal,
+            double entryPrice,
+            int period,
+            out double stopLoss)
+        {
+            stopLoss = 0;
+            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null ||
+                !(entryPrice > 0) || period < 1)
+                return false;
+
+            Bars sourceBars;
+            try { sourceBars = GetBarsForCurrentMasterTimer(signal.SourceTimeFrame, symbolName); }
+            catch { sourceBars = null; }
+            if (sourceBars == null || sourceBars.Count < period + 1)
+                return false;
+
+            var referenceTime = signal.EntryConfirmationTime != DateTime.MinValue
+                ? signal.EntryConfirmationTime
+                : signal.SignalTime;
+            var sourceIndex = ResolveSourceBarIndex(sourceBars, referenceTime);
+            if (!IsValidBarIndex(sourceBars, sourceIndex))
+                sourceIndex = sourceBars.Count - 2;
+            if (!IsValidBarIndex(sourceBars, sourceIndex) || sourceIndex < period)
+                return false;
+
+            var totalTrueRange = 0.0;
+            var startIndex = sourceIndex - period + 1;
+            for (var index = startIndex; index <= sourceIndex; index++)
+            {
+                var high = sourceBars.HighPrices[index];
+                var low = sourceBars.LowPrices[index];
+                var previousClose = sourceBars.ClosePrices[index - 1];
+                var trueRange = Math.Max(high - low, Math.Max(Math.Abs(high - previousClose), Math.Abs(low - previousClose)));
+                if (double.IsNaN(trueRange) || double.IsInfinity(trueRange) || !(trueRange > 0))
+                    return false;
+                totalTrueRange += trueRange;
+            }
+
+            var atrDistance = totalTrueRange / period;
+            stopLoss = NormalizePriceToSymbol(
+                symbol,
+                signal.TradeType == TradeType.Buy
+                    ? entryPrice - atrDistance
+                    : entryPrice + atrDistance);
+            return stopLoss > 0;
+        }
+
+        private bool TryResolveStrategySwingStopLoss(
+            Symbol symbol,
+            string symbolName,
+            BacktestStrategySignal signal,
+            double entryPrice,
+            IEnumerable<TimeFrame> frames,
+            out double stopLoss)
+        {
+            stopLoss = 0;
+            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || !(entryPrice > 0))
+                return false;
+
+            var referenceTime = signal.EntryConfirmationTime != DateTime.MinValue
+                ? signal.EntryConfirmationTime
+                : signal.SignalTime;
+            var wantHigh = signal.TradeType == TradeType.Sell;
+            var candidates = new List<Tuple<DateTime, double>>();
+            foreach (var sourceTimeFrame in (frames ?? Enumerable.Empty<TimeFrame>()).Where(frame => frame != null).Distinct())
+            {
+                Bars sourceBars;
+                try { sourceBars = GetBarsForCurrentMasterTimer(sourceTimeFrame, symbolName); }
+                catch { sourceBars = null; }
+                if (sourceBars == null || sourceBars.Count < 3)
+                    continue;
+
+                var endIndex = ResolveSourceBarIndex(sourceBars, referenceTime);
+                if (!IsValidBarIndex(sourceBars, endIndex))
+                    endIndex = sourceBars.Count - 2;
+                if (!IsValidBarIndex(sourceBars, endIndex))
+                    continue;
+
+                var earliestIndex = Math.Max(0, endIndex - 19);
+                candidates.AddRange(CollectConfirmedSwings(sourceBars, 20, endIndex)
+                    .Where(swing => swing.BarIndex >= earliestIndex && swing.BarIndex <= endIndex)
+                    .Where(swing => swing.IsHigh == wantHigh)
+                    .Where(swing => swing.Price > 0 && (wantHigh ? swing.Price > entryPrice : swing.Price < entryPrice))
+                    .Select(swing => Tuple.Create(sourceBars.OpenTimes[swing.BarIndex], swing.Price)));
+            }
+
+            var selected = candidates
+                .OrderByDescending(candidate => candidate.Item1)
+                .ThenBy(candidate => Math.Abs(candidate.Item2 - entryPrice))
+                .FirstOrDefault();
+            if (selected == null || !(selected.Item2 > 0))
+                return false;
+
+            stopLoss = NormalizePriceToSymbol(symbol, selected.Item2);
+            return stopLoss > 0;
         }
 
         private bool TryResolveStrategyCandleTakeProfit(
@@ -40163,9 +43465,7 @@ namespace cAlgo.Robots
             if (!(patternWick > 0) || !(isBuy ? patternWick < entryPrice : patternWick > entryPrice))
                 return false;
 
-            var effectiveBuffer = Math.Max(
-                ResolveEntryAwareProtectionBuffer(symbol, buffer, Math.Abs(entryPrice - patternWick)),
-                symbol.TickSize > 0 ? symbol.TickSize : 0);
+            var effectiveBuffer = Math.Max(0, buffer);
             stopLoss = NormalizePriceToSymbol(
                 symbol,
                 isBuy ? patternWick - effectiveBuffer : patternWick + effectiveBuffer);
@@ -40188,7 +43488,7 @@ namespace cAlgo.Robots
             // Event SL uses a reacted edge only for an official box zone (OB/FVG/S&D).
             // A line has no zone edge, so its Event SL must equal Wick SL exactly.
             if (!hasZone)
-                return TryResolveStrategyWickStopLoss(symbol, signal, entryPrice, buffer, out stopLoss);
+                return TryResolveStrategyWickStopLoss(symbol, signal, entryPrice, 0, out stopLoss);
 
             var zoneEdge = isBuy ? signal.RelatedZoneLow : signal.RelatedZoneHigh;
             if (!(zoneEdge > 0) || !(isBuy ? zoneEdge < entryPrice : zoneEdge > entryPrice))
@@ -40793,7 +44093,7 @@ namespace cAlgo.Robots
             {
                 throw new InvalidOperationException("Managed compact strategy exposure contract failed.");
             }
-            if (Enum.GetValues(typeof(CanonicalEventType)).Length != 5)
+            if (Enum.GetValues(typeof(CanonicalEventType)).Length != 6)
                 throw new InvalidOperationException("Canonical action grouping contract failed.");
             if (ResolveCandleMovementCode("m5.s.h1.sh +2") != "s" ||
                 ResolveCandleMovementCode("m5.r.ob +1") != "r" ||
@@ -40835,6 +44135,34 @@ namespace cAlgo.Robots
             {
                 throw new InvalidOperationException("Named-confluence scope contract failed.");
             }
+            if (!IsOpposingLineObstacle(99.8, 100.2, 100.0, 101.0, 2.0, 0.01, true) ||
+                IsOpposingLineObstacle(99.8, 100.2, 100.0, 103.0, 2.0, 0.01, true) ||
+                IsOpposingLineObstacle(99.8, 100.2, 100.0, 99.0, 2.0, 0.01, true) ||
+                !IsOpposingLineObstacle(99.8, 100.2, 100.0, 99.0, 2.0, 0.01, false) ||
+                IsOpposingLineObstacle(99.8, 100.2, 100.0, 97.0, 2.0, 0.01, false) ||
+                !IsOpposingZoneWithinClearance(99.8, 100.2, 100.0, 101.0, 103.0, 1.0, 0.01, true) ||
+                IsOpposingZoneWithinClearance(99.8, 100.2, 100.0, 102.0, 103.0, 1.0, 0.01, true) ||
+                !IsOpposingZoneWithinClearance(99.8, 100.2, 100.0, 97.0, 99.0, 1.0, 0.01, false) ||
+                IsOpposingZoneWithinClearance(99.8, 100.2, 100.0, 97.0, 98.0, 1.0, 0.01, false) ||
+                !IsOpposingLineObstacle(99.5, 102.0, 100.0, 101.5, 1.0, 0.01, true) ||
+                IsOpposingLineObstacle(100.0, 102.5, 102.0, 100.5, 1.0, 0.01, true) ||
+                !IsOpposingLineObstacle(98.0, 100.5, 100.0, 98.5, 1.0, 0.01, false) ||
+                IsOpposingLineObstacle(97.5, 100.0, 98.0, 99.5, 1.0, 0.01, false) ||
+                !IsOpposingZoneWithinClearance(99.5, 103.0, 100.0, 101.5, 102.0, 1.0, 0.01, true) ||
+                IsOpposingZoneWithinClearance(100.0, 103.5, 103.1, 101.0, 102.0, 1.0, 0.01, true))
+            {
+                throw new InvalidOperationException("Wick-aware opposing-level clearance contract failed.");
+            }
+            if (Math.Abs(CTraderStrategyEngine.ResolveEqualSplitRatio(1, 2) - 0.5) > 0.0000001 ||
+                Math.Abs(CTraderStrategyEngine.ResolveEqualSplitRatio(1, 3) - (1.0 / 3.0)) > 0.0000001 ||
+                Math.Abs(CTraderStrategyEngine.ResolveEqualSplitRatio(2, 3) - (2.0 / 3.0)) > 0.0000001 ||
+                Math.Abs(CTraderStrategyEngine.ResolveEqualSplitRatio(1, 4) - 0.25) > 0.0000001 ||
+                Math.Abs(CTraderStrategyEngine.ResolveEqualSplitRatio(2, 4) - 0.5) > 0.0000001 ||
+                Math.Abs(CTraderStrategyEngine.ResolveEqualSplitRatio(3, 4) - 0.75) > 0.0000001 ||
+                Math.Abs(CTraderStrategyEngine.ResolveEqualSplitRatio(4, 5) - 0.8) > 0.0000001)
+            {
+                throw new InvalidOperationException("Equal n.Trades split-ratio contract failed.");
+            }
             if (Math.Abs(CTraderStrategyEngine.ResolveEntryBufferMultiplier(StrategyEntryType.L00_05R) - 0.5) > 0.0000001 ||
                 Math.Abs(CTraderStrategyEngine.ResolveEntryBufferMultiplier(StrategyEntryType.L00_05) - 0.5) > 0.0000001 ||
                 Math.Abs(CTraderStrategyEngine.ResolveStopEntryBufferMultiplier(StrategyEntryType.S05) - 0.5) > 0.0000001 ||
@@ -40871,6 +44199,15 @@ namespace cAlgo.Robots
             {
                 throw new InvalidOperationException("Strategy trade-chain TP preset contract failed.");
             }
+            StrategyStopLossMode chainStopLossMode;
+            if (!TryResolveStrategyTradeChainStopLossMode("Now_Wick15_L01_R15", out chainStopLossMode) ||
+                chainStopLossMode != StrategyStopLossMode.Wick15 ||
+                !TryResolveStrategyTradeChainStopLossMode("Now_Wick20_L08_R2", out chainStopLossMode) ||
+                chainStopLossMode != StrategyStopLossMode.Wick2 ||
+                TryResolveStrategyTradeChainStopLossMode("Now_Wick_L01_R15", out chainStopLossMode))
+            {
+                throw new InvalidOperationException("Strategy trade-chain Wick15/Wick20 SL preset contract failed.");
+            }
             if (!CTraderStrategyEngine.HasMinimumRewardRisk(TradeType.Buy, 100, 90, 110, 1.0) ||
                 CTraderStrategyEngine.HasMinimumRewardRisk(TradeType.Buy, 100, 90, 109, 1.0) ||
                 !CTraderStrategyEngine.HasMinimumRewardRisk(TradeType.Sell, 100, 110, 80, 2.0))
@@ -40884,9 +44221,23 @@ namespace cAlgo.Robots
             }
             if (Math.Abs(CTraderStrategyEngine.ResolveProtectionBufferPips(3, 10, 1, 20) - 9.0) > 0.0000001 ||
                 Math.Abs(CTraderStrategyEngine.ResolveProtectionBufferPips(5, 10, 1, 20) - 15.0) > 0.0000001 ||
-                Math.Abs(CTraderStrategyEngine.ResolveProtectionBufferPips(3, 1, 0, 0) - 5.0) > 0.0000001)
+                Math.Abs(CTraderStrategyEngine.ResolveProtectionBufferPips(3, 1, 0, 0) - 0.3) > 0.0000001 ||
+                Math.Abs(CTraderStrategyEngine.ResolveProtectionBufferPips(3, 0, 0, 0)) > 0.0000001)
             {
                 throw new InvalidOperationException("Strategy protection-buffer contract failed.");
+            }
+            if (Math.Abs(ResolveStrategyWickMultiplier(StrategyStopLossMode.candle_wick_07) - 0.7) > 0.0000001 ||
+                Math.Abs(ResolveStrategyWickMultiplier(StrategyStopLossMode.candle_wick_13) - 1.3) > 0.0000001 ||
+                ResolveStrategyWickSourceCode(StrategyStopLossMode.candle_wick_07) != "W07" ||
+                ResolveStrategyWickSourceCode(StrategyStopLossMode.candle_wick_13) != "W13" ||
+                Math.Abs(ResolveStrategyWickMultiplier(StrategyStopLossMode.Wick05) - 0.5) > 0.0000001 ||
+                Math.Abs(ResolveStrategyWickMultiplier(StrategyStopLossMode.Wick11) - 1.1) > 0.0000001 ||
+                Math.Abs(ResolveStrategyWickMultiplier(StrategyStopLossMode.Wick2) - 2.0) > 0.0000001 ||
+                ResolveStrategyWickSourceCode(StrategyStopLossMode.Wick13) != "W13" ||
+                ResolveStrategyAtrPeriod(StrategyStopLossMode.ATR5) != 5 ||
+                ResolveStrategyAtrPeriod(StrategyStopLossMode.ATR48) != 48)
+            {
+                throw new InvalidOperationException("Explicit WYSIWYG SL-mode contract failed.");
             }
 
             TradeType direction;
@@ -40894,6 +44245,72 @@ namespace cAlgo.Robots
                 !CTraderStrategyEngine.TryResolveCrossDirection(3.0, 1.0, 2.0, 2.0, out direction) || direction != TradeType.Sell)
             {
                 throw new InvalidOperationException("Strategy cross-direction contract failed.");
+            }
+            int patternStartIndex;
+            int firstWickIndex;
+            if (
+                // DE40 M5 three-candle V: approach down, long lower Wick 1, rise to upper Wick 2.
+                !CTraderStrategyEngine.TryResolveMultiCandleWickFlipContinuationPattern(
+                    new[] { 25582.9, 25543.9, 25551.4 },
+                    new[] { 25588.9, 25558.9, 25607.4 },
+                    new[] { 25541.9, 25515.9, 25550.4 },
+                    new[] { 25544.4, 25553.4, 25582.9 },
+                    2,
+                    out direction,
+                    out patternStartIndex,
+                    out firstWickIndex) ||
+                direction != TradeType.Sell || patternStartIndex != 0 || firstWickIndex != 1 ||
+                // Five-candle inverted V with two directional bridge candles.
+                !CTraderStrategyEngine.TryResolveMultiCandleWickFlipContinuationPattern(
+                    new[] { 96.0, 104.0, 104.0, 100.0, 98.0 },
+                    new[] { 102.5, 112.0, 104.5, 100.5, 98.5 },
+                    new[] { 95.5, 103.5, 99.5, 97.5, 90.0 },
+                    new[] { 102.0, 105.0, 100.0, 98.0, 97.0 },
+                    4,
+                    out direction,
+                    out patternStartIndex,
+                    out firstWickIndex) ||
+                direction != TradeType.Buy || patternStartIndex != 0 || firstWickIndex != 1 ||
+                // Unrelated older candles must not enlarge the box: Wick 1 is the first
+                // candle, unless exactly one valid pre-direction confirmation is included.
+                !CTraderStrategyEngine.TryResolveMultiCandleWickFlipContinuationPattern(
+                    new[] { 90.0, 95.0, 109.0, 104.0, 98.0 },
+                    new[] { 92.5, 97.5, 111.5, 112.0, 98.5 },
+                    new[] { 89.5, 94.5, 108.5, 103.5, 90.0 },
+                    new[] { 92.0, 97.0, 111.0, 105.0, 97.0 },
+                    4,
+                    out direction,
+                    out patternStartIndex,
+                    out firstWickIndex) ||
+                direction != TradeType.Buy || patternStartIndex != 3 || firstWickIndex != 3 ||
+                // Wick 1 is mandatory; a normal directional candle cannot replace it.
+                CTraderStrategyEngine.TryResolveMultiCandleWickFlipContinuationPattern(
+                    new[] { 96.0, 104.0, 104.0, 100.0, 98.0 },
+                    new[] { 102.5, 105.5, 104.5, 100.5, 98.5 },
+                    new[] { 95.5, 103.0, 99.5, 97.5, 90.0 },
+                    new[] { 102.0, 105.0, 100.0, 98.0, 97.0 },
+                    4,
+                    out direction,
+                    out patternStartIndex,
+                    out firstWickIndex) ||
+                // An up/down bridge is sideways noise, not a directional Wick-1-to-Wick-2 leg.
+                CTraderStrategyEngine.TryResolveMultiCandleWickFlipContinuationPattern(
+                    new[] { 96.0, 104.0, 107.0, 100.0, 98.0 },
+                    new[] { 102.5, 112.0, 108.0, 100.5, 98.5 },
+                    new[] { 95.5, 103.5, 106.0, 97.5, 90.0 },
+                    new[] { 102.0, 105.0, 107.0, 98.0, 97.0 },
+                    4,
+                    out direction,
+                    out patternStartIndex,
+                    out firstWickIndex))
+            {
+                throw new InvalidOperationException("Wick-flip continuation direction contract failed.");
+            }
+            if (Math.Abs(CTraderStrategyEngine.ResolveNearestDirectionalTarget(TradeType.Buy, 100, 110, 106) - 106) > 0.0000001 ||
+                Math.Abs(CTraderStrategyEngine.ResolveNearestDirectionalTarget(TradeType.Sell, 100, 90, 96) - 96) > 0.0000001 ||
+                Math.Abs(CTraderStrategyEngine.ResolveNearestDirectionalTarget(TradeType.Buy, 100, 110, 96) - 110) > 0.0000001)
+            {
+                throw new InvalidOperationException("Wick-flip continuation target contract failed.");
             }
             if (!CTraderStrategyEngine.TryResolveTripleTrendDirection(1.0, 4.0, 2.0, 3.0, 2.0, out direction) || direction != TradeType.Buy)
                 throw new InvalidOperationException("Strategy triple-trend contract failed.");
@@ -40923,7 +44340,7 @@ namespace cAlgo.Robots
             if (!signal.IsValid || signal.StrategyId != "contract" || signal.TradeType != TradeType.Buy)
                 throw new InvalidOperationException("Strategy signal-construction contract failed.");
             if (CTraderStrategyEngine.ResolveAutoStopLossSource(0) != CTraderStrategyStopSource.EventInvalidation ||
-                CTraderStrategyEngine.ResolveAutoStopLossSource(CTraderStrategyEngine.AutoStopLossSourceCount - 1) != CTraderStrategyStopSource.CandleRange5 ||
+                CTraderStrategyEngine.ResolveAutoStopLossSource(CTraderStrategyEngine.AutoStopLossSourceCount - 1) != CTraderStrategyStopSource.CandleExtreme5 ||
                 CTraderStrategyEngine.ResolveAutoTakeProfitSource(0) != CTraderStrategyTargetSource.Liquidity ||
                 CTraderStrategyEngine.ResolveAutoTakeProfitSource(CTraderStrategyEngine.AutoTakeProfitSourceCount - 1) != CTraderStrategyTargetSource.RewardRisk2)
             {
@@ -41144,7 +44561,7 @@ namespace cAlgo.Robots
 
             return _structureEngine.GetOrCreateSnapshot(
                 cacheKey,
-                32,
+                128, // was 32 — increased to avoid full-cache eviction when many HTF timeframes are active
                 () => BuildStructureSnapshotFromAnalysisService(sourceBars, lookbackBars, snapshot.LastClosedBarIndex));
         }
 
@@ -41209,13 +44626,12 @@ namespace cAlgo.Robots
                                 : StructureZoneTypeV2.Fvg,
                     State = value.State == FortyTwo.Trading.Analysis.MarketZoneState.Invalidated
                         ? StructureZoneStateV2.Invalidated
-                        : value.State == FortyTwo.Trading.Analysis.MarketZoneState.Touched
-                            ? StructureZoneStateV2.Touched
-                            : StructureZoneStateV2.Active,
+                        : StructureZoneStateV2.Active,
                     IsBullish = value.Direction == FortyTwo.Trading.Analysis.MarketDirection.Bullish,
                     OriginBarIndex = value.OriginIndex + sourceIndexOffset,
                     ConfirmationBarIndex = value.ConfirmationIndex + sourceIndexOffset,
                     TouchBarIndex = value.TouchIndex >= 0 ? value.TouchIndex + sourceIndexOffset : -1,
+                    TouchCount = Math.Max(0, value.TouchCount),
                     InvalidationBarIndex = value.InvalidationIndex >= 0 ? value.InvalidationIndex + sourceIndexOffset : -1,
                     Low = value.Low,
                     High = value.High
@@ -42336,6 +45752,7 @@ namespace cAlgo.Robots
                 signal.StopLossSourceCode = slSource;
                 signal.TakeProfitSourceCode = tpSource;
                 ApplyStrategySignalRewardRisk(symbol, signal, entry, sl, tradePreset.TakeProfitMode, ref tp);
+                ApplyStrategySignalTakeProfitLimit(symbol, ref signal, entry, sl, ref tp);
                 var rewardRiskComment = BuildStrategyRewardRiskComment(entry, tp, sl);
                 context.StopLossReason = ResolveStrategyProtectionArtifactLabel(
                     symbol,
@@ -43233,9 +46650,8 @@ namespace cAlgo.Robots
                 : candidates.Where(v => v > baseEntry && v < stopLoss).OrderBy(v => v).ToList();
         }
 
-        // Strategy split trades use fixed retracement steps from entry to SL:
-        // leg 2 = 0.3, leg 3 = 0.5, leg 4 = 0.7, leg 5 = 0.9.
-        // This keeps n.Trades deterministic across Now and Wait_confirm chain slots.
+        // Strategy split trades divide the usable entry-to-SL range into equal segments.
+        // The base entry is leg 1 and the SL-side boundary is not itself an entry.
         private List<double> BuildStrategyEqualSplitEntries(Symbol symbol, TradeType tradeType, double baseEntry, double stopLoss, int totalLegCount)
         {
             return CTraderStrategyEngine.BuildSplitEntries(symbol, tradeType, baseEntry, stopLoss, totalLegCount, MinStopPips);
@@ -45097,11 +48513,11 @@ namespace cAlgo.Robots
                 var partials = new List<PartialTP>();
 
                 // 1. Try tp_targets array from POLL response (preferred)
-                var tpMatch = Regex.Match(json, "\"tp_targets\"\\s*:\\s*\\[([^\\]]*)\\]");
+                var tpMatch = _rxJsonTpTargets.Match(json);
                 if (tpMatch.Success)
                 {
                     var tpVals = tpMatch.Groups[1].Value;
-                    var tpPrices = Regex.Matches(tpVals, @"[\d]+\.?[\d]*");
+                    var tpPrices = _rxDecimalNum.Matches(tpVals);
                     var prices = new List<double>();
                     foreach (Match m in tpPrices)
                     {
@@ -45141,10 +48557,10 @@ namespace cAlgo.Robots
                     var rawJson = GetJsonValue(json, "raw_json");
                     if (!string.IsNullOrEmpty(rawJson))
                     {
-                        var pMatch = Regex.Match(rawJson, "\"partial_tps\"\\s*:\\s*\\[(.*?)\\]", RegexOptions.Singleline);
+                        var pMatch = _rxJsonPartialTps.Match(rawJson);
                         if (pMatch.Success)
                         {
-                            var items = Regex.Matches(pMatch.Groups[1].Value, "\\{(.*?)\\}", RegexOptions.Singleline);
+                            var items = _rxJsonObject.Matches(pMatch.Groups[1].Value);
                             foreach (Match m in items)
                             {
                                 var it = "{" + m.Groups[1].Value + "}";
@@ -46380,10 +49796,10 @@ namespace cAlgo.Robots
                     _lastPriceSymbolsText = updatedSymbols.Count > 0 ? string.Join(",", updatedSymbols.Take(12)) : "None";
                 }
             }
-            var resultsMatch = Regex.Match(json, "\"results\"\\s*:\\s*\\[(.*?)\\]", RegexOptions.Singleline);
+            var resultsMatch = _rxJsonResults.Match(json);
             if (resultsMatch.Success)
             {
-                var objects = Regex.Matches(resultsMatch.Groups[1].Value, "\\{(.*?)\\}", RegexOptions.Singleline);
+                var objects = _rxJsonObject.Matches(resultsMatch.Groups[1].Value);
                 if (!hasServerSummary) _lastSyncSummary.Read = objects.Count;
                 foreach (Match objMatch in objects)
                 {
@@ -46439,10 +49855,10 @@ namespace cAlgo.Robots
                 }
             }
 
-            var updatesMatch = Regex.Match(json, "\"tradeUpdates\"\\s*:\\s*\\[(.*?)\\]", RegexOptions.Singleline);
+            var updatesMatch = _rxJsonTradeUpdates.Match(json);
             if (updatesMatch.Success)
             {
-                var updates = Regex.Matches(updatesMatch.Groups[1].Value, "\\{(.*?)\\}", RegexOptions.Singleline);
+                var updates = _rxJsonObject.Matches(updatesMatch.Groups[1].Value);
                 foreach (Match updateMatch in updates)
                 {
                     var obj = "{" + updateMatch.Groups[1].Value + "}";
@@ -46477,10 +49893,10 @@ namespace cAlgo.Robots
                 }
             }
 
-            var closedRowsMatch = Regex.Match(json, "\"closedRows\"\\s*:\\s*\\[(.*?)\\]", RegexOptions.Singleline);
+            var closedRowsMatch = _rxJsonClosedRows.Match(json);
             if (closedRowsMatch.Success)
             {
-                var closedRows = Regex.Matches(closedRowsMatch.Groups[1].Value, "\\{(.*?)\\}", RegexOptions.Singleline);
+                var closedRows = _rxJsonObject.Matches(closedRowsMatch.Groups[1].Value);
                 foreach (Match rowMatch in closedRows)
                 {
                     var obj = "{" + rowMatch.Groups[1].Value + "}";
@@ -46696,7 +50112,7 @@ namespace cAlgo.Robots
                 symbolName,
                 GetMiniChartLabel(timeFrame),
                 BuildTradeTriggerClosedBarsKey(symbolName, timeFrame),
-                (_toggleStrategyMarkers ? "strategy" : "no-strategy") + "|" + SelectedBacktestStrategy + "|" + BuildDashboardAnalysisToggleKey());
+                (_toggleStrategyMarkers ? "strategy" : "no-strategy") + "|" + BuildConfiguredStrategyModesStateKey() + "|" + BuildDashboardAnalysisToggleKey());
             if (string.Equals(cacheKey, _visualAnalysisCacheKey, StringComparison.Ordinal))
                 return;
 
@@ -46714,6 +50130,51 @@ namespace cAlgo.Robots
             var sellItems = new Dictionary<string, DirectionalDashboardItem>(StringComparer.OrdinalIgnoreCase);
             var selectedRules = new HashSet<StrategyCustomRuleOption>(GetSelectedStrategyCustomRuleOptions());
             var frames = GetTradeTriggerTimeFrames(baseTimeFrame);
+
+            try
+            {
+                var baseBars = GetBarsForCurrentMasterTimer(baseTimeFrame, symbolName);
+                var latestClosedIndex = baseBars != null ? baseBars.Count - 2 : -1;
+                if (baseBars != null && latestClosedIndex >= 1)
+                {
+                    var scoreTime = ResolveSourceBarEndTime(
+                        baseBars,
+                        baseBars.OpenTimes[latestClosedIndex],
+                        baseTimeFrame);
+                    var trendBiasScore = BuildTrendBiasConfluenceScoreAt(symbolName, baseTimeFrame, scoreTime);
+                    var trendBiasDirection = ResolveTrendBiasDirection(trendBiasScore);
+                    var trendBiasLabel = trendBiasDirection > 0 ? "BULL" : trendBiasDirection < 0 ? "BEAR" : "NEUTRAL";
+                    var barTime = baseBars.OpenTimes[latestClosedIndex];
+                    AddMostRecentDirectionalDashboardItem(buyItems, new DirectionalDashboardItem
+                    {
+                        Category = "S",
+                        TypeKey = "TREND_BIAS_SCORE",
+                        Text = "tb:" + trendBiasLabel + "/B:" + FormatTrendBiasMask(trendBiasScore.BullishMask) +
+                            "[" + FormatTrendBiasMaskComponents(trendBiasScore.BullishMask) + "]" +
+                            "/E:" + FormatTrendBiasMask(trendBiasScore.EnabledMask),
+                        BarTime = barTime,
+                        TimeFrameMinutes = TimeFrameToMinutes(baseTimeFrame),
+                        Priority = 100,
+                        Importance = 3
+                    });
+                    AddMostRecentDirectionalDashboardItem(sellItems, new DirectionalDashboardItem
+                    {
+                        Category = "S",
+                        TypeKey = "TREND_BIAS_SCORE",
+                        Text = "tb:" + trendBiasLabel + "/S:" + FormatTrendBiasMask(trendBiasScore.BearishMask) +
+                            "[" + FormatTrendBiasMaskComponents(trendBiasScore.BearishMask) + "]" +
+                            "/E:" + FormatTrendBiasMask(trendBiasScore.EnabledMask),
+                        BarTime = barTime,
+                        TimeFrameMinutes = TimeFrameToMinutes(baseTimeFrame),
+                        Priority = 100,
+                        Importance = 3
+                    });
+                }
+            }
+            catch
+            {
+                // Dashboard diagnostics must never interrupt live strategy evaluation.
+            }
 
             foreach (var timeFrame in frames)
             {
@@ -47110,6 +50571,7 @@ namespace cAlgo.Robots
                     new[]
                     {
                         DrawChochDetections.ToString(), DrawBosDetections.ToString(), DrawSweepDetections.ToString(),
+                        DrawSweepReclaimChain.ToString(),
                         DrawRejectionDetections.ToString(), DrawBreakoutDetections.ToString(),
                         DrawCrossDetections.ToString(), DrawEarlyRejectionDetections.ToString(),
                         DrawPinBarPatterns.ToString(), DrawEngulfingPatterns.ToString(), DrawBigCandlePatterns.ToString(),
@@ -47122,6 +50584,8 @@ namespace cAlgo.Robots
                         ConfluenceEmaPullback.ToString(), ConfluenceKeyLevels.ToString(), ConfluenceSwing.ToString(),
                         ConfluenceEqualHighLow.ToString(), ConfluenceTrendline.ToString(), ConfluenceOrderBlock.ToString(),
                         ConfluenceFairValueGap.ToString(), ConfluenceSupply.ToString(), ConfluenceDemand.ToString(),
+                        TrendBiasStructure.ToString(), TrendBiasEma.ToString(), TrendBiasRsi.ToString(),
+                        TrendBiasMacd.ToString(), TrendBiasAdx.ToString(),
                         MinimumConfluences.ToString(),
                         DrawKeyLevels.ToString(), DrawLiquidityLevels.ToString(), DrawOrderBlocks.ToString(),
                         DrawFvgZones.ToString(), DrawSupplyDemand.ToString(), ZoneMaxCount.ToString(),
@@ -47131,16 +50595,18 @@ namespace cAlgo.Robots
 
         private bool IsDashboardEventOptionEnabled(StrategyCustomEventOption option, TimeFrame sourceTimeFrame)
         {
+            if (option == StrategyCustomEventOption.sweep_reclaim)
+                return IsScopeEnabledForTimeFrame(DrawSweepReclaimChain, sourceTimeFrame);
             StrategyCustomEventOption baseOption;
             StrategyEventFollowUpOutcome followUpOutcome;
             var isFollowUp = TryMapStrategyFollowUpEventOption(option, out baseOption, out followUpOutcome);
             if (!isFollowUp)
                 baseOption = option;
 
-            if (baseOption == StrategyCustomEventOption.X_Cross)
+            if (baseOption == StrategyCustomEventOption.x_Cross)
                 return !isFollowUp && _toggleCrossDetections &&
                     IsScopeEnabledForTimeFrame(DrawCrossDetections, sourceTimeFrame);
-            if (baseOption == StrategyCustomEventOption.Xr_EarlyRejection)
+            if (baseOption == StrategyCustomEventOption.xr_EarlyRejection)
                 return !isFollowUp && _toggleEarlyRejectionDetections &&
                     IsScopeEnabledForTimeFrame(DrawEarlyRejectionDetections, sourceTimeFrame);
 
@@ -47179,27 +50645,28 @@ namespace cAlgo.Robots
                     return false;
                 switch (baseOption)
                 {
-                    case StrategyCustomEventOption.Pxe_PriceEmaCross:
-                    case StrategyCustomEventOption.Emx_EmaFastMidCross:
-                    case StrategyCustomEventOption.Emt_EmaMidSlowCross:
+                    case StrategyCustomEventOption.ema_PriceFastEmaCross:
+                    case StrategyCustomEventOption.ema_PriceSlowEmaCross:
+                    case StrategyCustomEventOption.ema_EmaFastMidCross:
+                    case StrategyCustomEventOption.ema_EmaMidSlowCross:
                         return _toggleEmaEvents && IsScopeEnabledForTimeFrame(DrawEmaEvents, sourceTimeFrame);
-                    case StrategyCustomEventOption.Vwx_PriceVwapCross:
-                    case StrategyCustomEventOption.Vwr_VwapRejection:
+                    case StrategyCustomEventOption.vwap_PriceVwapCross:
+                    case StrategyCustomEventOption.vwap_VwapRejection:
                         return _toggleVwapEvents && IsScopeEnabledForTimeFrame(DrawVwapEvents, sourceTimeFrame);
-                    case StrategyCustomEventOption.Bbx_BollingerMidCross:
-                    case StrategyCustomEventOption.Bbr_BollingerBandReject:
+                    case StrategyCustomEventOption.bb_BollingerMidCross:
+                    case StrategyCustomEventOption.bb_BollingerBandReject:
                         return _toggleBollingerEvents && IsScopeEnabledForTimeFrame(DrawBollingerEvents, sourceTimeFrame);
-                    case StrategyCustomEventOption.R50_RsiMidlineCross:
-                    case StrategyCustomEventOption.Ros_RsiExitOversold:
-                    case StrategyCustomEventOption.Rob_RsiExitOverbought:
+                    case StrategyCustomEventOption.rsi_RsiMidlineCross:
+                    case StrategyCustomEventOption.rsi_RsiExitOversold:
+                    case StrategyCustomEventOption.rsi_RsiExitOverbought:
                         return _toggleRsiEvents && IsScopeEnabledForTimeFrame(DrawRsiEvents, sourceTimeFrame);
-                    case StrategyCustomEventOption.Stx_StochCross:
-                    case StrategyCustomEventOption.Sto_StochExitExtreme:
+                    case StrategyCustomEventOption.stoch_StochCross:
+                    case StrategyCustomEventOption.stoch_StochExitExtreme:
                         return _toggleStochasticEvents && IsScopeEnabledForTimeFrame(DrawStochasticEvents, sourceTimeFrame);
-                    case StrategyCustomEventOption.Mdx_MacdSignalCross:
-                    case StrategyCustomEventOption.Md0_MacdZeroCross:
+                    case StrategyCustomEventOption.macd_MacdSignalCross:
+                    case StrategyCustomEventOption.macd_MacdZeroCross:
                         return _toggleMacdEvents && IsScopeEnabledForTimeFrame(DrawMacdEvents, sourceTimeFrame);
-                    case StrategyCustomEventOption.Div_Divergence:
+                    case StrategyCustomEventOption.rsi_Divergence:
                         return _toggleDivergenceEvents && IsScopeEnabledForTimeFrame(DrawDivergenceEvents, sourceTimeFrame);
                     default:
                         return false;
@@ -47246,20 +50713,20 @@ namespace cAlgo.Robots
         {
             switch (option)
             {
-                case StrategyCustomEventOption.Pin_PinBar: return DrawPinBarPatterns;
-                case StrategyCustomEventOption.Eng_Engulfing: return DrawEngulfingPatterns;
-                case StrategyCustomEventOption.Big_BigCandle: return DrawBigCandlePatterns;
-                case StrategyCustomEventOption.Mor_MorningStar: return DrawMorningStarPatterns;
-                case StrategyCustomEventOption.Eve_EveningStar: return DrawEveningStarPatterns;
-                case StrategyCustomEventOption.Ham_Hammer: return DrawHammerPatterns;
-                case StrategyCustomEventOption.Hgm_HangingMan: return DrawHangingManPatterns;
-                case StrategyCustomEventOption.Sst_ShootingStar: return DrawShootingStarPatterns;
-                case StrategyCustomEventOption.Ihm_InvertedHammer: return DrawInvertedHammerPatterns;
-                case StrategyCustomEventOption.Prc_PiercingLine: return DrawPiercingLinePatterns;
-                case StrategyCustomEventOption.Dcc_DarkCloudCover: return DrawDarkCloudCoverPatterns;
-                case StrategyCustomEventOption.Tws_ThreeWhiteSoldiers: return DrawThreeWhiteSoldiersPatterns;
-                case StrategyCustomEventOption.Tbc_ThreeBlackCrows: return DrawThreeBlackCrowsPatterns;
-                case StrategyCustomEventOption.Har_Harami: return DrawHaramiPatterns;
+                case StrategyCustomEventOption.pin_PinBar: return DrawPinBarPatterns;
+                case StrategyCustomEventOption.eng_Engulfing: return DrawEngulfingPatterns;
+                case StrategyCustomEventOption.big_BigCandle: return DrawBigCandlePatterns;
+                case StrategyCustomEventOption.mor_MorningStar: return DrawMorningStarPatterns;
+                case StrategyCustomEventOption.eve_EveningStar: return DrawEveningStarPatterns;
+                case StrategyCustomEventOption.ham_Hammer: return DrawHammerPatterns;
+                case StrategyCustomEventOption.hgm_HangingMan: return DrawHangingManPatterns;
+                case StrategyCustomEventOption.sst_ShootingStar: return DrawShootingStarPatterns;
+                case StrategyCustomEventOption.ihm_InvertedHammer: return DrawInvertedHammerPatterns;
+                case StrategyCustomEventOption.prc_PiercingLine: return DrawPiercingLinePatterns;
+                case StrategyCustomEventOption.dcc_DarkCloudCover: return DrawDarkCloudCoverPatterns;
+                case StrategyCustomEventOption.tws_ThreeWhiteSoldiers: return DrawThreeWhiteSoldiersPatterns;
+                case StrategyCustomEventOption.tbc_ThreeBlackCrows: return DrawThreeBlackCrowsPatterns;
+                case StrategyCustomEventOption.har_Harami: return DrawHaramiPatterns;
                 default: return CandlePatternToggleMode.No;
             }
         }
@@ -47294,20 +50761,20 @@ namespace cAlgo.Robots
             filter = StructureEventFollowUpFilter.Any;
             switch (option)
             {
-                case StrategyCustomEventOption.Pin_PinBar: enabled = _togglePinBarPatterns; filter = _pinBarPatternFollowUpFilter; break;
-                case StrategyCustomEventOption.Eng_Engulfing: enabled = _toggleEngulfingPatterns; filter = _engulfingPatternFollowUpFilter; break;
-                case StrategyCustomEventOption.Big_BigCandle: enabled = _toggleBigCandlePatterns; filter = _bigCandlePatternFollowUpFilter; break;
-                case StrategyCustomEventOption.Mor_MorningStar: enabled = _toggleMorningStarPatterns; filter = _morningStarPatternFollowUpFilter; break;
-                case StrategyCustomEventOption.Eve_EveningStar: enabled = _toggleEveningStarPatterns; filter = _eveningStarPatternFollowUpFilter; break;
-                case StrategyCustomEventOption.Ham_Hammer: enabled = _toggleHammerPatterns; filter = _hammerPatternFollowUpFilter; break;
-                case StrategyCustomEventOption.Hgm_HangingMan: enabled = _toggleHangingManPatterns; filter = _hangingManPatternFollowUpFilter; break;
-                case StrategyCustomEventOption.Sst_ShootingStar: enabled = _toggleShootingStarPatterns; filter = _shootingStarPatternFollowUpFilter; break;
-                case StrategyCustomEventOption.Ihm_InvertedHammer: enabled = _toggleInvertedHammerPatterns; filter = _invertedHammerPatternFollowUpFilter; break;
-                case StrategyCustomEventOption.Prc_PiercingLine: enabled = _togglePiercingLinePatterns; filter = _piercingLinePatternFollowUpFilter; break;
-                case StrategyCustomEventOption.Dcc_DarkCloudCover: enabled = _toggleDarkCloudCoverPatterns; filter = _darkCloudCoverPatternFollowUpFilter; break;
-                case StrategyCustomEventOption.Tws_ThreeWhiteSoldiers: enabled = _toggleThreeWhiteSoldiersPatterns; filter = _threeWhiteSoldiersPatternFollowUpFilter; break;
-                case StrategyCustomEventOption.Tbc_ThreeBlackCrows: enabled = _toggleThreeBlackCrowsPatterns; filter = _threeBlackCrowsPatternFollowUpFilter; break;
-                case StrategyCustomEventOption.Har_Harami: enabled = _toggleHaramiPatterns; filter = _haramiPatternFollowUpFilter; break;
+                case StrategyCustomEventOption.pin_PinBar: enabled = _togglePinBarPatterns; filter = _pinBarPatternFollowUpFilter; break;
+                case StrategyCustomEventOption.eng_Engulfing: enabled = _toggleEngulfingPatterns; filter = _engulfingPatternFollowUpFilter; break;
+                case StrategyCustomEventOption.big_BigCandle: enabled = _toggleBigCandlePatterns; filter = _bigCandlePatternFollowUpFilter; break;
+                case StrategyCustomEventOption.mor_MorningStar: enabled = _toggleMorningStarPatterns; filter = _morningStarPatternFollowUpFilter; break;
+                case StrategyCustomEventOption.eve_EveningStar: enabled = _toggleEveningStarPatterns; filter = _eveningStarPatternFollowUpFilter; break;
+                case StrategyCustomEventOption.ham_Hammer: enabled = _toggleHammerPatterns; filter = _hammerPatternFollowUpFilter; break;
+                case StrategyCustomEventOption.hgm_HangingMan: enabled = _toggleHangingManPatterns; filter = _hangingManPatternFollowUpFilter; break;
+                case StrategyCustomEventOption.sst_ShootingStar: enabled = _toggleShootingStarPatterns; filter = _shootingStarPatternFollowUpFilter; break;
+                case StrategyCustomEventOption.ihm_InvertedHammer: enabled = _toggleInvertedHammerPatterns; filter = _invertedHammerPatternFollowUpFilter; break;
+                case StrategyCustomEventOption.prc_PiercingLine: enabled = _togglePiercingLinePatterns; filter = _piercingLinePatternFollowUpFilter; break;
+                case StrategyCustomEventOption.dcc_DarkCloudCover: enabled = _toggleDarkCloudCoverPatterns; filter = _darkCloudCoverPatternFollowUpFilter; break;
+                case StrategyCustomEventOption.tws_ThreeWhiteSoldiers: enabled = _toggleThreeWhiteSoldiersPatterns; filter = _threeWhiteSoldiersPatternFollowUpFilter; break;
+                case StrategyCustomEventOption.tbc_ThreeBlackCrows: enabled = _toggleThreeBlackCrowsPatterns; filter = _threeBlackCrowsPatternFollowUpFilter; break;
+                case StrategyCustomEventOption.har_Harami: enabled = _toggleHaramiPatterns; filter = _haramiPatternFollowUpFilter; break;
             }
         }
 
@@ -47396,7 +50863,12 @@ namespace cAlgo.Robots
                 return "no signal";
 
             var direction = signal.TradeType == TradeType.Buy ? "BUY" : "SELL";
-            AddVisualOnlyStrategyMarker(symbolName, mode, signal);
+            // File-backed strategies have dedicated historical event renderers. Do not add
+            // a synthetic Entry marker merely because the dashboard evaluated the latest bar;
+            // that duplicates the real strategy-event box and looks like an executed trade.
+            string fileBackedStrategyId;
+            if (!TryGetFileBackedStrategyId(mode, out fileBackedStrategyId))
+                AddVisualOnlyStrategyMarker(symbolName, mode, signal);
             return string.Format(CultureInfo.InvariantCulture, "{0}:{1}", GetBacktestStrategyModeDisplayName(mode), direction);
         }
 
@@ -47408,6 +50880,21 @@ namespace cAlgo.Robots
             {
                 case BacktestStrategyMode.CustomTrade:
                     matched = TryBuildCustomTradeSignal(symbolName, timeFrame, out signal);
+                    break;
+                case BacktestStrategyMode.candle_pattern_trend:
+                case BacktestStrategyMode.pinbar_structure_event:
+                case BacktestStrategyMode.engulfing_structure_event:
+                case BacktestStrategyMode.wick_flip:
+                case BacktestStrategyMode.reject_trendline:
+                case BacktestStrategyMode.sweep_reclaim:
+                {
+                    string strategyId;
+                    matched = TryGetFileBackedStrategyId(mode, out strategyId) &&
+                        TryBuildFileBackedStrategySignal(mode, strategyId, symbolName, timeFrame, out signal);
+                    break;
+                }
+                case BacktestStrategyMode.WickFlipContinuation:
+                    matched = TryBuildWickFlipContinuationSignal(symbolName, timeFrame, out signal);
                     break;
                 case BacktestStrategyMode.HtfEventMarket:
                 case BacktestStrategyMode.LtfEventMarket:
@@ -47469,7 +50956,12 @@ namespace cAlgo.Robots
                 return false;
             if (IsPriceActionTriggerStrategy(mode) && !HasLatestClosedPriceActionTrigger(symbolName, timeFrame, signal.TradeType))
                 return false;
-            if (mode == BacktestStrategyMode.CustomTrade || mode == BacktestStrategyMode.PriceActionEventDetectorV1)
+            if (mode == BacktestStrategyMode.CustomTrade ||
+                mode == BacktestStrategyMode.WickFlipContinuation ||
+                mode == BacktestStrategyMode.PriceActionEventDetectorV1)
+                return true;
+            string fileBackedStrategyId;
+            if (TryGetFileBackedStrategyId(mode, out fileBackedStrategyId))
                 return true;
             if (mode == BacktestStrategyMode.HtfEventMarket || mode == BacktestStrategyMode.LtfEventMarket)
                 return TryPassStrategyCustomEventGate(symbolName, timeFrame, signal.TradeType);
@@ -47539,6 +51031,7 @@ namespace cAlgo.Robots
             {
                 PositionId = BuildVisualStrategyMarkerId(symbolName, mode, signal.TradeType, signalTime),
                 SymbolName = symbolName,
+                SourceTimeFrame = signal.SourceTimeFrame,
                 TradeType = signal.TradeType,
                 Kind = StrategyMarkerKind.Entry,
                 Time = signalTime,
@@ -47547,7 +51040,10 @@ namespace cAlgo.Robots
                     CultureInfo.InvariantCulture,
                     "{0} {1}",
                     CompactPanelText(GetBacktestStrategyModeDisplayName(mode), 12),
-                    signal.TradeType == TradeType.Buy ? "B" : "S")
+                    signal.TradeType == TradeType.Buy ? "B" : "S"),
+                PatternSpan = signal.PatternSpan > 0
+                    ? signal.PatternSpan
+                    : ResolveStrategyMarkerPatternSpan(signal.SourceLabel)
             });
         }
 
@@ -47579,8 +51075,38 @@ namespace cAlgo.Robots
                 Kind = StrategyMarkerKind.Trigger,
                 Time = signal.SignalTime,
                 Price = markerPrice,
-                Text = signal.SourceLabel ?? "event"
+                Text = signal.SourceLabel ?? "event",
+                PatternSpan = ResolveStrategyMarkerPatternSpan(signal.SourceLabel)
             });
+        }
+
+        private static int ResolveStrategyMarkerPatternSpan(string sourceLabel)
+        {
+            if (string.IsNullOrWhiteSpace(sourceLabel))
+                return 1;
+
+            var multiIndex = sourceLabel.IndexOf(".mwfc", StringComparison.OrdinalIgnoreCase);
+            if (multiIndex >= 0)
+            {
+                var digitStart = multiIndex + 5;
+                var digitEnd = digitStart;
+                while (digitEnd < sourceLabel.Length && char.IsDigit(sourceLabel[digitEnd]))
+                    digitEnd++;
+                int parsedSpan;
+                if (digitEnd > digitStart &&
+                    int.TryParse(sourceLabel.Substring(digitStart, digitEnd - digitStart), NumberStyles.Integer, CultureInfo.InvariantCulture, out parsedSpan))
+                    return Math.Max(3, parsedSpan);
+                return 3;
+            }
+
+            return sourceLabel.IndexOf(".wfc", StringComparison.OrdinalIgnoreCase) >= 0 ? 2 : 1;
+        }
+
+        private static bool IsWickFlipMarkerLabel(string sourceLabel)
+        {
+            return !string.IsNullOrWhiteSpace(sourceLabel) &&
+                (sourceLabel.IndexOf(".mwfc", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 sourceLabel.IndexOf(".wfc", StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
         private static long BuildVisualStrategyMarkerId(string symbolName, BacktestStrategyMode mode, TradeType tradeType, DateTime signalTime)
@@ -47836,84 +51362,22 @@ namespace cAlgo.Robots
 
         private void ApplySelectedStrategyFilePresetOverrides()
         {
-            SharedStrategyConfigIds = "";
-            // custom_trade is deliberately not file-backed: every setting comes from
-            // the current cTrader parameter set. Only named presets load JSON overrides.
-            if (SelectedStrategyFile == StrategyFileMode.Off ||
-                SelectedStrategyFile == StrategyFileMode.custom_trade)
-                return;
-
-            var strategyId = SelectedStrategyFile.ToString();
-            var strategyPath = Path.Combine(GetBaseServerConfigPath(), "strategies", strategyId + ".json");
-            if (!System.IO.File.Exists(strategyPath))
-            {
-                SafeLog("ERROR", "[StrategyPreset] Strategy file not found: {0}", strategyPath);
-                return;
-            }
-
-            try
-            {
-                var strategy = CTraderRuleEngine.ParseJson(System.IO.File.ReadAllText(strategyPath)) as Dictionary<string, object>;
-                if (strategy == null)
-                    throw new InvalidOperationException("strategy JSON root must be an object");
-
-                var trade = GetStrategyPresetSection(strategy, "trade_config");
-                var confluences = GetStrategyPresetSection(strategy, "confluences");
-                string textValue;
-                bool boolValue;
-                NewsBlockPreset newsBlock;
-                StrategyTradeChainMode chainMode;
-                StrategyOrderCountMode orderCount;
-                StrategyEntryType entryMode;
-                StrategyStopLossMode stopLossMode;
-                StrategyTakeProfitMode takeProfitMode;
-                StrategyExitMode exitMode;
-                StrategyDaysPreset daysPreset;
-                StrategySessionsPreset sessionsPreset;
-                TradeBlockScopeMode blockMode;
-                MinimumConfluenceCountMode minimumCount;
-                ConfluenceScopeMode confluenceMode;
-
-                if (TryGetStrategyPresetString(trade, "symbols", out textValue)) StrategySymbols = textValue;
-                if (TryGetStrategyPresetString(trade, "timeframes", out textValue)) StrategyTimeframes = textValue;
-                if (TryGetStrategyPresetEnum(trade, "news_block", out newsBlock)) SelectedNewsBlockPreset = newsBlock;
-                if (TryGetStrategyPresetEnum(trade, "first_trade", out chainMode)) FirstTradeMode = chainMode;
-                if (TryGetStrategyPresetEnum(trade, "second_trade", out chainMode)) SecondTradeMode = chainMode;
-                if (TryGetStrategyPresetEnum(trade, "third_trade", out chainMode)) ThirdTradeMode = chainMode;
-                if (trade != null && trade.ContainsKey("pending_order_expiry_bars"))
-                    WaitConfirmMaxBars = Math.Max(1, Math.Min(50, (int)Math.Round(ToSharedRuleNumber(GetDictionaryValue(trade, "pending_order_expiry_bars")))));
-                if (TryGetStrategyPresetEnum(trade, "trade_count", out orderCount)) StrategyOrderCount = orderCount;
-                if (TryGetStrategyPresetEnum(trade, "entry", out entryMode)) SelectedStrategyEntryType = entryMode;
-                if (TryGetStrategyPresetEnum(trade, "sl", out stopLossMode)) SelectedStrategyStopLossMode = stopLossMode;
-                if (TryGetStrategyPresetEnum(trade, "tp", out takeProfitMode)) SelectedStrategyTakeProfitMode = takeProfitMode;
-                if (TryGetStrategyPresetEnum(trade, "exit_mode", out exitMode)) SelectedStrategyExitMode = exitMode;
-
-                if (TryGetStrategyPresetEnum(confluences, "days", out daysPreset)) StrategyDaysPresetValue = daysPreset;
-                if (TryGetStrategyPresetEnum(confluences, "time_range", out sessionsPreset)) StrategySessionsPresetValue = sessionsPreset;
-                if (TryGetStrategyPresetEnum(confluences, "overnight_block", out blockMode)) OvernightBlockMode = blockMode;
-                if (TryGetStrategyPresetEnum(confluences, "weekend_block", out blockMode)) WeekendBlockMode = blockMode;
-                if (TryGetStrategyPresetEnum(confluences, "minimum_count", out minimumCount)) MinimumConfluences = minimumCount;
-                if (TryGetStrategyPresetEnum(confluences, "volume_surge", out confluenceMode)) ConfluenceVolumeSurge = confluenceMode;
-                if (TryGetStrategyPresetEnum(confluences, "trend_bias", out confluenceMode)) ConfluenceTrendBias = confluenceMode;
-                if (TryGetStrategyPresetEnum(confluences, "premium_discount", out confluenceMode)) ConfluencePremiumDiscount = confluenceMode;
-                if (confluences != null && TryParseFlexibleBool(ConvertToInvariantString(GetDictionaryValue(confluences, "bar_direction")), out boolValue))
-                    ConfluenceBarDirection = boolValue;
-                if (TryGetStrategyPresetEnum(confluences, "ema", out confluenceMode)) ConfluenceEma = confluenceMode;
-                if (TryGetStrategyPresetEnum(confluences, "vwap", out confluenceMode)) ConfluenceVwap = confluenceMode;
-                if (TryGetStrategyPresetEnum(confluences, "bollinger", out confluenceMode)) ConfluenceBollinger = confluenceMode;
-                if (TryGetStrategyPresetEnum(confluences, "rsi", out confluenceMode)) ConfluenceRsi = confluenceMode;
-                if (TryGetStrategyPresetEnum(confluences, "stochastic", out confluenceMode)) ConfluenceStochastic = confluenceMode;
-                if (TryGetStrategyPresetEnum(confluences, "macd", out confluenceMode)) ConfluenceMacd = confluenceMode;
-                if (TryGetStrategyPresetEnum(confluences, "ichimoku", out confluenceMode)) ConfluenceIchimoku = confluenceMode;
-
-                SharedStrategyConfigIds = strategyId;
-                SafePrint("[StrategyPreset] Loaded {0} from {1}", strategyId, strategyPath);
-            }
-            catch (Exception ex)
-            {
-                SharedStrategyConfigIds = "";
-                SafeLog("ERROR", "[StrategyPreset] Failed to load {0}: {1}", strategyId, ex.Message);
-            }
+            // File-backed strategies keep their execution settings in their own JSON files.
+            // Do not copy one selected file into the global cTrader parameters: doing that
+            // made Strategy 1 special and prevented slots 2-5 from selecting independent
+            // custom strategies. Per-signal overrides are applied when each file strategy
+            // matches; this list is retained for shared position-action ownership.
+            SharedStrategyConfigIds = string.Join(",", GetConfiguredStrategyModes()
+                .Select(mode =>
+                {
+                    string strategyId;
+                    return TryGetFileBackedStrategyId(mode, out strategyId) ? strategyId : "";
+                })
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray());
+            if (!string.IsNullOrWhiteSpace(SharedStrategyConfigIds))
+                SafePrint("[StrategyPreset] File-backed strategies: {0}", SharedStrategyConfigIds);
         }
 
         private void EnsureSharedConfigCatalogLoaded()
@@ -47984,7 +51448,7 @@ namespace cAlgo.Robots
 
         private List<string> GetConfiguredSharedStrategyIds()
         {
-            var requested = Regex.Split(SharedStrategyConfigIds ?? "", "[,;\\s]+")
+            var requested = _rxCommaSep.Split(SharedStrategyConfigIds ?? "")
                 .Select(value => (value ?? "").Trim())
                 .Where(value => !string.IsNullOrWhiteSpace(value))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -48111,6 +51575,7 @@ namespace cAlgo.Robots
                 latestClosedIndex,
                 0,
                 true,
+                null,
                 preferredTradeType,
                 out resolvedTradeType,
                 out signalTime,
@@ -48126,6 +51591,7 @@ namespace cAlgo.Robots
             int latestClosedIndex,
             int scanBars,
             bool logRejections,
+            string onlyStrategyId,
             TradeType? preferredTradeType,
             out TradeType resolvedTradeType,
             out DateTime signalTime,
@@ -48140,7 +51606,10 @@ namespace cAlgo.Robots
             eventSlDistance = 0;
             EnsureSharedConfigCatalogLoaded();
 
-            foreach (var strategyId in GetConfiguredSharedStrategyIds())
+            var strategyIds = string.IsNullOrWhiteSpace(onlyStrategyId)
+                ? GetConfiguredSharedStrategyIds()
+                : new List<string> { onlyStrategyId.Trim() };
+            foreach (var strategyId in strategyIds)
             {
                 Dictionary<string, object> strategy;
                 if (!_sharedStrategyCatalog.TryGetValue(strategyId, out strategy) || strategy == null)
@@ -48157,6 +51626,13 @@ namespace cAlgo.Robots
                     resolvedSymbol = ResolveLoadedSymbol(symbolName) ?? Symbol;
                 var context = BuildSharedRuleContext(sourceBars, latestClosedIndex, resolvedSymbol, strategyTimeFrame, null);
                 context["__strategy_scan_bars"] = scanBars;
+                PopulateSharedConfigNativePredicates(
+                    context,
+                    symbolName,
+                    strategyTimeFrame,
+                    sourceBars,
+                    latestClosedIndex,
+                    scanBars);
                 var parameters = GetDictionaryValue(strategy, "params") as Dictionary<string, object>;
                 context["params"] = parameters ?? new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
                 context["strategy"] = strategy;
@@ -48202,8 +51678,14 @@ namespace cAlgo.Robots
                         definition,
                         context,
                         out matchedCandlePatternLabel);
+                    var enforceCandleReactionGate = true;
+                    bool configuredCandleReactionGate;
+                    if (TryParseFlexibleBool(
+                        ConvertToInvariantString(GetDictionaryValue(strategy, "enforce_candle_artifact_reaction")),
+                        out configuredCandleReactionGate))
+                        enforceCandleReactionGate = configuredCandleReactionGate;
                     List<CandleConfluenceMatch> candleReactionMatches = null;
-                    if (matchedCandlePattern && !ShouldKeepCandlePatternInline(
+                    if (matchedCandlePattern && enforceCandleReactionGate && !ShouldKeepCandlePatternInline(
                         sourceBars,
                         strategyTimeFrame,
                         latestClosedIndex,
@@ -48224,21 +51706,24 @@ namespace cAlgo.Robots
 
                     var previousSnapshot = BuildSharedIndicatorSnapshot(sourceBars, Math.Max(0, latestClosedIndex - 1));
                     var currentSnapshot = BuildSharedIndicatorSnapshot(sourceBars, latestClosedIndex);
-                    if (!TryPassSelectedStrategyCustomRules(
+                    string selectedConfluenceFailureReason;
+                    if (string.IsNullOrWhiteSpace(onlyStrategyId) && !TryPassSelectedStrategyCustomRules(
                         symbolName,
                         sourceBars,
                         strategyTimeFrame,
                         latestClosedIndex,
                         previousSnapshot,
                         currentSnapshot,
-                        requireBullishDirection))
+                        requireBullishDirection,
+                        out selectedConfluenceFailureReason))
                     {
                         if (logRejections)
                             SafePrint(
-                                "[SharedStrategy] Reject {0} {1} {2}: selected_confluence_failed",
+                                "[SharedStrategy] Reject {0} {1} {2}: {3}",
                                 strategyId,
                                 symbolName,
-                                requireBullishDirection ? "BUY" : "SELL");
+                                requireBullishDirection ? "BUY" : "SELL",
+                                selectedConfluenceFailureReason);
                         continue;
                     }
 
@@ -48258,6 +51743,82 @@ namespace cAlgo.Robots
                 }
             }
             return false;
+        }
+
+        private void PopulateSharedConfigNativePredicates(
+            Dictionary<string, object> context,
+            string symbolName,
+            TimeFrame strategyTimeFrame,
+            Bars sourceBars,
+            int barIndex,
+            int scanBars)
+        {
+            var predicates = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase)
+            {
+                { "any_structure_event_bullish", false },
+                { "any_structure_event_bearish", false },
+                { "any_candle_pattern_bullish", false },
+                { "any_candle_pattern_bearish", false },
+                { "trendline_rejection_bullish", false },
+                { "trendline_rejection_bearish", false },
+                { "wick_flip_bullish", false },
+                { "wick_flip_bearish", false }
+            };
+            context["native_predicates"] = predicates;
+            if (sourceBars == null || barIndex < 0 || barIndex >= sourceBars.Count)
+                return;
+
+            var exactBarTime = sourceBars.OpenTimes[barIndex];
+            var structural = GetCanonicalEventsForSymbolTimeFrame(
+                    symbolName,
+                    strategyTimeFrame,
+                    Math.Max(256, scanBars),
+                    Math.Max(180, scanBars))
+                .Where(item => item.BarTime == exactBarTime && IsStructuralCanonicalMarketEvent(item))
+                .ToList();
+            predicates["any_structure_event_bullish"] = structural.Any(item => item.IsBullish);
+            predicates["any_structure_event_bearish"] = structural.Any(item => !item.IsBullish);
+            // Use the same qualified candidates as trade markers (not raw canonical
+            // detections), including direction, confluences and minimum evidence count.
+            var qualifiedChains = (IsScopeEnabledForTimeFrame(DrawSweepReclaimChain, strategyTimeFrame)
+                ? CollectTradeTriggerCandidates(symbolName, strategyTimeFrame, Math.Max(256, scanBars))
+                : new List<TradeTriggerEvent>())
+                .Where(item => item.BarTime == exactBarTime && item.Option == StrategyCustomEventOption.sweep_reclaim)
+                .ToList();
+            predicates["sweep_reclaim_bullish"] = qualifiedChains.Any(item => item.IsBullish);
+            predicates["sweep_reclaim_bearish"] = qualifiedChains.Any(item => !item.IsBullish);
+
+            var triggersOnBar = CollectTradeTriggerCandidates(
+                    symbolName,
+                    strategyTimeFrame,
+                    Math.Max(256, scanBars),
+                    true)
+                .Where(item => item.BarTime == exactBarTime)
+                .ToList();
+            var candlePatterns = triggersOnBar
+                .Where(item => string.Equals(item.Family, "candle", StringComparison.OrdinalIgnoreCase) && !item.IsDirectionless)
+                .ToList();
+            predicates["any_candle_pattern_bullish"] = candlePatterns.Any(item => item.IsBullish);
+            predicates["any_candle_pattern_bearish"] = candlePatterns.Any(item => !item.IsBullish);
+
+            var trendlineRejections = triggersOnBar
+                .Where(item => item.Option == StrategyCustomEventOption.r_TrendlineRejection && !item.IsDirectionless)
+                .ToList();
+            predicates["trendline_rejection_bullish"] = trendlineRejections.Any(item => item.IsBullish);
+            predicates["trendline_rejection_bearish"] = trendlineRejections.Any(item => !item.IsBullish);
+
+            TradeType wickFlipDirection;
+            int patternStartIndex;
+            int firstWickIndex;
+            if (CTraderStrategyEngine.TryResolveMultiCandleWickFlipContinuationPattern(
+                sourceBars,
+                barIndex,
+                out wickFlipDirection,
+                out patternStartIndex,
+                out firstWickIndex))
+            {
+                predicates[wickFlipDirection == TradeType.Buy ? "wick_flip_bullish" : "wick_flip_bearish"] = true;
+            }
         }
 
         private bool SharedConfigStrategyMatchesMarket(Dictionary<string, object> strategy, string symbolName, TimeFrame timeFrame)
@@ -48464,9 +52025,9 @@ namespace cAlgo.Robots
                         return parsed;
             }
 
-            foreach (var token in Regex.Split(position != null ? position.Comment ?? "" : "", "[^A-Za-z0-9]+"))
+            foreach (var token in _rxNonAlphaNum.Split(position != null ? position.Comment ?? "" : ""))
             {
-                if (!Regex.IsMatch(token ?? "", "[A-Za-z]"))
+                if (!_rxHasLetter.IsMatch(token ?? ""))
                     continue;
                 if (TryParseTimeFrameToken(token, out parsed))
                     return parsed;
@@ -49206,7 +52767,7 @@ namespace cAlgo.Robots
             var result = new List<string>();
             var match = Regex.Match(json, string.Format("\"{0}\"\\s*:\\s*\\[(.*?)\\]", key), RegexOptions.Singleline);
             if (!match.Success) return result;
-            var items = Regex.Matches(match.Groups[1].Value, "\"([^\"]+)\"");
+            var items = _rxQuotedStr.Matches(match.Groups[1].Value);
             foreach (Match item in items)
             {
                 var value = item.Groups[1].Value;
@@ -49232,7 +52793,7 @@ namespace cAlgo.Robots
             if (string.IsNullOrWhiteSpace(root))
                 return "";
 
-            var cleanNote = string.IsNullOrWhiteSpace(note) ? "" : Regex.Replace(note.Trim(), "\\s+", "_");
+            var cleanNote = string.IsNullOrWhiteSpace(note) ? "" : TVBridgeCBot._rxWhitespace.Replace(note.Trim(), "_");
             var suffix = BuildPriceSuffix(entryPrice, takeProfit, stopLoss);
             if (string.IsNullOrWhiteSpace(cleanNote))
                 return string.IsNullOrWhiteSpace(suffix) ? root : root + "|" + suffix;
@@ -49276,7 +52837,7 @@ namespace cAlgo.Robots
             var value = string.IsNullOrWhiteSpace(raw) ? "" : raw.Trim();
             if (string.IsNullOrWhiteSpace(value))
                 return fallback;
-            value = Regex.Replace(value, "\\s+", "_").Trim('_');
+            value = TVBridgeCBot._rxWhitespace.Replace(value, "_").Trim('_');
             return string.IsNullOrWhiteSpace(value) ? fallback : value;
         }
 
@@ -49466,7 +53027,7 @@ namespace cAlgo.Robots
         ProtectiveSwing,
         Pattern,
         CandleWick,
-        CandleRange5
+        CandleExtreme5
     }
 
     internal enum CTraderStrategyTargetSource
@@ -49733,7 +53294,7 @@ namespace cAlgo.Robots
                 case 1: return CTraderStrategyStopSource.ProtectiveSwing;
                 case 2: return CTraderStrategyStopSource.Pattern;
                 case 3: return CTraderStrategyStopSource.CandleWick;
-                case 4: return CTraderStrategyStopSource.CandleRange5;
+                case 4: return CTraderStrategyStopSource.CandleExtreme5;
                 default: throw new ArgumentOutOfRangeException(nameof(priorityIndex));
             }
         }
@@ -49858,16 +53419,14 @@ namespace cAlgo.Robots
             double riskFactor,
             double entrySlDistancePips,
             double spreadPips,
-            double atr24Pips)
+            double atrPips)
         {
             var factor = Math.Max(0, riskFactor);
             return Math.Max(
-                5.0,
+                Math.Max(0, entrySlDistancePips) * 0.1 * factor,
                 Math.Max(
-                    Math.Max(0, entrySlDistancePips) * 0.1 * factor,
-                    Math.Max(
-                        Math.Max(0, spreadPips) * 3.0 * factor,
-                        Math.Max(0, atr24Pips) * 0.1 * factor)));
+                    Math.Max(0, spreadPips) * 3.0 * factor,
+                    Math.Max(0, atrPips) * 0.1 * factor));
         }
 
         public static double ResolveDistanceTarget(Symbol symbol, TradeType tradeType, double entryPrice, bool isStopLoss, double distance)
@@ -50095,6 +53654,280 @@ namespace cAlgo.Robots
                 return true;
             }
             return false;
+        }
+
+        public static bool TryResolveMultiCandleWickFlipContinuationPattern(
+            Bars bars,
+            int finalWickIndex,
+            out TradeType tradeType,
+            out int patternStartIndex,
+            out int firstWickIndex)
+        {
+            tradeType = TradeType.Buy;
+            patternStartIndex = -1;
+            firstWickIndex = -1;
+            if (bars == null)
+                return false;
+
+            return TryResolveMultiCandleWickFlipContinuationPatternCore(
+                bars.Count,
+                finalWickIndex,
+                index => bars.OpenPrices[index],
+                index => bars.HighPrices[index],
+                index => bars.LowPrices[index],
+                index => bars.ClosePrices[index],
+                out tradeType,
+                out patternStartIndex,
+                out firstWickIndex);
+        }
+
+        public static bool TryResolveMultiCandleWickFlipContinuationPattern(
+            double[] opens,
+            double[] highs,
+            double[] lows,
+            double[] closes,
+            int finalWickIndex,
+            out TradeType tradeType,
+            out int patternStartIndex,
+            out int firstWickIndex)
+        {
+            tradeType = TradeType.Buy;
+            patternStartIndex = -1;
+            firstWickIndex = -1;
+            if (opens == null || highs == null || lows == null || closes == null ||
+                opens.Length != highs.Length || opens.Length != lows.Length || opens.Length != closes.Length)
+                return false;
+
+            return TryResolveMultiCandleWickFlipContinuationPatternCore(
+                opens.Length,
+                finalWickIndex,
+                index => opens[index],
+                index => highs[index],
+                index => lows[index],
+                index => closes[index],
+                out tradeType,
+                out patternStartIndex,
+                out firstWickIndex);
+        }
+
+        private static bool TryResolveMultiCandleWickFlipContinuationPatternCore(
+            int candleCount,
+            int finalWickIndex,
+            Func<int, double> openAt,
+            Func<int, double> highAt,
+            Func<int, double> lowAt,
+            Func<int, double> closeAt,
+            out TradeType tradeType,
+            out int patternStartIndex,
+            out int firstWickIndex)
+        {
+            tradeType = TradeType.Buy;
+            patternStartIndex = -1;
+            firstWickIndex = -1;
+            if (finalWickIndex < 2 || finalWickIndex >= candleCount)
+                return false;
+
+            var final = CTraderCandlePatternEngine.BuildStats(
+                openAt(finalWickIndex), highAt(finalWickIndex), lowAt(finalWickIndex), closeAt(finalWickIndex));
+            bool finalUpper;
+            bool finalLower;
+            if (!TryResolveCleanLongWick(final, out finalUpper, out finalLower))
+                return false;
+
+            // Final bar: dominant wick must be at least 1.5× its body, ensuring the
+            // last candle is decisively wick-driven rather than body-heavy.
+            const double minimumFinalWickToBodyRatio = 1.5;
+            var finalDominantWick = finalUpper ? final.UpperWick : final.LowerWick;
+            if (final.Body <= 0 || finalDominantWick / final.Body < minimumFinalWickToBodyRatio)
+                return false;
+
+            // Wick 1 and Wick 2 may be adjacent or may contain one to three directional
+            // bridge candles between them.
+            for (var bridgeCandles = 0; bridgeCandles <= 3; bridgeCandles++)
+            {
+                var candidateFirstWickIndex = finalWickIndex - bridgeCandles - 1;
+                if (candidateFirstWickIndex < 1)
+                    continue;
+
+                var first = CTraderCandlePatternEngine.BuildStats(
+                    openAt(candidateFirstWickIndex), highAt(candidateFirstWickIndex),
+                    lowAt(candidateFirstWickIndex), closeAt(candidateFirstWickIndex));
+                bool firstUpper;
+                bool firstLower;
+                if (!TryResolveCleanLongWick(first, out firstUpper, out firstLower))
+                    continue;
+
+                var risesFromLowerToUpper = firstLower && finalUpper;
+                var fallsFromUpperToLower = firstUpper && finalLower;
+                if (!risesFromLowerToUpper && !fallsFromUpperToLower)
+                    continue;
+
+                // The bridge must progress from Wick 1 toward the opposite Wick 2 without
+                // alternating up/down. A meaningful net move prevents tiny sideways steps
+                // from qualifying merely because their body centres differ by a fraction.
+                if (!IsDirectionalBodyCenterPath(
+                        candidateFirstWickIndex,
+                        finalWickIndex,
+                        risesFromLowerToUpper,
+                        openAt,
+                        closeAt))
+                    continue;
+                var firstCenter = ResolveBodyCenter(openAt(candidateFirstWickIndex), closeAt(candidateFirstWickIndex));
+                var finalCenter = ResolveBodyCenter(openAt(finalWickIndex), closeAt(finalWickIndex));
+                if (Math.Abs(finalCenter - firstCenter) < 0.20 * Math.Max(first.Range, final.Range))
+                    continue;
+
+                // The visible pattern must begin at Wick 1, or at one optional pre-direction
+                // confirmation candle immediately before it. Allowing a longer prefix caused
+                // unrelated nearby candles to merge into one oversized box whose displayed
+                // first and last candles could have the same wick direction.
+                for (var approachCandles = 1; approachCandles >= 0; approachCandles--)
+                {
+                    var candidatePatternStartIndex = candidateFirstWickIndex - approachCandles;
+                    if (candidatePatternStartIndex < 0)
+                        continue;
+                    if (approachCandles == 1)
+                    {
+                        if (!IsDirectionalBodyCenterPath(
+                                candidatePatternStartIndex,
+                                candidateFirstWickIndex,
+                                fallsFromUpperToLower,
+                                openAt,
+                                closeAt))
+                            continue;
+
+                        var approachStartCenter = ResolveBodyCenter(
+                            openAt(candidatePatternStartIndex), closeAt(candidatePatternStartIndex));
+                        if (Math.Abs(firstCenter - approachStartCenter) < 0.15 * first.Range)
+                            continue;
+                    }
+
+                    var patternSpan = finalWickIndex - candidatePatternStartIndex + 1;
+                    if (patternSpan < 3 || patternSpan > 5)
+                        continue;
+                    if (!AreWickEndpointsPatternExtremes(
+                            candidatePatternStartIndex,
+                            candidateFirstWickIndex,
+                            finalWickIndex,
+                            risesFromLowerToUpper,
+                            highAt,
+                            lowAt))
+                        continue;
+
+                    tradeType = finalLower ? TradeType.Buy : TradeType.Sell;
+                    patternStartIndex = candidatePatternStartIndex;
+                    firstWickIndex = candidateFirstWickIndex;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool AreWickEndpointsPatternExtremes(
+            int patternStartIndex,
+            int firstWickIndex,
+            int finalWickIndex,
+            bool risesFromLowerToUpper,
+            Func<int, double> highAt,
+            Func<int, double> lowAt)
+        {
+            var firstWickExtreme = risesFromLowerToUpper
+                ? lowAt(firstWickIndex)
+                : highAt(firstWickIndex);
+            var finalWickExtreme = risesFromLowerToUpper
+                ? highAt(finalWickIndex)
+                : lowAt(finalWickIndex);
+            var scale = Math.Max(1.0, Math.Max(Math.Abs(firstWickExtreme), Math.Abs(finalWickExtreme)));
+            var tolerance = scale * 0.000000001;
+
+            for (var index = patternStartIndex; index <= finalWickIndex; index++)
+            {
+                if (risesFromLowerToUpper)
+                {
+                    if (lowAt(index) < firstWickExtreme - tolerance ||
+                        highAt(index) > finalWickExtreme + tolerance)
+                        return false;
+                }
+                else
+                {
+                    if (highAt(index) > firstWickExtreme + tolerance ||
+                        lowAt(index) < finalWickExtreme - tolerance)
+                        return false;
+                }
+            }
+            return true;
+        }
+
+        private static bool TryResolveCleanLongWick(
+            CTraderCandleStats candle,
+            out bool dominantUpper,
+            out bool dominantLower)
+        {
+            dominantUpper = false;
+            dominantLower = false;
+            if (candle == null || candle.Range <= 0)
+                return false;
+
+            const double minimumWickToRangeRatio = 0.40;
+            const double minimumWickToBodyAndMinorWickRatio = 0.70;
+            const double maximumOppositeWickToRangeRatio = 0.15;
+            dominantUpper =
+                candle.UpperWick >= minimumWickToRangeRatio * candle.Range &&
+                candle.UpperWick >= minimumWickToBodyAndMinorWickRatio * (candle.Body + candle.LowerWick) &&
+                candle.LowerWick <= maximumOppositeWickToRangeRatio * candle.Range;
+            dominantLower =
+                candle.LowerWick >= minimumWickToRangeRatio * candle.Range &&
+                candle.LowerWick >= minimumWickToBodyAndMinorWickRatio * (candle.Body + candle.UpperWick) &&
+                candle.UpperWick <= maximumOppositeWickToRangeRatio * candle.Range;
+            return dominantUpper || dominantLower;
+        }
+
+        private static bool IsDirectionalBodyCenterPath(
+            int startIndex,
+            int endIndex,
+            bool rising,
+            Func<int, double> openAt,
+            Func<int, double> closeAt)
+        {
+            if (startIndex >= endIndex)
+                return false;
+            var previous = ResolveBodyCenter(openAt(startIndex), closeAt(startIndex));
+            for (var index = startIndex + 1; index <= endIndex; index++)
+            {
+                var current = ResolveBodyCenter(openAt(index), closeAt(index));
+                if (rising ? current <= previous : current >= previous)
+                    return false;
+                previous = current;
+            }
+            return true;
+        }
+
+        private static double ResolveBodyCenter(double open, double close)
+        {
+            return (open + close) * 0.5;
+        }
+
+        public static double ResolveNearestDirectionalTarget(
+            TradeType tradeType,
+            double entryPrice,
+            double primaryTarget,
+            double alternateTarget)
+        {
+            if (!(entryPrice > 0) || !(primaryTarget > 0))
+                return 0;
+            var primaryValid = tradeType == TradeType.Buy
+                ? primaryTarget > entryPrice
+                : primaryTarget < entryPrice;
+            if (!primaryValid)
+                return 0;
+            var alternateValid = alternateTarget > 0 &&
+                (tradeType == TradeType.Buy ? alternateTarget > entryPrice : alternateTarget < entryPrice);
+            if (!alternateValid)
+                return primaryTarget;
+            return Math.Abs(alternateTarget - entryPrice) < Math.Abs(primaryTarget - entryPrice)
+                ? alternateTarget
+                : primaryTarget;
         }
 
         public static bool TryResolveTripleTrendDirection(
@@ -50416,6 +54249,27 @@ namespace cAlgo.Robots
             return entries;
         }
 
+        public static bool TryResolveCandleRangeStopLoss(
+            Symbol symbol,
+            TradeType tradeType,
+            double entryPrice,
+            double high,
+            double low,
+            out double stopLoss)
+        {
+            stopLoss = 0;
+            if (symbol == null || entryPrice <= 0 || high <= low)
+                return false;
+
+            var candleRange = high - low;
+            var rawStopLoss = tradeType == TradeType.Buy
+                ? entryPrice - candleRange
+                : entryPrice + candleRange;
+            stopLoss = CTraderRiskEngine.NormalizePrice(symbol, rawStopLoss);
+            return stopLoss > 0 &&
+                (tradeType == TradeType.Buy ? stopLoss < entryPrice : stopLoss > entryPrice);
+        }
+
         public static bool TryResolveCandleWickStopLoss(
             Symbol symbol, TradeType tradeType, double entryPrice,
             double open, double high, double low, double close,
@@ -50590,16 +54444,26 @@ namespace cAlgo.Robots
             entries.Add(CTraderRiskEngine.NormalizePrice(symbol, baseEntry));
             if (legCount == 1 || (tradeType == TradeType.Buy ? safeNearStop >= baseEntry : safeNearStop <= baseEntry))
                 return entries;
-            var ratios = new[] { 0.3, 0.5, 0.7, 0.9 };
             var tolerance = Math.Max(symbol.PipSize * 0.5, 0.0000001);
             for (var index = 1; index < legCount; index++)
             {
-                var candidate = CTraderRiskEngine.NormalizePrice(symbol, baseEntry + ((safeNearStop - baseEntry) * ratios[index - 1]));
+                var ratio = ResolveEqualSplitRatio(index, legCount);
+                var candidate = CTraderRiskEngine.NormalizePrice(symbol, baseEntry + ((safeNearStop - baseEntry) * ratio));
                 var valid = tradeType == TradeType.Buy ? candidate < baseEntry && candidate > stopLoss : candidate > baseEntry && candidate < stopLoss;
                 if (valid && !entries.Any(existing => Math.Abs(existing - candidate) < tolerance))
                     entries.Add(candidate);
             }
             return entries;
+        }
+
+        public static double ResolveEqualSplitRatio(int legIndex, int totalLegCount)
+        {
+            var legCount = Math.Max(1, Math.Min(5, totalLegCount));
+            if (legIndex <= 0)
+                return 0.0;
+            if (legIndex >= legCount)
+                return 1.0;
+            return (double)legIndex / legCount;
         }
     }
 
@@ -50784,8 +54648,16 @@ namespace cAlgo.Robots
         {
             if (symbol == null || plannedEntry <= 0 || filledEntry <= 0)
                 return;
-            string reason;
-            if (CTraderStrategyEngine.TryValidatePrices(symbol, action, filledEntry, stopLoss, takeProfit, out reason))
+
+            // A valid old SL/TP can still be materially farther from the actual market fill.
+            // Keeping those absolute prices after adverse entry slippage increases both the
+            // monetary risk and the realised R distance beyond what was approved by the risk
+            // gate. Preserve the approved distances from the actual fill every time the fill
+            // differs from the planned entry; validity alone is not sufficient.
+            var fillTolerance = Math.Max(
+                symbol.TickSize > 0 ? symbol.TickSize * 0.5 : 0.0,
+                0.0000001);
+            if (Math.Abs(filledEntry - plannedEntry) <= fillTolerance)
                 return;
 
             var stopDistance = stopLoss > 0 ? Math.Abs(stopLoss - plannedEntry) : 0;
@@ -51910,6 +55782,7 @@ namespace cAlgo.Robots
             if (minutes <= 5) return new List<TimeFrame> { TimeFrame.Hour, TimeFrame.Hour4 };
             if (minutes <= 15) return new List<TimeFrame> { TimeFrame.Hour4, TimeFrame.Daily };
             if (minutes <= 60) return new List<TimeFrame> { TimeFrame.Daily, TimeFrame.Weekly };
+            if (minutes <= 240) return new List<TimeFrame> { TimeFrame.Daily, TimeFrame.Weekly };
             return new List<TimeFrame> { TimeFrame.Weekly };
         }
 
@@ -52061,7 +55934,7 @@ namespace cAlgo.Robots
                 case "DCC": case "PRC": return 80; case "PIN": case "HAM": case "SST": return 76;
                 case "IHM": case "HGM": return 74; case "BIG": return 70; case "HAR": return 62;
                 case "MD0": return 78; case "MDX": return 74; case "EMX": return 72; case "STX": case "STO": return 70;
-                case "PXE": case "VWX": case "BBX": case "R50": return 68; case "ROS": case "ROB": return 66;
+                case "PXF": case "PXS": case "VWX": case "BBX": case "R50": return 68; case "ROS": case "ROB": return 66;
                 case "VWR": case "BBR": return 64; case "EMT": return 62; default: return 0;
             }
         }
@@ -52391,8 +56264,8 @@ namespace cAlgo.Robots
             inserted = 0;
             duplicated = 0;
             var raw = json ?? "";
-            var insertedMatch = Regex.Match(raw, "\"inserted\"\\s*:\\s*(\\d+)");
-            var duplicatedMatch = Regex.Match(raw, "\"duplicated\"\\s*:\\s*(\\d+)");
+            var insertedMatch = TVBridgeCBot._rxJsonInserted.Match(raw);
+            var duplicatedMatch = TVBridgeCBot._rxJsonDuplicated.Match(raw);
             if (insertedMatch.Success)
                 int.TryParse(insertedMatch.Groups[1].Value, out inserted);
             if (duplicatedMatch.Success)
@@ -52578,7 +56451,7 @@ namespace cAlgo.Robots
         public static string FormatServerErrorForPanel(string raw)
         {
             var text = string.IsNullOrWhiteSpace(raw) ? "Server Rejected Payload" : raw.Trim();
-            var match = Regex.Match(text, "\"error\"\\s*:\\s*\"([^\"]+)\"", RegexOptions.Singleline);
+            var match = TVBridgeCBot._rxJsonError.Match(text);
             if (match.Success) text = match.Groups[1].Value;
             var code = ExtractJsonStringField(raw, "code");
             var table = ExtractJsonStringField(raw, "table");
@@ -52586,13 +56459,13 @@ namespace cAlgo.Robots
             var constraint = ExtractJsonStringField(raw, "constraint");
             var detail = ExtractJsonStringField(raw, "detail");
             text = text.Replace("\\\"", "\"").Replace("\\\\", "\\").Trim();
-            text = Regex.Replace(text.Replace("\\n", " | ").Replace("\\r", " | "), "\\s+", " ");
+            text = TVBridgeCBot._rxWhitespace.Replace(text.Replace("\\n", " | ").Replace("\\r", " | "), " ");
             text = text.Replace("insert or update on table", "DB write on").Replace("violates foreign key constraint", "FK").Replace("\"", "").Replace("\\", "");
             if (!string.IsNullOrWhiteSpace(code)) text += " | code=" + code;
             if (!string.IsNullOrWhiteSpace(table)) text += " | table=" + table;
             if (!string.IsNullOrWhiteSpace(column)) text += " | column=" + column;
             if (!string.IsNullOrWhiteSpace(constraint)) text += " | constraint=" + constraint;
-            if (!string.IsNullOrWhiteSpace(detail)) text += " | detail=" + Regex.Replace(detail, "\\s+", " ");
+            if (!string.IsNullOrWhiteSpace(detail)) text += " | detail=" + TVBridgeCBot._rxWhitespace.Replace(detail, " ");
             return text.Length > 420 ? text.Substring(0, 420) : text;
         }
     }
@@ -53987,6 +57860,16 @@ namespace cAlgo.Robots
                     return EvaluatePinBar(args, ctx);
                 case "engulfing":
                     return EvaluateEngulfing(args, ctx);
+                case "any_structure_event":
+                    return EvaluateNativeDirectionalPredicate("any_structure_event", args, ctx);
+                case "any_candle_pattern":
+                    return EvaluateNativeDirectionalPredicate("any_candle_pattern", args, ctx);
+                case "trendline_rejection":
+                    return EvaluateNativeDirectionalPredicate("trendline_rejection", args, ctx);
+                case "wick_flip":
+                    return EvaluateNativeDirectionalPredicate("wick_flip", args, ctx);
+                case "sweep_reclaim":
+                    return EvaluateNativeDirectionalPredicate("sweep_reclaim", args, ctx);
                 case "morning_star":
                     return EvaluateSinglePattern("bullish_morning_star", "bullish", ctx);
                 case "evening_star":
@@ -54049,6 +57932,21 @@ namespace cAlgo.Robots
                 default:
                     return null;
             }
+        }
+
+        private static bool EvaluateNativeDirectionalPredicate(
+            string predicateName,
+            List<object> args,
+            Dictionary<string, object> ctx)
+        {
+            var bias = NormalizeDirection(ToInvariantString(args.ElementAtOrDefault(0)));
+            var bullish = IsTruthy(ValueAtPath(ctx, "native_predicates." + predicateName + "_bullish"));
+            var bearish = IsTruthy(ValueAtPath(ctx, "native_predicates." + predicateName + "_bearish"));
+            if (bias == "bullish")
+                return bullish;
+            if (bias == "bearish")
+                return bearish;
+            return bullish || bearish;
         }
 
         private static SharedRuleArtifactResult EvaluatePinBar(List<object> args, Dictionary<string, object> ctx)
@@ -54849,8 +58747,8 @@ namespace cAlgo.Robots
             if (operatorIndex >= 0)
                 return BinaryNode("and", ParseTextExpression(text.Substring(0, operatorIndex), true), ParseTextExpression(text.Substring(operatorIndex + matchedOperator.Length), true));
 
-            if (Regex.IsMatch(text, "^not\\b", RegexOptions.IgnoreCase))
-                return new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase) { { "not", ParseTextExpression(Regex.Replace(text, "^not\\b", "", RegexOptions.IgnoreCase), true) } };
+            if (TVBridgeCBot._rxNotKeyword.IsMatch(text))
+                return new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase) { { "not", ParseTextExpression(TVBridgeCBot._rxNotKeyword.Replace(text, ""), true) } };
             if (text.StartsWith("!", StringComparison.Ordinal) && !text.StartsWith("!=", StringComparison.Ordinal))
                 return new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase) { { "not", ParseTextExpression(text.Substring(1), true) } };
 
@@ -54872,7 +58770,7 @@ namespace cAlgo.Robots
             if (operatorIndex > 0)
                 return BinaryNode(matchedOperator, ParseTextExpression(text.Substring(0, operatorIndex), true), ParseTextExpression(text.Substring(operatorIndex + matchedOperator.Length), true));
 
-            var functionMatch = Regex.Match(text, "^([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\((.*)\\)$");
+            var functionMatch = TVBridgeCBot._rxFunctionCall.Match(text);
             if (functionMatch.Success)
             {
                 var functionName = functionMatch.Groups[1].Value.Trim();
@@ -54884,7 +58782,7 @@ namespace cAlgo.Robots
                 };
             }
 
-            if (Regex.IsMatch(text, "^[a-zA-Z_][a-zA-Z0-9_.]*$"))
+            if (TVBridgeCBot._rxIdentifier.IsMatch(text))
             {
                 if (text.Contains(".") || bareIdentifierAsVariable)
                     return BuildVariableNode(text);
@@ -54935,11 +58833,11 @@ namespace cAlgo.Robots
                 {
                     if (index + candidate.Length > text.Length || !string.Equals(text.Substring(index, candidate.Length), candidate, StringComparison.OrdinalIgnoreCase))
                         continue;
-                    if (wordBoundary && Regex.IsMatch(candidate, "^[a-zA-Z_]"))
+                    if (wordBoundary && (char.IsLetter(candidate[0]) || candidate[0] == '_'))
                     {
-                        var beforeOk = index == 0 || !Regex.IsMatch(text[index - 1].ToString(), "[a-zA-Z0-9_.]");
+                        var beforeOk = index == 0 || !TVBridgeCBot.IsIdentOrDotChar(text[index - 1]);
                         var afterIndex = index + candidate.Length;
-                        var afterOk = afterIndex >= text.Length || !Regex.IsMatch(text[afterIndex].ToString(), "[a-zA-Z0-9_.]");
+                        var afterOk = afterIndex >= text.Length || !TVBridgeCBot.IsIdentOrDotChar(text[afterIndex]);
                         if (!beforeOk || !afterOk) continue;
                     }
                     foundIndex = index;
@@ -54960,8 +58858,8 @@ namespace cAlgo.Robots
                 else if (lower == "open" || lower == "high" || lower == "low" || lower == "volume") name = "bar." + lower;
                 else
                 {
-                    var ema = Regex.Match(lower, "^ema_?(\\d+)$");
-                    var sma = Regex.Match(lower, "^sma_?(\\d+)$");
+                    var ema = TVBridgeCBot._rxEmaNum.Match(lower);
+                    var sma = TVBridgeCBot._rxSmaNum.Match(lower);
                     if (ema.Success) name = "indicators.ema_" + ema.Groups[1].Value;
                     else if (sma.Success) name = "indicators.sma_" + sma.Groups[1].Value;
                     else name = "indicators." + name;
@@ -55009,7 +58907,7 @@ namespace cAlgo.Robots
             if (string.Equals(text, "null", StringComparison.OrdinalIgnoreCase)) return null;
             double numericValue;
             if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out numericValue)) return numericValue;
-            if (Regex.IsMatch(text, "^[a-zA-Z_][a-zA-Z0-9_.]*$"))
+            if (TVBridgeCBot._rxIdentifier.IsMatch(text))
             {
                 if (text.Contains(".")) return new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase) { { "var", text } };
                 return text;
@@ -55394,7 +59292,6 @@ namespace FortyTwo.Trading.Analysis
     public enum MarketZoneState
     {
         Active,
-        Touched,
         Invalidated
     }
 
@@ -55575,6 +59472,7 @@ namespace FortyTwo.Trading.Analysis
         public int OriginIndex { get; set; }
         public int ConfirmationIndex { get; set; }
         public int TouchIndex { get; set; } = -1;
+        public int TouchCount { get; set; }
         public int InvalidationIndex { get; set; } = -1;
         public double Low { get; set; }
         public double High { get; set; }
@@ -56257,17 +60155,38 @@ namespace FortyTwo.Trading.Analysis
         {
             zone.State = MarketZoneState.Active;
             zone.TouchIndex = -1;
+            zone.TouchCount = 0;
             zone.InvalidationIndex = -1;
+            var insideVisit = false;
             for (var i = Math.Max(0, zone.ConfirmationIndex + 1); i <= lastClosedIndex; i++)
             {
-                if (zone.TouchIndex < 0 && candles[i].High >= zone.Low && candles[i].Low <= zone.High) zone.TouchIndex = i;
-                var invalid = zone.Direction == MarketDirection.Bullish ? candles[i].Close < zone.Low : candles[i].Close > zone.High;
+                var touches = candles[i].High >= zone.Low && candles[i].Low <= zone.High;
+                if (touches)
+                {
+                    if (!insideVisit)
+                        zone.TouchCount++;
+                    insideVisit = true;
+                    if (zone.TouchIndex < 0)
+                        zone.TouchIndex = i;
+                }
+                else
+                {
+                    insideVisit = false;
+                }
+
+                // A zone is broken only after the ENTIRE body of a completed candle is
+                // beyond its protected edge. Wick-throughs, overlaps, touches and rejection
+                // candles remain valid and continue contributing confluence.
+                var bodyLow = Math.Min(candles[i].Open, candles[i].Close);
+                var bodyHigh = Math.Max(candles[i].Open, candles[i].Close);
+                var invalid = zone.Direction == MarketDirection.Bullish
+                    ? bodyHigh < zone.Low
+                    : bodyLow > zone.High;
                 if (!invalid) continue;
                 zone.State = MarketZoneState.Invalidated;
                 zone.InvalidationIndex = i;
                 return;
             }
-            if (zone.TouchIndex >= 0) zone.State = MarketZoneState.Touched;
         }
 
         private int FindOppositeCandle(List<MarketCandle> candles, int confirmationIndex, MarketDirection direction, int maxBack)

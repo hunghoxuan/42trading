@@ -120,6 +120,46 @@
       ]
     },
     {
+      "value": "any_structure_event",
+      "label": "Any Structure Event",
+      "kind": "predicate",
+      "family": "structure",
+      "args": [
+        { "key": "bias", "label": "Bias (optional)" },
+        { "key": "tf", "label": "TF (optional)" }
+      ]
+    },
+    {
+      "value": "any_candle_pattern",
+      "label": "Any Candle Pattern",
+      "kind": "predicate",
+      "family": "patterns",
+      "args": [
+        { "key": "bias", "label": "Bias", "default": "bullish" },
+        { "key": "tf", "label": "TF (optional)" }
+      ]
+    },
+    {
+      "value": "trendline_rejection",
+      "label": "Trendline Rejection",
+      "kind": "predicate",
+      "family": "structure",
+      "args": [
+        { "key": "bias", "label": "Bias", "default": "bullish" },
+        { "key": "tf", "label": "TF (optional)" }
+      ]
+    },
+    {
+      "value": "wick_flip",
+      "label": "Wick Flip",
+      "kind": "predicate",
+      "family": "patterns",
+      "args": [
+        { "key": "bias", "label": "Bias (optional)" },
+        { "key": "tf", "label": "TF (optional)" }
+      ]
+    },
+    {
       "value": "inside_bar",
       "label": "Inside Bar",
       "kind": "predicate",

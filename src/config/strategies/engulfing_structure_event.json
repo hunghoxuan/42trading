@@ -1,0 +1,61 @@
+{
+  "id": "engulfing_structure_event",
+  "key": "engulfing_structure_event",
+  "name": "Engulfing Structure Event",
+  "description": "Engulfing candle aligned with any same-direction structure event. Execution settings are file-backed and editable in 42trade.",
+  "engine_version": "42trade.strategy.v3",
+  "kind": "custom",
+  "status": "active",
+  "enforce_candle_artifact_reaction": false,
+  "market": { "symbol": "", "tf": "" },
+  "settings": {
+    "trade_config": {
+      "symbols": "DE40,US30,BTCUSD,XAUUSD,EURGBP,EURUSD,GBPJPY,EURJPY",
+      "timeframes": "m5,m15,m30,h1,h4",
+      "news_block": "_30m",
+      "first_trade": "Now",
+      "second_trade": "No",
+      "third_trade": "No",
+      "pending_order_expiry_bars": 5,
+      "trade_count": "_1",
+      "entry": "L05",
+      "sl": "candle_wick_2",
+      "tp": "RR_1",
+      "exit_mode": "Off"
+    },
+    "confluences": {}
+  },
+  "params": {},
+  "indicators": [],
+  "rules": [
+    {
+      "id": "bullish_engulfing_structure",
+      "name": "Bullish Engulfing + Structure",
+      "bias": "bullish",
+      "priority": "high",
+      "when": {
+        "and": [
+          { "fn": "engulfing", "args": ["bullish"] },
+          { "fn": "any_structure_event", "args": ["bullish"] }
+        ]
+      },
+      "actions": [{ "id": "open_long", "action": "trade.open.long", "trade_plan": { "direction": "buy", "type": "limit" } }]
+    },
+    {
+      "id": "bearish_engulfing_structure",
+      "name": "Bearish Engulfing + Structure",
+      "bias": "bearish",
+      "priority": "high",
+      "when": {
+        "and": [
+          { "fn": "engulfing", "args": ["bearish"] },
+          { "fn": "any_structure_event", "args": ["bearish"] }
+        ]
+      },
+      "actions": [{ "id": "open_short", "action": "trade.open.short", "trade_plan": { "direction": "sell", "type": "limit" } }]
+    }
+  ],
+  "risk": { "rr_target": 1, "max_open_trades": 1 },
+  "conditions": { "symbols": [], "timeframes": [], "sessions": [], "regime_tags": [] },
+  "metadata": { "author": "42trade", "preset_scope": "ctrader_and_42trade" }
+}

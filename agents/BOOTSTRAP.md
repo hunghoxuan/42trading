@@ -26,3 +26,18 @@ Read this first on every new chat.
 - Put scratch or one-off files in `.local/`.
 - Before reverting or restoring any code from git history, first create a backup copy or commit the current state to a git branch.
 - Auto-commit work at end of day or immediately after each completed feature so recovery points always exist.
+
+## cTrader Bridge — Required Workflow
+
+Applies whenever editing `src/mt5-bridge/clients/TVBridge_CTrader.cs`:
+
+1. Write the patched file in the cloud workspace.
+2. Sync it to the source using `device_commit_files` with devicePath:
+   `/Users/macmini/Projects/moza/42trade/src/mt5-bridge/clients/TVBridge_CTrader.cs`
+3. After verifying the full source is synced to the active cTrader compile file, the AI may trigger compilation in the cTrader cAlgo IDE when the user requests or authorizes a rebuild.
+
+When reading TVBridge_CTrader.cs (58K+ lines), always use targeted reads:
+`sed -n 'START,ENDp'` or `grep -n` — never load the whole file.
+
+All static `Regex.*` patterns are compiled as `static readonly Regex` fields at ~line 320.
+Do not add new inline `Regex.Match/Replace/IsMatch` calls; extend the compiled block instead.

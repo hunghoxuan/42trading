@@ -334,6 +334,8 @@ const RULE_FUNCTION_EVALUATORS = {
     strategyEventFunctions.evaluateNamedFunction("sweep", args, ctx, evaluate),
   has_sweep: (args, ctx, evaluate) =>
     strategyEventFunctions.evaluateNamedFunction("has_sweep", args, ctx, evaluate),
+  any_structure_event: (args, ctx, evaluate) =>
+    strategyEventFunctions.evaluateNamedFunction("any_structure_event", args, ctx, evaluate),
   bos: (args, ctx, evaluate) =>
     strategyEventFunctions.evaluateNamedFunction("bos", args, ctx, evaluate),
   has_bos: (args, ctx, evaluate) =>
@@ -348,6 +350,8 @@ const RULE_FUNCTION_EVALUATORS = {
     strategyEventFunctions.evaluateNamedFunction("pin_bar", args, ctx, evaluate),
   engulfing: (args, ctx, evaluate) =>
     strategyEventFunctions.evaluateNamedFunction("engulfing", args, ctx, evaluate),
+  wick_flip: (args, ctx, evaluate) =>
+    strategyEventFunctions.evaluateNamedFunction("wick_flip", args, ctx, evaluate),
   inside_bar: (args, ctx, evaluate) =>
     strategyEventFunctions.evaluateNamedFunction("inside_bar", args, ctx, evaluate),
   outside_bar: (args, ctx, evaluate) =>

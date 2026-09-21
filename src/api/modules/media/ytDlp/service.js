@@ -48,7 +48,7 @@ function validateSourceUrl(raw) {
 }
 
 function normalizeOptions(input = {}) {
-  const mediaKind = input.media_kind === "audio" ? "audio" : "video";
+  const mediaKind = ["audio", "image"].includes(input.media_kind) ? input.media_kind : "video";
   const audioFormat = AUDIO_FORMATS.has(input.audio_format) ? input.audio_format : "mp3";
   const videoQuality = VIDEO_QUALITIES.has(String(input.video_quality))
     ? String(input.video_quality)
@@ -82,7 +82,7 @@ function buildArgs(job, outputDir) {
   if (options.embed_metadata) args.push("--embed-metadata");
   if (options.media_kind === "audio") {
     args.push("--extract-audio", "--audio-format", options.audio_format, "--audio-quality", "0");
-  } else {
+  } else if (options.media_kind === "video") {
     args.push("--format", "bestvideo*+bestaudio/best", "--merge-output-format", "mp4");
     if (options.video_quality !== "best") args.push("--format-sort", `res:${options.video_quality}`);
   }
@@ -247,7 +247,7 @@ function createYtDlpService(options) {
     const job = await repo.create({
       sid, user_id: userId, source_url: sourceUrl, source_title: null, extractor: null,
       media_kind: normalized.media_kind,
-      requested_format: normalized.media_kind === "audio" ? normalized.audio_format : normalized.video_quality,
+      requested_format: normalized.media_kind === "audio" ? normalized.audio_format : normalized.media_kind === "image" ? "original" : normalized.video_quality,
       status: "queued", progress: 0, downloaded_bytes: 0, total_bytes: 0,
       speed_text: null, eta_text: null, output_files: [], options: normalized,
       error_message: null, created_at: now, updated_at: now, started_at: null, completed_at: null,

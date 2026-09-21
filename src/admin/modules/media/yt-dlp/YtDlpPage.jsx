@@ -160,6 +160,23 @@ export default function YtDlpPage() {
     [jobs, publishes],
   );
 
+  // Older API instances expose the connected YouTube provider without the
+  // per-channel `channels` array. Keep the destination usable during a
+  // rolling restart, and always give a single configured connection a real
+  // option in the selector.
+  const youtubeChannelOptions = useMemo(() => {
+    const channels = Array.isArray(platforms.youtube?.channels)
+      ? platforms.youtube.channels
+      : [];
+    if (channels.length) return channels;
+    if (!platforms.youtube?.label && !platforms.youtube?.configured) return [];
+    return [{
+      id: "default",
+      label: platforms.youtube?.label || "Connected YouTube channel",
+      configured: Boolean(platforms.youtube?.configured),
+    }];
+  }, [platforms.youtube]);
+
   const filteredJobs = useMemo(() => {
     const query = historySearch.trim().toLowerCase();
     const values = jobs.filter((job) => {
@@ -305,13 +322,18 @@ export default function YtDlpPage() {
   }
 
   function openPublish(job, fileIndex, platform) {
+    const defaultYoutubeChannel = youtubeChannelOptions.find((channel) => channel.configured)?.id || "";
     setPublishDraft({
       job_sid: job.sid,
       file_index: fileIndex,
       platform,
       title: job.source_title || job.output_files[fileIndex]?.name || "Video",
       description: "",
-      privacy: "private",
+      // Unlisted keeps the upload off the channel's public feed while making
+      // its link accessible. Private videos are intentionally inaccessible
+      // to viewers who were not explicitly invited in YouTube Studio.
+      privacy: "unlisted",
+      youtube_channel_id: platform === "youtube" ? defaultYoutubeChannel : "",
       mode: "manual",
       scheduled_at: localDateTimeValue(),
     });
@@ -555,13 +577,14 @@ export default function YtDlpPage() {
                 required
                 className="yt-dlp-url-input"
                 aria-label="Media URL"
-                placeholder="MEDIA URL — YOUTUBE, TIKTOK OR FACEBOOK"
+                placeholder="MEDIA URL — YOUTUBE, TIKTOK, FACEBOOK OR INSTAGRAM"
                 value={form.source_url}
                 onChange={(event) => setForm({ ...form, source_url: event.target.value })}
               />
               <InputComboSelect className="yt-dlp-form-select" aria-label="Media type" value={form.media_kind} onChange={(event) => setForm({ ...form, media_kind: event.target.value })}>
                 <option value="video">VIDEO</option>
                 <option value="audio">AUDIO ONLY</option>
+                <option value="image">IMAGES / PHOTO POST</option>
               </InputComboSelect>
               {form.media_kind === "video" ? (
                 <InputComboSelect className="yt-dlp-form-select" aria-label="Maximum quality" value={form.video_quality} onChange={(event) => setForm({ ...form, video_quality: event.target.value })}>
@@ -570,13 +593,13 @@ export default function YtDlpPage() {
                     <option key={quality} value={quality}>{quality}p</option>
                   ))}
                 </InputComboSelect>
-              ) : (
+              ) : form.media_kind === "audio" ? (
                 <InputComboSelect className="yt-dlp-form-select" aria-label="Audio format" value={form.audio_format} onChange={(event) => setForm({ ...form, audio_format: event.target.value })}>
                   {["mp3", "m4a", "opus", "flac", "wav"].map((format) => (
                     <option key={format} value={format}>{format.toUpperCase()}</option>
                   ))}
                 </InputComboSelect>
-              )}
+              ) : null}
               <div className="yt-dlp-options">
                 <label><input type="checkbox" checked={form.playlist} onChange={(event) => setForm({ ...form, playlist: event.target.checked })} /> Playlist</label>
                 <label><input type="checkbox" checked={form.subtitles} onChange={(event) => setForm({ ...form, subtitles: event.target.checked })} /> Subtitles</label>
@@ -663,14 +686,28 @@ export default function YtDlpPage() {
                 </label>
               )}
               {publishDraft.platform === "youtube" && (
-                <label className="yt-dlp-field">
-                  <span>Privacy</span>
-                  <select value={publishDraft.privacy} onChange={(event) => setPublishDraft({ ...publishDraft, privacy: event.target.value })}>
-                    <option value="private">Private</option>
-                    <option value="unlisted">Unlisted</option>
-                    <option value="public">Public</option>
-                  </select>
-                </label>
+                <>
+                  <label className="yt-dlp-field">
+                    <span>Publish to channel</span>
+                    <select required value={publishDraft.youtube_channel_id} onChange={(event) => setPublishDraft({ ...publishDraft, youtube_channel_id: event.target.value })}>
+                      <option value="" disabled>Select a connected YouTube channel</option>
+                      {youtubeChannelOptions.map((channel) => (
+                        <option key={channel.id} value={channel.id} disabled={!channel.configured}>
+                          {channel.label}{channel.id === "default" ? " (default)" : ""}{channel.configured ? "" : " — not configured"}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="yt-dlp-field">
+                    <span>Visibility</span>
+                    <select value={publishDraft.privacy} onChange={(event) => setPublishDraft({ ...publishDraft, privacy: event.target.value })}>
+                      <option value="private">Private — only invited viewers</option>
+                      <option value="unlisted">Unlisted — anyone with the link</option>
+                      <option value="public">Public — visible on the channel</option>
+                    </select>
+                    <small className="minor-text">The connected Google OAuth account determines this personal or Brand channel. Connect each additional channel in Providers to make it selectable here.</small>
+                  </label>
+                </>
               )}
               {publishDraft.platform === "tiktok" && (
                 <div className="minor-text">Uploads to the TikTok inbox as a draft. Review and post it from the TikTok app.</div>
@@ -734,7 +771,7 @@ export default function YtDlpPage() {
                 {publishes.map((item) => (
                   <tr key={item.sid}>
                     <td><span className={`yt-dlp-platform-label yt-dlp-platform-${item.platform}`}><PlatformIcon platform={item.platform} /> {item.platform === "youtube" ? "YouTube" : item.platform === "tiktok" ? "TikTok" : "Facebook"}</span><div className="minor-text">{item.account_label}</div></td>
-                    <td>{item.title}</td>
+                    <td>{item.title}{item.platform === "youtube" && <div className="minor-text">{item.privacy}</div>}</td>
                     <td><span className={`status-dot ${statusTone(item.status)}`} /> {item.status}{item.status === "uploading" ? ` ${Math.round(item.progress || 0)}%` : ""}</td>
                     <td>{new Date(item.scheduled_at).toLocaleString()}</td>
                     <td>{item.remote_url ? <a href={item.remote_url} target="_blank" rel="noreferrer">Open ↗</a> : item.remote_id || "—"}{item.error_message && <div className="msg-error">{item.error_message}</div>}</td>

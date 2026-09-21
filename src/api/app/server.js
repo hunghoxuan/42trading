@@ -581,6 +581,7 @@ const CONFIG_GUIDE_DIR = path.join(CONFIG_DIR, "guide");
 const USER_DATA_ROOT = path.join(GLOBAL_DATA_DIR, "users");
 const USER_REPO_ROOT = path.join(GLOBAL_DATA_DIR, "system", "users");
 const YT_DLP_DATA_ROOT = path.join(REPO_ROOT, "data");
+const YOUTUBE_OAUTH_ATTEMPTS = new Map();
 
 async function loadMediaPublishingCredentials(userId) {
   const readProvider = async (name) => {
@@ -603,6 +604,9 @@ async function loadMediaPublishingCredentials(userId) {
       clientId: String(youtube.data.client_id || ""),
       clientSecret: String(youtube.data.client_secret || ""),
       refreshToken: String(youtube.data.refresh_token || ""),
+      // Additional named OAuth connections are optional. Keeping the original
+      // fields above preserves existing single-channel Provider records.
+      channels: Array.isArray(youtube.data.channels) ? youtube.data.channels : [],
     },
     tiktok: {
       enabled: tiktok.enabled,
@@ -642,6 +646,90 @@ async function saveMediaPublishingCredentials(userId, platform, patch = {}) {
   );
 }
 
+function purgeYoutubeOAuthAttempts() {
+  const now = Date.now();
+  for (const [state, attempt] of YOUTUBE_OAUTH_ATTEMPTS) {
+    if (attempt.expiresAt <= now) YOUTUBE_OAUTH_ATTEMPTS.delete(state);
+  }
+}
+
+async function startYoutubeChannelOAuth(userId, origin) {
+  const base = new URL(origin);
+  if (!/^https?:$/.test(base.protocol) || !/^(localhost|127[.]0[.]0[.]1)$/i.test(base.hostname)) {
+    throw new Error("YouTube channel connection is only available from the local 42trade app.");
+  }
+  const stored = await loadMediaPublishingCredentials(userId);
+  const clientId = String(stored.youtube.clientId || "").trim();
+  const clientSecret = String(stored.youtube.clientSecret || "").trim();
+  if (!clientId || !clientSecret) throw new Error("Add the Google OAuth client ID and secret in YouTube Publishing first.");
+  purgeYoutubeOAuthAttempts();
+  const state = crypto.randomBytes(24).toString("base64url");
+  const redirectUri = `${base.origin}/v2/media/yt-dlp/youtube/oauth/callback`;
+  YOUTUBE_OAUTH_ATTEMPTS.set(state, {
+    userId,
+    clientId,
+    clientSecret,
+    redirectUri,
+    expiresAt: Date.now() + 10 * 60_000,
+  });
+  const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  authUrl.search = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: "code",
+    scope: "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly",
+    access_type: "offline",
+    prompt: "consent select_account",
+    state,
+  }).toString();
+  return authUrl.toString();
+}
+
+async function completeYoutubeChannelOAuth(state, code, oauthError) {
+  purgeYoutubeOAuthAttempts();
+  const attempt = YOUTUBE_OAUTH_ATTEMPTS.get(String(state || ""));
+  YOUTUBE_OAUTH_ATTEMPTS.delete(String(state || ""));
+  if (!attempt) throw new Error("This YouTube connection link expired. Start again from Providers.");
+  if (oauthError) throw new Error(`Google did not authorize the channel: ${oauthError}`);
+  if (!code) throw new Error("Google did not return an authorization code.");
+  const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      code: String(code), client_id: attempt.clientId, client_secret: attempt.clientSecret,
+      redirect_uri: attempt.redirectUri, grant_type: "authorization_code",
+    }),
+  });
+  const token = await tokenResponse.json();
+  if (!tokenResponse.ok || !token.access_token || !token.refresh_token) {
+    throw new Error(token.error_description || token.error || "Google did not return a reusable YouTube connection.");
+  }
+  const channelResponse = await fetch("https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true", {
+    headers: { Authorization: `Bearer ${token.access_token}` },
+  });
+  const channelData = await channelResponse.json();
+  const channel = channelData?.items?.[0];
+  if (!channelResponse.ok || !channel?.id) {
+    throw new Error(channelData?.error?.message || "Google authorized the account, but no YouTube channel was selected.");
+  }
+  const row = await settingsStore.getUserSetting(attempt.userId, "api_key", "YOUTUBE_API_KEY");
+  const existing = decryptObject(row?.data && typeof row.data === "object" ? row.data : {});
+  const channels = Array.isArray(existing.channels) ? existing.channels : [];
+  const connected = {
+    id: String(channel.id),
+    label: String(channel.snippet?.title || "YouTube channel"),
+    client_id: attempt.clientId,
+    client_secret: attempt.clientSecret,
+    refresh_token: String(token.refresh_token),
+  };
+  const withoutCurrent = channels.filter((entry) => String(entry?.id || "") !== connected.id);
+  await settingsStore.upsertUserSetting(attempt.userId, "api_key", "YOUTUBE_API_KEY", encryptObject({
+    ...existing,
+    channels: [...withoutCurrent, connected],
+  }), row?.status || "ACTIVE");
+  return { id: connected.id, label: connected.label };
+}
+
 const YT_DLP_SERVICE = createYtDlpService({
   dataRoot: YT_DLP_DATA_ROOT,
   getPublishingCredentials: loadMediaPublishingCredentials,
@@ -660,6 +748,7 @@ const handleYtDlpRequest = createYtDlpHttpHandler({
   readJson,
   getSession: getUiSessionFromReq,
   requirePermission: requireUiPermission,
+  youtubeOAuth: { start: startYoutubeChannelOAuth, complete: completeYoutubeChannelOAuth },
 });
 
 function scopedUserId(userId) {
@@ -7751,6 +7840,19 @@ function maskMediaProviderPayload(name, data = {}) {
       ? maskApiKeyForDisplay(value)
       : value;
   }
+  if (name === "YOUTUBE_API_KEY") {
+    out.channels = (Array.isArray(data.channels) ? data.channels : []).map((channel, index) => ({
+      id: String(channel?.id || `channel_${index + 1}`),
+      label: String(channel?.label || channel?.channel_label || `YouTube channel ${index + 1}`),
+      client_id: String(channel?.client_id || channel?.clientId || ""),
+      client_secret: channel?.client_secret || channel?.clientSecret
+        ? maskApiKeyForDisplay(String(channel.client_secret || channel.clientSecret))
+        : "",
+      refresh_token: channel?.refresh_token || channel?.refreshToken
+        ? maskApiKeyForDisplay(String(channel.refresh_token || channel.refreshToken))
+        : "",
+    }));
+  }
   return out;
 }
 
@@ -7765,6 +7867,30 @@ function normalizeMediaProviderPayload(name, incoming = {}, existing = {}) {
     out[field] = MEDIA_PROVIDER_SECRET_FIELDS.has(field) && (!value || isMaskedSecretLike(value))
       ? String(existing[field] || "")
       : value;
+  }
+  if (name === "YOUTUBE_API_KEY") {
+    const existingChannels = new Map(
+      (Array.isArray(existing.channels) ? existing.channels : []).map((channel) => [String(channel?.id || ""), channel]),
+    );
+    out.channels = (Array.isArray(incoming.channels) ? incoming.channels : [])
+      .map((channel, index) => {
+        const id = String(channel?.id || `channel_${index + 1}`).trim();
+        const previous = existingChannels.get(id) || {};
+        const secret = String(channel?.client_secret ?? channel?.clientSecret ?? "").trim();
+        const refresh = String(channel?.refresh_token ?? channel?.refreshToken ?? "").trim();
+        return {
+          id,
+          label: String(channel?.label || channel?.channel_label || `YouTube channel ${index + 1}`).trim(),
+          client_id: String(channel?.client_id ?? channel?.clientId ?? "").trim(),
+          client_secret: !secret || isMaskedSecretLike(secret)
+            ? String(previous.client_secret || previous.clientSecret || "")
+            : secret,
+          refresh_token: !refresh || isMaskedSecretLike(refresh)
+            ? String(previous.refresh_token || previous.refreshToken || "")
+            : refresh,
+        };
+      })
+      .filter((channel) => channel.id && channel.label);
   }
   return out;
 }

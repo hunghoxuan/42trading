@@ -1,0 +1,61 @@
+{
+  "id": "reject_trendline",
+  "key": "reject_trendline",
+  "name": "Reject Trendline",
+  "description": "Any directional candle pattern aligned with a same-direction trendline rejection on the same completed bar. Execution settings are file-backed and editable in 42trade.",
+  "engine_version": "42trade.strategy.v3",
+  "kind": "custom",
+  "status": "active",
+  "enforce_candle_artifact_reaction": false,
+  "market": { "symbol": "", "tf": "" },
+  "settings": {
+    "trade_config": {
+      "symbols": "DE40,US30,BTCUSD,XAUUSD,EURGBP,EURUSD,GBPJPY,EURJPY",
+      "timeframes": "m5,m15,m30,h1,h4",
+      "news_block": "_30m",
+      "first_trade": "Now_Wick_L0_R15",
+      "second_trade": "Now_Event_L03_R1",
+      "third_trade": "No",
+      "pending_order_expiry_bars": 5,
+      "trade_count": "_1",
+      "entry": "L0",
+      "sl": "candle_wick",
+      "tp": "RR_1_3",
+      "exit_mode": "Off"
+    },
+    "confluences": {}
+  },
+  "params": {},
+  "indicators": [],
+  "rules": [
+    {
+      "id": "bullish_candle_trendline_rejection",
+      "name": "Bullish Candle + Trendline Rejection",
+      "bias": "bullish",
+      "priority": "high",
+      "when": {
+        "and": [
+          { "fn": "any_candle_pattern", "args": ["bullish"] },
+          { "fn": "trendline_rejection", "args": ["bullish"] }
+        ]
+      },
+      "actions": [{ "id": "open_long", "action": "trade.open.long", "trade_plan": { "direction": "buy", "type": "limit" } }]
+    },
+    {
+      "id": "bearish_candle_trendline_rejection",
+      "name": "Bearish Candle + Trendline Rejection",
+      "bias": "bearish",
+      "priority": "high",
+      "when": {
+        "and": [
+          { "fn": "any_candle_pattern", "args": ["bearish"] },
+          { "fn": "trendline_rejection", "args": ["bearish"] }
+        ]
+      },
+      "actions": [{ "id": "open_short", "action": "trade.open.short", "trade_plan": { "direction": "sell", "type": "limit" } }]
+    }
+  ],
+  "risk": { "rr_target": 1.3, "max_open_trades": 1 },
+  "conditions": { "symbols": [], "timeframes": [], "sessions": [], "regime_tags": [] },
+  "metadata": { "author": "42trade", "preset_scope": "ctrader_and_42trade" }
+}

@@ -3653,6 +3653,16 @@ function findCurrentBarLevelMatch(functionName = "", level = null, ctx = {}, pre
     source_artifact_type: String(bestMatch?.sourceEntry?.sourceType || "").trim()
   });
 }
+function latestArtifactByType({ types = [], bias = "", ctx = {} }) {
+  const items = filterArtifactsBeforeCurrentBar(selectArtifactsForContext(ctx), ctx).filter(
+    (item) => (Array.isArray(types) ? types : [types]).includes(String(item?.type || "").trim().toLowerCase()) && matchArtifactBias(item, bias)
+  );
+  return buildArtifactResult(
+    Array.isArray(types) ? types.join("_") : String(types || ""),
+    items,
+    { timeframe: currentTimeframe(ctx), bias }
+  );
+}
 function currentBarArtifactByType({ types = [], bias = "", ctx = {} }) {
   const items = filterArtifactsAtCurrentBar(selectArtifactsForContext(ctx), ctx).filter(
     (item) => (Array.isArray(types) ? types : [types]).includes(String(item?.type || "").trim().toLowerCase()) && matchArtifactBias(item, bias)
@@ -3662,6 +3672,12 @@ function currentBarArtifactByType({ types = [], bias = "", ctx = {} }) {
     items,
     { timeframe: currentTimeframe(ctx), bias }
   );
+}
+function currentBarArtifactByPredicate({ name = "artifact", bias = "", ctx = {}, predicate = () => false }) {
+  const items = filterArtifactsAtCurrentBar(selectArtifactsForContext(ctx), ctx).filter(
+    (item) => predicate(item) && matchArtifactBias(item, bias)
+  );
+  return buildArtifactResult(name, items, { timeframe: currentTimeframe(ctx), bias });
 }
 function latestBreakoutMatch(level = null, ctx = {}) {
   const normalizedLevel = normalizeLevel(level);
@@ -3978,6 +3994,56 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
           ),
           { timeframe, bias: biasArg }
         );
+      case "any_structure_event":
+        return buildArtifactResult(
+          lowerName,
+          resultMatches(
+            currentBarArtifactByType({
+              types: ["bos", "choch", "sweep_high", "sweep_low", "rejection", "breakout"],
+              bias: biasArg,
+              ctx: nextCtx
+            })
+          ),
+          { timeframe, bias: biasArg }
+        );
+      case "any_candle_pattern":
+        return buildArtifactResult(
+          lowerName,
+          resultMatches(
+            currentBarArtifactByPredicate({
+              name: lowerName,
+              bias: biasArg,
+              ctx: nextCtx,
+              predicate: (item) => {
+                const family = String(item?.family || "").trim().toLowerCase();
+                const subtype = String(item?.subtype || "").trim().toLowerCase();
+                return family === "pattern" || family === "candle" || subtype === "candlestick";
+              }
+            })
+          ),
+          { timeframe, bias: biasArg }
+        );
+      case "trendline_rejection":
+        return buildArtifactResult(
+          lowerName,
+          resultMatches(
+            currentBarArtifactByPredicate({
+              name: lowerName,
+              bias: biasArg,
+              ctx: nextCtx,
+              predicate: (item) => {
+                const type = String(item?.type || "").trim().toLowerCase();
+                if (["trendline_rejection", "bullish_trendline_rejection", "bearish_trendline_rejection"].includes(type)) return true;
+                if (type !== "rejection") return false;
+                const levelKind = String(
+                  item?.level_kind || item?.levelKind || item?.artifact_group || item?.payload?.level_kind || item?.payload?.levelKind || item?.payload?.source_artifact_type || ""
+                ).trim().toLowerCase();
+                return levelKind === "tl" || levelKind.includes("trendline");
+              }
+            })
+          ),
+          { timeframe, bias: biasArg }
+        );
       case "breakout":
         return latestBreakoutMatch(level, nextCtx);
       case "pin_bar":
@@ -3998,6 +4064,18 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
           resultMatches(
             currentBarArtifactByType({
               types: ["bullish_engulfing", "bearish_engulfing"],
+              bias: biasArg,
+              ctx: nextCtx
+            })
+          ),
+          { timeframe, bias: biasArg }
+        );
+      case "wick_flip":
+        return buildArtifactResult(
+          lowerName,
+          resultMatches(
+            currentBarArtifactByType({
+              types: ["wick_flip", "bullish_wick_flip", "bearish_wick_flip"],
               bias: biasArg,
               ctx: nextCtx
             })
@@ -4092,7 +4170,9 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
       case "has_bos":
         return buildArtifactResult(
           lowerName,
-          resultMatches(currentBarArtifactByType({ types: ["bos"], bias: biasArg, ctx: nextCtx })),
+          resultMatches(
+            timeframe !== currentTimeframe(ctx) ? latestArtifactByType({ types: ["bos"], bias: biasArg, ctx: nextCtx }) : currentBarArtifactByType({ types: ["bos"], bias: biasArg, ctx: nextCtx })
+          ),
           { timeframe, bias: biasArg }
         );
       case "choch":
@@ -4568,6 +4648,9 @@ var RULE_FUNCTION_NAMES = [
   "sweeps_below",
   "sweep",
   "has_sweep",
+  "any_structure_event",
+  "any_candle_pattern",
+  "trendline_rejection",
   "bos",
   "has_bos",
   "choch",
@@ -4575,6 +4658,7 @@ var RULE_FUNCTION_NAMES = [
   "breakout",
   "pin_bar",
   "engulfing",
+  "wick_flip",
   "morning_star",
   "evening_star",
   "hammer",

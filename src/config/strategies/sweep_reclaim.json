@@ -1,0 +1,32 @@
+{
+  "id": "sweep_reclaim",
+  "key": "sweep_reclaim",
+  "name": "Sweep Reclaim",
+  "description": "Closed-bar chain: confirmed swing liquidity sweep/reclaim, rejection at that level, later CHOCH, later BOS of new structure, then directional candle confirmation. Enable Sweep Reclaim Chain under cTrader Structure Events. Native cTrader detector; not a same-bar AND rule.",
+  "engine_version": "42trade.strategy.v3",
+  "kind": "custom",
+  "status": "active",
+  "enforce_candle_artifact_reaction": false,
+  "market": { "symbol": "", "tf": "" },
+  "settings": { "confluences": {} },
+  "params": {},
+  "indicators": [],
+  "rules": [
+    {
+      "id": "bullish_sweep_reclaim",
+      "name": "Bullish Sweep Reclaim",
+      "bias": "bullish",
+      "when": { "fn": "sweep_reclaim", "args": ["bullish"] },
+      "actions": [{ "id": "open_long", "action": "trade.open.long", "trade_plan": { "direction": "buy", "type": "market" } }]
+    },
+    {
+      "id": "bearish_sweep_reclaim",
+      "name": "Bearish Sweep Reclaim",
+      "bias": "bearish",
+      "when": { "fn": "sweep_reclaim", "args": ["bearish"] },
+      "actions": [{ "id": "open_short", "action": "trade.open.short", "trade_plan": { "direction": "sell", "type": "market" } }]
+    }
+  ],
+  "conditions": { "symbols": [], "timeframes": [], "sessions": [], "regime_tags": [] },
+  "metadata": { "author": "42trade", "preset_scope": "ctrader" }
+}

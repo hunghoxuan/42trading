@@ -26,6 +26,33 @@ function supportsTikTok(fileName) {
   return [".mp4", ".webm", ".mov"].includes(path.extname(fileName).toLowerCase());
 }
 
+function youtubeChannels(stored = {}) {
+  const primary = {
+    id: "default",
+    label: text(stored.label, "YouTube channel"),
+    clientId: text(stored.clientId),
+    clientSecret: text(stored.clientSecret),
+    refreshToken: text(stored.refreshToken),
+  };
+  const extras = Array.isArray(stored.channels) ? stored.channels : [];
+  const seen = new Set();
+  return [primary, ...extras.map((channel, index) => ({
+    id: text(channel?.id, `channel_${index + 1}`),
+    label: text(channel?.label || channel?.channel_label, `YouTube channel ${index + 1}`),
+    clientId: text(channel?.clientId || channel?.client_id),
+    clientSecret: text(channel?.clientSecret || channel?.client_secret),
+    refreshToken: text(channel?.refreshToken || channel?.refresh_token),
+  }))].filter((channel) => {
+    if (!channel.id || seen.has(channel.id)) return false;
+    seen.add(channel.id);
+    return true;
+  });
+}
+
+function configuredYoutubeChannel(channel) {
+  return Boolean(channel?.clientId && channel?.clientSecret && channel?.refreshToken);
+}
+
 async function responseJson(response) {
   const body = await response.text();
   let data = {};
@@ -266,6 +293,7 @@ function createMediaPublishService({
     return {
       youtube: {
         ...stored.youtube,
+        channels: youtubeChannels(stored.youtube),
         label: text(stored.youtube?.label, "YouTube channel"),
       },
       tiktok: {
@@ -282,12 +310,16 @@ function createMediaPublishService({
 
   async function status(userId) {
     const config = await credentials(userId);
+    const channels = config.youtube.channels.map((channel) => ({
+      id: channel.id,
+      label: channel.label,
+      configured: config.youtube.enabled !== false && configuredYoutubeChannel(channel),
+    }));
     return {
       youtube: {
-        configured: config.youtube.enabled !== false && Boolean(
-          config.youtube.clientId && config.youtube.clientSecret && config.youtube.refreshToken
-        ),
-        label: config.youtube.label,
+        configured: channels.some((channel) => channel.configured),
+        label: channels.find((channel) => channel.configured)?.label || config.youtube.label,
+        channels,
         mode: "channel_upload",
       },
       tiktok: {
@@ -334,8 +366,12 @@ function createMediaPublishService({
       const destinations = await status(item.user_id);
       let result;
       if (item.platform === "youtube") {
-        if (!destinations.youtube.configured) throw new Error("YouTube channel credentials are not configured.");
-        result = await uploadYouTube(item, file, config.youtube, onProgress);
+        const channelId = text(item.options?.youtube_channel_id, "default");
+        const channel = config.youtube.channels.find((entry) => entry.id === channelId);
+        if (!channel || !configuredYoutubeChannel(channel) || config.youtube.enabled === false) {
+          throw new Error("The selected YouTube channel credentials are not configured.");
+        }
+        result = await uploadYouTube(item, file, channel, onProgress);
       } else if (item.platform === "tiktok") {
         if (!destinations.tiktok.configured) throw new Error("TikTok account credentials are not configured.");
         result = await uploadTikTokDraft(
@@ -389,6 +425,13 @@ function createMediaPublishService({
       const platformLabel = platform === "youtube" ? "YouTube" : platform === "tiktok" ? "TikTok" : "Facebook";
       throw new Error(`${platformLabel} credentials are not configured.`);
     }
+    const youtubeChannelId = platform === "youtube" ? text(input.youtube_channel_id, "default") : "";
+    const youtubeChannel = platform === "youtube"
+      ? configured.channels?.find((channel) => channel.id === youtubeChannelId && channel.configured)
+      : null;
+    if (platform === "youtube" && !youtubeChannel) {
+      throw new Error("Select a configured YouTube channel.");
+    }
     const now = new Date();
     const requestedAt = input.scheduled_at ? new Date(input.scheduled_at) : now;
     if (!Number.isFinite(requestedAt.getTime())) throw new Error("Invalid scheduled date and time.");
@@ -400,13 +443,13 @@ function createMediaPublishService({
       job_sid: text(input.job_sid),
       file_index: index,
       platform,
-      account_label: configured.label,
+      account_label: platform === "youtube" ? youtubeChannel.label : configured.label,
       title: (text(input.title) || path.parse(file.name).name).slice(
         0,
         platform === "youtube" ? 100 : platform === "facebook" ? 255 : 2200,
       ),
       description: text(input.description),
-      privacy: platform === "youtube" && ["private", "unlisted", "public"].includes(input.privacy) ? input.privacy : "private",
+      privacy: platform === "youtube" && ["private", "unlisted", "public"].includes(input.privacy) ? input.privacy : "unlisted",
       status: "scheduled",
       progress: 0,
       scheduled_at: scheduledAt.toISOString(),
@@ -415,7 +458,10 @@ function createMediaPublishService({
       remote_id: null,
       remote_url: null,
       error_message: null,
-      options: { category_id: text(input.category_id, "22") },
+      options: {
+        category_id: text(input.category_id, "22"),
+        ...(platform === "youtube" ? { youtube_channel_id: youtubeChannelId } : {}),
+      },
       created_at: createdAt,
       updated_at: createdAt,
     });

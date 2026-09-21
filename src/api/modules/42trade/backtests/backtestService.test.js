@@ -195,18 +195,46 @@ test("simulateStrategy rejects trades that violate market metadata min stop pips
   assert.equal(result.execution_options.min_stop_pips, 15);
 });
 
-test("strategy catalog contains only the shared candle_pattern_trend file", async () => {
+test("strategy catalog contains all shared file-backed strategies", async () => {
   const strategies = await backtestService.listStrategies();
-  assert.deepEqual(strategies.map((item) => item?.id || item?.key), ["candle_pattern_trend"]);
-  assert.equal(strategies[0]?.engine_version, "42trade.strategy.v3");
+  assert.deepEqual(strategies.map((item) => item?.id || item?.key), [
+    "candle_pattern_trend",
+    "engulfing_structure_event",
+    "pinbar_structure_event",
+    "reject_trendline",
+    "sweep_reclaim",
+    "wick_flip",
+  ]);
+  assert.equal(strategies.every((item) => item?.engine_version === "42trade.strategy.v3"), true);
 });
 
 test("candle_pattern_trend exposes the shared cTrader preset settings", async () => {
-  const strategy = (await backtestService.listStrategies())[0];
+  const strategy = (await backtestService.listStrategies()).find((item) => item?.id === "candle_pattern_trend");
   assert.equal(strategy?.settings?.trade_config?.entry, "L0");
   assert.equal(strategy?.settings?.trade_config?.sl, "event");
   assert.equal(strategy?.settings?.trade_config?.tp, "RR_1_5");
   assert.equal(strategy?.settings?.confluences?.minimum_count, "_2");
+});
+
+test("custom file strategies expose their requested cTrader execution presets", async () => {
+  const strategies = await backtestService.listStrategies();
+  const byId = Object.fromEntries(strategies.map((item) => [item.id, item]));
+  assert.deepEqual(
+    ["entry", "sl", "tp"].map((key) => byId.pinbar_structure_event.settings.trade_config[key]),
+    ["market", "candle_wick_13", "RR_1_5"],
+  );
+  assert.deepEqual(
+    ["entry", "sl", "tp"].map((key) => byId.engulfing_structure_event.settings.trade_config[key]),
+    ["L05", "candle_wick_2", "RR_1"],
+  );
+  assert.deepEqual(
+    ["entry", "sl", "tp"].map((key) => byId.wick_flip.settings.trade_config[key]),
+    ["market", "candle_wick_13", "RR_1_5"],
+  );
+  assert.deepEqual(
+    ["entry", "sl", "tp"].map((key) => byId.reject_trendline.settings.trade_config[key]),
+    ["L0", "candle_wick", "RR_1_3"],
+  );
 });
 
 test("simulateStrategy fills limit orders only after price touches the limit", () => {
