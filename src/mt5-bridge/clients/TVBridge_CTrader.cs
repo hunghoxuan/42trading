@@ -22,7 +22,7 @@ namespace cAlgo.Robots
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class TVBridgeCBot : Robot
     {
-        private const string BuildVersion = "v2026.09.24 - sweep-stage-vs-chain-markers";
+        private const string BuildVersion = "v2026.09.25 - scoped-sweep-markers";
         private const string BridgeSourceId = "Ctrader";
         private const string BridgeSourceType = "ctrader_bridge";
         private const int TransientErrorLogThresholdCount = 10;
@@ -244,6 +244,7 @@ namespace cAlgo.Robots
         private readonly Dictionary<long, StrategyPositionSnapshot> _trackedStrategyPositions = new Dictionary<long, StrategyPositionSnapshot>();
         private readonly List<StrategyChartMarker> _strategyChartMarkers = new List<StrategyChartMarker>();
         private readonly HashSet<string> _loggedFullEventKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _loggedSweepReclaimProofSummaryKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly List<ChartArtifactPriceBand> _drawnChartArtifactPriceBands = new List<ChartArtifactPriceBand>();
         private DateTime _lastStrategyPositionMarkerReconcileUtc = DateTime.MinValue;
         private string _visualAnalysisCacheKey = "";
@@ -2492,7 +2493,7 @@ namespace cAlgo.Robots
         [Parameter("Bar Direction", Group = "Confluences", DefaultValue = true)]
         public bool ConfluenceBarDirection { get; set; }
 
-        [Parameter("Swp - Sweep", Group = "Structure Events", DefaultValue = StructureEventToggleMode.Yes)]
+        [Parameter("Swp - Sweep", Group = "Structure Events", DefaultValue = StructureEventToggleMode.LTF)]
         public StructureEventToggleMode DrawSweepDetections { get; set; }
 
         [Parameter("Br - Breakout", Group = "Structure Events", DefaultValue = StructureEventToggleMode.Yes)]
@@ -21046,6 +21047,28 @@ namespace cAlgo.Robots
                 sourceBars,
                 timeFrame,
                 boundedLookback);
+            var latestClosedBarTime = sourceBars.OpenTimes[Math.Max(0, sourceBars.Count - 2)];
+            var summaryKey = string.Format(
+                CultureInfo.InvariantCulture,
+                "{0}|{1}|{2}",
+                NormalizeSymbolAlias(symbolName),
+                TimeFrameToMinutes(timeFrame),
+                latestClosedBarTime.Ticks);
+            if (_loggedSweepReclaimProofSummaryKeys.Add(summaryKey))
+            {
+                PrintAlways(
+                    "[SweepReclaimProof] symbol={0} tf={1} sweep={2} sweep_reclaim={3} lookback={4}",
+                    NormalizeSymbolAlias(symbolName),
+                    GetMiniChartLabel(timeFrame),
+                    canonicalEvents.Count(evt => evt.EventType == CanonicalEventType.SweepReclaim),
+                    canonicalEvents.Count(evt => evt.EventType == CanonicalEventType.SweepReclaimChain),
+                    boundedLookback);
+                if (_loggedSweepReclaimProofSummaryKeys.Count > 5000)
+                {
+                    _loggedSweepReclaimProofSummaryKeys.Clear();
+                    _loggedSweepReclaimProofSummaryKeys.Add(summaryKey);
+                }
+            }
             foreach (var canonicalEvent in canonicalEvents
                 .Where(evt => evt.EventType == CanonicalEventType.SweepReclaim ||
                     evt.EventType == CanonicalEventType.SweepReclaimChain)
@@ -21106,7 +21129,8 @@ namespace cAlgo.Robots
                 StructureEventsCombo != StructureEventComboMode.Trades;
             var showTradeEvents = StructureEventsCombo == StructureEventComboMode.All ||
                 StructureEventsCombo == StructureEventComboMode.Trades ||
-                hasFileBackedEventMarkers;
+                hasFileBackedEventMarkers ||
+                IsSweepReclaimStrategySelected();
             if (!showRawEvents && !showTradeEvents)
                 return objectIndex;
 
@@ -21137,6 +21161,13 @@ namespace cAlgo.Robots
                 .Select(group => group.First())
                 .OrderByDescending(TimeFrameToMinutes))
             {
+                // Sweep proof markers obey the existing Swp scope selector. This is a
+                // display filter only: strategy execution still scans its configured TFs.
+                // LTF means the current chart TF, HTF means higher TFs, and Yes means both.
+                if (IsSweepReclaimStrategySelected() &&
+                    !IsScopeEnabledForTimeFrame(DrawSweepDetections, sourceTimeFrame))
+                    continue;
+
                 Bars sourceBars;
                 try
                 {
@@ -21298,7 +21329,7 @@ namespace cAlgo.Robots
                         continue;
 
                     var labelText = isSweepReclaimStageMarker
-                        ? BuildChartEventDisplayLabel(sourceTimeFrame, "sr.wait", primary.IsBullish)
+                        ? BuildChartEventDisplayLabel(sourceTimeFrame, "sweep", primary.IsBullish)
                         : isCompletedSweepReclaimChain
                             ? BuildChartEventDisplayLabel(sourceTimeFrame, "sweep_reclaim", primary.IsBullish)
                         : isTradeEvent
@@ -21335,7 +21366,7 @@ namespace cAlgo.Robots
                         GetDirectionalEventColor(primary.IsBullish),
                         isTradeEvent || isCompletedSweepReclaimChain
                             ? 255
-                            : isSweepReclaimStageMarker ? 120 : 179);
+                            : isSweepReclaimStageMarker ? 210 : 179);
                     if (isTradeEvent)
                     {
                         foreach (var supportingTrigger in sameBarTriggers)
@@ -21408,7 +21439,7 @@ namespace cAlgo.Robots
                     var labelFontSize = isCompletedSweepReclaimChain
                         ? Math.Max(10, ResolveChartMarkerFontSize(sourceTimeFrame) + 2)
                         : isSweepReclaimStageMarker
-                            ? Math.Min(8, ResolveChartMarkerFontSize(sourceTimeFrame))
+                            ? Math.Max(9, ResolveChartMarkerFontSize(sourceTimeFrame))
                             : ResolveChartMarkerFontSize(sourceTimeFrame);
                     var eventBarRange = Math.Max(
                         sourceBars.HighPrices[barIndex] - sourceBars.LowPrices[barIndex],
@@ -51125,7 +51156,9 @@ namespace cAlgo.Robots
             {
                 case CanonicalEventType.Choch: return DrawChochDetections;
                 case CanonicalEventType.Bos: return DrawBosDetections;
-                case CanonicalEventType.SweepReclaim: return DrawSweepDetections;
+                case CanonicalEventType.SweepReclaim:
+                case CanonicalEventType.SweepReclaimChain:
+                    return DrawSweepDetections;
                 case CanonicalEventType.Rejection: return DrawRejectionDetections;
                 case CanonicalEventType.Breakout: return DrawBreakoutDetections;
                 default: return StructureEventToggleMode.No;
