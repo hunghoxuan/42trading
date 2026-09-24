@@ -2496,6 +2496,15 @@ namespace cAlgo.Robots
         [Parameter("Swp - Sweep", Group = "Structure Events", DefaultValue = StructureEventToggleMode.LTF)]
         public StructureEventToggleMode DrawSweepDetections { get; set; }
 
+        [Parameter("Swp - Swing strength", Group = "Structure Events", DefaultValue = 3, MinValue = 2, MaxValue = 8)]
+        public int SweepSwingStrength { get; set; }
+
+        [Parameter("Swp - Min swing ATR", Group = "Structure Events", DefaultValue = 0.5, MinValue = 0.0, MaxValue = 5.0, Step = 0.1)]
+        public double SweepMinimumSwingAtr { get; set; }
+
+        [Parameter("Swp - Min penetration ATR", Group = "Structure Events", DefaultValue = 0.1, MinValue = 0.0, MaxValue = 2.0, Step = 0.05)]
+        public double SweepMinimumPenetrationAtr { get; set; }
+
         [Parameter("Br - Breakout", Group = "Structure Events", DefaultValue = StructureEventToggleMode.Yes)]
         public StructureEventToggleMode DrawBreakoutDetections { get; set; }
 
@@ -44998,6 +45007,9 @@ namespace cAlgo.Robots
                         sourceBars.GetHashCode().ToString(CultureInfo.InvariantCulture),
                         sourceBars.OpenTimes[lastClosedBarIndex].Ticks.ToString(CultureInfo.InvariantCulture),
                         Math.Max(lookbackBars, 10).ToString(CultureInfo.InvariantCulture),
+                        SweepSwingStrength.ToString(CultureInfo.InvariantCulture),
+                        SweepMinimumSwingAtr.ToString(CultureInfo.InvariantCulture),
+                        SweepMinimumPenetrationAtr.ToString(CultureInfo.InvariantCulture),
                         ZoneFvgDisplacement.ToString(),
                         ZoneFvgBodyRatio.ToString(),
                         ZoneFvgGap.ToString(),
@@ -45157,7 +45169,8 @@ namespace cAlgo.Robots
                 },
                 Swings = new FortyTwo.Trading.Analysis.SwingAnalysisConfig
                 {
-                    Strength = 2,
+                    Strength = Math.Max(2, Math.Min(8, SweepSwingStrength)),
+                    MinimumProminenceAtr = Math.Max(0.0, SweepMinimumSwingAtr),
                     LookbackBars = Math.Max(lookbackBars, 10)
                 },
                 Structures = new FortyTwo.Trading.Analysis.StructureAnalysisConfig
@@ -45166,6 +45179,8 @@ namespace cAlgo.Robots
                     ConsumeBrokenLevels = true,
                     ConsumeSweptLevels = true,
                     DetectTwoBarSweeps = true,
+                    MinimumSwingSeparationAtr = Math.Max(0.0, SweepMinimumSwingAtr),
+                    MinimumSweepPenetrationAtr = Math.Max(0.0, SweepMinimumPenetrationAtr),
                     ExternalBias = FortyTwo.Trading.Analysis.MarketDirection.Neutral
                 },
                 Zones = new FortyTwo.Trading.Analysis.ZoneAnalysisConfig
@@ -59797,6 +59812,7 @@ namespace FortyTwo.Trading.Analysis
     public sealed class SwingAnalysisConfig
     {
         public int Strength { get; set; } = 2;
+        public double MinimumProminenceAtr { get; set; } = 0.0;
         public int LookbackBars { get; set; } = 180;
     }
 
@@ -59806,6 +59822,8 @@ namespace FortyTwo.Trading.Analysis
         public bool ConsumeBrokenLevels { get; set; } = true;
         public bool ConsumeSweptLevels { get; set; } = true;
         public bool DetectTwoBarSweeps { get; set; } = true;
+        public double MinimumSwingSeparationAtr { get; set; } = 0.0;
+        public double MinimumSweepPenetrationAtr { get; set; } = 0.0;
         public MarketDirection ExternalBias { get; set; } = MarketDirection.Neutral;
     }
 
@@ -60086,6 +60104,8 @@ namespace FortyTwo.Trading.Analysis
                 var isLow = true;
                 var highStrict = false;
                 var lowStrict = false;
+                var surroundingHigh = double.MinValue;
+                var surroundingLow = double.MaxValue;
                 for (var offset = 1; offset <= strength; offset++)
                 {
                     var left = candles[i - offset];
@@ -60094,6 +60114,17 @@ namespace FortyTwo.Trading.Analysis
                     if (left.Low < low || right.Low < low) isLow = false;
                     if (left.High < high || right.High < high) highStrict = true;
                     if (left.Low > low || right.Low > low) lowStrict = true;
+                    surroundingHigh = Math.Max(surroundingHigh, Math.Max(left.High, right.High));
+                    surroundingLow = Math.Min(surroundingLow, Math.Min(left.Low, right.Low));
+                }
+                var atr = AverageTrueRange(candles, i, 14);
+                var minimumProminence = atr * Math.Max(0.0, config.MinimumProminenceAtr);
+                if (minimumProminence > 0.0)
+                {
+                    if (isHigh && high - surroundingHigh < minimumProminence)
+                        isHigh = false;
+                    if (isLow && surroundingLow - low < minimumProminence)
+                        isLow = false;
                 }
                 if (isHigh && highStrict)
                     values.Add(new SwingInfo { Index = i, TimeUtc = candles[i].OpenTimeUtc, Price = high, IsHigh = true, ConfirmationIndex = i + strength });
@@ -60142,6 +60173,9 @@ namespace FortyTwo.Trading.Analysis
                 }
 
                 var candle = candles[barIndex];
+                var atr = AverageTrueRange(candles, barIndex, 14);
+                var minimumPenetration = atr * Math.Max(0.0, config.MinimumSweepPenetrationAtr);
+                var minimumSwingSeparation = atr * Math.Max(0.0, config.MinimumSwingSeparationAtr);
                 if (latestHigh != null && candle.Close > latestHigh.Price && (!config.ConsumeBrokenLevels || brokenHighs.Add(latestHigh.Index)))
                 {
                     var before = bias;
@@ -60159,8 +60193,15 @@ namespace FortyTwo.Trading.Analysis
 
                 if (latestHigh != null && latestHigh.ConfirmationIndex < barIndex && (!config.ConsumeSweptLevels || !sweptHighs.Contains(latestHigh.Index)))
                 {
-                    var oneBar = candle.High > latestHigh.Price && candle.Open <= latestHigh.Price && candle.Close < latestHigh.Price;
-                    var twoBar = config.DetectTwoBarSweeps && barIndex > 0 && candles[barIndex - 1].High > latestHigh.Price && candles[barIndex - 1].Close >= latestHigh.Price && candle.Close < latestHigh.Price;
+                    var meaningfulSwing = latestLow == null || minimumSwingSeparation <= 0.0 ||
+                        latestHigh.Price - latestLow.Price >= minimumSwingSeparation;
+                    var oneBar = meaningfulSwing && candle.High > latestHigh.Price &&
+                        candle.High - latestHigh.Price >= minimumPenetration &&
+                        candle.Open <= latestHigh.Price && candle.Close < latestHigh.Price;
+                    var twoBar = meaningfulSwing && config.DetectTwoBarSweeps && barIndex > 0 &&
+                        candles[barIndex - 1].High > latestHigh.Price &&
+                        candles[barIndex - 1].High - latestHigh.Price >= minimumPenetration &&
+                        candles[barIndex - 1].Close >= latestHigh.Price && candle.Close < latestHigh.Price;
                     if (oneBar || twoBar)
                     {
                         if (config.ConsumeSweptLevels) sweptHighs.Add(latestHigh.Index);
@@ -60169,8 +60210,15 @@ namespace FortyTwo.Trading.Analysis
                 }
                 if (latestLow != null && latestLow.ConfirmationIndex < barIndex && (!config.ConsumeSweptLevels || !sweptLows.Contains(latestLow.Index)))
                 {
-                    var oneBar = candle.Low < latestLow.Price && candle.Open >= latestLow.Price && candle.Close > latestLow.Price;
-                    var twoBar = config.DetectTwoBarSweeps && barIndex > 0 && candles[barIndex - 1].Low < latestLow.Price && candles[barIndex - 1].Close <= latestLow.Price && candle.Close > latestLow.Price;
+                    var meaningfulSwing = latestHigh == null || minimumSwingSeparation <= 0.0 ||
+                        latestHigh.Price - latestLow.Price >= minimumSwingSeparation;
+                    var oneBar = meaningfulSwing && candle.Low < latestLow.Price &&
+                        latestLow.Price - candle.Low >= minimumPenetration &&
+                        candle.Open >= latestLow.Price && candle.Close > latestLow.Price;
+                    var twoBar = meaningfulSwing && config.DetectTwoBarSweeps && barIndex > 0 &&
+                        candles[barIndex - 1].Low < latestLow.Price &&
+                        latestLow.Price - candles[barIndex - 1].Low >= minimumPenetration &&
+                        candles[barIndex - 1].Close <= latestLow.Price && candle.Close > latestLow.Price;
                     if (oneBar || twoBar)
                     {
                         if (config.ConsumeSweptLevels) sweptLows.Add(latestLow.Index);
@@ -60179,6 +60227,31 @@ namespace FortyTwo.Trading.Analysis
                 }
             }
             return values.OrderBy(value => value.ConfirmationIndex).ThenBy(value => value.Type).ToList();
+        }
+
+        private static double AverageTrueRange(List<MarketCandle> candles, int index, int period)
+        {
+            if (candles == null || candles.Count < 2 || index < 1)
+                return 0.0;
+            var end = Math.Min(index, candles.Count - 1);
+            var start = Math.Max(1, end - Math.Max(1, period) + 1);
+            var total = 0.0;
+            var count = 0;
+            for (var i = start; i <= end; i++)
+            {
+                var previousClose = candles[i - 1].Close;
+                var trueRange = Math.Max(
+                    candles[i].High - candles[i].Low,
+                    Math.Max(
+                        Math.Abs(candles[i].High - previousClose),
+                        Math.Abs(candles[i].Low - previousClose)));
+                if (trueRange > 0.0 && !double.IsNaN(trueRange) && !double.IsInfinity(trueRange))
+                {
+                    total += trueRange;
+                    count++;
+                }
+            }
+            return count > 0 ? total / count : 0.0;
         }
 
         private StructureEventInfo NewStructure(MarketStructureEventType type, int trigger, SwingInfo swing, MarketDirection direction, MarketDirection before, MarketDirection after, int confirmation = -1)
