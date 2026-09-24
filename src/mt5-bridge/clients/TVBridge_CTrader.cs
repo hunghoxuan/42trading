@@ -22,7 +22,7 @@ namespace cAlgo.Robots
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class TVBridgeCBot : Robot
     {
-        private const string BuildVersion = "v2026.09.25 - scoped-sweep-markers";
+        private const string BuildVersion = "v2026.09.25 - sweep-reclaim-on-choch";
         private const string BridgeSourceId = "Ctrader";
         private const string BridgeSourceType = "ctrader_bridge";
         private const int TransientErrorLogThresholdCount = 10;
@@ -2504,6 +2504,9 @@ namespace cAlgo.Robots
 
         [Parameter("Swp - Min penetration ATR", Group = "Structure Events", DefaultValue = 0.1, MinValue = 0.0, MaxValue = 2.0, Step = 0.05)]
         public double SweepMinimumPenetrationAtr { get; set; }
+
+        [Parameter("Swp - Reclaim window", Group = "Structure Events", DefaultValue = 48, MinValue = 3, MaxValue = 200)]
+        public int SweepReclaimWindowBars { get; set; }
 
         [Parameter("Br - Breakout", Group = "Structure Events", DefaultValue = StructureEventToggleMode.Yes)]
         public StructureEventToggleMode DrawBreakoutDetections { get; set; }
@@ -15744,10 +15747,13 @@ namespace cAlgo.Robots
                     sweepStage.EventKey += "_chain_stage_" + bars.OpenTimes[start].Ticks;
                     result.Add(sweepStage);
                 }
-                var rejection = -1;
-                var choch = -1;
-                var bos = -1;
-                var end = Math.Min(last, start + 20);
+                SwingPoint? reversalReference = snapshot.Swings
+                    .Where(candidate => candidate.IsHigh == bullish &&
+                        candidate.BarIndex + 2 < start)
+                    .OrderByDescending(candidate => candidate.BarIndex)
+                    .Select(candidate => (SwingPoint?)candidate)
+                    .FirstOrDefault();
+                var end = Math.Min(last, start + Math.Max(3, SweepReclaimWindowBars));
                 for (var i = reclaimed; i <= end; i++)
                 {
                     if (bullish ? bars.ClosePrices[i] < low : bars.ClosePrices[i] > high)
@@ -15755,47 +15761,28 @@ namespace cAlgo.Robots
                     List<StructureEventV2> atBar;
                     if (!eventsByIndex.TryGetValue(i, out atBar))
                         atBar = new List<StructureEventV2>();
-                    if (choch >= 0 && atBar.Any(e => e.Type == StructureEventTypeV2.Choch && e.IsBullish != bullish))
+                    if (atBar.Any(e => e.Type == StructureEventTypeV2.Choch && e.IsBullish != bullish))
                         break;
-                    if (rejection < 0)
-                    {
-                        if (i - reclaimed > 3) break;
-                        var patterns = GetDetectedSharedRulePatternSet(bars, timeFrame, i);
-                        var tolerance = Math.Max(symbol.PipSize * 2, 0.0000001);
-                        int span;
-                        var rejected = bullish
-                            ? TryMatchBullishLevelRejection(bars, i, sweep.ReferencePrice, tolerance,
-                                bars.HighPrices[i] - bars.LowPrices[i], patterns, bars.OpenPrices[i - 1], bars.ClosePrices[i - 1], out span)
-                            : TryMatchBearishLevelRejection(bars, i, sweep.ReferencePrice, tolerance,
-                                bars.HighPrices[i] - bars.LowPrices[i], patterns, bars.OpenPrices[i - 1], bars.ClosePrices[i - 1], out span);
-                        if (rejected) rejection = i;
+                    var confirmsReversal = atBar.Any(e =>
+                        e.IsBullish == bullish &&
+                        (e.Type == StructureEventTypeV2.Choch ||
+                         (e.Type == StructureEventTypeV2.Bos && e.BiasBefore == StructureBias.Neutral)));
+                    var directlyBreaksOppositeSwing = reversalReference.HasValue &&
+                        (bullish
+                            ? bars.ClosePrices[i] > reversalReference.Value.Price
+                            : bars.ClosePrices[i] < reversalReference.Value.Price);
+                    if (!confirmsReversal && !directlyBreaksOppositeSwing)
                         continue;
-                    }
-                    if (choch < 0)
-                    {
-                        if (i - rejection > 6) break;
-                        if (atBar.Any(e => e.Type == StructureEventTypeV2.Choch && e.IsBullish == bullish))
-                            choch = i;
-                        continue;
-                    }
-                    if (bos < 0)
-                    {
-                        if (i - choch > 10) break;
-                        // New structure must form AFTER the CHOCH. Re-breaking its old
-                        // reference swing is not a second confirmation of the reversal.
-                        if (atBar.Any(e => e.Type == StructureEventTypeV2.Bos && e.IsBullish == bullish &&
-                            e.ReferenceSwingIndex >= choch && e.ReferenceSwingIndex < i))
-                            bos = i;
-                        continue;
-                    }
-                    if (i - bos > 3) break;
-                    var confirmations = GetDetectedSharedRulePatternSet(bars, timeFrame, i);
-                    var confirmed = bullish
-                        ? confirmations.Any(p => p.StartsWith("bullish_", StringComparison.OrdinalIgnoreCase))
-                        : confirmations.Any(p => p.StartsWith("bearish_", StringComparison.OrdinalIgnoreCase) ||
-                            p == "shooting_star" || p == "hanging_man");
-                    if (!confirmed || (bullish ? bars.ClosePrices[i] <= bars.OpenPrices[i] : bars.ClosePrices[i] >= bars.OpenPrices[i]))
-                        continue;
+
+                    // The sweep candle already proves rejection: it penetrated the known
+                    // liquidity level and closed back through it. A same-direction CHOCH is
+                    // therefore the structural confirmation that completes sweep_reclaim.
+                    // When prior bias is still Neutral the same first structural break is
+                    // classified as BOS, so accept that equivalent confirmation as well. If
+                    // the shared bias engine emits neither label, a direct close through the
+                    // latest confirmed opposite swing is the same structural CHOCH definition.
+                    // Requiring another rejection pattern, a later BOS and one more candle
+                    // delayed the signal and caused valid reversals to expire unseen.
                     if (i >= first)
                     {
                         var identity = sweepIdentity;
@@ -21072,6 +21059,19 @@ namespace cAlgo.Robots
                     canonicalEvents.Count(evt => evt.EventType == CanonicalEventType.SweepReclaim),
                     canonicalEvents.Count(evt => evt.EventType == CanonicalEventType.SweepReclaimChain),
                     boundedLookback);
+                PrintAlways(
+                    "[SweepReclaimProofDetail] {0}",
+                    string.Join(", ", canonicalEvents
+                        .OrderBy(evt => evt.BarTime)
+                        .Select(evt => string.Format(
+                            CultureInfo.InvariantCulture,
+                            "{0}:{1}:start={2:yyyy-MM-dd HH:mm}:event={3:yyyy-MM-dd HH:mm}:level={4:0.#####}",
+                            evt.EventType == CanonicalEventType.SweepReclaimChain ? "reclaim" : "sweep",
+                            evt.IsBullish ? "B" : "S",
+                            evt.ChainStartTime,
+                            evt.BarTime,
+                            evt.PriceRef))
+                        .ToArray()));
                 if (_loggedSweepReclaimProofSummaryKeys.Count > 5000)
                 {
                     _loggedSweepReclaimProofSummaryKeys.Clear();
@@ -45169,8 +45169,10 @@ namespace cAlgo.Robots
                 },
                 Swings = new FortyTwo.Trading.Analysis.SwingAnalysisConfig
                 {
-                    Strength = Math.Max(2, Math.Min(8, SweepSwingStrength)),
-                    MinimumProminenceAtr = Math.Max(0.0, SweepMinimumSwingAtr),
+                    // Keep CHOCH/BOS responsive. Sweep reference levels apply their own
+                    // stricter pivot strength below instead of weakening all structure.
+                    Strength = 2,
+                    MinimumProminenceAtr = 0.0,
                     LookbackBars = Math.Max(lookbackBars, 10)
                 },
                 Structures = new FortyTwo.Trading.Analysis.StructureAnalysisConfig
@@ -45179,6 +45181,7 @@ namespace cAlgo.Robots
                     ConsumeBrokenLevels = true,
                     ConsumeSweptLevels = true,
                     DetectTwoBarSweeps = true,
+                    SweepSwingStrength = Math.Max(2, Math.Min(8, SweepSwingStrength)),
                     MinimumSwingSeparationAtr = Math.Max(0.0, SweepMinimumSwingAtr),
                     MinimumSweepPenetrationAtr = Math.Max(0.0, SweepMinimumPenetrationAtr),
                     ExternalBias = FortyTwo.Trading.Analysis.MarketDirection.Neutral
@@ -59822,6 +59825,7 @@ namespace FortyTwo.Trading.Analysis
         public bool ConsumeBrokenLevels { get; set; } = true;
         public bool ConsumeSweptLevels { get; set; } = true;
         public bool DetectTwoBarSweeps { get; set; } = true;
+        public int SweepSwingStrength { get; set; } = 2;
         public double MinimumSwingSeparationAtr { get; set; } = 0.0;
         public double MinimumSweepPenetrationAtr { get; set; } = 0.0;
         public MarketDirection ExternalBias { get; set; } = MarketDirection.Neutral;
@@ -60193,8 +60197,11 @@ namespace FortyTwo.Trading.Analysis
 
                 if (latestHigh != null && latestHigh.ConfirmationIndex < barIndex && (!config.ConsumeSweptLevels || !sweptHighs.Contains(latestHigh.Index)))
                 {
-                    var meaningfulSwing = latestLow == null || minimumSwingSeparation <= 0.0 ||
-                        latestHigh.Price - latestLow.Price >= minimumSwingSeparation;
+                    var meaningfulSwing = IsPivotAtStrength(
+                            candles, latestHigh.Index, true, config.SweepSwingStrength,
+                            minimumSwingSeparation, lastClosedIndex) &&
+                        (latestLow == null || minimumSwingSeparation <= 0.0 ||
+                            latestHigh.Price - latestLow.Price >= minimumSwingSeparation);
                     var oneBar = meaningfulSwing && candle.High > latestHigh.Price &&
                         candle.High - latestHigh.Price >= minimumPenetration &&
                         candle.Open <= latestHigh.Price && candle.Close < latestHigh.Price;
@@ -60210,8 +60217,11 @@ namespace FortyTwo.Trading.Analysis
                 }
                 if (latestLow != null && latestLow.ConfirmationIndex < barIndex && (!config.ConsumeSweptLevels || !sweptLows.Contains(latestLow.Index)))
                 {
-                    var meaningfulSwing = latestHigh == null || minimumSwingSeparation <= 0.0 ||
-                        latestHigh.Price - latestLow.Price >= minimumSwingSeparation;
+                    var meaningfulSwing = IsPivotAtStrength(
+                            candles, latestLow.Index, false, config.SweepSwingStrength,
+                            minimumSwingSeparation, lastClosedIndex) &&
+                        (latestHigh == null || minimumSwingSeparation <= 0.0 ||
+                            latestHigh.Price - latestLow.Price >= minimumSwingSeparation);
                     var oneBar = meaningfulSwing && candle.Low < latestLow.Price &&
                         latestLow.Price - candle.Low >= minimumPenetration &&
                         candle.Open >= latestLow.Price && candle.Close > latestLow.Price;
@@ -60227,6 +60237,48 @@ namespace FortyTwo.Trading.Analysis
                 }
             }
             return values.OrderBy(value => value.ConfirmationIndex).ThenBy(value => value.Type).ToList();
+        }
+
+        private static bool IsPivotAtStrength(
+            List<MarketCandle> candles,
+            int pivotIndex,
+            bool isHigh,
+            int strength,
+            double minimumProminence,
+            int lastClosedIndex)
+        {
+            if (candles == null || pivotIndex < 0 || pivotIndex >= candles.Count)
+                return false;
+            var resolvedStrength = Math.Max(1, strength);
+            if (pivotIndex - resolvedStrength < 0 ||
+                pivotIndex + resolvedStrength > Math.Min(lastClosedIndex, candles.Count - 1))
+                return false;
+            var pivotPrice = isHigh ? candles[pivotIndex].High : candles[pivotIndex].Low;
+            var nearestSurroundingExtreme = isHigh ? double.MinValue : double.MaxValue;
+            for (var offset = 1; offset <= resolvedStrength; offset++)
+            {
+                var leftPrice = isHigh
+                    ? candles[pivotIndex - offset].High
+                    : candles[pivotIndex - offset].Low;
+                var rightPrice = isHigh
+                    ? candles[pivotIndex + offset].High
+                    : candles[pivotIndex + offset].Low;
+                if (isHigh ? leftPrice > pivotPrice || rightPrice > pivotPrice
+                           : leftPrice < pivotPrice || rightPrice < pivotPrice)
+                    return false;
+                nearestSurroundingExtreme = isHigh
+                    ? Math.Max(nearestSurroundingExtreme, Math.Max(leftPrice, rightPrice))
+                    : Math.Min(nearestSurroundingExtreme, Math.Min(leftPrice, rightPrice));
+            }
+            if (minimumProminence > 0.0)
+            {
+                var prominence = isHigh
+                    ? pivotPrice - nearestSurroundingExtreme
+                    : nearestSurroundingExtreme - pivotPrice;
+                if (prominence < minimumProminence)
+                    return false;
+            }
+            return true;
         }
 
         private static double AverageTrueRange(List<MarketCandle> candles, int index, int period)
