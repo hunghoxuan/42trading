@@ -22,14 +22,14 @@ namespace cAlgo.Robots
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class TVBridgeCBot : Robot
     {
-        private const string BuildVersion = "v2026.09.24 - parameter-driven-indicators";
+        private const string BuildVersion = "v2026.09.24 - automatic-sweep-reclaim";
         private const string BridgeSourceId = "Ctrader";
         private const string BridgeSourceType = "ctrader_bridge";
         private const int TransientErrorLogThresholdCount = 10;
         private const int TransientErrorLogThresholdSeconds = 30;
         private const string CustomUiSettingsFileName = "ctrader_ui_settings.txt";
         private const string CanonicalEventCacheFileName = "canonical_events.tsv";
-        private const string CanonicalEventCacheVersion = "18";
+        private const string CanonicalEventCacheVersion = "19";
         private const int DefaultCachedFileMaxBars = 2000;
         private const string CandlePatternCacheFileName = "candle_patterns.tsv";
         private const string CandlePatternCacheVersion = "2";
@@ -2495,9 +2495,6 @@ namespace cAlgo.Robots
         [Parameter("Swp - Sweep", Group = "Structure Events", DefaultValue = StructureEventToggleMode.Yes)]
         public StructureEventToggleMode DrawSweepDetections { get; set; }
 
-        [Parameter("Sweep Reclaim Chain", Group = "Structure Events", DefaultValue = ConfluenceScopeMode.No)]
-        public ConfluenceScopeMode DrawSweepReclaimChain { get; set; }
-
         [Parameter("Br - Breakout", Group = "Structure Events", DefaultValue = StructureEventToggleMode.Yes)]
         public StructureEventToggleMode DrawBreakoutDetections { get; set; }
 
@@ -3488,6 +3485,11 @@ namespace cAlgo.Robots
             return configured.Count == 1 &&
                 (configured[0] == BacktestStrategyMode.WickFlipContinuation ||
                  configured[0] == BacktestStrategyMode.wick_flip);
+        }
+
+        private bool IsSweepReclaimStrategySelected()
+        {
+            return GetConfiguredStrategyModes().Any(mode => mode == BacktestStrategyMode.sweep_reclaim);
         }
 
         private string BuildConfiguredStrategyModesStateKey()
@@ -14225,8 +14227,8 @@ namespace cAlgo.Robots
         {
             return string.Join("-", new[]
             {
-                "v5",
-                DrawSweepReclaimChain.ToString(),
+                "v6",
+                IsSweepReclaimStrategySelected() ? "sr1" : "sr0",
                 _toggleChochDetections ? "1" : "0",
                 _toggleBosDetections ? "1" : "0",
                 _toggleSweepDetections ? "1" : "0",
@@ -14255,7 +14257,7 @@ namespace cAlgo.Robots
             // The persisted file has one path per symbol/timeframe. Reuse it only for the
             // complete, maximum-artifact configuration; scoped/limited WYSIWYG views must be
             // recomputed so a file produced under different controls cannot leak events.
-            return DrawSweepReclaimChain == ConfluenceScopeMode.No && AreAllCanonicalStructureEventsEnabled() &&
+            return !IsSweepReclaimStrategySelected() && AreAllCanonicalStructureEventsEnabled() &&
                 ZoneMaxCount == ZoneMaxCountPreset.Max &&
                 DrawKeyLevels == ConfluenceScopeMode.Yes &&
                 DrawLiquidityLevels == ConfluenceScopeMode.Yes &&
@@ -14277,13 +14279,13 @@ namespace cAlgo.Robots
             switch (eventType)
             {
                 case CanonicalEventType.SweepReclaimChain:
-                    return DrawSweepReclaimChain != ConfluenceScopeMode.No;
+                    return IsSweepReclaimStrategySelected();
                 case CanonicalEventType.Choch:
                     return _toggleChochDetections;
                 case CanonicalEventType.Bos:
                     return _toggleBosDetections;
                 case CanonicalEventType.SweepReclaim:
-                    return _toggleSweepDetections;
+                    return _toggleSweepDetections || IsSweepReclaimStrategySelected();
                 case CanonicalEventType.Rejection:
                     return _toggleRejectionDetections;
                 case CanonicalEventType.Breakout:
@@ -15691,6 +15693,7 @@ namespace cAlgo.Robots
                 .GroupBy(e => e.ConfirmationBarIndex)
                 .ToDictionary(g => g.Key, g => g.ToList());
             var emitted = new HashSet<string>(StringComparer.Ordinal);
+            var emittedSweepStages = new HashSet<string>(StringComparer.Ordinal);
             foreach (var sweep in snapshot.Events.Where(e => e.Type == StructureEventTypeV2.Sweep))
             {
                 var start = sweep.TriggerBarIndex;
@@ -15705,6 +15708,26 @@ namespace cAlgo.Robots
                 if (bullish ? low >= sweep.ReferencePrice || bars.ClosePrices[reclaimed] <= sweep.ReferencePrice
                             : high <= sweep.ReferencePrice || bars.ClosePrices[reclaimed] >= sweep.ReferencePrice)
                     continue;
+                var sweepIdentity = bars.OpenTimes[start].Ticks + "|" + bullish + "|" + bars.OpenTimes[sweep.ReferenceSwingIndex].Ticks;
+                if (reclaimed >= first && emittedSweepStages.Add(sweepIdentity))
+                {
+                    var sweepStage = BuildCanonicalMarketEvent(
+                        symbolName,
+                        timeFrame,
+                        CanonicalEventType.SweepReclaim,
+                        bullish,
+                        CanonicalEventReason.LiquiditySweep,
+                        CanonicalEventAction.Wait,
+                        bars.OpenTimes[reclaimed],
+                        sweep.ReferencePrice,
+                        1,
+                        60,
+                        artifactId: "chain_sweep|" + sweepIdentity,
+                        artifactOriginTime: bars.OpenTimes[sweep.ReferenceSwingIndex]);
+                    sweepStage.ChainStartTime = bars.OpenTimes[start];
+                    sweepStage.EventKey += "_chain_stage_" + bars.OpenTimes[start].Ticks;
+                    result.Add(sweepStage);
+                }
                 var rejection = -1;
                 var choch = -1;
                 var bos = -1;
@@ -15759,7 +15782,7 @@ namespace cAlgo.Robots
                         continue;
                     if (i >= first)
                     {
-                        var identity = bars.OpenTimes[start].Ticks + "|" + bullish + "|" + bars.OpenTimes[sweep.ReferenceSwingIndex].Ticks;
+                        var identity = sweepIdentity;
                         if (!emitted.Add(identity)) break;
                         var evt = BuildCanonicalMarketEvent(symbolName, timeFrame, CanonicalEventType.SweepReclaimChain,
                             bullish, CanonicalEventReason.LiquiditySweep,
@@ -15783,7 +15806,7 @@ namespace cAlgo.Robots
                 return empty;
 
             var anyStructureEventEnabled =
-                DrawSweepReclaimChain != ConfluenceScopeMode.No ||
+                IsSweepReclaimStrategySelected() ||
                 _toggleChochDetections ||
                 _toggleBosDetections ||
                 _toggleSweepDetections ||
@@ -15914,7 +15937,7 @@ namespace cAlgo.Robots
                     LogSlowChartStep("CanonicalEvents.Phase", phaseStarted, string.Format(CultureInfo.InvariantCulture, "{0} {1} -> {2}", normalizedSymbol, GetMiniChartLabel(timeFrame), canonical.Count));
                 }
 
-                if (IsScopeEnabledForTimeFrame(DrawSweepReclaimChain, timeFrame))
+                if (IsSweepReclaimStrategySelected())
                     canonical.AddRange(CollectSweepReclaimChains(normalizedSymbol, symbol, bars, timeFrame, resolvedLookbackBars));
 
                 var normalizeStarted = Stopwatch.StartNew();
@@ -20974,6 +20997,16 @@ namespace cAlgo.Robots
             }
         }
 
+        // A selected sweep_reclaim strategy exposes both detector stages on the chart:
+        // the initial confirmed sweep/reclaim proves the detector is active, while the
+        // completed chain remains the only stage eligible to qualify as a trade signal.
+        private static bool IsSweepReclaimDetectorProofTrigger(TradeTriggerEvent trigger)
+        {
+            return trigger.HasCanonicalEvent &&
+                (trigger.CanonicalEvent.EventType == CanonicalEventType.SweepReclaim ||
+                 trigger.CanonicalEvent.EventType == CanonicalEventType.SweepReclaimChain);
+        }
+
         // Sole renderer for event boxes and labels. Events=Trades renders only the exact
         // strategy-qualified records used by execution; Events=All adds dim raw detections.
         private int DrawUnifiedTradeTriggerEventsOnChart(int objectIndex)
@@ -21050,7 +21083,8 @@ namespace cAlgo.Robots
                     ? detectedTriggers
                         .Where(trigger => (selectedOptions.Count == 0 && fileBackedMarkerOptions.Count == 0) ||
                             selectedOptions.Any(option => TradeTriggerMatchesSelectedOption(trigger, option)) ||
-                            fileBackedMarkerOptions.Any(option => TradeTriggerMatchesSelectedOption(trigger, option)))
+                            fileBackedMarkerOptions.Any(option => TradeTriggerMatchesSelectedOption(trigger, option)) ||
+                            (IsSweepReclaimStrategySelected() && IsSweepReclaimDetectorProofTrigger(trigger)))
                         .ToList()
                     : new List<TradeTriggerEvent>();
                 var visibleTriggers = showRawEvents
@@ -21117,6 +21151,8 @@ namespace cAlgo.Robots
                             visualLookbackBars,
                             strategyEligibilityCache);
                     var isTradeEvent = isFileBackedStrategyEvent || isManualTradeEvent;
+                    var isSweepReclaimProofEvent = IsSweepReclaimStrategySelected() &&
+                        rawGroup.Any(IsSweepReclaimDetectorProofTrigger);
                     if (isTradeEvent)
                     {
                         var qualifiedGroup = isFileBackedStrategyEvent
@@ -21127,8 +21163,13 @@ namespace cAlgo.Robots
                             : selectedOptions;
                         renderGroups.Add(Tuple.Create(qualifiedGroup, true, namingOptions));
                     }
-                    else if (showRawEvents)
-                        renderGroups.Add(Tuple.Create(rawGroup, false, selectedOptions));
+                    else if (showRawEvents || isSweepReclaimProofEvent)
+                    {
+                        var rawNamingOptions = isSweepReclaimProofEvent
+                            ? new List<StrategyCustomEventOption> { StrategyCustomEventOption.sweep_reclaim }
+                            : selectedOptions;
+                        renderGroups.Add(Tuple.Create(rawGroup, false, rawNamingOptions));
+                    }
                 }
 
                 var triggers = eventLimit < 0
@@ -21154,21 +21195,28 @@ namespace cAlgo.Robots
                     if (!IsValidBarIndex(sourceBars, barIndex))
                         continue;
 
-                    var labelText = isTradeEvent
-                        ? BuildAcceptedCombinedTradeTriggerEventName(
+                    var isSweepReclaimStageProof = !isTradeEvent && IsSweepReclaimStrategySelected() &&
+                        sameBarTriggers.Any(trigger => trigger.HasCanonicalEvent &&
+                            trigger.CanonicalEvent.EventType == CanonicalEventType.SweepReclaim) &&
+                        !sameBarTriggers.Any(trigger => trigger.HasCanonicalEvent &&
+                            trigger.CanonicalEvent.EventType == CanonicalEventType.SweepReclaimChain);
+                    var labelText = isSweepReclaimStageProof
+                        ? BuildChartEventDisplayLabel(sourceTimeFrame, "sweep_reclaim.sweep", primary.IsBullish)
+                        : isTradeEvent
+                            ? BuildAcceptedCombinedTradeTriggerEventName(
                             symbolName,
                             sourceTimeFrame,
                             sourceBars,
                             barIndex,
                             visualLookbackBars,
                             sameBarTriggers,
-                            namingOptions,
-                            primary.IsBullish)
-                        : BuildCombinedTradeTriggerEventName(
-                            sourceTimeFrame,
-                            sameBarTriggers,
-                            namingOptions,
-                            primary.IsBullish);
+                                namingOptions,
+                                primary.IsBullish)
+                            : BuildCombinedTradeTriggerEventName(
+                                sourceTimeFrame,
+                                sameBarTriggers,
+                                namingOptions,
+                                primary.IsBullish);
                     // No synthetic fallback: without an actual selected candle or structure
                     // representative, this is not a displayable event.
                     if (string.IsNullOrWhiteSpace(labelText))
@@ -50822,7 +50870,7 @@ namespace cAlgo.Robots
                     new[]
                     {
                         DrawChochDetections.ToString(), DrawBosDetections.ToString(), DrawSweepDetections.ToString(),
-                        DrawSweepReclaimChain.ToString(),
+                        IsSweepReclaimStrategySelected() ? "sr1" : "sr0",
                         DrawRejectionDetections.ToString(), DrawBreakoutDetections.ToString(),
                         DrawCrossDetections.ToString(), DrawEarlyRejectionDetections.ToString(),
                         DrawPinBarPatterns.ToString(), DrawEngulfingPatterns.ToString(), DrawBigCandlePatterns.ToString(),
@@ -50848,7 +50896,7 @@ namespace cAlgo.Robots
         private bool IsDashboardEventOptionEnabled(StrategyCustomEventOption option, TimeFrame sourceTimeFrame)
         {
             if (option == StrategyCustomEventOption.sweep_reclaim)
-                return IsScopeEnabledForTimeFrame(DrawSweepReclaimChain, sourceTimeFrame);
+                return IsSweepReclaimStrategySelected();
             StrategyCustomEventOption baseOption;
             StrategyEventFollowUpOutcome followUpOutcome;
             var isFollowUp = TryMapStrategyFollowUpEventOption(option, out baseOption, out followUpOutcome);
@@ -52052,7 +52100,7 @@ namespace cAlgo.Robots
             predicates["any_structure_event_bearish"] = bearishStructure;
             // Use the same qualified candidates as trade markers (not raw canonical
             // detections), including direction, confluences and minimum evidence count.
-            var qualifiedChains = (IsScopeEnabledForTimeFrame(DrawSweepReclaimChain, strategyTimeFrame)
+            var qualifiedChains = (IsSweepReclaimStrategySelected()
                 ? CollectTradeTriggerCandidates(symbolName, strategyTimeFrame, Math.Max(256, scanBars))
                 : new List<TradeTriggerEvent>())
                 .Where(item => item.BarTime == exactBarTime && item.Option == StrategyCustomEventOption.sweep_reclaim)

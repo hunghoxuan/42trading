@@ -2,7 +2,7 @@
   "id": "sweep_reclaim",
   "key": "sweep_reclaim",
   "name": "Sweep Reclaim",
-  "description": "Closed-bar chain: confirmed swing liquidity sweep/reclaim, rejection at that level, later CHOCH, later BOS of new structure, then directional candle confirmation. Enable Sweep Reclaim Chain under cTrader Structure Events. Native cTrader detector; not a same-bar AND rule.",
+  "description": "Closed-bar chain: confirmed swing liquidity sweep/reclaim, rejection at that level, later CHOCH, later BOS of new structure, then directional candle confirmation. Selecting this strategy automatically enables its native cTrader detector; not a same-bar AND rule.",
   "engine_version": "42trade.strategy.v3",
   "kind": "custom",
   "status": "active",
