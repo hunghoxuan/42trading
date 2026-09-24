@@ -2508,6 +2508,9 @@ namespace cAlgo.Robots
         [Parameter("Swp - Reclaim window", Group = "Structure Events", DefaultValue = 48, MinValue = 3, MaxValue = 200)]
         public int SweepReclaimWindowBars { get; set; }
 
+        [Parameter("Swp - Max trade distance ATR", Group = "Structure Events", DefaultValue = 1.0, MinValue = 0.0, MaxValue = 10.0, Step = 0.1)]
+        public double SweepReclaimMaxTradeDistanceAtr { get; set; }
+
         [Parameter("Br - Breakout", Group = "Structure Events", DefaultValue = StructureEventToggleMode.Yes)]
         public StructureEventToggleMode DrawBreakoutDetections { get; set; }
 
@@ -21063,14 +21066,25 @@ namespace cAlgo.Robots
                     "[SweepReclaimProofDetail] {0}",
                     string.Join(", ", canonicalEvents
                         .OrderBy(evt => evt.BarTime)
-                        .Select(evt => string.Format(
-                            CultureInfo.InvariantCulture,
-                            "{0}:{1}:start={2:yyyy-MM-dd HH:mm}:event={3:yyyy-MM-dd HH:mm}:level={4:0.#####}",
-                            evt.EventType == CanonicalEventType.SweepReclaimChain ? "reclaim" : "sweep",
-                            evt.IsBullish ? "B" : "S",
-                            evt.ChainStartTime,
-                            evt.BarTime,
-                            evt.PriceRef))
+                        .Select(evt =>
+                        {
+                            var eventIndex = ResolveSourceBarIndex(sourceBars, evt.BarTime);
+                            var atr = eventIndex >= 0
+                                ? ComputeAverageTrueRangeAtIndex(sourceBars, eventIndex, 14)
+                                : double.NaN;
+                            var distanceAtr = eventIndex >= 0 && atr > 0 && !double.IsNaN(atr) && !double.IsInfinity(atr)
+                                ? Math.Abs(sourceBars.ClosePrices[eventIndex] - evt.PriceRef) / atr
+                                : double.NaN;
+                            return string.Format(
+                                CultureInfo.InvariantCulture,
+                                "{0}:{1}:start={2:yyyy-MM-dd HH:mm}:event={3:yyyy-MM-dd HH:mm}:level={4:0.#####}:dist={5}ATR",
+                                evt.EventType == CanonicalEventType.SweepReclaimChain ? "reclaim" : "sweep",
+                                evt.IsBullish ? "B" : "S",
+                                evt.ChainStartTime,
+                                evt.BarTime,
+                                evt.PriceRef,
+                                double.IsNaN(distanceAtr) ? "na" : distanceAtr.ToString("0.##", CultureInfo.InvariantCulture));
+                        })
                         .ToArray()));
                 if (_loggedSweepReclaimProofSummaryKeys.Count > 5000)
                 {
@@ -32990,13 +33004,25 @@ namespace cAlgo.Robots
                 var start = ResolveSourceBarIndex(sourceBars, chain.ChainStartTime);
                 if (chain.ChainStartTime == DateTime.MinValue || start < 0 || start > signalIndex)
                     return false;
+                var atr = ComputeAverageTrueRangeAtIndex(sourceBars, signalIndex, 14);
+                var entryDistanceAtr = atr > 0 && !double.IsNaN(atr) && !double.IsInfinity(atr)
+                    ? Math.Abs(referenceEntry - chain.PriceRef) / atr
+                    : double.NaN;
+                if (SweepReclaimMaxTradeDistanceAtr > 0 &&
+                    !double.IsNaN(entryDistanceAtr) &&
+                    entryDistanceAtr > SweepReclaimMaxTradeDistanceAtr)
+                    return false;
                 signal.SourceLabel = BuildCanonicalMarketEventName(chain);
                 signal.PatternSpan = signalIndex - start + 1;
                 var patternSpan = signal.PatternSpan;
                 signal.OriginalPatternLow = Enumerable.Range(start, patternSpan).Min(i => sourceBars.LowPrices[i]);
                 signal.OriginalPatternHigh = Enumerable.Range(start, patternSpan).Max(i => sourceBars.HighPrices[i]);
                 signal.Note += " [chain_start=" + chain.ChainStartTime.ToString("O", CultureInfo.InvariantCulture) +
-                    ";chain_end=" + signalTime.ToString("O", CultureInfo.InvariantCulture) + ";sweep>rejection>choch>bos>candle]";
+                    ";chain_end=" + signalTime.ToString("O", CultureInfo.InvariantCulture) +
+                    ";entry_distance_atr=" + (double.IsNaN(entryDistanceAtr)
+                        ? "na"
+                        : entryDistanceAtr.ToString("0.###", CultureInfo.InvariantCulture)) +
+                    ";sweep>reclaim>structure_break]";
             }
             return ApplySharedStrategyTradePreset(strategy, ref signal);
         }
