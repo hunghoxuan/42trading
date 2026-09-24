@@ -22,14 +22,14 @@ namespace cAlgo.Robots
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class TVBridgeCBot : Robot
     {
-        private const string BuildVersion = "v2026.09.21 - shared-trend-bias-engine";
+        private const string BuildVersion = "v2026.09.24 - parameter-driven-indicators";
         private const string BridgeSourceId = "Ctrader";
         private const string BridgeSourceType = "ctrader_bridge";
         private const int TransientErrorLogThresholdCount = 10;
         private const int TransientErrorLogThresholdSeconds = 30;
         private const string CustomUiSettingsFileName = "ctrader_ui_settings.txt";
         private const string CanonicalEventCacheFileName = "canonical_events.tsv";
-        private const string CanonicalEventCacheVersion = "16";
+        private const string CanonicalEventCacheVersion = "18";
         private const int DefaultCachedFileMaxBars = 2000;
         private const string CandlePatternCacheFileName = "candle_patterns.tsv";
         private const string CandlePatternCacheVersion = "2";
@@ -194,6 +194,7 @@ namespace cAlgo.Robots
         private RsiIndicatorConfig _resolvedRsiEventConfig;
         private StochasticIndicatorConfig _resolvedStochasticEventConfig;
         private MacdIndicatorConfig _resolvedMacdEventConfig;
+        private AdxIndicatorConfig _resolvedAdxConfig;
         private ChartIndicator _chartRsiIndicator;
         private ChartIndicator _chartStochasticIndicator;
         private ChartIndicator _chartMacdIndicator;
@@ -558,6 +559,14 @@ namespace cAlgo.Robots
             M12_26_9,
             M8_21_5,
             M5_34_5
+        }
+
+        public enum AdxVisualMode
+        {
+            Auto,
+            Off,
+            A14,
+            A21
         }
 
         public enum EventToggleMode
@@ -2608,6 +2617,9 @@ namespace cAlgo.Robots
 
         [Parameter("MACD", Group = "Momentum Technical", DefaultValue = MacdVisualMode.Auto)]
         public MacdVisualMode DrawMacdMode { get; set; }
+
+        [Parameter("ADX", Group = "Momentum Technical", DefaultValue = AdxVisualMode.Auto)]
+        public AdxVisualMode DrawAdxMode { get; set; }
 
         [Parameter("EMA evt", Group = "Structure Events", DefaultValue = StructureEventToggleMode.Yes)]
         public StructureEventToggleMode DrawEmaEvents { get; set; }
@@ -7918,6 +7930,21 @@ namespace cAlgo.Robots
             }
         }
 
+        private AdxIndicatorConfig ResolveAdxIndicatorConfig(AdxVisualMode mode)
+        {
+            switch (mode)
+            {
+                case AdxVisualMode.A21:
+                    return new AdxIndicatorConfig { Period = 21, MinimumStrength = 25.0 };
+                case AdxVisualMode.Off:
+                    return new AdxIndicatorConfig();
+                case AdxVisualMode.A14:
+                case AdxVisualMode.Auto:
+                default:
+                    return new AdxIndicatorConfig { Period = 14, MinimumStrength = 25.0 };
+            }
+        }
+
         private string GetEmaOverlayPairLabel()
         {
             return "EMA";
@@ -12097,6 +12124,50 @@ namespace cAlgo.Robots
                     // A trigger must establish direction. Directionless detections remain
                     // available as rules/context, but never enter the trigger source of truth.
                 }
+
+                // `__AnyStructureEvent` is an umbrella selector and is intentionally skipped
+                // by the enum loop above. File-backed pinbar/engulfing structure strategies
+                // also accept a candle rejecting an artifact that originated earlier, so emit
+                // a concrete structure record for that active LTF/HTF level or zone. This keeps
+                // chart markers and execution on the same predicate.
+                if (fileStrategyNeedsStructureEvents)
+                {
+                    List<CandleConfluenceMatch> bullishArtifactMatches;
+                    if (TryResolveActiveStructureArtifactReaction(
+                        symbolName,
+                        sourceBars,
+                        timeFrame,
+                        barIndex,
+                        true,
+                        out bullishArtifactMatches))
+                    {
+                        candidates.Add(BuildActiveStructureArtifactTrigger(
+                            symbolName,
+                            timeFrame,
+                            sourceBars,
+                            barIndex,
+                            true,
+                            bullishArtifactMatches));
+                    }
+
+                    List<CandleConfluenceMatch> bearishArtifactMatches;
+                    if (TryResolveActiveStructureArtifactReaction(
+                        symbolName,
+                        sourceBars,
+                        timeFrame,
+                        barIndex,
+                        false,
+                        out bearishArtifactMatches))
+                    {
+                        candidates.Add(BuildActiveStructureArtifactTrigger(
+                            symbolName,
+                            timeFrame,
+                            sourceBars,
+                            barIndex,
+                            false,
+                            bearishArtifactMatches));
+                    }
+                }
             }
 
             List<TradeTriggerEvent> resolved;
@@ -12198,6 +12269,10 @@ namespace cAlgo.Robots
                 TrendBiasRsi.ToString(),
                 TrendBiasMacd.ToString(),
                 TrendBiasAdx.ToString(),
+                DrawEmaOverlay.ToString(),
+                DrawRsiMode.ToString(),
+                DrawMacdMode.ToString(),
+                DrawAdxMode.ToString(),
                 ConfluencePremiumDiscount.ToString(),
                 ConfluenceOpposingLevelClearance.ToString(),
                 ConfluenceBarDirection.ToString(),
@@ -12232,6 +12307,8 @@ namespace cAlgo.Robots
         // while m5.r.h1.ob is an HTF OB reaction. Zone/line visibility is independent.
         private bool IsEnabledNamedArtifactTrigger(TradeTriggerEvent trigger)
         {
+            if (trigger.RequiredByFileStrategy)
+                return true;
             return IsAttachedArtifactScopeEnabled(trigger, NamedConfluenceKind.EmaPullback, ConfluenceEmaPullback) &&
                 IsAttachedArtifactScopeEnabled(trigger, NamedConfluenceKind.KeyLevels, ConfluenceKeyLevels) &&
                 IsAttachedArtifactScopeEnabled(trigger, NamedConfluenceKind.Swing, ConfluenceSwing) &&
@@ -14004,6 +14081,78 @@ namespace cAlgo.Robots
                 SupportEventNames = specialSupportEventNames,
                 StopDistance = stopDistance,
                 Priority = GetEventLabelPriorityScore(normalizedLabel)
+            };
+        }
+
+        private TradeTriggerEvent BuildActiveStructureArtifactTrigger(
+            string symbolName,
+            TimeFrame timeFrame,
+            Bars sourceBars,
+            int barIndex,
+            bool bullish,
+            List<CandleConfluenceMatch> matches)
+        {
+            var resolvedMatches = (matches ?? new List<CandleConfluenceMatch>())
+                .Where(item => item != null)
+                .ToList();
+            var match = resolvedMatches.FirstOrDefault();
+            if (match == null)
+                return default(TradeTriggerEvent);
+
+            var isZone = match.High > match.Low;
+            var movement = match.IsSweep
+                ? "s"
+                : string.IsNullOrWhiteSpace(match.MovementCode)
+                    ? "r"
+                    : match.MovementCode.Trim().ToLowerInvariant();
+            var eventType = match.IsSweep
+                ? CanonicalEventType.SweepReclaim
+                : CanonicalEventType.Rejection;
+            var reason = match.IsSweep
+                ? CanonicalEventReason.LiquiditySweep
+                : CanonicalEventReason.KeyLevelRejection;
+            var canonical = BuildCanonicalMarketEvent(
+                symbolName,
+                timeFrame,
+                eventType,
+                bullish,
+                reason,
+                bullish ? CanonicalEventAction.Buy : CanonicalEventAction.Sell,
+                sourceBars.OpenTimes[barIndex],
+                (match.Low + match.High) * 0.5,
+                match.IsSweep ? 4 : 3,
+                match.IsSweep ? 78 : 72,
+                isZone ? match.Low : 0,
+                isZone ? match.High : 0,
+                match.Kind,
+                BuildArtifactId(match.Kind, match.OriginTime, match.Low, match.High),
+                match.OriginTime);
+            var supportNames = BuildCandleConfluenceSupportEventNames(
+                timeFrame,
+                resolvedMatches,
+                bullish);
+            var primaryName = supportNames.FirstOrDefault() ?? AddCombinedEventDirectionArrow(
+                movement + "." + GetCanonicalLevelOperand(match.Kind),
+                bullish);
+            return new TradeTriggerEvent
+            {
+                SymbolName = symbolName,
+                Name = GetMiniChartLabel(timeFrame) + "." + primaryName,
+                Family = "structure",
+                Option = StrategyCustomEventOption.__AnyStructureEvent,
+                SourceTimeFrame = timeFrame,
+                BarTime = sourceBars.OpenTimes[barIndex],
+                IsBullish = bullish,
+                IsDirectionless = false,
+                HasCanonicalEvent = true,
+                CanonicalEvent = canonical,
+                ConfluenceCount = Math.Max(0, resolvedMatches.Count - 1),
+                SupportEventNames = supportNames.Skip(1).ToList(),
+                StopDistance = isZone
+                    ? match.High - match.Low
+                    : Math.Max(sourceBars.HighPrices[barIndex] - sourceBars.LowPrices[barIndex], 0),
+                Priority = GetEventLabelPriorityScore(movement),
+                RequiredByFileStrategy = true
             };
         }
 
@@ -16560,6 +16709,7 @@ namespace cAlgo.Robots
             public bool IsBullish;
             public bool IsDirectionless;
             public bool IsDirectionRepresentative;
+            public bool RequiredByFileStrategy;
             public bool HasCanonicalEvent;
             public CanonicalMarketEvent CanonicalEvent;
             // Number of active/visible artifacts supporting the primary movement. The total
@@ -16930,6 +17080,12 @@ namespace cAlgo.Robots
             public int FastPeriod;
             public int SlowPeriod;
             public int SignalPeriod;
+        }
+
+        private struct AdxIndicatorConfig
+        {
+            public int Period;
+            public double MinimumStrength;
         }
 
         private sealed class SharedIndicatorSnapshot
@@ -18554,7 +18710,8 @@ namespace cAlgo.Robots
             Symbol symbolOverride = null,
             CandleArtifactMatchMode matchMode = CandleArtifactMatchMode.ConfirmedMovement,
             bool forceTouch = false,
-            bool forceAllNear = false)
+            bool forceAllNear = false,
+            bool forceArtifactScope = false)
         {
             matches = new List<CandleConfluenceMatch>();
             if (CandleConfluenceWith == CandleConfluenceMode.None && !forceTouch && !forceAllNear)
@@ -18586,6 +18743,8 @@ namespace cAlgo.Robots
 
             var confluenceTimeFrames = new List<TimeFrame> { sourceTimeFrame };
             confluenceTimeFrames.AddRange(GetChartTradeStructureTimeFrames(chartProfile));
+            if (forceArtifactScope)
+                confluenceTimeFrames.AddRange(GetAutoHigherTimeframes(sourceTimeFrame));
             var sourceMinutes = Math.Max(1, TimeFrameToMinutes(sourceTimeFrame));
             foreach (var structureTimeFrame in confluenceTimeFrames
                 .Where(value => value != null)
@@ -18630,10 +18789,10 @@ namespace cAlgo.Robots
                     }
 
                     if (includeAll || CandleConfluenceWith == CandleConfluenceMode.Ob_OrderBlock)
-                        CollectCandleOrderBlockConfluenceMatches(matches, structureBars, structureTimeFrame, structureEndIndex, isBullish, barLow, barHigh, anchorPrice, priceTolerance, requireTouch);
+                        CollectCandleOrderBlockConfluenceMatches(matches, structureBars, structureTimeFrame, structureEndIndex, isBullish, barLow, barHigh, anchorPrice, priceTolerance, requireTouch, forceArtifactScope);
 
                     if (includeAll || CandleConfluenceWith == CandleConfluenceMode.Fvg_FairValueGap)
-                        CollectCandleFvgConfluenceMatches(matches, structureBars, structureTimeFrame, structureEndIndex, isBullish, barLow, barHigh, anchorPrice, priceTolerance, requireTouch);
+                        CollectCandleFvgConfluenceMatches(matches, structureBars, structureTimeFrame, structureEndIndex, isBullish, barLow, barHigh, anchorPrice, priceTolerance, requireTouch, forceArtifactScope);
 
                     if (includeAll || CandleConfluenceWith == CandleConfluenceMode.Sup_Support)
                     {
@@ -18703,7 +18862,7 @@ namespace cAlgo.Robots
             // artifact scope used by executable triggers before selecting the best match,
             // allowing the next eligible artifact to win when a higher-priority one is off.
             matches = matches
-                .Where(item => IsCandleConfluenceMatchScopeEnabled(sourceTimeFrame, item))
+                .Where(item => forceArtifactScope || IsCandleConfluenceMatchScopeEnabled(sourceTimeFrame, item))
                 .Where(item => IsCandleConfluenceArtifactActiveBefore(item, sourceBars, sourceBars.OpenTimes[barIndex], priceTolerance, symbolName))
                 .ToList();
             matches = KeepNearestCandleSwingHighAndLow(matches, sourceBars.ClosePrices[barIndex]);
@@ -18775,6 +18934,34 @@ namespace cAlgo.Robots
                 .ToList();
 
             return bestMatch != null;
+        }
+
+        // File-backed structure strategies describe a candle reacting to an already-active
+        // structure artifact. The artifact does not need to originate or emit another event on
+        // the signal bar. Resolve the active LTF/HTF level or zone directly, independently from
+        // chart drawing/confluence toggles, while preserving the normal no-lookahead lifecycle
+        // checks and directional rejection/sweep classification.
+        private bool TryResolveActiveStructureArtifactReaction(
+            string symbolName,
+            Bars sourceBars,
+            TimeFrame sourceTimeFrame,
+            int barIndex,
+            bool bullish,
+            out List<CandleConfluenceMatch> matches)
+        {
+            var matched = ShouldKeepCandlePatternInline(
+                sourceBars,
+                sourceTimeFrame,
+                barIndex,
+                bullish,
+                out matches,
+                symbolName,
+                ResolveLoadedSymbol(symbolName) ?? Symbol,
+                CandleArtifactMatchMode.ConfirmedMovement,
+                true,
+                true,
+                true);
+            return matched && matches != null && matches.Count > 0;
         }
 
         private List<CandleConfluenceMatch> CollapseOverlappingCandleConfluenceMatches(
@@ -19214,9 +19401,10 @@ namespace cAlgo.Robots
             double barHigh,
             double anchorPrice,
             double tolerance,
-            bool requireTouch)
+            bool requireTouch,
+            bool forceEnabled = false)
         {
-            if (sourceBars == null || !_toggleFvgZones)
+            if (sourceBars == null || (!_toggleFvgZones && !forceEnabled))
                 return;
             var zones = BuildStructureSnapshotV2(sourceBars, 80, snapshotEndIndex).Zones
                 .Where(value => (value.Type == StructureZoneTypeV2.Fvg || value.Type == StructureZoneTypeV2.InverseFvg) &&
@@ -19245,9 +19433,10 @@ namespace cAlgo.Robots
             double barHigh,
             double anchorPrice,
             double tolerance,
-            bool requireTouch)
+            bool requireTouch,
+            bool forceEnabled = false)
         {
-            if (sourceBars == null || !_toggleOrderBlocks)
+            if (sourceBars == null || (!_toggleOrderBlocks && !forceEnabled))
                 return;
             var zones = BuildStructureSnapshotV2(sourceBars, 80, snapshotEndIndex).Zones
                 .Where(value => (value.Type == StructureZoneTypeV2.OrderBlock || value.Type == StructureZoneTypeV2.BreakerBlock) &&
@@ -21448,18 +21637,15 @@ namespace cAlgo.Robots
             if (sourceBars == null || barIndex < 0 || barIndex >= sourceBars.Count)
                 return snapshot;
 
-            var emaConfig = _toggleEmaEvents
-                ? _resolvedEmaEventConfig
-                : (_toggleEmaOverlay ? _resolvedEmaOverlayConfig : ResolveEmaIndicatorConfig(EmaVisualMode.Auto, true));
-            var vwapConfig = _toggleVwapEvents
-                ? _resolvedVwapEventConfig
-                : (_toggleVwapOverlay ? _resolvedVwapOverlayConfig : ResolveVwapIndicatorConfig(VwapVisualMode.Auto));
-            var bollingerConfig = _toggleBollingerEvents
-                ? _resolvedBollingerEventConfig
-                : (_toggleBollingerOverlay ? _resolvedBollingerOverlayConfig : ResolveBollingerIndicatorConfig(BollingerVisualMode.Auto));
-            var rsiConfig = _toggleRsiEvents ? _resolvedRsiEventConfig : ResolveRsiIndicatorConfig(RsiVisualMode.Auto);
-            var stochasticConfig = _toggleStochasticEvents ? _resolvedStochasticEventConfig : ResolveStochasticIndicatorConfig(StochasticVisualMode.Auto);
-            var macdConfig = _toggleMacdEvents ? _resolvedMacdEventConfig : ResolveMacdIndicatorConfig(MacdVisualMode.Auto);
+            // Indicator calculations always use the values selected in Momentum Technical.
+            // Event/overlay toggles control visibility and event emission only; they must not
+            // silently change the periods used by confluences and strategy rules.
+            var emaConfig = _resolvedEmaEventConfig;
+            var vwapConfig = _resolvedVwapEventConfig;
+            var bollingerConfig = _resolvedBollingerEventConfig;
+            var rsiConfig = _resolvedRsiEventConfig;
+            var stochasticConfig = _resolvedStochasticEventConfig;
+            var macdConfig = _resolvedMacdEventConfig;
             var cacheClosedBar = barIndex < sourceBars.Count - 1;
             var cacheKey = default(SharedIndicatorSnapshotCacheKey);
             if (cacheClosedBar)
@@ -26094,6 +26280,7 @@ namespace cAlgo.Robots
             _resolvedRsiEventConfig = ResolveRsiIndicatorConfig(DrawRsiMode == RsiVisualMode.Off ? RsiVisualMode.Auto : DrawRsiMode);
             _resolvedStochasticEventConfig = ResolveStochasticIndicatorConfig(DrawStochasticMode == StochasticVisualMode.Off ? StochasticVisualMode.Auto : DrawStochasticMode);
             _resolvedMacdEventConfig = ResolveMacdIndicatorConfig(DrawMacdMode == MacdVisualMode.Off ? MacdVisualMode.Auto : DrawMacdMode);
+            _resolvedAdxConfig = ResolveAdxIndicatorConfig(DrawAdxMode == AdxVisualMode.Off ? AdxVisualMode.Auto : DrawAdxMode);
             _toggleEmaOverlay = DrawEmaOverlay != EmaVisualMode.Off;
             _toggleVwapOverlay = DrawVwapOverlay != VwapVisualMode.Off;
             _toggleBollingerOverlay = DrawBollingerOverlay != BollingerVisualMode.Off;
@@ -29386,6 +29573,24 @@ namespace cAlgo.Robots
                     .FirstOrDefault();
                 matchesBullish = matchedBullish.EventKey != null;
                 matchesBearish = matchedBearish.EventKey != null;
+                List<CandleConfluenceMatch> bullishArtifactMatches = null;
+                List<CandleConfluenceMatch> bearishArtifactMatches = null;
+                if (!matchesBullish)
+                    matchesBullish = TryResolveActiveStructureArtifactReaction(
+                        symbolName,
+                        sourceBars,
+                        strategyTimeFrame,
+                        latestClosedIndex,
+                        true,
+                        out bullishArtifactMatches);
+                if (!matchesBearish)
+                    matchesBearish = TryResolveActiveStructureArtifactReaction(
+                        symbolName,
+                        sourceBars,
+                        strategyTimeFrame,
+                        latestClosedIndex,
+                        false,
+                        out bearishArtifactMatches);
                 if (!matchesBullish && !matchesBearish)
                     return false;
                 var resolvedLabels = new List<string>();
@@ -29393,6 +29598,19 @@ namespace cAlgo.Robots
                     resolvedLabels.Add(GetCanonicalEventTypeShortLabel(matchedBullish.EventType));
                 if (matchedBearish.EventKey != null && (matchedBullish.EventKey == null || matchedBearish.EventType != matchedBullish.EventType))
                     resolvedLabels.Add(GetCanonicalEventTypeShortLabel(matchedBearish.EventType));
+                var artifactMatch = (bullishArtifactMatches ?? new List<CandleConfluenceMatch>())
+                    .Concat(bearishArtifactMatches ?? new List<CandleConfluenceMatch>())
+                    .FirstOrDefault();
+                if (artifactMatch != null)
+                {
+                    var artifactTimeFrame = TimeFrameToMinutes(artifactMatch.SourceTimeFrame) == TimeFrameToMinutes(strategyTimeFrame)
+                        ? ""
+                        : GetArtifactDisplayTimeFrameLabel(artifactMatch.SourceTimeFrame) + ".";
+                    var movement = artifactMatch.IsSweep
+                        ? "s"
+                        : string.IsNullOrWhiteSpace(artifactMatch.MovementCode) ? "r" : artifactMatch.MovementCode.Trim().ToLowerInvariant();
+                    resolvedLabels.Add(movement + "." + artifactTimeFrame + GetCanonicalLevelOperand(artifactMatch.Kind));
+                }
                 shortLabel = string.Join("+", resolvedLabels.Distinct());
                 if (string.IsNullOrWhiteSpace(shortLabel))
                     shortLabel = "SME";
@@ -40306,6 +40524,11 @@ namespace cAlgo.Robots
             if (string.IsNullOrWhiteSpace(symbolName) || strategyTimeFrame == null || decisionTime == DateTime.MinValue)
                 return score;
 
+            var emaConfig = _resolvedEmaEventConfig;
+            var rsiConfig = _resolvedRsiEventConfig;
+            var macdConfig = _resolvedMacdEventConfig;
+            var adxConfig = _resolvedAdxConfig;
+
             var ltfStructureBullish = false;
             var ltfStructureBearish = false;
             var ltfEmaBullish = false;
@@ -40330,27 +40553,41 @@ namespace cAlgo.Robots
                 score.LtfStructureScore = GetTrendBiasScoreAt(ltfContext);
                 ltfStructureBullish = score.LtfStructureScore >= 2;
                 ltfStructureBearish = score.LtfStructureScore <= -2;
-                EvaluateEmaTrendAlignment(ltfContext, 9, 21, out ltfEmaBullish, out ltfEmaBearish, out ltfEmaDetail);
+                EvaluateEmaTrendAlignment(
+                    ltfContext,
+                    emaConfig.FastPeriod,
+                    emaConfig.SlowPeriod,
+                    out ltfEmaBullish,
+                    out ltfEmaBearish,
+                    out ltfEmaDetail);
 
-                var ltfRsi = ComputeRelativeStrengthIndex(ltfContext.Bars, ltfContext.BarIndex, 14);
-                ltfRsiBullish = MatchesRsiTrendBias(ltfRsi, true);
-                ltfRsiBearish = MatchesRsiTrendBias(ltfRsi, false);
-                ltfRsiDetail = "RSI14=" + FormatTrendBiasValue(ltfRsi) +
-                    " (bull>=50 & <70,bear<=50 & >30)";
+                var ltfRsi = ComputeRelativeStrengthIndex(ltfContext.Bars, ltfContext.BarIndex, rsiConfig.Period);
+                ltfRsiBullish = MatchesRsiTrendBias(ltfRsi, true, rsiConfig);
+                ltfRsiBearish = MatchesRsiTrendBias(ltfRsi, false, rsiConfig);
+                ltfRsiDetail = "RSI" + rsiConfig.Period.ToString(CultureInfo.InvariantCulture) + "=" + FormatTrendBiasValue(ltfRsi) +
+                    string.Format(CultureInfo.InvariantCulture, " (bull>={0:G} & <{1:G},bear<={0:G} & >{2:G})", rsiConfig.Midline, rsiConfig.Overbought, rsiConfig.Oversold);
 
                 double macdLine;
                 double macdSignal;
-                if (TryComputeMacdValues(ltfContext.Bars, ltfContext.BarIndex, 12, 26, 9, out macdLine, out macdSignal))
+                if (TryComputeMacdValues(
+                    ltfContext.Bars,
+                    ltfContext.BarIndex,
+                    macdConfig.FastPeriod,
+                    macdConfig.SlowPeriod,
+                    macdConfig.SignalPeriod,
+                    out macdLine,
+                    out macdSignal))
                 {
                     ltfMacdBullish = macdLine > macdSignal;
                     ltfMacdBearish = macdLine < macdSignal;
-                    ltfMacdDetail = "MACD12/26/9=" + FormatTrendBiasValue(macdLine) +
+                    ltfMacdDetail = string.Format(CultureInfo.InvariantCulture, "MACD{0}/{1}/{2}=", macdConfig.FastPeriod, macdConfig.SlowPeriod, macdConfig.SignalPeriod) + FormatTrendBiasValue(macdLine) +
                         "/" + FormatTrendBiasValue(macdSignal);
                 }
 
-                var ltfAdx = ComputeAverageDirectionalIndex(ltfContext.Bars, ltfContext.BarIndex, 14);
-                ltfAdxStrong = IsFiniteNumber(ltfAdx) && ltfAdx >= 25.0;
-                ltfAdxDetail = "ADX14=" + FormatTrendBiasValue(ltfAdx) + " (min=25)";
+                var ltfAdx = ComputeAverageDirectionalIndex(ltfContext.Bars, ltfContext.BarIndex, adxConfig.Period);
+                ltfAdxStrong = IsFiniteNumber(ltfAdx) && ltfAdx >= adxConfig.MinimumStrength;
+                ltfAdxDetail = "ADX" + adxConfig.Period.ToString(CultureInfo.InvariantCulture) + "=" + FormatTrendBiasValue(ltfAdx) +
+                    " (min=" + FormatTrendBiasValue(adxConfig.MinimumStrength) + ")";
             }
 
             var htfStructureScores = new List<int>();
@@ -40381,28 +40618,42 @@ namespace cAlgo.Robots
                 bool htfEmaBullish;
                 bool htfEmaBearish;
                 string htfEmaDetail;
-                EvaluateEmaTrendAlignment(htfContext, 20, 50, out htfEmaBullish, out htfEmaBearish, out htfEmaDetail);
+                EvaluateEmaTrendAlignment(
+                    htfContext,
+                    emaConfig.FastPeriod,
+                    emaConfig.SlowPeriod,
+                    out htfEmaBullish,
+                    out htfEmaBearish,
+                    out htfEmaDetail);
                 htfEmaStates.Add(htfEmaBullish ? 1 : htfEmaBearish ? -1 : 0);
                 htfEmaDetails.Add(htfLabel + "[" + htfEmaDetail + "]");
 
-                var htfRsi = ComputeRelativeStrengthIndex(htfContext.Bars, htfContext.BarIndex, 14);
-                htfRsiStates.Add(MatchesRsiTrendBias(htfRsi, true)
+                var htfRsi = ComputeRelativeStrengthIndex(htfContext.Bars, htfContext.BarIndex, rsiConfig.Period);
+                htfRsiStates.Add(MatchesRsiTrendBias(htfRsi, true, rsiConfig)
                     ? 1
-                    : MatchesRsiTrendBias(htfRsi, false) ? -1 : 0);
-                htfRsiDetails.Add(htfLabel + "=" + FormatTrendBiasValue(htfRsi));
+                    : MatchesRsiTrendBias(htfRsi, false, rsiConfig) ? -1 : 0);
+                htfRsiDetails.Add(htfLabel + "[RSI" + rsiConfig.Period.ToString(CultureInfo.InvariantCulture) + "=" + FormatTrendBiasValue(htfRsi) + "]");
 
                 double htfMacdLine;
                 double htfMacdSignal;
-                if (TryComputeMacdValues(htfContext.Bars, htfContext.BarIndex, 12, 26, 9, out htfMacdLine, out htfMacdSignal))
+                if (TryComputeMacdValues(
+                    htfContext.Bars,
+                    htfContext.BarIndex,
+                    macdConfig.FastPeriod,
+                    macdConfig.SlowPeriod,
+                    macdConfig.SignalPeriod,
+                    out htfMacdLine,
+                    out htfMacdSignal))
                 {
                     htfMacdStates.Add(htfMacdLine > htfMacdSignal ? 1 : htfMacdLine < htfMacdSignal ? -1 : 0);
-                    htfMacdDetails.Add(htfLabel + "=" + FormatTrendBiasValue(htfMacdLine) + "/" + FormatTrendBiasValue(htfMacdSignal));
+                    htfMacdDetails.Add(string.Format(CultureInfo.InvariantCulture, "{0}[MACD{1}/{2}/{3}=", htfLabel, macdConfig.FastPeriod, macdConfig.SlowPeriod, macdConfig.SignalPeriod) +
+                        FormatTrendBiasValue(htfMacdLine) + "/" + FormatTrendBiasValue(htfMacdSignal) + "]");
                 }
 
-                var htfAdx = ComputeAverageDirectionalIndex(htfContext.Bars, htfContext.BarIndex, 14);
-                var htfAdxStrong = IsFiniteNumber(htfAdx) && htfAdx >= 25.0;
+                var htfAdx = ComputeAverageDirectionalIndex(htfContext.Bars, htfContext.BarIndex, adxConfig.Period);
+                var htfAdxStrong = IsFiniteNumber(htfAdx) && htfAdx >= adxConfig.MinimumStrength;
                 htfAdxStates.Add(htfAdxStrong);
-                htfAdxDetails.Add(htfLabel + "=" + FormatTrendBiasValue(htfAdx));
+                htfAdxDetails.Add(htfLabel + "[ADX" + adxConfig.Period.ToString(CultureInfo.InvariantCulture) + "=" + FormatTrendBiasValue(htfAdx) + "]");
             }
             score.HtfStructureScore = AggregateStrategyTrendBiasScores(htfStructureScores);
             var htfStructureState = ResolveDirectionalConsensus(htfStructureStates);
@@ -40508,13 +40759,13 @@ namespace cAlgo.Robots
             return count;
         }
 
-        private bool MatchesRsiTrendBias(double value, bool bullish)
+        private bool MatchesRsiTrendBias(double value, bool bullish, RsiIndicatorConfig config)
         {
             if (!IsFiniteNumber(value))
                 return false;
             return bullish
-                ? value >= 50.0 && value < 70.0
-                : value <= 50.0 && value > 30.0;
+                ? value >= config.Midline && value < config.Overbought
+                : value <= config.Midline && value > config.Oversold;
         }
 
         private void EvaluateEmaTrendAlignment(
@@ -50586,6 +50837,7 @@ namespace cAlgo.Robots
                         ConfluenceFairValueGap.ToString(), ConfluenceSupply.ToString(), ConfluenceDemand.ToString(),
                         TrendBiasStructure.ToString(), TrendBiasEma.ToString(), TrendBiasRsi.ToString(),
                         TrendBiasMacd.ToString(), TrendBiasAdx.ToString(),
+                        DrawEmaOverlay.ToString(), DrawRsiMode.ToString(), DrawMacdMode.ToString(), DrawAdxMode.ToString(),
                         MinimumConfluences.ToString(),
                         DrawKeyLevels.ToString(), DrawLiquidityLevels.ToString(), DrawOrderBlocks.ToString(),
                         DrawFvgZones.ToString(), DrawSupplyDemand.ToString(), ZoneMaxCount.ToString(),
@@ -51776,8 +52028,28 @@ namespace cAlgo.Robots
                     Math.Max(180, scanBars))
                 .Where(item => item.BarTime == exactBarTime && IsStructuralCanonicalMarketEvent(item))
                 .ToList();
-            predicates["any_structure_event_bullish"] = structural.Any(item => item.IsBullish);
-            predicates["any_structure_event_bearish"] = structural.Any(item => !item.IsBullish);
+            var bullishStructure = structural.Any(item => item.IsBullish);
+            var bearishStructure = structural.Any(item => !item.IsBullish);
+            List<CandleConfluenceMatch> bullishArtifactMatches;
+            List<CandleConfluenceMatch> bearishArtifactMatches;
+            if (!bullishStructure)
+                bullishStructure = TryResolveActiveStructureArtifactReaction(
+                    symbolName,
+                    sourceBars,
+                    strategyTimeFrame,
+                    barIndex,
+                    true,
+                    out bullishArtifactMatches);
+            if (!bearishStructure)
+                bearishStructure = TryResolveActiveStructureArtifactReaction(
+                    symbolName,
+                    sourceBars,
+                    strategyTimeFrame,
+                    barIndex,
+                    false,
+                    out bearishArtifactMatches);
+            predicates["any_structure_event_bullish"] = bullishStructure;
+            predicates["any_structure_event_bearish"] = bearishStructure;
             // Use the same qualified candidates as trade markers (not raw canonical
             // detections), including direction, confluences and minimum evidence count.
             var qualifiedChains = (IsScopeEnabledForTimeFrame(DrawSweepReclaimChain, strategyTimeFrame)

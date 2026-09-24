@@ -2,7 +2,7 @@
   "id": "pinbar_structure_event",
   "key": "pinbar_structure_event",
   "name": "Pinbar Structure Event",
-  "description": "Pin bar aligned with any same-direction structure event. Execution settings are file-backed and editable in 42trade.",
+  "description": "Pin bar directionally rejecting or sweeping any active LTF/HTF structure level or zone. The artifact may originate before the signal bar. Execution settings are file-backed and editable in 42trade.",
   "engine_version": "42trade.strategy.v3",
   "kind": "custom",
   "status": "active",
