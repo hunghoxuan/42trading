@@ -22,7 +22,7 @@ namespace cAlgo.Robots
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class TVBridgeCBot : Robot
     {
-        private const string BuildVersion = "v2026.09.24 - automatic-sweep-reclaim";
+        private const string BuildVersion = "v2026.09.24 - sweep-stage-vs-chain-markers";
         private const string BridgeSourceId = "Ctrader";
         private const string BridgeSourceType = "ctrader_bridge";
         private const int TransientErrorLogThresholdCount = 10;
@@ -3490,6 +3490,12 @@ namespace cAlgo.Robots
         private bool IsSweepReclaimStrategySelected()
         {
             return GetConfiguredStrategyModes().Any(mode => mode == BacktestStrategyMode.sweep_reclaim);
+        }
+
+        private bool IsSweepReclaimOnlyStrategySelection()
+        {
+            var configured = GetConfiguredStrategyModes().ToList();
+            return configured.Count == 1 && configured[0] == BacktestStrategyMode.sweep_reclaim;
         }
 
         private string BuildConfiguredStrategyModesStateKey()
@@ -21007,6 +21013,76 @@ namespace cAlgo.Robots
                  trigger.CanonicalEvent.EventType == CanonicalEventType.SweepReclaimChain);
         }
 
+        private static bool IsCompletedSweepReclaimChainTrigger(TradeTriggerEvent trigger)
+        {
+            return trigger.HasCanonicalEvent &&
+                trigger.CanonicalEvent.EventType == CanonicalEventType.SweepReclaimChain;
+        }
+
+        // A sweep_reclaim-only chart does not need the generic trigger collector, which
+        // evaluates every candle, technical and structure option on every scanned bar.
+        // Replaying only this detector keeps startup rendering below cTrader's watchdog
+        // limit while preserving the exact canonical events used by the strategy.
+        private List<TradeTriggerEvent> CollectSweepReclaimDetectorProofTriggers(
+            string symbolName,
+            TimeFrame timeFrame,
+            Bars sourceBars,
+            int lookbackBars)
+        {
+            var triggers = new List<TradeTriggerEvent>();
+            if (sourceBars == null || sourceBars.Count < 8)
+                return triggers;
+
+            var symbol = ResolveLoadedSymbol(NormalizeSymbolAlias(symbolName));
+            if (symbol == null)
+                return triggers;
+
+            var boundedLookback = Math.Min(
+                Math.Max(20, lookbackBars),
+                Math.Min(512, Math.Max(20, sourceBars.Count - 2)));
+            var canonicalEvents = CollectSweepReclaimChains(
+                NormalizeSymbolAlias(symbolName),
+                symbol,
+                sourceBars,
+                timeFrame,
+                boundedLookback);
+            foreach (var canonicalEvent in canonicalEvents
+                .Where(evt => evt.EventType == CanonicalEventType.SweepReclaim ||
+                    evt.EventType == CanonicalEventType.SweepReclaimChain)
+                .OrderByDescending(evt => evt.BarTime))
+            {
+                var barIndex = ResolveSourceBarIndex(sourceBars, canonicalEvent.BarTime);
+                if (!IsValidBarIndex(sourceBars, barIndex))
+                    continue;
+                var completedChain = canonicalEvent.EventType == CanonicalEventType.SweepReclaimChain;
+                triggers.Add(new TradeTriggerEvent
+                {
+                    SymbolName = symbolName,
+                    Name = BuildCanonicalMarketEventName(canonicalEvent),
+                    Family = "structure",
+                    Option = completedChain
+                        ? StrategyCustomEventOption.sweep_reclaim
+                        : StrategyCustomEventOption.s_Sweep,
+                    SourceTimeFrame = timeFrame,
+                    BarTime = canonicalEvent.BarTime,
+                    IsBullish = canonicalEvent.IsBullish,
+                    IsDirectionless = false,
+                    IsDirectionRepresentative = true,
+                    RequiredByFileStrategy = true,
+                    HasCanonicalEvent = true,
+                    CanonicalEvent = canonicalEvent,
+                    ConfluenceCount = 0,
+                    SupportEventNames = new List<string>(),
+                    OpposingEvidenceNames = new List<string>(),
+                    StopDistance = Math.Max(
+                        sourceBars.HighPrices[barIndex] - sourceBars.LowPrices[barIndex],
+                        0),
+                    Priority = completedChain ? 100 : 90
+                });
+            }
+            return triggers;
+        }
+
         // Sole renderer for event boxes and labels. Events=Trades renders only the exact
         // strategy-qualified records used by execution; Events=All adds dim raw detections.
         private int DrawUnifiedTradeTriggerEventsOnChart(int objectIndex)
@@ -21076,7 +21152,14 @@ namespace cAlgo.Robots
                     continue;
 
                 var visualLookbackBars = ResolveWorkingLookbackBars(sourceBars, sourceTimeFrame);
-                var detectedTriggers = CollectTradeTriggerCandidates(symbolName, sourceTimeFrame, visualLookbackBars, true)
+                var sweepReclaimOnly = IsSweepReclaimOnlyStrategySelection();
+                var detectedTriggers = (sweepReclaimOnly
+                        ? CollectSweepReclaimDetectorProofTriggers(
+                            symbolName,
+                            sourceTimeFrame,
+                            sourceBars,
+                            visualLookbackBars)
+                        : CollectTradeTriggerCandidates(symbolName, sourceTimeFrame, visualLookbackBars, true))
                     .Where(trigger => !trigger.IsDirectionless)
                     .ToList();
                 var selectedRawTriggers = showTradeEvents
@@ -21113,6 +21196,16 @@ namespace cAlgo.Robots
                 foreach (var rawGroup in candidateGroups)
                 {
                     var primaryRaw = rawGroup[0];
+                    var isSweepReclaimProofGroup = sweepReclaimOnly &&
+                        rawGroup.Any(IsSweepReclaimDetectorProofTrigger);
+                    if (isSweepReclaimProofGroup)
+                    {
+                        renderGroups.Add(Tuple.Create(
+                            rawGroup,
+                            false,
+                            new List<StrategyCustomEventOption> { StrategyCustomEventOption.sweep_reclaim }));
+                        continue;
+                    }
                     var groupKey = string.Format(
                         CultureInfo.InvariantCulture,
                         "{0}|{1}",
@@ -21172,9 +21265,13 @@ namespace cAlgo.Robots
                     }
                 }
 
+                // candidateGroups/renderGroups are newest-first.  Take() therefore keeps
+                // the most recent markers; TakeLast() selected the oldest candidates in
+                // the evaluation budget, which commonly placed the only allowed marker
+                // well outside the visible chart window.
                 var triggers = eventLimit < 0
                     ? renderGroups
-                    : renderGroups.TakeLast(eventLimit).ToList();
+                    : renderGroups.Take(eventLimit).ToList();
 
                 foreach (var renderGroup in triggers)
                 {
@@ -21182,6 +21279,11 @@ namespace cAlgo.Robots
                     var isTradeEvent = renderGroup.Item2;
                     var namingOptions = renderGroup.Item3;
                     var primary = sameBarTriggers[0];
+                    var isCompletedSweepReclaimChain = IsSweepReclaimStrategySelected() &&
+                        sameBarTriggers.Any(IsCompletedSweepReclaimChainTrigger);
+                    var isSweepReclaimStageMarker = IsSweepReclaimStrategySelected() &&
+                        sameBarTriggers.Any(IsSweepReclaimDetectorProofTrigger) &&
+                        !isCompletedSweepReclaimChain;
                     var triggerKey = string.Format(
                         CultureInfo.InvariantCulture,
                         "{0}|{1}|{2}|{3}",
@@ -21195,13 +21297,10 @@ namespace cAlgo.Robots
                     if (!IsValidBarIndex(sourceBars, barIndex))
                         continue;
 
-                    var isSweepReclaimStageProof = !isTradeEvent && IsSweepReclaimStrategySelected() &&
-                        sameBarTriggers.Any(trigger => trigger.HasCanonicalEvent &&
-                            trigger.CanonicalEvent.EventType == CanonicalEventType.SweepReclaim) &&
-                        !sameBarTriggers.Any(trigger => trigger.HasCanonicalEvent &&
-                            trigger.CanonicalEvent.EventType == CanonicalEventType.SweepReclaimChain);
-                    var labelText = isSweepReclaimStageProof
-                        ? BuildChartEventDisplayLabel(sourceTimeFrame, "sweep_reclaim.sweep", primary.IsBullish)
+                    var labelText = isSweepReclaimStageMarker
+                        ? BuildChartEventDisplayLabel(sourceTimeFrame, "sr.wait", primary.IsBullish)
+                        : isCompletedSweepReclaimChain
+                            ? BuildChartEventDisplayLabel(sourceTimeFrame, "sweep_reclaim", primary.IsBullish)
                         : isTradeEvent
                             ? BuildAcceptedCombinedTradeTriggerEventName(
                             symbolName,
@@ -21232,7 +21331,11 @@ namespace cAlgo.Robots
                         labelText,
                         sameBarTriggers);
 
-                    var color = WithAlpha(GetDirectionalEventColor(primary.IsBullish), isTradeEvent ? 255 : 179);
+                    var color = WithAlpha(
+                        GetDirectionalEventColor(primary.IsBullish),
+                        isTradeEvent || isCompletedSweepReclaimChain
+                            ? 255
+                            : isSweepReclaimStageMarker ? 120 : 179);
                     if (isTradeEvent)
                     {
                         foreach (var supportingTrigger in sameBarTriggers)
@@ -21264,10 +21367,14 @@ namespace cAlgo.Robots
                             color,
                             8);
                     }
-                    else
+                    else if (!isSweepReclaimStageMarker)
                     {
-                        var rawFillAlpha = (int)Math.Round(ResolveBackgroundVisualAlpha(sourceTimeFrame, barIndex >= sourceBars.Count - 2) * 0.70);
-                        var rawBorderAlpha = (int)Math.Round(ResolveSurroundingBoxAlpha() * 0.70);
+                        var rawFillAlpha = isCompletedSweepReclaimChain
+                            ? Math.Max(36, ResolveBackgroundVisualAlpha(sourceTimeFrame, barIndex >= sourceBars.Count - 2))
+                            : (int)Math.Round(ResolveBackgroundVisualAlpha(sourceTimeFrame, barIndex >= sourceBars.Count - 2) * 0.70);
+                        var rawBorderAlpha = isCompletedSweepReclaimChain
+                            ? Math.Max(180, ResolveSurroundingBoxAlpha())
+                            : (int)Math.Round(ResolveSurroundingBoxAlpha() * 0.70);
                         DrawPatternRangeBox(
                             markerPrefix + GetMiniChartLabel(sourceTimeFrame) + "_" + objectIndex.ToString(CultureInfo.InvariantCulture),
                             sourceBars,
@@ -21286,7 +21393,23 @@ namespace cAlgo.Robots
                     var wickPrice = primary.IsBullish
                         ? sourceBars.LowPrices[barIndex]
                         : sourceBars.HighPrices[barIndex];
-                    var labelFontSize = ResolveChartMarkerFontSize(sourceTimeFrame);
+                    if (isCompletedSweepReclaimChain)
+                    {
+                        var proofIcon = Chart.DrawIcon(
+                            "RAW_EVT_ICON_" + GetMiniChartLabel(sourceTimeFrame) + "_" + objectIndex.ToString(CultureInfo.InvariantCulture),
+                            GetDirectionalChartIconType(primary.IsBullish),
+                            labelTime,
+                            wickPrice,
+                            color);
+                        TrySetPropertyValue(proofIcon, "Thickness", 2);
+                        TrySetPropertyValue(proofIcon, "ZIndex", 30);
+                        TrySetPropertyValue(proofIcon, "IsInteractive", false);
+                    }
+                    var labelFontSize = isCompletedSweepReclaimChain
+                        ? Math.Max(10, ResolveChartMarkerFontSize(sourceTimeFrame) + 2)
+                        : isSweepReclaimStageMarker
+                            ? Math.Min(8, ResolveChartMarkerFontSize(sourceTimeFrame))
+                            : ResolveChartMarkerFontSize(sourceTimeFrame);
                     var eventBarRange = Math.Max(
                         sourceBars.HighPrices[barIndex] - sourceBars.LowPrices[barIndex],
                         Symbol.PipSize * 8.0);
@@ -21304,7 +21427,7 @@ namespace cAlgo.Robots
                     TryStyleChartText(label, labelFontSize, "Courier New", true);
                     TrySetEnumPropertyValue(label, "HorizontalAlignment", "Center");
                     TrySetEnumPropertyValue(label, "VerticalAlignment", "Center");
-                    TrySetPropertyValue(label, "ZIndex", 12);
+                    TrySetPropertyValue(label, "ZIndex", isCompletedSweepReclaimChain ? 30 : 12);
                     objectIndex++;
                 }
             }
