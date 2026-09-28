@@ -48,3 +48,13 @@ test("active run panel renders the one-line summary row without pnl under the co
     /<MetricValue[\s\S]*?value=\{summaryPnlValue\}/,
   );
 });
+
+test("history provides range, search, filters, and pagination", () => {
+  assert.match(backtestsPageSource, /aria-label="Search backtest history"/);
+  assert.match(backtestsPageSource, /historyStrategyFilter/);
+  assert.match(backtestsPageSource, /historySymbolFilter/);
+  assert.match(backtestsPageSource, /historyTimeframeFilter/);
+  assert.match(backtestsPageSource, /<PaginationBar[\s\S]*?total=\{historyRuns\.length\}/);
+  assert.match(backtestsPageSource, /Range \{formatBacktestHistoryRange\(run\)\}/);
+  assert.match(backtestsPageSource, /pagedHistoryRuns\.map\(\(run\)/);
+});

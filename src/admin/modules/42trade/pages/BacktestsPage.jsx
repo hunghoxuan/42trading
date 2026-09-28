@@ -21,6 +21,7 @@ import MasterDetailLayout from "../../../shared/components/MasterDetailLayout";
 import ResponsivePanel from "../../../shared/components/ResponsivePanel";
 import ListItems from "../../../shared/components/ListItems";
 import InputComboSelect from "../../../shared/components/InputComboSelect";
+import PaginationBar from "../../../shared/components/PaginationBar";
 import TabBar from "../../../shared/components/TabBar";
 import { useConfirmDialog } from "../../../shared/components/ConfirmDialog";
 import useIsMobile from "../../../shared/hooks/useIsMobile.js";
@@ -230,6 +231,30 @@ const RULE_MODE_OPTIONS = [
 ];
 
 const HISTORY_STRATEGY_FILTER_ALL = "__all__";
+const HISTORY_FILTER_ALL = "__all__";
+const HISTORY_PAGE_SIZE_OPTIONS = [25, 50, 100];
+
+function formatBacktestHistoryDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatBacktestHistoryRange(run = {}) {
+  const summary = run?.summary && typeof run.summary === "object" ? run.summary : {};
+  const startLabel = formatBacktestHistoryDate(
+    summary?.first_bar_at || run?.first_bar_at || summary?.testing_period?.startDate,
+  );
+  const endLabel = formatBacktestHistoryDate(
+    summary?.last_bar_at || run?.last_bar_at || summary?.testing_period?.endDate,
+  );
+  if (startLabel && endLabel) return `${startLabel} → ${endLabel}`;
+  return startLabel || endLabel || "Range unavailable";
+}
 
 const RULE_COMPARE_OPTIONS = (Array.isArray(strategyFunctions?.operators)
   ? strategyFunctions.operators
@@ -1902,6 +1927,11 @@ export default function BacktestsPage() {
   const [historyStrategyFilter, setHistoryStrategyFilter] = useState(
     HISTORY_STRATEGY_FILTER_ALL,
   );
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [historySymbolFilter, setHistorySymbolFilter] = useState(HISTORY_FILTER_ALL);
+  const [historyTimeframeFilter, setHistoryTimeframeFilter] = useState(HISTORY_FILTER_ALL);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyPageSize, setHistoryPageSize] = useState(25);
   const [resultChartLoaded, setResultChartLoaded] = useState(false);
   const [resultChartLoadKey, setResultChartLoadKey] = useState(0);
   const [replayPlaying, setReplayPlaying] = useState(false);
@@ -2904,12 +2934,75 @@ export default function BacktestsPage() {
         .map(([value, label]) => ({ value, label })),
     ];
   }, [runs]);
+  const historySymbolOptions = useMemo(
+    () => [
+      { value: HISTORY_FILTER_ALL, label: "All Symbols" },
+      ...Array.from(
+        new Set(
+          runs
+            .map((run) => String(run?.symbol || "").trim().toUpperCase())
+            .filter(Boolean),
+        ),
+      )
+        .sort((left, right) => left.localeCompare(right))
+        .map((value) => ({ value, label: value })),
+    ],
+    [runs],
+  );
+  const historyTimeframeOptions = useMemo(
+    () => [
+      { value: HISTORY_FILTER_ALL, label: "All Timeframes" },
+      ...sortBacktestMatrixTimeframes(
+        runs.map((run) => String(run?.tf || run?.timeframe || "").trim()).filter(Boolean),
+      ).map((value) => ({ value, label: value })),
+    ],
+    [runs],
+  );
+  const deferredHistoryQuery = useDeferredValue(historyQuery);
   const historyRuns = useMemo(() => {
     const selectedFilter = String(historyStrategyFilter || HISTORY_STRATEGY_FILTER_ALL).trim();
+    const selectedSymbol = String(historySymbolFilter || HISTORY_FILTER_ALL).trim().toUpperCase();
+    const selectedTimeframe = String(historyTimeframeFilter || HISTORY_FILTER_ALL).trim();
+    const query = String(deferredHistoryQuery || "").trim().toLowerCase();
     return [...runs]
       .filter((run) => {
-        if (selectedFilter === HISTORY_STRATEGY_FILTER_ALL) return true;
-        return String(run?.strategy_key || run?.strategy_id || "").trim() === selectedFilter;
+        if (
+          selectedFilter !== HISTORY_STRATEGY_FILTER_ALL &&
+          String(run?.strategy_key || run?.strategy_id || "").trim() !== selectedFilter
+        ) {
+          return false;
+        }
+        if (
+          selectedSymbol !== HISTORY_FILTER_ALL.toUpperCase() &&
+          String(run?.symbol || "").trim().toUpperCase() !== selectedSymbol
+        ) {
+          return false;
+        }
+        if (
+          selectedTimeframe !== HISTORY_FILTER_ALL &&
+          timeframeLabel(run?.tf || run?.timeframe || "") !== selectedTimeframe
+        ) {
+          return false;
+        }
+        if (!query) return true;
+        const searchableText = [
+          run?.run_id,
+          run?.display_name,
+          run?.strategy_name,
+          run?.strategy_key,
+          run?.strategy_id,
+          run?.symbol,
+          timeframeLabel(run?.tf || run?.timeframe || ""),
+          run?.status,
+          run?.summary?.source,
+          run?.summary?.first_bar_at,
+          run?.summary?.last_bar_at,
+          formatBacktestHistoryRange(run),
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return searchableText.includes(query);
       })
       .sort((left, right) => {
         const cmp = compareTimeDesc(
@@ -2919,7 +3012,12 @@ export default function BacktestsPage() {
         if (cmp !== 0) return cmp;
         return String(right?.run_id || "").localeCompare(String(left?.run_id || ""));
       });
-  }, [historyStrategyFilter, runs]);
+  }, [deferredHistoryQuery, historyStrategyFilter, historySymbolFilter, historyTimeframeFilter, runs]);
+  const historyPages = Math.max(1, Math.ceil(historyRuns.length / historyPageSize));
+  const pagedHistoryRuns = useMemo(() => {
+    const start = (historyPage - 1) * historyPageSize;
+    return historyRuns.slice(start, start + historyPageSize);
+  }, [historyPage, historyPageSize, historyRuns]);
   useEffect(() => {
     if (
       historyStrategyFilter !== HISTORY_STRATEGY_FILTER_ALL &&
@@ -2928,6 +3026,12 @@ export default function BacktestsPage() {
       setHistoryStrategyFilter(HISTORY_STRATEGY_FILTER_ALL);
     }
   }, [historyStrategyFilter, historyStrategyOptions]);
+  useEffect(() => {
+    setHistoryPage(1);
+  }, [deferredHistoryQuery, historyStrategyFilter, historySymbolFilter, historyTimeframeFilter, historyPageSize]);
+  useEffect(() => {
+    setHistoryPage((current) => Math.min(Math.max(1, current), historyPages));
+  }, [historyPages]);
   const replaySummary = useMemo(() => {
     if (!replayPlaying || !replayProgress) return null;
     const replayTimeSec = Number(replayProgress.clockTimeSec);
@@ -4365,12 +4469,20 @@ export default function BacktestsPage() {
 
   const runList = (
     <div className="stack-layout" style={{ gap: 8 }}>
+      <input
+        type="search"
+        value={historyQuery}
+        onChange={(event) => setHistoryQuery(event.target.value)}
+        className="text-input"
+        placeholder="Search run, strategy, symbol, timeframe, or date..."
+        aria-label="Search backtest history"
+        style={{ width: "100%", minHeight: 32, fontSize: 11 }}
+      />
       <div
         style={{
-          display: "flex",
-          alignItems: "center",
+          display: "grid",
+          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
           gap: 8,
-          flexWrap: "wrap",
         }}
       >
         <InputComboSelect
@@ -4383,9 +4495,43 @@ export default function BacktestsPage() {
           }
           searchable
           searchPlaceholder="Filter strategy..."
-          style={{ flex: "1 1 220px", minWidth: 0, height: 32, fontSize: 11 }}
+          style={{ minWidth: 0, height: 32, fontSize: 11 }}
         >
           {historyStrategyOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </InputComboSelect>
+        <InputComboSelect
+          value={historySymbolFilter}
+          onChange={(event) =>
+            setHistorySymbolFilter(
+              String(event?.target?.value || HISTORY_FILTER_ALL).trim() || HISTORY_FILTER_ALL,
+            )
+          }
+          searchable
+          searchPlaceholder="Filter symbol..."
+          style={{ minWidth: 0, height: 32, fontSize: 11 }}
+        >
+          {historySymbolOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </InputComboSelect>
+        <InputComboSelect
+          value={historyTimeframeFilter}
+          onChange={(event) =>
+            setHistoryTimeframeFilter(
+              String(event?.target?.value || HISTORY_FILTER_ALL).trim() || HISTORY_FILTER_ALL,
+            )
+          }
+          searchable
+          searchPlaceholder="Filter timeframe..."
+          style={{ minWidth: 0, height: 32, fontSize: 11 }}
+        >
+          {historyTimeframeOptions.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
             </option>
@@ -4396,21 +4542,31 @@ export default function BacktestsPage() {
           className="secondary-button"
           disabled={!historyRuns.length}
           onClick={handleDeleteVisibleRuns}
-          title="Delete all visible history"
+          title="Delete all filtered history"
           style={{
             minHeight: 32,
-            minWidth: 32,
             padding: "0 10px",
             fontSize: 12,
             color: historyRuns.length ? "#f87171" : undefined,
           }}
         >
-          X
+          Delete filtered
         </button>
       </div>
+      <PaginationBar
+        page={historyPage}
+        pages={historyPages}
+        total={historyRuns.length}
+        pageSize={historyPageSize}
+        pageSizeOptions={HISTORY_PAGE_SIZE_OPTIONS}
+        label={`${historyRuns.length ? (historyPage - 1) * historyPageSize + 1 : 0}-${Math.min(historyPage * historyPageSize, historyRuns.length)} of ${historyRuns.length}`}
+        onPageChange={setHistoryPage}
+        onPageSizeChange={setHistoryPageSize}
+        className="pager-area"
+      />
       <ListItems>
       {historyRuns.length ? (
-        historyRuns.map((run) => {
+        pagedHistoryRuns.map((run) => {
           const isActive = selectedRunId === run.run_id;
           const pnl = Number(run?.summary?.total_pnl || 0);
           const openRun = () => {
@@ -4548,6 +4704,9 @@ export default function BacktestsPage() {
                     </span>
                   </span>
                   <span>WR {formatNumber(run?.summary?.win_rate_pct || 0, 0)}%</span>
+                  <span title="Backtest data range">
+                    Range {formatBacktestHistoryRange(run)}
+                  </span>
                 </div>
               </div>
             </div>
@@ -4561,6 +4720,17 @@ export default function BacktestsPage() {
         </div>
       )}
       </ListItems>
+      {historyRuns.length > historyPageSize ? (
+        <PaginationBar
+          page={historyPage}
+          pages={historyPages}
+          total={historyRuns.length}
+          label={`${historyRuns.length ? (historyPage - 1) * historyPageSize + 1 : 0}-${Math.min(historyPage * historyPageSize, historyRuns.length)} of ${historyRuns.length}`}
+          onPageChange={setHistoryPage}
+          showPageSize={false}
+          className="pager-area"
+        />
+      ) : null}
     </div>
   );
 
