@@ -214,8 +214,12 @@ namespace cAlgo.Plugins
             try
             {
                 if (string.IsNullOrWhiteSpace(jsonReport))
-                    throw new InvalidOperationException(
-                        process.BacktestingError.ToString() ?? "cTrader returned no JSON report");
+                {
+                    var backtestingError = process.BacktestingError.ToString();
+                    throw new InvalidOperationException(string.IsNullOrWhiteSpace(backtestingError)
+                        ? "cTrader returned no JSON report"
+                        : backtestingError);
+                }
                 var response = Post($"/api/backtests/ctrader/worker/jobs/{Uri.EscapeDataString(context.Job.JobId)}/complete", new
                 {
                     worker_id = WorkerId,
