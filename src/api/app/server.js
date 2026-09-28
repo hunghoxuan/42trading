@@ -39895,12 +39895,30 @@ const appHandler = async (req, res) => {
     const userId = await resolveEaUserId(req, body, url);
     try {
       if (action === "progress") {
+        const resolvedParameters = ctraderBacktestQueueService.normalizeResolvedParameters(
+          body?.resolved_parameters,
+        );
+        const currentJob = await ctraderBacktestQueueService.getJob(userId, jobId);
+        const sanitizedOverrides = ctraderBacktestQueueService.sanitizeParameterOverrides(
+          currentJob?.launch_config?.parameters,
+        );
         const job = await ctraderBacktestQueueService.updateJob(
           userId,
           jobId,
           {
             status: "running",
             progress_pct: body?.progress_pct,
+            operation: String(body?.operation || "").trim(),
+            ...(resolvedParameters.length
+              ? {
+                  launch_config: {
+                    ...(currentJob?.launch_config || {}),
+                    parameters: sanitizedOverrides,
+                    parameter_overrides: sanitizedOverrides,
+                    resolved_parameters: resolvedParameters,
+                  },
+                }
+              : {}),
           },
           { workerId },
         );
@@ -39926,6 +39944,18 @@ const appHandler = async (req, res) => {
       }
       const report = body?.ctrader_report || body?.json_report || body?.report;
       if (!report) return json(res, 400, { ok: false, error: "ctrader_report is required" });
+      const resolvedParameters = ctraderBacktestQueueService.normalizeResolvedParameters(
+        body?.resolved_parameters || job?.launch_config?.resolved_parameters,
+      );
+      const sanitizedOverrides = ctraderBacktestQueueService.sanitizeParameterOverrides(
+        job?.launch_config?.parameter_overrides || job?.launch_config?.parameters,
+      );
+      const resolvedLaunchConfig = {
+        ...(job.launch_config || {}),
+        parameters: sanitizedOverrides,
+        parameter_overrides: sanitizedOverrides,
+        resolved_parameters: resolvedParameters,
+      };
       const reportPath = await ctraderBacktestQueueService.archiveHtmlReport(
         userId,
         job.run_id,
@@ -39942,14 +39972,14 @@ const appHandler = async (req, res) => {
           started_at: job.started_at || job.claimed_at || job.created_at,
           config: {
             ...(job.config || {}),
-            ctrader_launch: job.launch_config,
+            ctrader_launch: resolvedLaunchConfig,
             batch_id: job.batch_id,
             job_id: job.job_id,
           },
         },
         config: {
           ...(job.config || {}),
-          ctrader_launch: job.launch_config,
+          ctrader_launch: resolvedLaunchConfig,
           batch_id: job.batch_id,
           job_id: job.job_id,
         },
@@ -39970,6 +40000,7 @@ const appHandler = async (req, res) => {
           result_run_id: persisted?.run?.run_id || job.run_id,
           report_path: reportPath,
           error: null,
+          launch_config: resolvedLaunchConfig,
         },
         { workerId },
       );

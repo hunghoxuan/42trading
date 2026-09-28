@@ -1255,6 +1255,103 @@ function formatBacktestSummaryParams(summary = null) {
   return text || "";
 }
 
+function formatStoredParameterValue(value) {
+  if (value === null || value === undefined) return "-";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
+function getCTraderHistoryParameters(run = {}) {
+  const config = run?.config && typeof run.config === "object" ? run.config : {};
+  const launch =
+    config?.ctrader_launch && typeof config.ctrader_launch === "object"
+      ? config.ctrader_launch
+      : null;
+  if (!launch && String(config?.executor || "").trim().toLowerCase() !== "ctrader") {
+    return null;
+  }
+  if (!launch) {
+    const legacyGroups = [
+      "strategy_slots",
+      "custom_rules",
+      "trade_config",
+      "confluences",
+      "custom_triggers",
+    ];
+    const parameters = legacyGroups.flatMap((group) =>
+      Object.entries(config?.[group] || {}).map(([name, value]) => ({
+        name: `${group}.${name}`,
+        value,
+        type: "",
+        source: "legacy-recorded",
+      })),
+    );
+    return {
+      context: [
+        ["cBot", config?.ctrader?.cbot_name],
+        ["Symbol", config.symbol || run.symbol],
+        ["Timeframe", config.timeframe || run.tf],
+        ["Start", config.date_from],
+        ["End", config.date_to],
+        ["Starting balance", config.initial_capital],
+        ["Data mode", config?.ctrader?.data],
+        ["Spread", config?.ctrader?.spread],
+        ["Commission", config?.ctrader?.commissions],
+      ].filter(([, value]) => value !== "" && value !== null && value !== undefined),
+      parameters,
+      legacyPartial: true,
+    };
+  }
+  const context = [
+    ["cBot", launch.robot_name],
+    ["Symbol", launch.symbol || run.symbol],
+    ["Timeframe", launch.timeframe || run.tf],
+    ["Start UTC", launch.start_time_utc],
+    ["End UTC", launch.end_time_utc],
+    ["Starting balance", launch.balance],
+    ["Data mode", launch.data_mode],
+    ["Spread (pips)", launch.spread_pips],
+    [
+      "Commission",
+      launch.apply_commission_automatically
+        ? "Broker automatic"
+        : `${formatStoredParameterValue(launch.commission_usd_per_million)} USD / $1m`,
+    ],
+  ].filter(([, value]) => value !== "" && value !== null && value !== undefined);
+  const resolved = Array.isArray(launch.resolved_parameters)
+    ? launch.resolved_parameters
+        .map((item) => ({
+          name: String(item?.name || item?.key || "").trim(),
+          value: item?.value,
+          type: String(item?.type || "").trim(),
+          source: String(item?.source || "recorded").trim(),
+        }))
+        .filter((item) => item.name)
+    : Object.entries(launch.resolved_parameters || {}).map(([name, value]) => ({
+        name,
+        value,
+        type: "",
+        source: "recorded",
+      }));
+  const overrides = launch.parameter_overrides || launch.parameters || {};
+  const fallback = resolved.length
+    ? []
+    : Object.entries(overrides).map(([name, value]) => ({
+        name,
+        value,
+        type: "",
+        source: "override-only",
+      }));
+  return { context, parameters: resolved.length ? resolved : fallback };
+}
+
 function formatMoneyCompact(value, digits = 0) {
   const num = Number(value);
   if (!Number.isFinite(num)) return "-";
@@ -1956,6 +2053,7 @@ export default function BacktestsPage() {
   const [historyTimeframeFilter, setHistoryTimeframeFilter] = useState(HISTORY_FILTER_ALL);
   const [historyPage, setHistoryPage] = useState(1);
   const [historyPageSize, setHistoryPageSize] = useState(25);
+  const [historyParamsRunId, setHistoryParamsRunId] = useState("");
   const [resultChartLoaded, setResultChartLoaded] = useState(false);
   const [resultChartLoadKey, setResultChartLoadKey] = useState(0);
   const [replayPlaying, setReplayPlaying] = useState(false);
@@ -4687,6 +4785,8 @@ export default function BacktestsPage() {
         pagedHistoryRuns.map((run) => {
           const isActive = selectedRunId === run.run_id;
           const pnl = Number(run?.summary?.total_pnl || 0);
+          const cTraderParams = getCTraderHistoryParameters(run);
+          const cTraderParamsOpen = historyParamsRunId === run.run_id;
           const openRun = () => {
             const nextRunId = String(run?.run_id || "").trim();
             if (!nextRunId) return;
@@ -4825,7 +4925,64 @@ export default function BacktestsPage() {
                   <span title="Backtest data range">
                     Range {formatBacktestHistoryRange(run)}
                   </span>
+                  {cTraderParams ? (
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setHistoryParamsRunId((current) =>
+                          current === run.run_id ? "" : run.run_id,
+                        );
+                      }}
+                      style={{ minHeight: 24, padding: "0 8px", fontSize: 10 }}
+                    >
+                      {`${cTraderParamsOpen ? "Hide" : "All"} parameters (${cTraderParams.parameters.length})`}
+                    </button>
+                  ) : null}
                 </div>
+                {cTraderParamsOpen && cTraderParams ? (
+                  <div
+                    onClick={(event) => event.stopPropagation()}
+                    onKeyDown={(event) => event.stopPropagation()}
+                    style={{
+                      marginTop: 8,
+                      padding: 10,
+                      borderRadius: 8,
+                      background: "rgba(15,23,42,0.48)",
+                      border: "1px solid rgba(148,163,184,0.16)",
+                      maxHeight: 360,
+                      overflow: "auto",
+                    }}
+                  >
+                    <div className="panel-label" style={{ marginBottom: 6 }}>BACKTEST SETTINGS</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "minmax(120px, 0.7fr) minmax(0, 1.3fr)", gap: "4px 10px", fontSize: 10 }}>
+                      {cTraderParams.context.map(([name, value]) => (
+                        <div key={name} style={{ display: "contents" }}>
+                          <span className="minor-text">{name}</span>
+                          <span style={{ overflowWrap: "anywhere" }}>{formatStoredParameterValue(value)}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="panel-label" style={{ margin: "10px 0 6px" }}>
+                      {`CBOT PARAMETERS (${cTraderParams.parameters.length})`}
+                    </div>
+                    {cTraderParams.legacyPartial ? (
+                      <div className="minor-text" style={{ fontSize: 10, marginBottom: 6 }}>
+                        Legacy run: showing every parameter recorded at the time. Unrecorded cBot defaults cannot be reconstructed safely.
+                      </div>
+                    ) : null}
+                    <div style={{ display: "grid", gridTemplateColumns: "minmax(140px, 0.8fr) minmax(0, 1.2fr) auto", gap: "4px 10px", fontSize: 10 }}>
+                      {cTraderParams.parameters.map((parameter, index) => (
+                        <div key={`${parameter.name}:${index}`} style={{ display: "contents" }}>
+                          <span className="minor-text" title={parameter.type || undefined}>{parameter.name}</span>
+                          <span style={{ overflowWrap: "anywhere" }}>{formatStoredParameterValue(parameter.value)}</span>
+                          <span className="minor-text">{parameter.source}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
           );

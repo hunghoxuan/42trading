@@ -129,14 +129,20 @@ namespace cAlgo.Plugins
                     SpreadPips = launch.SpreadPips,
                     PreciseConversion = true
                 };
-                var parameterValues = BuildParameterValues(robotType, launch.Parameters);
+                var parameterSet = BuildParameterValues(robotType, launch.Parameters);
                 var process = Backtesting.Start(
                     robotType,
                     launch.Symbol,
                     ParseTimeFrame(launch.Timeframe),
                     settings,
-                    parameterValues);
-                var context = new JobContext { Job = job, Process = process, LastReportedProgress = -1 };
+                    parameterSet.Values);
+                var context = new JobContext
+                {
+                    Job = job,
+                    Process = process,
+                    LastReportedProgress = -1,
+                    ResolvedParameters = parameterSet.Snapshot
+                };
                 lock (_sync)
                     _active[process] = context;
 
@@ -178,7 +184,8 @@ namespace cAlgo.Plugins
                 {
                     worker_id = WorkerId,
                     progress_pct = progress,
-                    operation = operation ?? ""
+                    operation = operation ?? "",
+                    resolved_parameters = context.ResolvedParameters
                 });
                 if (response.StatusCode == 409 || response.Body.IndexOf("cancelled", StringComparison.OrdinalIgnoreCase) >= 0)
                     context.Process.Terminate();
@@ -213,7 +220,8 @@ namespace cAlgo.Plugins
                 {
                     worker_id = WorkerId,
                     ctrader_report = jsonReport,
-                    html_report = htmlReport
+                    html_report = htmlReport,
+                    resolved_parameters = context.ResolvedParameters
                 }, TimeSpan.FromMinutes(3));
                 if (!response.IsSuccessful)
                     throw new InvalidOperationException($"42trade rejected result ({response.StatusCode}): {response.Body}");
@@ -262,20 +270,54 @@ namespace cAlgo.Plugins
             return Http.Send(request);
         }
 
-        private static object[] BuildParameterValues(RobotType robotType, Dictionary<string, JsonElement> overrides)
+        private static ResolvedParameterSet BuildParameterValues(
+            RobotType robotType,
+            Dictionary<string, JsonElement> overrides)
         {
             var values = new List<object>();
+            var snapshot = new List<ParameterSnapshot>();
             var named = overrides ?? new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
             foreach (var parameter in robotType.Parameters)
             {
-                if (!TryGetOverride(named, parameter.Name, out var element))
+                var hasOverride = TryGetOverride(named, parameter.Name, out var element);
+                var resolved = hasOverride
+                    ? ConvertParameter(element, parameter.DefaultValue)
+                    : parameter.DefaultValue;
+                values.Add(resolved);
+                snapshot.Add(new ParameterSnapshot
                 {
-                    values.Add(parameter.DefaultValue);
-                    continue;
-                }
-                values.Add(ConvertParameter(element, parameter.DefaultValue));
+                    Name = parameter.Name,
+                    Type = parameter.Type.ToString(),
+                    Value = ToJsonSafeValue(parameter.Name, resolved),
+                    Source = hasOverride ? "override" : "default"
+                });
             }
-            return values.ToArray();
+            return new ResolvedParameterSet
+            {
+                Values = values.ToArray(),
+                Snapshot = snapshot
+            };
+        }
+
+        private static object ToJsonSafeValue(string name, object value)
+        {
+            if (IsSensitiveParameterName(name)) return "[REDACTED]";
+            if (value == null) return null;
+            if (value is string || value is bool || value is int || value is long ||
+                value is double || value is decimal || value is float)
+                return value;
+            if (value is DateTime dateTime)
+                return dateTime.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
+            return value.ToString();
+        }
+
+        private static bool IsSensitiveParameterName(string value)
+        {
+            var compact = CompactKey(value);
+            return compact.Contains("apikey") || compact.Contains("password") ||
+                compact.Contains("passwd") || compact.Contains("secret") ||
+                compact.Contains("token") || compact.Contains("credential") ||
+                compact.Contains("authorization") || compact.Contains("authkey");
         }
 
         private static bool TryGetOverride(Dictionary<string, JsonElement> values, string name, out JsonElement element)
@@ -366,6 +408,28 @@ namespace cAlgo.Plugins
             public BacktestJob Job { get; set; }
             public BacktestingProcess Process { get; set; }
             public int LastReportedProgress { get; set; }
+            public List<ParameterSnapshot> ResolvedParameters { get; set; }
+        }
+
+        private sealed class ResolvedParameterSet
+        {
+            public object[] Values { get; set; }
+            public List<ParameterSnapshot> Snapshot { get; set; }
+        }
+
+        private sealed class ParameterSnapshot
+        {
+            [JsonPropertyName("name")]
+            public string Name { get; set; }
+
+            [JsonPropertyName("type")]
+            public string Type { get; set; }
+
+            [JsonPropertyName("value")]
+            public object Value { get; set; }
+
+            [JsonPropertyName("source")]
+            public string Source { get; set; }
         }
 
         private sealed class ClaimResponse

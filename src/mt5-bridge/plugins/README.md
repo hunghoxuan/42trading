@@ -4,7 +4,14 @@
 
 ## Local installation
 
-The active cTrader project on this Mac is `BacktestWorker42trade`. Its project file links directly to this repository source, so this file remains the source of truth:
+The active cTrader project on this Mac is `BacktestWorker42trade`. This repository file is the source of truth. Before building, copy the entire source file into the active project so cTrader cloud synchronisation cannot overwrite the repository copy:
+
+```sh
+cp src/mt5-bridge/plugins/BacktestWorkerPlugin.cs \
+  ~/cAlgo/Sources/Plugins/BacktestWorker42trade/BacktestWorker42trade/BacktestWorkerPlugin.cs
+```
+
+The active project is:
 
 `~/cAlgo/Sources/Plugins/BacktestWorker42trade/BacktestWorker42trade/BacktestWorker42trade.csproj`
 

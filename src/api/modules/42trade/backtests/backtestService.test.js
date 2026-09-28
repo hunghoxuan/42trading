@@ -94,7 +94,15 @@ test("normalizes cTrader JsonReport fields for the 42trade dashboard", () => {
       run_id: "ctrader-test-run",
       strategy_key: "DonchianBreakoutV1",
       strategy_name: "Donchian Breakout V1",
-      config: { trade_config: { take_profit: "RR_2" } },
+      config: {
+        trade_config: { take_profit: "RR_2" },
+        ctrader_launch: {
+          resolved_parameters: [
+            { name: "Strategy 3", type: "Enum", value: "DonchianBreakoutV1", source: "override" },
+            { name: "Enable Debug", type: "Enum", value: "No", source: "default" },
+          ],
+        },
+      },
     },
     ctrader_report: JSON.stringify(report),
   });
@@ -103,6 +111,11 @@ test("normalizes cTrader JsonReport fields for the 42trade dashboard", () => {
   assert.equal(result.run.tf, "5");
   assert.equal(result.run.config.executor, "cTrader");
   assert.equal(result.run.config.trade_config.take_profit, "RR_2");
+  assert.equal(result.run.config.ctrader_launch.resolved_parameters.length, 2);
+  assert.equal(
+    result.run.config.ctrader_launch.resolved_parameters[1].source,
+    "default",
+  );
   assert.deepEqual(result.run.selection.timeframes, ["5"]);
   assert.equal(result.summary.total_pnl, 14.55);
   assert.equal(result.summary.total_trades, 1);

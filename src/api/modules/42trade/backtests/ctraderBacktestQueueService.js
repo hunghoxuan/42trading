@@ -64,6 +64,45 @@ function normalizeTimeframe(value) {
   return aliases[tf] || tf;
 }
 
+function isSensitiveParameterName(value) {
+  return /(?:api[_ -]?key|password|passwd|secret|token|credential|authorization|auth[_ -]?key)/iu.test(
+    safeText(value),
+  );
+}
+
+function sanitizeParameterOverrides(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).map(([name, parameterValue]) => [
+      name,
+      isSensitiveParameterName(name) ? "[REDACTED]" : parameterValue,
+    ]),
+  );
+}
+
+function normalizeResolvedParameters(value) {
+  const rows = Array.isArray(value)
+    ? value
+    : value && typeof value === "object"
+      ? Object.entries(value).map(([name, parameterValue]) => ({
+          name,
+          value: parameterValue,
+          source: "recorded",
+        }))
+      : [];
+  return rows
+    .slice(0, 2000)
+    .map((row) => ({
+      name: safeText(row?.name || row?.key),
+      type: safeText(row?.type),
+      value: isSensitiveParameterName(row?.name || row?.key)
+        ? "[REDACTED]"
+        : row?.value ?? null,
+      source: safeText(row?.source || "recorded"),
+    }))
+    .filter((row) => row.name);
+}
+
 function normalizeUtcDate(value, fieldName) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -335,9 +374,13 @@ module.exports = {
   updateJob,
   cancelJob,
   archiveHtmlReport,
+  normalizeResolvedParameters,
+  sanitizeParameterOverrides,
   __test: {
     normalizeBatchRequest,
     normalizeTimeframe,
     parseStoredJob,
+    normalizeResolvedParameters,
+    sanitizeParameterOverrides,
   },
 };

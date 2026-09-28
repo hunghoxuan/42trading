@@ -87,6 +87,12 @@ remains under `run.config`. Planned SL/TP/R values are recovered from the bridge
 trade comment when present; a structured bridge trade snapshot remains the
 preferred source for these fields.
 
+Native queued cTrader runs also persist `run.config.ctrader_launch` with the
+testing context and a `resolved_parameters` array. Each entry records the cBot
+parameter display name, cTrader type, effective value, and whether it came from
+an explicit override or the cBot default. Backtest History exposes this complete
+snapshot through the **All parameters** control on each cTrader run.
+
 ## Why Backtests Live Beside Trading
 
 | Reason | Explanation |

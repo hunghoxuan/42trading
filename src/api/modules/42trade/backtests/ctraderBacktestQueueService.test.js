@@ -25,6 +25,26 @@ test("normalizes a native cTrader batch and preserves report dimensions", () => 
   assert.equal(normalized.parameters["1st Trade"], "Now_Wick_L0_R15");
 });
 
+test("normalizes the complete effective cBot parameter snapshot", () => {
+  assert.deepEqual(
+    queue.__test.normalizeResolvedParameters([
+      { name: "Strategy 3", type: "Enum", value: "DonchianBreakoutV1", source: "override" },
+      { name: "Enable Debug", type: "Enum", value: "No", source: "default" },
+      { name: "EA API Key", type: "String", value: "must-not-be-stored", source: "override" },
+      { name: "", value: "ignored" },
+    ]),
+    [
+      { name: "Strategy 3", type: "Enum", value: "DonchianBreakoutV1", source: "override" },
+      { name: "Enable Debug", type: "Enum", value: "No", source: "default" },
+      { name: "EA API Key", type: "String", value: "[REDACTED]", source: "override" },
+    ],
+  );
+  assert.deepEqual(
+    queue.__test.sanitizeParameterOverrides({ Strategy: "Ichimoku", ApiKey: "secret" }),
+    { Strategy: "Ichimoku", ApiKey: "[REDACTED]" },
+  );
+});
+
 test("creates, claims, progresses, and cancels cTrader jobs", async () => {
   const userId = `test-ctrader-queue-${crypto.randomBytes(6).toString("hex")}`;
   let jobs = [];
