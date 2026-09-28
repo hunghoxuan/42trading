@@ -30,6 +30,83 @@ namespace cAlgo.Plugins
         private readonly object _sync = new object();
         private readonly Dictionary<BacktestingProcess, JobContext> _active =
             new Dictionary<BacktestingProcess, JobContext>();
+        private static readonly Dictionary<string, string> ParameterAliases =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["rulesprofile"] = "SelectedRiskTemplate",
+                ["mdayloss"] = "MaxDailyLossPreset",
+                ["mdaywin"] = "MaxDailyWinPreset",
+                ["mdd"] = "MaxEquityDrawdownPreset",
+                ["mriskcbottrade"] = "MaxRiskPreset",
+                ["symbols"] = "StrategySymbols",
+                ["timeframes"] = "StrategyTimeframes",
+                ["newsblock"] = "SelectedNewsBlockPreset",
+                ["1sttrade"] = "FirstTradeMode",
+                ["2ndtrade"] = "SecondTradeMode",
+                ["3rdtrade"] = "ThirdTradeMode",
+                ["ntrades"] = "StrategyOrderCount",
+                ["entry"] = "SelectedStrategyEntryType",
+                ["sl"] = "SelectedStrategyStopLossMode",
+                ["tp"] = "SelectedStrategyTakeProfitMode",
+                ["exitmode"] = "SelectedStrategyExitMode",
+                ["enabletrade"] = "EnableLiveStrategyTrading",
+                ["enabledebug"] = "EnableStrategyDebug",
+                ["strategy"] = "SelectedBacktestStrategy",
+                ["strategy2"] = "SelectedBacktestStrategy2",
+                ["strategy3"] = "SelectedBacktestStrategy3",
+                ["strategy4"] = "SelectedBacktestStrategy4",
+                ["strategy5"] = "SelectedBacktestStrategy5"
+            };
+        private static readonly Dictionary<string, string[]> KnownEnumValues =
+            new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["SelectedRiskTemplate"] = new[]
+                {
+                    "Custom", "FTMO_1Step", "FTMO_2Step", "The5ers_HighStakes",
+                    "FundedNext_Stellar_2Step", "FundedNext_Stellar_1Step",
+                    "FundedNext_Stellar_Lite", "FTPlus_1Step_Express"
+                },
+                ["MaxDailyLossPreset"] = RiskLimitPresetNames(),
+                ["MaxDailyWinPreset"] = RiskLimitPresetNames(),
+                ["MaxEquityDrawdownPreset"] = RiskLimitPresetNames(),
+                ["MaxRiskPreset"] = RiskLimitPresetNames(),
+                ["StrategyOrderCount"] = new[] { "Auto", "_1", "_2", "_3", "_4", "_5" },
+                ["SelectedStrategyEntryType"] = new[]
+                {
+                    "market", "L0", "L01", "L02", "L03", "L04", "L05", "L06", "L07", "L08",
+                    "L00_025R", "L00_05R", "L00_075R", "candle_mid", "candle_retest",
+                    "ltf_Key_levels", "HTF_Key_levels", "fvg_mid", "ob_mid", "breakout_close",
+                    "reclaim_retest", "L00_01", "L00_03", "L00_05", "L00_07", "S01", "S03", "S05", "S07"
+                },
+                ["SelectedStrategyStopLossMode"] = new[]
+                {
+                    "No", "Auto", "ATR5", "ATR12", "ATR24", "ATR48", "Body", "candle_body",
+                    "candle_extreme_5", "candle_extreme_10", "candle_range", "candle_wick", "candle_wick_07",
+                    "candle_wick_1_5", "candle_wick_2", "candle_wick_13", "event", "event_invalidation",
+                    "furthest_invalidation", "fvg_edge", "HTF_Key_levels", "ltf_Key_levels", "ob_edge", "pattern",
+                    "protective_swing", "Range24", "session_high_low", "structure", "swing", "Swing1H", "Swing4H",
+                    "Swing15m", "SwingHTF", "SwingLTF", "wick", "Wick05", "Wick07", "Wick11", "Wick13", "Wick15", "Wick2"
+                },
+                ["SelectedStrategyTakeProfitMode"] = new[]
+                {
+                    "No", "Auto", "candle", "RR_0_3", "RR_0_5", "RR_0_7", "RR_1", "RR_1_3", "RR_1_5",
+                    "RR_1_7", "RR_2", "RR_2_5", "RR_3", "ltf_Key_levels", "HTF_Key_levels", "next_liquidity",
+                    "session_high_low", "ob_edge", "fvg_edge", "vwap", "ema_mid", "atr_1", "atr_2", "atr_3",
+                    "trail_only", "event", "structure"
+                },
+                ["SelectedStrategyExitMode"] = new[]
+                {
+                    "Off", "Trailing_Stop", "Break_Even", "Reversed_when_SL",
+                    "Trailing_Stop_Reversed_when_SL", "Break_Even_Reversed_when_SL"
+                },
+                ["EnableLiveStrategyTrading"] = new[] { "No", "Yes", "Buy", "Sell" },
+                ["EnableStrategyDebug"] = new[] { "Yes", "No" },
+                ["SelectedBacktestStrategy"] = BacktestStrategyNames(),
+                ["SelectedBacktestStrategy2"] = BacktestStrategyNames(),
+                ["SelectedBacktestStrategy3"] = BacktestStrategyNames(),
+                ["SelectedBacktestStrategy4"] = BacktestStrategyNames(),
+                ["SelectedBacktestStrategy5"] = BacktestStrategyNames()
+            };
         private bool _polling;
         private bool _stopping;
 
@@ -87,7 +164,8 @@ namespace cAlgo.Plugins
                 var response = Post("/api/backtests/ctrader/worker/claim", new
                 {
                     worker_id = WorkerId,
-                    limit = freeSlots
+                    limit = freeSlots,
+                    execution_mode = "plugin"
                 });
                 if (!response.IsSuccessful)
                 {
@@ -123,12 +201,10 @@ namespace cAlgo.Plugins
                     EndTimeUtc = ParseUtc(launch.EndTimeUtc),
                     Balance = launch.Balance,
                     DataMode = ParseDataMode(launch.DataMode),
-                    Commission = launch.CommissionUsdPerMillion,
-                    CommissionType = SymbolCommissionType.UsdPerMillionUsdVolume,
-                    ApplyCommissionAutomatically = launch.ApplyCommissionAutomatically,
-                    SpreadPips = launch.SpreadPips,
-                    PreciseConversion = true
+                    SpreadPips = launch.SpreadPips
                 };
+                ConfigureCommission(settings, launch);
+                ConfigurePreciseConversion(settings);
                 var parameterSet = BuildParameterValues(robotType, launch.Parameters);
                 var process = Backtesting.Start(
                     robotType,
@@ -216,7 +292,9 @@ namespace cAlgo.Plugins
                 if (string.IsNullOrWhiteSpace(jsonReport))
                 {
                     var backtestingError = process.BacktestingError.ToString();
-                    throw new InvalidOperationException(string.IsNullOrWhiteSpace(backtestingError)
+                    throw new InvalidOperationException(
+                        string.IsNullOrWhiteSpace(backtestingError) ||
+                        string.Equals(backtestingError, "None", StringComparison.OrdinalIgnoreCase)
                         ? "cTrader returned no JSON report"
                         : backtestingError);
                 }
@@ -261,6 +339,40 @@ namespace cAlgo.Plugins
             }
         }
 
+        private void ConfigureCommission(BacktestingSettings settings, LaunchConfig launch)
+        {
+            // cTrader 5.9 currently hosts the legacy BacktestingSettings API even
+            // though newer Automate NuGet packages expose Commission and
+            // ApplyCommissionAutomatically. Reflection keeps one plugin binary
+            // compatible with both API generations and avoids MissingMethodException.
+            var settingsType = settings.GetType();
+            var autoProperty = settingsType.GetProperty("ApplyCommissionAutomatically");
+            var commissionProperty = settingsType.GetProperty("Commission");
+            var commissionTypeProperty = settingsType.GetProperty("CommissionType");
+            if (autoProperty != null && commissionProperty != null && commissionTypeProperty != null)
+            {
+                autoProperty.SetValue(settings, launch.ApplyCommissionAutomatically);
+                commissionProperty.SetValue(settings, launch.CommissionUsdPerMillion);
+                commissionTypeProperty.SetValue(settings, SymbolCommissionType.UsdPerMillionUsdVolume);
+                return;
+            }
+
+            var legacyCommissionProperty = settingsType.GetProperty("CommissionUsdPerMillionUsd");
+            if (legacyCommissionProperty == null)
+                throw new NotSupportedException("This cTrader version exposes no supported backtesting commission setting.");
+
+            legacyCommissionProperty.SetValue(settings, launch.CommissionUsdPerMillion);
+            if (launch.ApplyCommissionAutomatically)
+                Print("This cTrader runtime cannot apply broker commission automatically; using the queued USD-per-million value.");
+        }
+
+        private static void ConfigurePreciseConversion(BacktestingSettings settings)
+        {
+            var property = settings.GetType().GetProperty("PreciseConversion");
+            if (property != null)
+                property.SetValue(settings, true);
+        }
+
         private HttpResponse Post(string path, object payload, TimeSpan? timeout = null)
         {
             var request = new HttpRequest(new Uri($"{ApiBase.TrimEnd('/')}{path}"))
@@ -274,7 +386,7 @@ namespace cAlgo.Plugins
             return Http.Send(request);
         }
 
-        private static ResolvedParameterSet BuildParameterValues(
+        private ResolvedParameterSet BuildParameterValues(
             RobotType robotType,
             Dictionary<string, JsonElement> overrides)
         {
@@ -284,16 +396,32 @@ namespace cAlgo.Plugins
             foreach (var parameter in robotType.Parameters)
             {
                 var hasOverride = TryGetOverride(named, parameter.Name, out var element);
-                var resolved = hasOverride
-                    ? ConvertParameter(element, parameter.DefaultValue)
-                    : parameter.DefaultValue;
+                object resolved;
+                var source = hasOverride ? "override" : "default";
+                if (IsSensitiveParameterName(parameter.Name))
+                {
+                    resolved = "";
+                    source = "redacted";
+                }
+                else if (hasOverride)
+                {
+                    resolved = ConvertParameter(parameter.Name, element, parameter.DefaultValue, parameter.Type);
+                }
+                else if (parameter.Type == AlgoParameterType.Color)
+                {
+                    resolved = parameter.DefaultValue?.ToString() ?? "";
+                }
+                else
+                {
+                    resolved = parameter.DefaultValue;
+                }
                 values.Add(resolved);
                 snapshot.Add(new ParameterSnapshot
                 {
                     Name = parameter.Name,
                     Type = parameter.Type.ToString(),
                     Value = ToJsonSafeValue(parameter.Name, resolved),
-                    Source = hasOverride ? "override" : "default"
+                    Source = source
                 });
             }
             return new ResolvedParameterSet
@@ -331,7 +459,8 @@ namespace cAlgo.Plugins
             var compactName = CompactKey(name);
             foreach (var pair in values)
             {
-                if (CompactKey(pair.Key) == compactName)
+                var requestedName = ResolveParameterName(pair.Key);
+                if (CompactKey(requestedName) == compactName)
                 {
                     element = pair.Value;
                     return true;
@@ -341,20 +470,42 @@ namespace cAlgo.Plugins
             return false;
         }
 
+        private static string ResolveParameterName(string value)
+        {
+            var compact = CompactKey(value);
+            return ParameterAliases.TryGetValue(compact, out var internalName)
+                ? internalName
+                : value;
+        }
+
         private static string CompactKey(string value)
         {
             return new string((value ?? "").Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
         }
 
-        private static object ConvertParameter(JsonElement element, object defaultValue)
+        private static object ConvertParameter(
+            string parameterName,
+            JsonElement element,
+            object defaultValue,
+            AlgoParameterType parameterType)
         {
             if (element.ValueKind == JsonValueKind.Null)
                 return defaultValue;
+            var text = element.ValueKind == JsonValueKind.String ? element.GetString() : element.ToString();
+            if (TryResolveKnownEnum(parameterName, text, out var enumOrdinal))
+                return defaultValue == null
+                    ? (long)enumOrdinal
+                    : Convert.ChangeType(enumOrdinal, defaultValue.GetType(), CultureInfo.InvariantCulture);
+            if (parameterType == AlgoParameterType.Enum || parameterType == AlgoParameterType.MultiEnum ||
+                parameterType == AlgoParameterType.Color || parameterType == AlgoParameterType.Symbol ||
+                parameterType == AlgoParameterType.MultiSymbol)
+                return text;
+            if (parameterType == AlgoParameterType.TimeFrame)
+                return ParseTimeFrame(text);
             if (defaultValue == null)
-                return element.ValueKind == JsonValueKind.String ? element.GetString() : element.ToString();
+                return text;
 
             var type = defaultValue.GetType();
-            var text = element.ValueKind == JsonValueKind.String ? element.GetString() : element.ToString();
             if (type == typeof(string)) return text;
             if (type == typeof(bool)) return element.ValueKind == JsonValueKind.True ||
                 (element.ValueKind != JsonValueKind.False && bool.Parse(text));
@@ -365,6 +516,42 @@ namespace cAlgo.Plugins
             if (type == typeof(TimeFrame)) return ParseTimeFrame(text);
             if (type.IsEnum) return Enum.Parse(type, text, true);
             return JsonSerializer.Deserialize(element.GetRawText(), type, JsonOptions());
+        }
+
+        private static bool TryResolveKnownEnum(string parameterName, string value, out int ordinal)
+        {
+            ordinal = -1;
+            if (!KnownEnumValues.TryGetValue(parameterName ?? "", out var names))
+                return false;
+            ordinal = Array.FindIndex(names, name => string.Equals(name, value, StringComparison.OrdinalIgnoreCase));
+            if (ordinal < 0)
+                throw new ArgumentException($"Unknown value '{value}' for cBot parameter '{parameterName}'.");
+            return true;
+        }
+
+        private static string[] RiskLimitPresetNames()
+        {
+            return new[]
+            {
+                "None", "_0_05pct", "_0_1pct", "_0_2pct", "_0_5pct", "_1pct", "_2pct", "_3pct",
+                "_4pct", "_5pct", "_10pct", "_15pct", "_20pct", "_25usd", "_50usd", "_100usd",
+                "_200usd", "_500usd", "_1000usd", "_2000usd"
+            };
+        }
+
+        private static string[] BacktestStrategyNames()
+        {
+            return new[]
+            {
+                "Off", "CustomTrade", "HtfEventMarket", "LtfEventMarket", "EmaCrossV1", "SmaCrossV1",
+                "GoldenCrossV1", "TripleEmaTrendV1", "RsiReversionV1", "BollingerReversionV1", "StochReversalV1",
+                "MacdSignalV1", "RocMomentumV1", "DonchianBreakoutV1", "ichimoku_full_confirmation", "Trend",
+                "Impulse", "PriceActionV1", "PriceActionEventDetectorV1", "PriceActionFvgContextV1",
+                "ArtifactSuggestedLevelsV1", "ArtifactSuggestedLevelsV2", "ArtifactSuggestedLevelsV2LimitBodyMid",
+                "AiSnapshotContextV1", "WickFlipContinuation", "candle_pattern_trend", "pinbar_structure_event",
+                "engulfing_structure_event", "wick_flip", "reject_trendline", "sweep_reclaim", "london_trend_sweep",
+                "ichimoku", "ichimoku_strict"
+            };
         }
 
         private static DateTime ParseUtc(string value)

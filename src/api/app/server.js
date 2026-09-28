@@ -39873,6 +39873,7 @@ const appHandler = async (req, res) => {
       const result = await ctraderBacktestQueueService.claimJobs(userId, {
         workerId: body?.worker_id,
         limit: body?.limit,
+        executionMode: body?.execution_mode,
       });
       return json(res, 200, result);
     } catch (error) {

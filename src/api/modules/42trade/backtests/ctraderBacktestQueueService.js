@@ -9,6 +9,7 @@ const OBJECT_TYPE = "ctrader_backtest_jobs";
 const ACTIVE_STATUSES = new Set(["claimed", "running"]);
 const FINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
 const DATA_MODES = new Set(["ticks", "m1", "open"]);
+const EXECUTION_MODES = new Set(["plugin", "cli"]);
 const MAX_BATCH_JOBS = 500;
 const DEFAULT_LEASE_MS = 2 * 60 * 1000;
 let claimLock = Promise.resolve();
@@ -150,6 +151,10 @@ function normalizeBatchRequest(payload = {}) {
   if (!DATA_MODES.has(dataMode)) {
     throw new Error(`data_mode must be one of: ${Array.from(DATA_MODES).join(", ")}`);
   }
+  const executionMode = safeText(payload.execution_mode || "plugin").toLowerCase();
+  if (!EXECUTION_MODES.has(executionMode)) {
+    throw new Error(`execution_mode must be one of: ${Array.from(EXECUTION_MODES).join(", ")}`);
+  }
   const parameters =
     payload.parameters && typeof payload.parameters === "object" && !Array.isArray(payload.parameters)
       ? payload.parameters
@@ -163,6 +168,7 @@ function normalizeBatchRequest(payload = {}) {
     end_time_utc: endTimeUtc,
     balance: Number.isFinite(balance) ? Math.max(1, balance) : 10000,
     data_mode: dataMode,
+    execution_mode: executionMode,
     spread_pips: Number.isFinite(Number(payload.spread_pips))
       ? Number(payload.spread_pips)
       : 0,
@@ -240,6 +246,7 @@ async function createBatch(userId, payload = {}) {
         end_time_utc: normalized.end_time_utc,
         balance: normalized.balance,
         data_mode: normalized.data_mode,
+        execution_mode: normalized.execution_mode,
         spread_pips: normalized.spread_pips,
         commission_usd_per_million: normalized.commission_usd_per_million,
         apply_commission_automatically: normalized.apply_commission_automatically,
@@ -256,6 +263,7 @@ async function createBatch(userId, payload = {}) {
         strategy_name: normalized.strategy_name,
         symbol,
         timeframe,
+        execution_mode: normalized.execution_mode,
         launch_config: launchConfig,
         config: normalized.config,
         created_at: createdAt,
@@ -283,15 +291,26 @@ function withClaimLock(operation) {
   return next;
 }
 
-async function claimJobs(userId, { workerId, limit = 1, leaseMs = DEFAULT_LEASE_MS } = {}) {
+async function claimJobs(
+  userId,
+  { workerId, limit = 1, leaseMs = DEFAULT_LEASE_MS, executionMode = "plugin" } = {},
+) {
   const normalizedWorkerId = safeText(workerId);
   if (!normalizedWorkerId) throw new Error("worker_id is required");
   const claimLimit = Math.max(1, Math.min(20, Number(limit) || 1));
+  const normalizedExecutionMode = safeText(executionMode || "plugin").toLowerCase();
+  if (!EXECUTION_MODES.has(normalizedExecutionMode)) {
+    throw new Error(`execution_mode must be one of: ${Array.from(EXECUTION_MODES).join(", ")}`);
+  }
   return withClaimLock(async () => {
     const jobs = await listJobs(userId, { limit: 2000 });
     const now = Date.now();
     const selected = jobs
       .filter((job) => {
+        const jobExecutionMode = safeText(
+          job.execution_mode || job.launch_config?.execution_mode || "plugin",
+        ).toLowerCase();
+        if (jobExecutionMode !== normalizedExecutionMode) return false;
         if (job.status === "queued") return true;
         if (!ACTIVE_STATUSES.has(job.status)) return false;
         const leaseTime = new Date(job.heartbeat_at || job.claimed_at || 0).getTime();

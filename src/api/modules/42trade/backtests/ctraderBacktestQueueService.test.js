@@ -15,12 +15,14 @@ test("normalizes a native cTrader batch and preserves report dimensions", () => 
     start_time_utc: "2025-09-01",
     end_time_utc: "2026-09-01",
     balance: "10000",
+    execution_mode: "cli",
     parameters: { "1st Trade": "Now_Wick_L0_R15" },
   });
 
   assert.deepEqual(normalized.symbols, ["BTCUSD", "XAUUSD"]);
   assert.deepEqual(normalized.timeframes, ["m5", "h1", "d1"]);
   assert.equal(normalized.balance, 10000);
+  assert.equal(normalized.execution_mode, "cli");
   assert.equal(normalized.apply_commission_automatically, true);
   assert.equal(normalized.parameters["1st Trade"], "Now_Wick_L0_R15");
 });
@@ -73,6 +75,39 @@ test("creates, claims, progresses, and cancels cTrader jobs", async () => {
 
     const cancelled = await queue.cancelJob(userId, jobs[1].job_id);
     assert.equal(cancelled.status, "cancelled");
+  } finally {
+    for (const job of jobs) {
+      await objectStore.deleteObject(userId, queue.OBJECT_TYPE, job.job_id).catch(() => {});
+    }
+  }
+});
+
+test("isolates CLI jobs from desktop plugin workers", async () => {
+  const userId = `test-ctrader-execution-${crypto.randomBytes(6).toString("hex")}`;
+  let jobs = [];
+  try {
+    const batch = await queue.createBatch(userId, {
+      execution_mode: "cli",
+      symbols: ["BTCUSD"],
+      timeframes: ["m5"],
+      start_time_utc: "2025-09-01T00:00:00Z",
+      end_time_utc: "2026-09-01T00:00:00Z",
+    });
+    jobs = batch.jobs;
+    assert.equal(jobs[0].execution_mode, "cli");
+    assert.equal(jobs[0].launch_config.execution_mode, "cli");
+
+    const pluginClaim = await queue.claimJobs(userId, {
+      workerId: "plugin-worker",
+      executionMode: "plugin",
+    });
+    assert.equal(pluginClaim.jobs.length, 0);
+
+    const cliClaim = await queue.claimJobs(userId, {
+      workerId: "cli-worker",
+      executionMode: "cli",
+    });
+    assert.equal(cliClaim.jobs.length, 1);
   } finally {
     for (const job of jobs) {
       await objectStore.deleteObject(userId, queue.OBJECT_TYPE, job.job_id).catch(() => {});

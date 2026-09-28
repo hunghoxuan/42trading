@@ -2030,9 +2030,10 @@ export default function BacktestsPage() {
   const [loadingCTraderJobs, setLoadingCTraderJobs] = useState(false);
   const [queueingCTraderBatch, setQueueingCTraderBatch] = useState(false);
   const [ctraderBatchForm, setCTraderBatchForm] = useState({
-    robot_name: "TVBridge_CTrader",
+    robot_name: "tvbridge",
+    execution_mode: "cli",
     symbols: "BTCUSD",
-    timeframes: "m5,m15,h1",
+    timeframes: "m5",
     start_date: dateInputDaysAgo(365),
     end_date: dateInputDaysAgo(0),
     balance: "10000",
@@ -2170,6 +2171,7 @@ export default function BacktestsPage() {
         .filter(Boolean);
       await api.createCTraderBacktestBatch({
         robot_name: ctraderBatchForm.robot_name,
+        execution_mode: ctraderBatchForm.execution_mode,
         symbols,
         timeframes,
         start_time_utc: `${ctraderBatchForm.start_date}T00:00:00.000Z`,
@@ -5408,6 +5410,21 @@ export default function BacktestsPage() {
         />
       </label>
       <label className="stack-layout" style={{ gap: 5 }}>
+        <span className="minor-text">Execution</span>
+        <InputComboSelect
+          value={ctraderBatchForm.execution_mode}
+          onChange={(event) =>
+            setCTraderBatchForm((current) => ({
+              ...current,
+              execution_mode: event.target.value,
+            }))
+          }
+        >
+          <option value="cli">cTrader CLI (headless)</option>
+          <option value="plugin">Desktop plugin</option>
+        </InputComboSelect>
+      </label>
+      <label className="stack-layout" style={{ gap: 5 }}>
         <span className="minor-text">Symbols (comma separated)</span>
         <input
           className="text-input"
@@ -5544,11 +5561,12 @@ export default function BacktestsPage() {
         />
       </label>
       <button type="submit" className="primary-button" disabled={queueingCTraderBatch}>
-        {queueingCTraderBatch ? "Queueing..." : "Queue native batch"}
+        {queueingCTraderBatch ? "Queueing..." : "Queue cTrader batch"}
       </button>
       <div className="minor-text" style={{ fontSize: 10, lineHeight: 1.5 }}>
-        One job is created for each symbol × timeframe. The running cTrader worker claims up to its
-        configured parallel limit and saves every completed report into History.
+        One job is created for each symbol × timeframe. The selected worker claims up to its
+        configured parallel limit and saves every completed report into History. Use CLI for
+        reliable parameter overrides and unattended background runs.
       </div>
     </form>
   );
