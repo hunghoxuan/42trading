@@ -130,6 +130,7 @@ const {
   formatUnixSecForProvider,
 } = marketDataDomain;
 const backtestService = backtestsDomain.backtestService;
+const ctraderBacktestQueueService = backtestsDomain.ctraderBacktestQueueService;
 const strategyConfigService = strategiesDomain.strategyConfigService;
 const ruleConfigService = rulesDomain.ruleConfigService;
 const { createSharedCatalogService } = require("../modules/42trade/catalog/sharedCatalogService");
@@ -26929,6 +26930,16 @@ async function requireEaKey(req, res, urlObj, payload = null) {
   return false;
 }
 
+async function resolveEaUserId(req, payload = null, urlObj = null) {
+  const { key } = resolveEaApiKey(req, payload, urlObj);
+  if (key) {
+    const account = await mt5FindAccountByApiKeyHash(hashApiKey(key)).catch(() => null);
+    const accountUserId = String(account?.user_id || account?.userId || "").trim();
+    if (accountUserId) return accountUserId;
+  }
+  return CFG.mt5DefaultUserId;
+}
+
 async function requireV2BrokerAccount(req, res, urlObj, payload = null) {
   const { key } = resolveEaApiKey(req, payload, urlObj);
   if (!key) {
@@ -39782,6 +39793,208 @@ const appHandler = async (req, res) => {
     }
   }
 
+  if (
+    req.method === "GET" &&
+    (url.pathname === "/v2/backtests/ctrader/jobs" ||
+      url.pathname === "/api/backtests/ctrader/jobs")
+  ) {
+    const sess = getUiSessionFromReq(req);
+    if (!sess.ok) return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const userId = uiEffectiveUserId(req, url, null) || CFG.mt5DefaultUserId;
+      const jobs = await ctraderBacktestQueueService.listJobs(userId, {
+        limit: Number(url.searchParams.get("limit") || 500),
+        batchId: url.searchParams.get("batch_id") || "",
+      });
+      const counts = jobs.reduce((out, job) => {
+        const status = String(job?.status || "unknown").toLowerCase();
+        out[status] = Number(out[status] || 0) + 1;
+        return out;
+      }, {});
+      return json(res, 200, { ok: true, jobs, counts });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    (url.pathname === "/v2/backtests/ctrader/jobs" ||
+      url.pathname === "/api/backtests/ctrader/jobs")
+  ) {
+    const sess = getUiSessionFromReq(req);
+    if (!sess.ok) return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const body = await readJson(req);
+      const userId = uiEffectiveUserId(req, url, body) || CFG.mt5DefaultUserId;
+      const result = await ctraderBacktestQueueService.createBatch(userId, body || {});
+      return json(res, 200, result);
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  const ctraderCancelJobMatch = url.pathname.match(
+    /^\/(?:v2|api)\/backtests\/ctrader\/jobs\/([^/]+)\/cancel$/,
+  );
+  if (req.method === "POST" && ctraderCancelJobMatch) {
+    const sess = getUiSessionFromReq(req);
+    if (!sess.ok) return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const userId = uiEffectiveUserId(req, url, null) || CFG.mt5DefaultUserId;
+      const job = await ctraderBacktestQueueService.cancelJob(
+        userId,
+        decodeURIComponent(ctraderCancelJobMatch[1]),
+      );
+      return json(res, 200, { ok: true, job });
+    } catch (error) {
+      return json(res, 404, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    (url.pathname === "/v2/backtests/ctrader/worker/claim" ||
+      url.pathname === "/api/backtests/ctrader/worker/claim")
+  ) {
+    const body = await readJson(req);
+    if (!(await requireEaKey(req, res, url, body))) return;
+    try {
+      const userId = await resolveEaUserId(req, body, url);
+      const result = await ctraderBacktestQueueService.claimJobs(userId, {
+        workerId: body?.worker_id,
+        limit: body?.limit,
+      });
+      return json(res, 200, result);
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  const ctraderWorkerJobMatch = url.pathname.match(
+    /^\/(?:v2|api)\/backtests\/ctrader\/worker\/jobs\/([^/]+)\/(progress|complete|fail)$/,
+  );
+  if (req.method === "POST" && ctraderWorkerJobMatch) {
+    const body = await readJson(req);
+    if (!(await requireEaKey(req, res, url, body))) return;
+    const jobId = decodeURIComponent(ctraderWorkerJobMatch[1]);
+    const action = ctraderWorkerJobMatch[2];
+    const workerId = String(body?.worker_id || "").trim();
+    const userId = await resolveEaUserId(req, body, url);
+    try {
+      if (action === "progress") {
+        const job = await ctraderBacktestQueueService.updateJob(
+          userId,
+          jobId,
+          {
+            status: "running",
+            progress_pct: body?.progress_pct,
+          },
+          { workerId },
+        );
+        return json(res, 200, { ok: true, job });
+      }
+      if (action === "fail") {
+        const job = await ctraderBacktestQueueService.updateJob(
+          userId,
+          jobId,
+          {
+            status: "failed",
+            error: String(body?.error || "cTrader backtest failed").trim(),
+          },
+          { workerId },
+        );
+        return json(res, 200, { ok: true, job });
+      }
+
+      const job = await ctraderBacktestQueueService.getJob(userId, jobId);
+      if (!job) return json(res, 404, { ok: false, error: "cTrader backtest job not found" });
+      if (job.status === "cancelled") {
+        return json(res, 409, { ok: false, error: "cTrader backtest job was cancelled" });
+      }
+      const report = body?.ctrader_report || body?.json_report || body?.report;
+      if (!report) return json(res, 400, { ok: false, error: "ctrader_report is required" });
+      const reportPath = await ctraderBacktestQueueService.archiveHtmlReport(
+        userId,
+        job.run_id,
+        body?.html_report,
+      );
+      const persisted = await backtestService.persistBacktestResult(userId, {
+        run: {
+          run_id: job.run_id,
+          strategy_key: job.strategy_key,
+          strategy_id: job.strategy_key,
+          strategy_name: job.strategy_name,
+          symbol: job.symbol,
+          tf: job.timeframe,
+          started_at: job.started_at || job.claimed_at || job.created_at,
+          config: {
+            ...(job.config || {}),
+            ctrader_launch: job.launch_config,
+            batch_id: job.batch_id,
+            job_id: job.job_id,
+          },
+        },
+        config: {
+          ...(job.config || {}),
+          ctrader_launch: job.launch_config,
+          batch_id: job.batch_id,
+          job_id: job.job_id,
+        },
+        summary: {
+          batch_id: job.batch_id,
+          job_id: job.job_id,
+          report_path: reportPath,
+          archived_report_path: reportPath,
+        },
+        ctrader_report: report,
+      });
+      const completedJob = await ctraderBacktestQueueService.updateJob(
+        userId,
+        jobId,
+        {
+          status: "completed",
+          progress_pct: 100,
+          result_run_id: persisted?.run?.run_id || job.run_id,
+          report_path: reportPath,
+          error: null,
+        },
+        { workerId },
+      );
+      return json(res, 200, { ok: true, job: completedJob, result: persisted });
+    } catch (error) {
+      if (action === "complete") {
+        await ctraderBacktestQueueService
+          .updateJob(
+            userId,
+            jobId,
+            {
+              status: "failed",
+              error: error instanceof Error ? error.message : String(error),
+            },
+            { workerId },
+          )
+          .catch(() => {});
+      }
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   const sharedCatalogMatch = url.pathname.match(
     /^\/(?:v2|api)\/shared-catalog\/(rules?|events?|strategies?)(?:\/([a-zA-Z0-9._-]+))?$/,
   );
@@ -40260,10 +40473,23 @@ const appHandler = async (req, res) => {
       url.pathname === "/api/backtests/save")
   ) {
     const sess = getUiSessionFromReq(req);
-    if (!sess.ok) return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
     try {
       const body = await readJson(req);
-      const userId = uiEffectiveUserId(req, url, body) || CFG.mt5DefaultUserId;
+      let bridgeAccount = null;
+      if (!sess.ok) {
+        if (!(await requireEaKey(req, res, url, body))) return;
+        const { key } = resolveEaApiKey(req, body, url);
+        if (key) {
+          bridgeAccount = await mt5FindAccountByApiKeyHash(hashApiKey(key));
+        }
+      }
+      const userId = sess.ok
+        ? uiEffectiveUserId(req, url, body) || CFG.mt5DefaultUserId
+        : String(
+            bridgeAccount?.user_id ||
+              bridgeAccount?.userId ||
+              CFG.mt5DefaultUserId,
+          ).trim() || CFG.mt5DefaultUserId;
       const result = await backtestService.persistBacktestResult(userId, body || {});
       notifyMutationResult({
         eventType: "BACKTEST_RUN",

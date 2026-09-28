@@ -1272,6 +1272,17 @@ export const api = {
   runBacktest: (payload = {}) => post("/api/backtests/run", payload),
   runBacktestBatch: (payload = {}) => post("/api/backtests/run-batch", payload),
   saveBacktest: (payload = {}) => post("/api/backtests/save", payload),
+  listCTraderBacktestJobs: (params = {}) => {
+    const query = new URLSearchParams();
+    if (params.limit) query.set("limit", String(params.limit));
+    if (params.batch_id) query.set("batch_id", String(params.batch_id));
+    const suffix = query.toString();
+    return get(`/api/backtests/ctrader/jobs${suffix ? `?${suffix}` : ""}`);
+  },
+  createCTraderBacktestBatch: (payload = {}) =>
+    post("/api/backtests/ctrader/jobs", payload),
+  cancelCTraderBacktestJob: (jobId) =>
+    post(`/api/backtests/ctrader/jobs/${encodeURIComponent(jobId)}/cancel`, {}),
   getBacktest: (runId) => get(`/api/backtests/${encodeURIComponent(runId)}`),
   deleteBacktest: (runId) => del(`/api/backtests/${encodeURIComponent(runId)}`),
   listRules: () => get("/api/rules"),

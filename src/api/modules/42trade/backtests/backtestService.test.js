@@ -33,6 +33,116 @@ function makeBaseBars() {
   ];
 }
 
+test("normalizes cTrader JsonReport fields for the 42trade dashboard", () => {
+  const report = {
+    main: {
+      period: "m5",
+      symbol: "BTCUSD",
+      cBotName: "tvbridge",
+      netProfit: 14.55,
+      roi: 0.15,
+      startingCapital: 10000,
+      endingBalance: 10014.55,
+      endingEquity: 10014.55,
+      utcOffset: 120,
+      testingPeriod: {
+        startDate: 1756684800000,
+        endDate: 1756771200000,
+      },
+      spread: { type: "fixed", value: 1 },
+      commissions: { type: "usdPerMillionUsdVolume", value: 30 },
+    },
+    equity: {
+      maxBalanceDrawdownPercent: 1.25,
+      maxEquityDrawdownPercent: 1.5,
+    },
+    tradeStatistics: {
+      totalTrades: { all: 1 },
+      winningTrades: { all: 1 },
+      losingTrades: { all: 0 },
+      profitFactor: { all: 2.5 },
+      commissions: { all: -0.52 },
+      swaps: { all: 0 },
+    },
+    history: {
+      items: [
+        {
+          id: 3,
+          symbol: "BTCUSD",
+          direction: "sell",
+          net: 14.55,
+          gross: 15.07,
+          entryTime: 1756685520000,
+          closeTime: 1756685760000,
+          entryPrice: 108086.88,
+          closePrice: 107949.89,
+          commissions: -0.52,
+          swaps: 0,
+          volume: 0.11,
+          quantity: 0.11,
+          pips: 13699,
+          label: "donchian_breakout_v1.xJAp",
+          comment:
+            "m5.x<don20|Now_Event_L03_R1.1-1|TP:rr1 107938.15/SL:even 108174.75 1r 13.01$|c:0",
+        },
+      ],
+    },
+  };
+
+  const result = backtestService.__test.normalizeCTraderBacktestPayload({
+    run: {
+      run_id: "ctrader-test-run",
+      strategy_key: "DonchianBreakoutV1",
+      strategy_name: "Donchian Breakout V1",
+      config: { trade_config: { take_profit: "RR_2" } },
+    },
+    ctrader_report: JSON.stringify(report),
+  });
+
+  assert.equal(result.run.run_id, "ctrader-test-run");
+  assert.equal(result.run.tf, "5");
+  assert.equal(result.run.config.executor, "cTrader");
+  assert.equal(result.run.config.trade_config.take_profit, "RR_2");
+  assert.deepEqual(result.run.selection.timeframes, ["5"]);
+  assert.equal(result.summary.total_pnl, 14.55);
+  assert.equal(result.summary.total_trades, 1);
+  assert.equal(result.summary.win_rate_pct, 100);
+  assert.equal(result.summary.profit_factor, 2.5);
+  assert.equal(result.summary.monthly[0].month, "2025-09");
+  assert.equal(result.summary.monthly[0].net, 14.55);
+  assert.equal(result.summary.by_direction[0].direction, "SELL");
+
+  const trade = result.trades[0];
+  assert.equal(trade.sid, "ctrader-test-run:3");
+  assert.equal(trade.action, "SELL");
+  assert.equal(trade.side, "sell");
+  assert.equal(trade.tf, "5");
+  assert.equal(trade.entry, 108086.88);
+  assert.equal(trade.exit_price, 107949.89);
+  assert.equal(trade.pnl_realized, 14.55);
+  assert.equal(trade.commission, -0.52);
+  assert.equal(trade.opened_at, "2025-09-01T00:12:00.000Z");
+  assert.equal(trade.closed_at, "2025-09-01T00:16:00.000Z");
+  assert.equal(trade.tp, 107938.15);
+  assert.equal(trade.sl, 108174.75);
+  assert.equal(trade.rr_planned, 1);
+  assert.equal(trade.risk_money_planned, 13.01);
+  assert.equal(trade.result, "win");
+  assert.equal(trade.strategy_key, "DonchianBreakoutV1");
+});
+
+test("leaves native 42trade backtest payloads unchanged", () => {
+  const payload = {
+    run: { run_id: "native-run" },
+    summary: { total_pnl: 10 },
+    trades: [{ sid: "native-trade" }],
+  };
+  assert.equal(
+    backtestService.__test.normalizeCTraderBacktestPayload(payload),
+    payload,
+  );
+});
+
 test("evaluateRule supports multi-timeframe BOS lookups", () => {
   const h1Bars = makeStructureBars();
   const baseBars = makeBaseBars();

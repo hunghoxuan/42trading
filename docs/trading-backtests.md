@@ -60,6 +60,33 @@
 | Object-store records | object store type `backtests` | Repo-backed persisted records |
 | Run artifacts | `manifest.json`, `summary.json`, `trades.json`, `events.json` | Inputs and outputs for each simulation |
 
+## cTrader Result Import
+
+`POST /api/backtests/save` (and its `/v2` alias) accepts either the native
+42trade result contract or a cTrader `JsonReport`. Supply the cTrader report in
+`ctrader_report`, `cTraderReport`, `json_report`, `jsonReport`, or `report`; the
+value may be an object or a JSON string. Include a `run` object when the caller
+has authoritative strategy/configuration metadata.
+
+The cTrader adapter normalizes the report before object-store persistence:
+
+| cTrader field | Dashboard field |
+|---|---|
+| `history.items[].id` | `sid`, `trade_id`, `broker_trade_id` |
+| `direction` | `action`, `side` |
+| `entryTime`, `closeTime` | ISO and Unix entry/exit timestamps |
+| `entryPrice`, `closePrice` | `entry`, `exit_price` |
+| `net`, `gross` | `pnl_realized`, `pnl_gross` |
+| `commissions`, `swaps` | `commission`, `swap` |
+| report period/symbol plus supplied run metadata | canonical TF, symbol, strategy, and selection fields |
+
+The saved summary includes PnL, win rate, profit factor, drawdown, costs, data
+range, and breakdowns by month, UTC entry hour, UTC weekday, trading session,
+direction, symbol, timeframe, and strategy. The complete launch configuration
+remains under `run.config`. Planned SL/TP/R values are recovered from the bridge
+trade comment when present; a structured bridge trade snapshot remains the
+preferred source for these fields.
+
 ## Why Backtests Live Beside Trading
 
 | Reason | Explanation |
@@ -85,4 +112,3 @@
 | Schema details | [schema-reference.md](./schema-reference.md) |
 | Realtime bars and chart transport | [runtime-realtime.md](./runtime-realtime.md) |
 | MT5 bridge, object store, and connectors | [integrations-storage.md](./integrations-storage.md) |
-

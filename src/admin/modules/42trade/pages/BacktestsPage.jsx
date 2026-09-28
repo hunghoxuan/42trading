@@ -45,6 +45,11 @@ function formatNumber(value, digits = 2) {
   return num.toFixed(digits);
 }
 
+function dateInputDaysAgo(days = 0) {
+  const value = new Date(Date.now() - Number(days || 0) * 24 * 60 * 60 * 1000);
+  return value.toISOString().slice(0, 10);
+}
+
 function timeframeLabel(tfRaw) {
   const tf = String(tfRaw || "").trim().toLowerCase();
   if (!tf) return "-";
@@ -168,6 +173,7 @@ function tradeStrategyKey(trade = {}) {
 
 const LEFT_TABS = [
   { value: "backtest", label: "Backtest" },
+  { value: "ctrader", label: "cTrader Queue" },
   { value: "history", label: "History" },
   { value: "rules", label: "Rules" },
   { value: "strategies", label: "Strategies" },
@@ -1901,6 +1907,7 @@ export default function BacktestsPage() {
     if (locationHash === "#rules") return "rules";
     if (editorHashActive({ hash: locationHash })) return "strategies";
     if (locationHash === "#history") return "history";
+    if (locationHash === "#ctrader") return "ctrader";
     return "backtest";
   });
   const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(true);
@@ -1922,6 +1929,23 @@ export default function BacktestsPage() {
   const [savingRun, setSavingRun] = useState(false);
   const [error, setError] = useState("");
   const [batchReport, setBatchReport] = useState(null);
+  const [ctraderJobs, setCTraderJobs] = useState([]);
+  const [loadingCTraderJobs, setLoadingCTraderJobs] = useState(false);
+  const [queueingCTraderBatch, setQueueingCTraderBatch] = useState(false);
+  const [ctraderBatchForm, setCTraderBatchForm] = useState({
+    robot_name: "TVBridge_CTrader",
+    symbols: "BTCUSD",
+    timeframes: "m5,m15,h1",
+    start_date: dateInputDaysAgo(365),
+    end_date: dateInputDaysAgo(0),
+    balance: "10000",
+    data_mode: "m1",
+    spread_pips: "0",
+    commission_usd_per_million: "0",
+    apply_commission_automatically: true,
+    strategy_key: "DonchianBreakoutV1",
+    parameter_json: "{}",
+  });
   const [resultFilterTf, setResultFilterTf] = useState("all");
   const [resultFilterStrategy, setResultFilterStrategy] = useState("all");
   const [historyStrategyFilter, setHistoryStrategyFilter] = useState(
@@ -2010,6 +2034,83 @@ export default function BacktestsPage() {
     }
   }
 
+  const loadCTraderJobs = useCallback(async ({ quiet = false } = {}) => {
+    if (!quiet) setLoadingCTraderJobs(true);
+    try {
+      const response = await api.listCTraderBacktestJobs({ limit: 500 });
+      setCTraderJobs(Array.isArray(response?.jobs) ? response.jobs : []);
+    } catch (loadError) {
+      if (!quiet) {
+        setError(String(loadError?.message || loadError || "Failed to load cTrader jobs"));
+      }
+    } finally {
+      if (!quiet) setLoadingCTraderJobs(false);
+    }
+  }, []);
+
+  async function handleQueueCTraderBatch(event) {
+    event?.preventDefault?.();
+    setQueueingCTraderBatch(true);
+    setError("");
+    try {
+      let parameters = {};
+      try {
+        parameters = JSON.parse(ctraderBatchForm.parameter_json || "{}");
+      } catch {
+        throw new Error("Parameter overrides must be valid JSON");
+      }
+      if (!parameters || Array.isArray(parameters) || typeof parameters !== "object") {
+        throw new Error("Parameter overrides must be a JSON object");
+      }
+      const symbols = ctraderBatchForm.symbols
+        .split(",")
+        .map((value) => value.trim().toUpperCase())
+        .filter(Boolean);
+      const timeframes = ctraderBatchForm.timeframes
+        .split(",")
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean);
+      await api.createCTraderBacktestBatch({
+        robot_name: ctraderBatchForm.robot_name,
+        symbols,
+        timeframes,
+        start_time_utc: `${ctraderBatchForm.start_date}T00:00:00.000Z`,
+        end_time_utc: `${ctraderBatchForm.end_date}T23:59:59.999Z`,
+        balance: Number(ctraderBatchForm.balance),
+        data_mode: ctraderBatchForm.data_mode,
+        spread_pips: Number(ctraderBatchForm.spread_pips),
+        commission_usd_per_million: Number(
+          ctraderBatchForm.commission_usd_per_million,
+        ),
+        apply_commission_automatically:
+          ctraderBatchForm.apply_commission_automatically,
+        strategy_key: ctraderBatchForm.strategy_key,
+        strategy_name: ctraderBatchForm.strategy_key,
+        parameters,
+        config: {
+          source: "42trade-ctrader-queue",
+          requested_symbols: symbols,
+          requested_timeframes: timeframes,
+        },
+      });
+      await loadCTraderJobs();
+    } catch (queueError) {
+      setError(String(queueError?.message || queueError || "Failed to queue cTrader batch"));
+    } finally {
+      setQueueingCTraderBatch(false);
+    }
+  }
+
+  async function handleCancelCTraderJob(jobId) {
+    setError("");
+    try {
+      await api.cancelCTraderBacktestJob(jobId);
+      await loadCTraderJobs({ quiet: true });
+    } catch (cancelError) {
+      setError(String(cancelError?.message || cancelError || "Failed to cancel cTrader job"));
+    }
+  }
+
   async function loadRulesCatalog() {
     setLoadingRules(true);
     try {
@@ -2078,6 +2179,15 @@ export default function BacktestsPage() {
   }, []);
 
   useEffect(() => {
+    if (activeTab !== "ctrader") return undefined;
+    void loadCTraderJobs();
+    const timer = window.setInterval(() => {
+      void loadCTraderJobs({ quiet: true });
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [activeTab, loadCTraderJobs]);
+
+  useEffect(() => {
     if (!routeStrategyId) return;
     const routeStrategyBaseId = resolveCustomStrategyBaseId(routeStrategyId);
     const existsInCatalog =
@@ -2119,6 +2229,10 @@ export default function BacktestsPage() {
     }
     if (locationHash === "#history") {
       setActiveTab((current) => (current === "history" ? current : "history"));
+      return;
+    }
+    if (locationHash === "#ctrader") {
+      setActiveTab((current) => (current === "ctrader" ? current : "ctrader"));
       return;
     }
   }, [locationHash]);
@@ -4208,6 +4322,10 @@ export default function BacktestsPage() {
       );
       return;
     }
+    if (nextTab === "ctrader") {
+      navigate(`${backtestsBasePath}#ctrader`, { replace: false });
+      return;
+    }
     if (nextTab === "strategies") {
       navigate(`${backtestsBasePath}#edit`, { replace: false });
       return;
@@ -5102,6 +5220,281 @@ export default function BacktestsPage() {
     </div>
   );
 
+  const ctraderQueueCounts = ctraderJobs.reduce((counts, job) => {
+    const status = String(job?.status || "unknown").toLowerCase();
+    counts[status] = Number(counts[status] || 0) + 1;
+    return counts;
+  }, {});
+  const ctraderQueueForm = (
+    <form onSubmit={handleQueueCTraderBatch} className="stack-layout" style={{ gap: 12 }}>
+      <div className="panel-label">NATIVE CTRADER BATCH</div>
+      <label className="stack-layout" style={{ gap: 5 }}>
+        <span className="minor-text">cBot name</span>
+        <input
+          className="text-input"
+          value={ctraderBatchForm.robot_name}
+          onChange={(event) =>
+            setCTraderBatchForm((current) => ({ ...current, robot_name: event.target.value }))
+          }
+          required
+        />
+      </label>
+      <label className="stack-layout" style={{ gap: 5 }}>
+        <span className="minor-text">Strategy/report label</span>
+        <input
+          className="text-input"
+          value={ctraderBatchForm.strategy_key}
+          onChange={(event) =>
+            setCTraderBatchForm((current) => ({ ...current, strategy_key: event.target.value }))
+          }
+          required
+        />
+      </label>
+      <label className="stack-layout" style={{ gap: 5 }}>
+        <span className="minor-text">Symbols (comma separated)</span>
+        <input
+          className="text-input"
+          value={ctraderBatchForm.symbols}
+          onChange={(event) =>
+            setCTraderBatchForm((current) => ({ ...current, symbols: event.target.value }))
+          }
+          placeholder="BTCUSD,XAUUSD"
+          required
+        />
+      </label>
+      <label className="stack-layout" style={{ gap: 5 }}>
+        <span className="minor-text">Timeframes (comma separated)</span>
+        <input
+          className="text-input"
+          value={ctraderBatchForm.timeframes}
+          onChange={(event) =>
+            setCTraderBatchForm((current) => ({ ...current, timeframes: event.target.value }))
+          }
+          placeholder="m5,m15,h1,h4,d1"
+          required
+        />
+      </label>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <label className="stack-layout" style={{ gap: 5 }}>
+          <span className="minor-text">Start</span>
+          <input
+            type="date"
+            className="text-input"
+            value={ctraderBatchForm.start_date}
+            onChange={(event) =>
+              setCTraderBatchForm((current) => ({ ...current, start_date: event.target.value }))
+            }
+            required
+          />
+        </label>
+        <label className="stack-layout" style={{ gap: 5 }}>
+          <span className="minor-text">End</span>
+          <input
+            type="date"
+            className="text-input"
+            value={ctraderBatchForm.end_date}
+            onChange={(event) =>
+              setCTraderBatchForm((current) => ({ ...current, end_date: event.target.value }))
+            }
+            required
+          />
+        </label>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <label className="stack-layout" style={{ gap: 5 }}>
+          <span className="minor-text">Balance</span>
+          <input
+            type="number"
+            min="1"
+            className="text-input"
+            value={ctraderBatchForm.balance}
+            onChange={(event) =>
+              setCTraderBatchForm((current) => ({ ...current, balance: event.target.value }))
+            }
+          />
+        </label>
+        <label className="stack-layout" style={{ gap: 5 }}>
+          <span className="minor-text">Data</span>
+          <InputComboSelect
+            value={ctraderBatchForm.data_mode}
+            onChange={(event) =>
+              setCTraderBatchForm((current) => ({ ...current, data_mode: event.target.value }))
+            }
+          >
+            <option value="ticks">Ticks</option>
+            <option value="m1">M1 bars</option>
+            <option value="open">Open prices</option>
+          </InputComboSelect>
+        </label>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <label className="stack-layout" style={{ gap: 5 }}>
+          <span className="minor-text">Spread (pips)</span>
+          <input
+            type="number"
+            min="0"
+            step="0.1"
+            className="text-input"
+            value={ctraderBatchForm.spread_pips}
+            onChange={(event) =>
+              setCTraderBatchForm((current) => ({ ...current, spread_pips: event.target.value }))
+            }
+          />
+        </label>
+        <label className="stack-layout" style={{ gap: 5 }}>
+          <span className="minor-text">Commission / $1m</span>
+          <input
+            type="number"
+            min="0"
+            step="0.1"
+            className="text-input"
+            disabled={ctraderBatchForm.apply_commission_automatically}
+            value={ctraderBatchForm.commission_usd_per_million}
+            onChange={(event) =>
+              setCTraderBatchForm((current) => ({
+                ...current,
+                commission_usd_per_million: event.target.value,
+              }))
+            }
+          />
+        </label>
+      </div>
+      <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 11 }}>
+        <input
+          type="checkbox"
+          checked={ctraderBatchForm.apply_commission_automatically}
+          onChange={(event) =>
+            setCTraderBatchForm((current) => ({
+              ...current,
+              apply_commission_automatically: event.target.checked,
+            }))
+          }
+        />
+        Use broker symbol commission and swaps
+      </label>
+      <label className="stack-layout" style={{ gap: 5 }}>
+        <span className="minor-text">cBot parameter overrides (JSON by display name)</span>
+        <textarea
+          className="text-input"
+          rows={8}
+          spellCheck={false}
+          value={ctraderBatchForm.parameter_json}
+          onChange={(event) =>
+            setCTraderBatchForm((current) => ({ ...current, parameter_json: event.target.value }))
+          }
+          placeholder={'{"Timeframes":"m5","1st Trade":"Now_Wick_L0_R15"}'}
+          style={{ resize: "vertical", fontFamily: "monospace" }}
+        />
+      </label>
+      <button type="submit" className="primary-button" disabled={queueingCTraderBatch}>
+        {queueingCTraderBatch ? "Queueing..." : "Queue native batch"}
+      </button>
+      <div className="minor-text" style={{ fontSize: 10, lineHeight: 1.5 }}>
+        One job is created for each symbol × timeframe. The running cTrader worker claims up to its
+        configured parallel limit and saves every completed report into History.
+      </div>
+    </form>
+  );
+
+  const ctraderJobsPanel = (
+    <div className="stack-layout" style={{ gap: 14 }}>
+      <ResponsivePanel
+        title="cTrader Worker Queue"
+        showToggle={false}
+        border="always"
+        bodyClassName="stack-layout"
+      >
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          {[
+            ["Queued", ctraderQueueCounts.queued || 0],
+            ["Running", (ctraderQueueCounts.running || 0) + (ctraderQueueCounts.claimed || 0)],
+            ["Completed", ctraderQueueCounts.completed || 0],
+            ["Failed", ctraderQueueCounts.failed || 0],
+          ].map(([label, value]) => (
+            <span key={label} className="minor-text" style={{ fontSize: 11 }}>
+              <strong>{value}</strong> {label}
+            </span>
+          ))}
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => loadCTraderJobs()}
+            disabled={loadingCTraderJobs}
+            style={{ marginLeft: "auto", minHeight: 30 }}
+          >
+            {loadingCTraderJobs ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
+      </ResponsivePanel>
+      <ResponsivePanel showToggle={false} border="always" bodyClassName="stack-layout">
+        {ctraderJobs.length ? (
+          <ListItems>
+            {ctraderJobs.map((job) => {
+              const status = String(job?.status || "queued").toLowerCase();
+              const progress = Math.max(0, Math.min(100, Number(job?.progress_pct || 0)));
+              const canCancel = ["queued", "claimed", "running"].includes(status);
+              return (
+                <div key={job.job_id} className="backtests-item-card card-item">
+                  <div className="backtests-item-card__body" style={{ width: "100%", gap: 8 }}>
+                    <div style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
+                      <strong style={{ fontSize: 12 }}>
+                        {job.symbol} {timeframeLabel(job.timeframe)} · {job.strategy_name}
+                      </strong>
+                      <span className="minor-text" style={{ textTransform: "uppercase", fontSize: 10 }}>
+                        {status}
+                      </span>
+                    </div>
+                    <div className="minor-text" style={{ fontSize: 10 }}>
+                      {`${String(job?.launch_config?.start_time_utc || "").slice(0, 10)} → ${String(job?.launch_config?.end_time_utc || "").slice(0, 10)} · ${job?.launch_config?.robot_name || "cBot"}`}
+                    </div>
+                    <div style={{ height: 5, borderRadius: 4, background: "rgba(148,163,184,.16)", overflow: "hidden" }}>
+                      <div style={{ width: `${progress}%`, height: "100%", background: status === "failed" ? "#ef4444" : "#22c55e" }} />
+                    </div>
+                    {job.error ? <div className="msg-error" style={{ fontSize: 10 }}>{job.error}</div> : null}
+                    <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                      {job.result_run_id ? (
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={() => {
+                            setSelectedRunId(job.result_run_id);
+                            setActiveTab("backtest");
+                            navigate(
+                              buildBacktestsDetailUrl(job.result_run_id, {
+                                strategyId: job.strategy_key,
+                                params: { symbol: job.symbol, tf: job.timeframe },
+                                basePath: backtestsBasePath,
+                              }),
+                            );
+                          }}
+                        >
+                          Open report
+                        </button>
+                      ) : null}
+                      {canCancel ? (
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={() => handleCancelCTraderJob(job.job_id)}
+                        >
+                          Cancel
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </ListItems>
+        ) : (
+          <div className="empty-state">
+            {loadingCTraderJobs ? "LOADING CTRADER JOBS..." : "NO CTRADER JOBS QUEUED"}
+          </div>
+        )}
+      </ResponsivePanel>
+    </div>
+  );
+
   const leftPanelBody = (
     <div className="stack-layout" style={{ gap: 14 }}>
       {activeTab === "backtest" ? (
@@ -5161,6 +5554,7 @@ export default function BacktestsPage() {
           {runList}
         </div>
       ) : null}
+      {activeTab === "ctrader" ? ctraderQueueForm : null}
       {activeTab === "strategies" ? (
         <div className="stack-layout" style={{ gap: 8 }}>
           <div
@@ -5366,6 +5760,8 @@ export default function BacktestsPage() {
                     onStrategyMarkersChange={handleRuleTestMarkersChange}
                   />
                 </div>
+              ) : activeTab === "ctrader" ? (
+                ctraderJobsPanel
               ) : !activeRun ? (
                 <div className="empty-state">SELECT A RUN TO INSPECT DETAILS</div>
               ) : (

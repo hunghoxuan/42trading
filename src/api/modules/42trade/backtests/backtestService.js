@@ -25,6 +25,9 @@ const strategyEventFunctions = require("../../../../shared/rules-engine/features
 const {
   evaluateChartStrategies,
 } = require("../../../../shared/utils/chartStrategyChecks.cjs");
+const {
+  normalizeCTraderBacktestPayload,
+} = require("./ctraderBacktestAdapter");
 const { safePathPart, userRootDir } = objectStore;
 
 const BACKTESTS_DIRNAME = "backtests";
@@ -3514,6 +3517,7 @@ async function resolveRunDir(userId, runId, strategyKey = "") {
 }
 
 async function persistBacktestResult(userId, result = {}) {
+  result = normalizeCTraderBacktestPayload(result);
   const run = result?.run && typeof result.run === "object" ? result.run : null;
   const summary =
     result?.summary && typeof result.summary === "object" ? result.summary : null;
@@ -4238,5 +4242,6 @@ module.exports = {
     buildRunExecutionFingerprint,
     summarizeStrategyBacktestRecords,
     buildBacktestSummaryIndex,
+    normalizeCTraderBacktestPayload,
   },
 };
