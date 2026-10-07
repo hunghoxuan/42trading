@@ -168,7 +168,15 @@ function resolveHomePath(user) {
 
 export default function App() {
   const [theme, setTheme] = useState(
-    () => localStorage.getItem("ui_theme") || "dark",
+    () => {
+      try {
+        const userSelected = localStorage.getItem("ui_theme_user_selected") === "1";
+        const savedTheme = localStorage.getItem("ui_theme");
+        return userSelected && savedTheme === "light" ? "light" : "dark";
+      } catch {
+        return "dark";
+      }
+    },
   );
   const [authLoading, setAuthLoading] = useState(true);
   const [authUser, setAuthUser] = useState(() => loadStoredAuthUser());
@@ -451,7 +459,15 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("ui_theme", theme);
+    document.documentElement.style.colorScheme = theme;
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute("content", theme === "light" ? "#e6edf5" : "#0b0f14");
+    try {
+      localStorage.setItem("ui_theme", theme);
+    } catch {
+      // Safari can deny storage in restricted browsing contexts.
+    }
   }, [theme]);
 
   useEffect(() => {
@@ -677,8 +693,14 @@ export default function App() {
     return () => window.removeEventListener(AUTH_REQUIRED_EVENT, onAuthRequired);
   }, []);
 
-  const toggleTheme = () =>
+  const toggleTheme = () => {
+    try {
+      localStorage.setItem("ui_theme_user_selected", "1");
+    } catch {
+      // Theme still applies for the active session when storage is unavailable.
+    }
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));
+  };
   const handleUserUpdate = (user) => {
     authVersionRef.current += 1;
     if (user) {

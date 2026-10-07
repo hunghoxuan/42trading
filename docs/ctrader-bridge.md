@@ -1,5 +1,7 @@
 # cTrader Bridge — Events, Visuals & Params Reference
 
+> For the current AI-agent continuation baseline—including strategy ownership, confluences, adaptive-risk modes, visuals, dashboard behavior, sync, and acceptance checks—read [ctrader-ai-agent-handoff.md](./ctrader-ai-agent-handoff.md) first.
+
 Source of truth: `src/mt5-bridge/clients/TVBridge_CTrader.cs` (cTrader bot, class `TVBridgeCBot`).
 
 This document catalogs the trade-trigger events (short codes), the Chart Visuals combos, the SMC zone detection presets, and the on-chart panels/grids. Keep it in sync when event options, combo values, or params change.
@@ -207,6 +209,50 @@ Note: cTrader's **native** period separators are separate. The bot forces `Grid 
   Alpha values (lower = blurrier): background candle body 24 / wick 14 / border 70; highlight box fill 30 / border 130; pattern body 34 / wick 16 / wick border 110 / body border 85; guide lines 65.
   `[HTFHL]` prints (unfiltered) the frame/index and the detected pattern per completed HTF candle.
   Mini-chart pattern markers use the **same pattern code** as the LTF highlight (via `ResolveMarkerPatternFallbackLabel` when the marker has no explicit label) — the generic `pat` fallback was removed.
+
+Forward-risk cause labels (v108) are separate from the original event label, whose text and Buy-below/Sell-above placement stay unchanged. Each `×` (touch/enter) or `?` (near) has an additional label naming the exact obstacle selected for that mark's reaction price, e.g. `m5.touch.h1.fvg ×` or `m5.near.h1.ob ?`. The new label follows the mark's above/below-candle side; projected HTF cause labels use the mark's final LTF candle. `near` is a potential interaction, not a confirmed future reversal. Original direction, rule names, filters, and SL/TP planning are unchanged.
+
+Event protection guides (v109) are finite horizontal SL/TP lines with the exact left/right visual bounds of their surrounding box, including HTF and multi-candle patterns. The `rN` value is centered above a buy TP line or below a sell TP line, rather than replacing the TP line. Protection prices, explicit SL/TP settings, SL Buffer, and qualification rules are unchanged.
+
+SL dropdown naming (v110): the former `wick` is `pattern_wick`, using the whole pattern's adverse high/low boundary (or event candle boundary when no pattern boundary exists). This is distinct from `candle_wick`, which uses the signal candle alone. Numbered `Wick*` choices now belong to the `candle_wick` family with explicit decimal suffixes (`_0_5`, `_0_7`, `_1_1`, `_1_3`, `_1_5`, `_2`). Equivalent duplicate choices have `_legacy` suffixes so all 42 persisted numeric values keep their existing resolver and source code. Controls, ATR, candle, event/level, pattern, and swing families are grouped in declaration order; prices and SL Buffer behavior are unchanged. Strategy JSON and backtest-worker jobs accept the old names as aliases. Native cTrader parameter sets saved by textual name may need the user to reselect the renamed equivalent after reloading; do not silently change live selections.
+
+Indicator protection (v111) adds the same explicit choices to SL and TP: `ema`, `ema_fast`, `ema_mid`, `ema_slow`, `ichi_cloud`, `ichi_kijun`, `ichi_tenkan`, `donchian_edge`, and `donchian_mid`. All existing numeric enum values remain stable. Protection uses the cBot overlay presets (even if the overlay is hidden), the signal symbol/timeframe, and the completed signal candle. The existing TP `ema_mid` now consistently uses the overlay preset's middle EMA rather than the separate event preset.
+
+- `ema` chooses the nearest valid fast/mid/slow line on the required side of entry; explicit roles use only that line. Pair presets may have equal mid/slow periods. Source labels name the actual role and period, e.g. `ema_fast(20)`. Values require at least the selected period's history and use the shared deterministic EMA calculation, not manually attached indicator instances.
+- `ichi_cloud` SL uses the far/adverse cloud edge (BUY lower, SELL upper); TP uses the nearest cloud edge ahead of entry. The cloud displayed at the signal candle is calculated from `signalIndex - BasePeriod`, with enough past history for Span B; no future-projected cloud/Chikou value is used. Tenkan/Kijun use their configured range midpoints at the signal candle.
+- `donchian_edge` uses the adverse channel edge for SL and the favorable edge for TP; `donchian_mid` uses the channel midpoint. Its configured-period window includes the completed signal candle, matching the displayed channel. Breakout detection's separate prior-bar channel is unchanged.
+- Explicit indicator modes return no level when missing history or on the wrong side; they never silently substitute RR/another indicator. SL Buffer is applied once, outward, after raw selection. Targets do not use SL Buffer.
+- Auto preserves strategy-owned stops and prefers event invalidation/protective swing. Its fallback sequence now includes Ichimoku (cloud/Kijun/Tenkan), Donchian (edge/mid), and EMA before pattern/wick/extreme fallbacks; within an indicator family it chooses the nearest valid level. Unowned failed strategy fallback SLs can consult this shared pool in visible Auto slots only; explicit JSON/per-leg invalidation is not overridden. Auto TP adds these three indicator families after existing liquidity/key/session/zone sources and before RR fallback. It filters each line for the existing minimum RR (including the inward TP buffer) before choosing, so a nearby inadequate line cannot hide a farther qualifying one.
+
+The shared protection resolver is used by execution and reconstructed event guides. Broker risk/SL-required gates remain mandatory. This adds selectable price references, not evidence that any new choice improves trading performance; evaluate changed Auto plans in backtests before using them live.
+
+## Planned entry and split-leg guides (v112)
+
+Event protection guides now include a solid yellow entry line with the same exact start/end X and thickness as SL/TP and the surrounding box. Reconstructed plans use the current Entry, SL, SL Buffer, TP and n.Trades parameters. Numbered entry labels identify `M` (market), `L` (limit) and `S` (stop).
+
+Chart reconstruction and signal execution share `CTraderStrategyEngine.BuildEntryLegPlan`: Auto/1 produces one leg; 2–5 uses the existing normalized equal-split ladder toward the buffered SL, respecting the minimum stop offset and duplicate-price/range limitations. L0 starts with a limit at the selected entry; market starts with a market leg; stop starts with a stop leg. Additional legs are limits. All legs share the same absolute SL/TP, so the common TP guide lists each leg's own R rather than inventing separate RR targets.
+
+These are planned orders, not inferred fills. Pending fills, market slippage, historical account affordability, live position caps, margin and broker rejection cannot be guaranteed by a market-data-only reconstruction. Execution retains all live risk/affordability/creation gates; the optional broker execution layer remains separate and is not multiplied according to today's n.Trades setting. Existing historical protection timing limitations outside the new indicator path are not changed by this drawing feature.
+
+## Session time policy (v105; Asia naming v106)
+
+Full-session constants use the market's own timezone, independent of the chart/computer display timezone:
+
+| TimeRange | Market-local window | UTC window |
+|---|---|---|
+| `Asia_UTC00_09` | Tokyo 09:00–18:00 | 00:00–09:00 all year |
+| `London_UTC07_16_BST_08_17_GMT` | London 08:00–17:00 | 07:00–16:00 BST; 08:00–17:00 GMT |
+| `NewYork_UTC12_21_EDT_13_22_EST` | New York 08:00–17:00 | 12:00–21:00 EDT; 13:00–22:00 EST |
+
+Combined full-session choices are explicitly named `OR`; overlaps are intersections. The shared definitions also drive session boxes and session high/low calculations.
+
+KZs remain New York-clock strategy windows: Asia 20:00–00:00, London 02:00–05:00, NewYork 07:00–10:00. `30m_Before_*` / `60m_Before_*` accept only the lead-in, excluding the KZ itself. `KZ_Overlap` now intersects KZ windows, not full sessions; these three configured windows do not overlap, so this selection accepts no signals. Europe time blocks use Prague/Berlin CET/CEST and now state that in their names.
+
+Days/TimeRange/Overnight/Weekend qualification is shared by live strategy decisions and reconstructed event markers. Main raw/proof fallbacks cannot bypass that time gate. `Events = Trades` also checks configured symbols/timeframes and Buy/Sell restrictions. Actual broker fill/exit visuals remain execution records; they are not the source of reconstructed event markers.
+
+Days still use the Central Europe reference calendar. Overnight blocks 17:00–00:00 in the selected risk-template timezone; Weekend blocks Saturday/Sunday and Friday after 17:00 in that timezone. Manual/Cbot/Both scopes are retained. Submission checks reuse the same time predicates at server UTC now, so a valid historical decision can still be rejected if submission happens after a cutoff. Account/broker gates (position caps, risk, margin, market availability, news data) are separate and are not retrospectively inferred from today's account or actual trade history.
+
+TimeRange enum ordinals are unchanged. Old textual cTrader parameter sets may need the equivalent renamed choice reselected after a rebuild; verify the selection before starting the bot. No fallback to the computer timezone is allowed if a required market/reference timezone is unavailable.
 
 ## Related docs
 

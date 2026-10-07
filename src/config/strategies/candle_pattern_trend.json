@@ -2,28 +2,25 @@
   "id": "candle_pattern_trend",
   "key": "candle_pattern_trend",
   "name": "Candle Pattern Trend",
-  "description": "Shared cTrader and 42Trade candle-pattern preset. Defined values override the matching cTrader parameters.",
+  "description": "Shared candle-pattern strategy. The strategy owns SL and auto-exit; cTrader Trade Config owns Entry, TP and n.Trades.",
   "engine_version": "42trade.strategy.v3",
   "kind": "custom",
   "status": "active",
+  "auto_exit": {
+    "id": "opposite_structure_event",
+    "description": "Exit when a confirmed structure event appears against the open position.",
+    "evaluate_on": "closed_bar",
+    "timeframe": "strategy",
+    "long_when": { "fn": "any_structure_event", "args": ["bearish"] },
+    "short_when": { "fn": "any_structure_event", "args": ["bullish"] }
+  },
   "market": {
     "symbol": "",
     "tf": ""
   },
   "settings": {
     "trade_config": {
-      "symbols": "DE40,US30,BTCUSD,XAUUSD,EURGBP,EURUSD,GBPJPY,EURJPY",
-      "timeframes": "m5,m15,m30,h1,h4",
-      "news_block": "_30m",
-      "first_trade": "Now_Wick_L0_R2",
-      "second_trade": "Now_Event_L03_R1",
-      "third_trade": "No",
-      "pending_order_expiry_bars": 5,
-      "trade_count": "_1",
-      "entry": "L0",
-      "sl": "event",
-      "tp": "RR_1_5",
-      "exit_mode": "Break_Even"
+      "sl": "pattern"
     },
     "confluences": {
       "days": "All",
@@ -46,7 +43,6 @@
   },
   "params": {
     "stop_lookback": 3,
-    "reward_rr": 1.5,
     "min_stop_pips": 15
   },
   "indicators": [],
@@ -69,10 +65,7 @@
           "action": "trade.open.long",
           "trade_plan": {
             "direction": "buy",
-            "type": "market",
-            "entry": "bar.close",
-            "sl": "price_action_sl(buy, params.stop_lookback, 0, params.min_stop_pips)",
-            "tp": "price_action_tp(buy, params.stop_lookback, params.reward_rr, 0, params.min_stop_pips)"
+            "sl": "price_action_sl(buy, params.stop_lookback, 0, params.min_stop_pips)"
           }
         }
       ]
@@ -95,29 +88,18 @@
           "action": "trade.open.short",
           "trade_plan": {
             "direction": "sell",
-            "type": "market",
-            "entry": "bar.close",
-            "sl": "price_action_sl(sell, params.stop_lookback, 0, params.min_stop_pips)",
-            "tp": "price_action_tp(sell, params.stop_lookback, params.reward_rr, 0, params.min_stop_pips)"
+            "sl": "price_action_sl(sell, params.stop_lookback, 0, params.min_stop_pips)"
           }
         }
       ]
     }
   ],
-  "risk": {
-    "rr_target": 1.5,
-    "min_rr": 1.5,
-    "stop_lookback": 3,
-    "max_open_trades": 1,
-    "fallback_stop_pct": 0.001,
-    "fallback_tp_pct": 0.0015
-  },
+  "risk": {},
   "conditions": {
     "symbols": ["DE40", "US30", "BTCUSD", "XAUUSD", "EURGBP", "EURUSD", "GBPJPY", "EURJPY"],
     "timeframes": ["m5", "m15", "m30", "h1", "h4"],
     "skip_news": true,
     "news_window_minutes": 30,
-    "min_rr": 1.5,
     "sessions": [],
     "regime_tags": []
   },

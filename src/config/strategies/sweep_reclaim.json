@@ -2,13 +2,21 @@
   "id": "sweep_reclaim",
   "key": "sweep_reclaim",
   "name": "Sweep Reclaim",
-  "description": "Closed-bar chain: a qualified swing-liquidity sweep closes back through its level, then price confirms reversal with CHOCH, neutral-bias BOS, or a direct close through the latest opposite swing. The event remains visible on chart; live entry is rejected when confirmation is overextended from the swept level.",
+  "description": "Closed-bar sweep/reclaim chain. The strategy owns pattern SL and auto-exit; cTrader owns Entry, TP and n.Trades.",
   "engine_version": "42trade.strategy.v3",
   "kind": "custom",
   "status": "active",
+  "auto_exit": {
+    "id": "opposite_structure_event",
+    "description": "Exit when a confirmed structure event appears against the reclaimed direction.",
+    "evaluate_on": "closed_bar",
+    "timeframe": "strategy",
+    "long_when": { "fn": "any_structure_event", "args": ["bearish"] },
+    "short_when": { "fn": "any_structure_event", "args": ["bullish"] }
+  },
   "enforce_candle_artifact_reaction": false,
   "market": { "symbol": "", "tf": "" },
-  "settings": { "confluences": {} },
+  "settings": { "trade_config": { "sl": "pattern" }, "confluences": {} },
   "params": {},
   "indicators": [],
   "rules": [
@@ -17,16 +25,17 @@
       "name": "Bullish Sweep Reclaim",
       "bias": "bullish",
       "when": { "fn": "sweep_reclaim", "args": ["bullish"] },
-      "actions": [{ "id": "open_long", "action": "trade.open.long", "trade_plan": { "direction": "buy", "type": "market" } }]
+      "actions": [{ "id": "open_long", "action": "trade.open.long", "trade_plan": { "direction": "buy" } }]
     },
     {
       "id": "bearish_sweep_reclaim",
       "name": "Bearish Sweep Reclaim",
       "bias": "bearish",
       "when": { "fn": "sweep_reclaim", "args": ["bearish"] },
-      "actions": [{ "id": "open_short", "action": "trade.open.short", "trade_plan": { "direction": "sell", "type": "market" } }]
+      "actions": [{ "id": "open_short", "action": "trade.open.short", "trade_plan": { "direction": "sell" } }]
     }
   ],
+  "risk": {},
   "conditions": { "symbols": [], "timeframes": [], "sessions": [], "regime_tags": [] },
   "metadata": { "author": "42trade", "preset_scope": "ctrader" }
 }

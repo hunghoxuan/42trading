@@ -1,0 +1,42 @@
+{
+  "id": "donchian_breakout_v1",
+  "key": "donchian_breakout_v1",
+  "name": "Donchian Momentum Breakout",
+  "description": "Fresh 20-bar closing breakout with candle-quality, EMA 50/200 trend and ADX strength gates. The strategy owns middle-channel buffered SL, 1R break-even protection, controlled pyramiding and opposite 10-bar channel auto-exit; cTrader owns Entry, TP and n.Trades.",
+  "engine_version": "42trade.strategy.v3",
+  "kind": "custom",
+  "status": "active",
+  "auto_exit": {
+    "id": "opposite_donchian_10",
+    "description": "Exit a long on a close below the previous 10-bar low; exit a short on a close above the previous 10-bar high.",
+    "evaluate_on": "closed_bar",
+    "timeframe": "strategy",
+    "long_when": { "fn": "donchian_opposite_breakout", "args": ["long", 10] },
+    "short_when": { "fn": "donchian_opposite_breakout", "args": ["short", 10] }
+  },
+  "market": { "symbol": "", "tf": "" },
+  "settings": { "trade_config": { "sl": "donchian_middle_atr_buffer" } },
+  "params": {
+    "entry_period": 20,
+    "exit_period": 10,
+    "sl_buffer_atr": 0.25,
+    "sl_min_buffer_pips": 2,
+    "fresh_cross_required": true,
+    "min_body_atr": 0.25,
+    "close_location_min": 0.6,
+    "max_breakout_extension_atr": 1.0,
+    "ema_fast": 50,
+    "ema_slow": 200,
+    "adx_period": 14,
+    "adx_min": 18,
+    "max_same_direction_positions": 2,
+    "pyramid_requires_breakeven": true,
+    "execution_gap_risk_reserve_percent": 15,
+    "drawdown_risk_multipliers": { "5_percent": 0.5, "8_percent": 0.25, "10_percent": 0.1 }
+  },
+  "indicators": [],
+  "rules": [],
+  "risk": {},
+  "conditions": { "symbols": [], "timeframes": [], "sessions": [], "regime_tags": [] },
+  "metadata": { "author": "42trade", "preset_scope": "ctrader", "entry_engine": "builtin" }
+}

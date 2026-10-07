@@ -1,0 +1,78 @@
+{
+  "id": "london_trend_sweep",
+  "key": "london_trend_sweep",
+  "name": "London Trend Sweep",
+  "description": "M15 London continuation after a swing sweep with EMA9/21 agreement. The strategy owns its ATR-buffered pattern SL and auto-exit; cTrader owns Entry, TP and n.Trades.",
+  "engine_version": "42trade.strategy.v3",
+  "kind": "custom",
+  "status": "active",
+  "auto_exit": {
+    "id": "opposite_structure_event",
+    "description": "Exit when a confirmed structure event appears against the London continuation.",
+    "evaluate_on": "closed_bar",
+    "timeframe": "strategy",
+    "long_when": { "fn": "any_structure_event", "args": ["bearish"] },
+    "short_when": { "fn": "any_structure_event", "args": ["bullish"] }
+  },
+  "enforce_candle_artifact_reaction": false,
+  "market": { "symbol": "", "tf": "m15" },
+  "settings": {
+    "trade_config": {
+      "sl": "pattern"
+    },
+    "confluences": {}
+  },
+  "params": {
+    "swing_strength": 2,
+    "swing_lookback_bars": 64,
+    "minimum_penetration_atr": 0.05,
+    "minimum_wick_body_ratio": 1.0,
+    "ema_fast_period": 9,
+    "ema_slow_period": 21,
+    "london_open_hours": 4,
+    "minimum_close_location": 0.45,
+    "stop_buffer_atr": 0.08,
+    "minimum_stop_atr": 0.35,
+    "maximum_stop_atr": 1.8,
+    "maximum_holding_bars": 32
+  },
+  "indicators": [],
+  "rules": [
+    {
+      "id": "bullish_london_trend_sweep",
+      "name": "Bullish London Trend Sweep",
+      "bias": "bullish",
+      "priority": "high",
+      "when": {
+        "fn": "london_trend_sweep",
+        "args": ["bullish", { "var": "params.swing_strength" }, { "var": "params.swing_lookback_bars" }, { "var": "params.minimum_penetration_atr" }, { "var": "params.minimum_wick_body_ratio" }, { "var": "params.ema_fast_period" }, { "var": "params.ema_slow_period" }, { "var": "params.london_open_hours" }, { "var": "params.minimum_close_location" }, { "var": "params.stop_buffer_atr" }, { "var": "params.minimum_stop_atr" }, { "var": "params.maximum_stop_atr" }]
+      },
+      "actions": [{ "id": "open_long", "action": "trade.open.long", "trade_plan": { "direction": "buy" } }]
+    },
+    {
+      "id": "bearish_london_trend_sweep",
+      "name": "Bearish London Trend Sweep",
+      "bias": "bearish",
+      "priority": "high",
+      "when": {
+        "fn": "london_trend_sweep",
+        "args": ["bearish", { "var": "params.swing_strength" }, { "var": "params.swing_lookback_bars" }, { "var": "params.minimum_penetration_atr" }, { "var": "params.minimum_wick_body_ratio" }, { "var": "params.ema_fast_period" }, { "var": "params.ema_slow_period" }, { "var": "params.london_open_hours" }, { "var": "params.minimum_close_location" }, { "var": "params.stop_buffer_atr" }, { "var": "params.minimum_stop_atr" }, { "var": "params.maximum_stop_atr" }]
+      },
+      "actions": [{ "id": "open_short", "action": "trade.open.short", "trade_plan": { "direction": "sell" } }]
+    }
+  ],
+  "risk": {},
+  "conditions": {
+    "symbols": ["DE40", "US30", "XAUUSD", "EURGBP", "EURUSD", "GBPJPY", "EURJPY"],
+    "timeframes": ["m15"],
+    "skip_news": true,
+    "news_window_minutes": 30,
+    "sessions": ["London"],
+    "regime_tags": []
+  },
+  "metadata": {
+    "author": "42trade research",
+    "preset_scope": "ctrader_and_42trade",
+    "validation": "2026-08-25 through 2026-09-24 cTrader M15, chronological 60/40 split"
+  }
+}

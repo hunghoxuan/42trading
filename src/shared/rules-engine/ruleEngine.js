@@ -201,6 +201,7 @@ const RULE_FUNCTION_NAMES = [
   "three_candles_signal",
   "three_candles_sl",
   "three_candles_tp",
+  "london_trend_sweep",
   "get_artifacts",
   "is_true",
   "draw",

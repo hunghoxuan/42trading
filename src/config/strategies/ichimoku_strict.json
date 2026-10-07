@@ -1,0 +1,31 @@
+{
+  "id": "ichimoku_strict",
+  "key": "ichimoku_strict",
+  "name": "Ichimoku Strict",
+  "description": "Strict 9/26/52 Ichimoku strategy. It owns cloud-edge SL and Chikou auto-exit; cTrader owns Entry, TP and n.Trades.",
+  "engine_version": "42trade.strategy.v3",
+  "kind": "custom",
+  "status": "active",
+  "auto_exit": {
+    "id": "chikou_historical_price_cross",
+    "description": "Exit a long when Chikou crosses below the historical candle 26 bars back; exit a short when Chikou crosses above it.",
+    "evaluate_on": "closed_bar",
+    "timeframe": "strategy",
+    "long_when": {
+      "fn": "chikou_crosses_below_historical_price",
+      "args": [26]
+    },
+    "short_when": {
+      "fn": "chikou_crosses_above_historical_price",
+      "args": [26]
+    }
+  },
+  "market": { "symbol": "", "tf": "" },
+  "settings": { "trade_config": { "sl": "ichimoku_cloud_edge_atr_buffer" } },
+  "params": {},
+  "indicators": [],
+  "rules": [],
+  "risk": {},
+  "conditions": { "symbols": [], "timeframes": [], "sessions": [], "regime_tags": [] },
+  "metadata": { "author": "42trade", "preset_scope": "ctrader", "entry_engine": "builtin" }
+}

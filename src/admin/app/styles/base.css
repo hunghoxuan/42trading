@@ -1,4 +1,5 @@
 :root {
+    color-scheme: dark;
     /* Default Dark Theme Tokens */
     --bg: #0b0f14;
     --surface: #121821;
@@ -37,6 +38,7 @@
 }
 
 [data-theme="light"] {
+    color-scheme: light;
     /* SMC Light Theme Tokens */
     --bg: #dde5ef;
     --surface: #f6f9fc;
@@ -112,6 +114,8 @@
 }
 body {
     margin: 0;
+    min-height: 100vh;
+    min-height: 100dvh;
     background: var(--app-bg-base);
     color: var(--text);
     overflow-x: hidden;
@@ -1476,6 +1480,10 @@ body.ai-chat-layout-panel-open .app-shell {
         flex: 0 0 auto;
         min-height: 320px;
         max-height: 58vh;
+        max-height: 58dvh;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
     }
     .trades-page-container .logs-list-pane.is-collapsed {
         min-height: 0 !important;
@@ -4449,6 +4457,31 @@ input[type="checkbox"]:disabled {
 .pay42-page-container .pay42-inline-panel__body > * {
     width: 100%;
 }
+.pay42-page-container .pay42-see-qr-button {
+    width: 100%;
+    min-height: 48px;
+}
+.pay42-qr-modal-content {
+    min-height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+    box-sizing: border-box;
+}
+.pay42-qr-thumb--modal {
+    display: block;
+    width: min(92vw, 720px);
+    height: auto;
+    max-height: calc(100dvh - 120px);
+    aspect-ratio: 1 / 1;
+    object-fit: contain;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: clamp(10px, 2vw, 20px);
+    box-sizing: border-box;
+}
 .pay42-page-container .pay42-offer-metrics {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4760,7 +4793,10 @@ input[type="checkbox"]:disabled {
     transform: translate(-50%, -50%);
     width: min(420px, 92vw);
     max-height: 85vh;
+    max-height: 85dvh;
     overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
     z-index: 10001;
     background: var(--surface-elevated);
     border: 1px solid var(--panel-strong-border);
@@ -5981,6 +6017,8 @@ input[type="checkbox"]:disabled {
     top: 0;
     right: 0;
     bottom: 0;
+    height: 100vh;
+    height: 100dvh;
     width: min(100vw, var(--edge-slide-panel-size, 420px));
     border-radius: var(--radius-xl) 0 0 var(--radius-xl);
     animation: edgeSlideFromRight 0.18s ease-out;
@@ -5990,6 +6028,7 @@ input[type="checkbox"]:disabled {
     left: 0;
     right: 0;
     height: min(100vh, var(--edge-slide-panel-size, 420px));
+    height: min(100dvh, var(--edge-slide-panel-size, 420px));
     border-radius: 0 0 var(--radius-xl) var(--radius-xl);
     animation: edgeSlideFromTop 0.18s ease-out;
 }
@@ -6030,6 +6069,8 @@ input[type="checkbox"]:disabled {
     flex: 1 1 auto;
     min-height: 0;
     overflow: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
 }
 @keyframes edgeSlideFromRight {
     from {
@@ -7115,6 +7156,15 @@ label,
 }
 
 @media (max-width: 767px) {
+    /* List/detail pages cap their list pane on phones. Keep the capped pane
+       touch-scrollable instead of clipping controls below its boundary. */
+    .logs-list-pane:not(.is-collapsed) {
+        overflow-x: hidden !important;
+        overflow-y: auto !important;
+        overscroll-behavior-y: contain;
+        -webkit-overflow-scrolling: touch;
+    }
+
     input:not([type="checkbox"]):not([type="radio"]),
     select,
     button,

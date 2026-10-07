@@ -307,6 +307,50 @@
       ]
     },
     {
+      "value": "sweep_reclaim",
+      "label": "Sweep Reclaim",
+      "kind": "predicate",
+      "family": "structure",
+      "args": [
+        { "key": "direction", "label": "Direction" }
+      ]
+    },
+    {
+      "value": "london_trend_sweep",
+      "label": "London Trend Sweep",
+      "kind": "predicate",
+      "family": "structure",
+      "args": []
+    },
+    {
+      "value": "chikou_crosses_above_historical_price",
+      "label": "Chikou Crosses Above Historical Price",
+      "kind": "predicate",
+      "family": "ichimoku",
+      "args": [
+        { "key": "shift", "label": "Shift", "default": 26 }
+      ]
+    },
+    {
+      "value": "chikou_crosses_below_historical_price",
+      "label": "Chikou Crosses Below Historical Price",
+      "kind": "predicate",
+      "family": "ichimoku",
+      "args": [
+        { "key": "shift", "label": "Shift", "default": 26 }
+      ]
+    },
+    {
+      "value": "donchian_opposite_breakout",
+      "label": "Donchian Opposite Breakout",
+      "kind": "predicate",
+      "family": "donchian",
+      "args": [
+        { "key": "position_direction", "label": "Position Direction" },
+        { "key": "period", "label": "Exit Period", "default": 10 }
+      ]
+    },
+    {
       "value": "is_true",
       "label": "IS_TRUE",
       "kind": "predicate",

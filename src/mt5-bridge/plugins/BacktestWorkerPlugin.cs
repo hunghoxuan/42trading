@@ -81,18 +81,23 @@ namespace cAlgo.Plugins
                 ["SelectedStrategyStopLossMode"] = new[]
                 {
                     "No", "Auto", "ATR5", "ATR12", "ATR24", "ATR48", "Body", "candle_body",
-                    "candle_extreme_5", "candle_extreme_10", "candle_range", "candle_wick", "candle_wick_07",
-                    "candle_wick_1_5", "candle_wick_2", "candle_wick_13", "event", "event_invalidation",
+                    "candle_extreme_5", "candle_extreme_10", "candle_range", "candle_wick", "candle_wick_0_7",
+                    "candle_wick_1_5", "candle_wick_2", "candle_wick_1_3", "event", "event_invalidation",
                     "furthest_invalidation", "fvg_edge", "HTF_Key_levels", "ltf_Key_levels", "ob_edge", "pattern",
                     "protective_swing", "Range24", "session_high_low", "structure", "swing", "Swing1H", "Swing4H",
-                    "Swing15m", "SwingHTF", "SwingLTF", "wick", "Wick05", "Wick07", "Wick11", "Wick13", "Wick15", "Wick2"
+                    "Swing15m", "SwingHTF", "SwingLTF", "pattern_wick", "candle_wick_0_5", "candle_wick_0_7_legacy",
+                    "candle_wick_1_1", "candle_wick_1_3_legacy", "candle_wick_1_5_legacy", "candle_wick_2_legacy", "Reacted",
+                    "ema", "ema_fast", "ema_mid", "ema_slow", "donchian_edge", "donchian_mid",
+                    "ichi_cloud", "ichi_kijun", "ichi_tenkan"
                 },
                 ["SelectedStrategyTakeProfitMode"] = new[]
                 {
                     "No", "Auto", "candle", "RR_0_3", "RR_0_5", "RR_0_7", "RR_1", "RR_1_3", "RR_1_5",
                     "RR_1_7", "RR_2", "RR_2_5", "RR_3", "ltf_Key_levels", "HTF_Key_levels", "next_liquidity",
                     "session_high_low", "ob_edge", "fvg_edge", "vwap", "ema_mid", "atr_1", "atr_2", "atr_3",
-                    "trail_only", "event", "structure"
+                    "trail_only", "event", "structure", "Reacted", "RR_3_5", "RR_4", "RR_5",
+                    "ema", "ema_fast", "ema_slow", "donchian_edge", "donchian_mid",
+                    "ichi_cloud", "ichi_kijun", "ichi_tenkan"
                 },
                 ["SelectedStrategyExitMode"] = new[]
                 {
@@ -523,6 +528,22 @@ namespace cAlgo.Plugins
             ordinal = -1;
             if (!KnownEnumValues.TryGetValue(parameterName ?? "", out var names))
                 return false;
+            if (string.Equals(parameterName, "SelectedStrategyStopLossMode", StringComparison.OrdinalIgnoreCase))
+            {
+                // Accept older jobs without changing their persisted enum ordinal.
+                switch ((value ?? "").Trim().ToLowerInvariant())
+                {
+                    case "wick": value = "pattern_wick"; break;
+                    case "wick05": value = "candle_wick_0_5"; break;
+                    case "wick07": value = "candle_wick_0_7_legacy"; break;
+                    case "wick11": value = "candle_wick_1_1"; break;
+                    case "wick13": value = "candle_wick_1_3_legacy"; break;
+                    case "wick15": value = "candle_wick_1_5_legacy"; break;
+                    case "wick2": value = "candle_wick_2_legacy"; break;
+                    case "candle_wick_07": value = "candle_wick_0_7"; break;
+                    case "candle_wick_13": value = "candle_wick_1_3"; break;
+                }
+            }
             ordinal = Array.FindIndex(names, name => string.Equals(name, value, StringComparison.OrdinalIgnoreCase));
             if (ordinal < 0)
                 throw new ArgumentException($"Unknown value '{value}' for cBot parameter '{parameterName}'.");

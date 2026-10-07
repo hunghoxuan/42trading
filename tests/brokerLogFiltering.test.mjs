@@ -55,3 +55,14 @@ test("cTrader classifies failed ack and reject messages as error logs", () => {
     /if \(!response\.IsSuccessStatusCode\)[\s\S]*throw new Exception\("HTTP "/,
   );
 });
+
+test("cTrader risk gates use the simulated server clock during backtests", () => {
+  assert.match(
+    cTraderSource,
+    /private DateTime GetRiskReferenceNow\(\)[\s\S]*?NormalizeBotTimeToUtc\(Server\.Time\)[\s\S]*?ConvertTimeFromUtc\(utcNow, GetRiskReferenceTimeZone\(\)\)/,
+  );
+  assert.doesNotMatch(
+    cTraderSource,
+    /private DateTime GetRiskReferenceNow\(\)\s*\{\s*return TimeZoneInfo\.ConvertTimeFromUtc\(DateTime\.UtcNow,/,
+  );
+});

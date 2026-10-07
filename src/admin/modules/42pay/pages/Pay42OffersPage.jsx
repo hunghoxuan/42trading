@@ -9,6 +9,7 @@ import CrudContainer from "../../../shared/components/CrudContainer";
 import InputComboSelect from "../../../shared/components/InputComboSelect";
 import PaginationBar from "../../../shared/components/PaginationBar";
 import DateTimePicker from "../../../shared/components/DateTimePicker";
+import MobileFullscreenModal from "../../../shared/components/MobileFullscreenModal";
 import { showToast } from "../../../shared/components/ToastContainer";
 import Pay42MediaThumb from "./Pay42MediaThumb";
 import Pay42PageShell from "./Pay42PageShell";
@@ -74,6 +75,7 @@ export default function Pay42OffersPage({ authUser }) {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [tableMode, setTableMode] = useState("table");
+  const [qrModalOpen, setQrModalOpen] = useState(false);
 
   const currentRole = roleLabel(authUser);
   const canManage = currentRole === "seller" || currentRole === "admin";
@@ -355,6 +357,7 @@ export default function Pay42OffersPage({ authUser }) {
   }
 
   function closeDetail() {
+    setQrModalOpen(false);
     setDetailOpen(false);
   }
 
@@ -426,21 +429,20 @@ export default function Pay42OffersPage({ authUser }) {
             </label>
             <ResponsivePanel
               title="Buyer Payment QR"
-              subtitle="Scan-ready payment code for buyers"
+              subtitle="Open the scan-ready payment code for buyers"
               className="pay42-form-field pay42-form-field--full pay42-inline-panel"
               bodyClassName="pay42-inline-panel__body"
               border="always"
               defaultOpen
             >
-              <div className="pay42-offer-hero pay42-offer-hero--qr-only">
-                <Pay42MediaThumb
-                  src={form.qr_code_image}
-                  alt={`${form.sid || form.offer_name || "offer"} qr`}
-                  label={form.sid || form.offer_name || "offer"}
-                  className="pay42-qr-thumb pay42-qr-thumb--detail"
-                  kind="qr"
-                />
-              </div>
+              <button
+                type="button"
+                className="secondary-button pay42-see-qr-button"
+                disabled={!form.qr_code_image}
+                onClick={() => setQrModalOpen(true)}
+              >
+                See QR code
+              </button>
             </ResponsivePanel>
             <div className="pay42-inline-actions pay42-form-field--full">
               <button
@@ -485,7 +487,8 @@ export default function Pay42OffersPage({ authUser }) {
   );
 
   return (
-    <Pay42PageShell>
+    <>
+      <Pay42PageShell>
       <PageHeader className="trades-page-header" title={canManage ? "Offers" : "Points"} />
 
       {error ? <div className="error">{error}</div> : null}
@@ -660,6 +663,23 @@ export default function Pay42OffersPage({ authUser }) {
           ))}
         </div>
       )}
-    </Pay42PageShell>
+      </Pay42PageShell>
+      <MobileFullscreenModal
+        open={qrModalOpen}
+        title="Buyer Payment QR"
+        subtitle={form.sid || form.offer_name || "Scan to pay"}
+        onClose={() => setQrModalOpen(false)}
+      >
+        <div className="pay42-qr-modal-content">
+          <Pay42MediaThumb
+            src={form.qr_code_image}
+            alt={`${form.sid || form.offer_name || "offer"} payment QR code`}
+            label={form.sid || form.offer_name || "offer"}
+            className="pay42-qr-thumb pay42-qr-thumb--modal"
+            kind="qr"
+          />
+        </div>
+      </MobileFullscreenModal>
+    </>
   );
 }

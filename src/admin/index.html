@@ -3,10 +3,38 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="color-scheme" content="dark light" />
+        <meta name="theme-color" content="#0b0f14" />
         <title>PayHub</title>
         <link rel="icon" type="image/png" href="/logo/payhub-p-final.png" />
         <link rel="shortcut icon" href="/logo/payhub-p-final.png" />
         <script>
+            // Apply the theme before the app paints. Legacy/default sessions are
+            // migrated to dark; only an explicit theme selection is persisted.
+            (function () {
+                var theme = "dark";
+                try {
+                    var userSelected =
+                        localStorage.getItem("ui_theme_user_selected") === "1";
+                    if (
+                        userSelected &&
+                        localStorage.getItem("ui_theme") === "light"
+                    ) {
+                        theme = "light";
+                    }
+                } catch (_) {
+                    theme = "dark";
+                }
+                document.documentElement.setAttribute("data-theme", theme);
+                document.documentElement.style.colorScheme = theme;
+                document
+                    .querySelector('meta[name="theme-color"]')
+                    .setAttribute(
+                        "content",
+                        theme === "light" ? "#e6edf5" : "#0b0f14",
+                    );
+            })();
+
             // Guard against broken browser extensions that monkey-patch JS built-ins.
             // Save originals and restore them before app modules execute.
             (function () {

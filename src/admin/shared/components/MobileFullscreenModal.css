@@ -1,7 +1,10 @@
 .mobile-fullscreen-modal {
   position: fixed;
   inset: 0;
-  z-index: 320;
+  /* Must stay above mobile CRUD detail dialogs (z-index: 1100). */
+  z-index: 1300;
+  height: 100vh;
+  height: 100dvh;
 }
 
 .mobile-fullscreen-modal__backdrop {
@@ -27,7 +30,7 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 14px;
+  padding: calc(12px + env(safe-area-inset-top, 0px)) 14px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
@@ -42,5 +45,7 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 12px;
+  padding: 12px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }

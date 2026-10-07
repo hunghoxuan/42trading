@@ -79,6 +79,76 @@ function buildArtifactResult(functionName = "", matches = [], extra = {}) {
   };
 }
 
+function evaluateLondonTrendSweep(rawArgs = [], ctx = {}) {
+  const args = Array.isArray(rawArgs) ? rawArgs : [];
+  const bias = String(args[0] || "").trim().toLowerCase();
+  const strength = Math.max(1, Number(args[1]) || 2);
+  const lookback = Math.max(12, Number(args[2]) || 64);
+  const penetrationAtr = Math.max(0, Number(args[3]) || 0.05);
+  const wickBodyRatio = Math.max(0.1, Number(args[4]) || 1);
+  const fastPeriod = Math.max(2, Number(args[5]) || 9);
+  const slowPeriod = Math.max(fastPeriod + 1, Number(args[6]) || 21);
+  const sessionHours = Math.max(1, Number(args[7]) || 4);
+  const closeFraction = Math.max(0.1, Math.min(0.9, Number(args[8]) || 0.45));
+  const stopBufferAtr = Math.max(0, Number(args[9]) || 0.08);
+  const minimumStopAtr = Math.max(0.05, Number(args[10]) || 0.35);
+  const maximumStopAtr = Math.max(minimumStopAtr, Number(args[11]) || 1.8);
+  const bars = Array.isArray(ctx?.bars) ? ctx.bars : [];
+  const index = Number(ctx?.index);
+  if (!Number.isInteger(index) || index < Math.max(slowPeriod, strength * 2 + 2) || index >= bars.length) return false;
+  const current = bars[index];
+  const date = new Date(Number(current?.time) * 1000);
+  const nyHour = Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false }).format(date));
+  if (nyHour < 3 || nyHour >= 3 + sessionHours) return false;
+  const closes = bars.slice(0, index + 1).map((bar) => Number(bar?.close));
+  const ema = (period) => {
+    const k = 2 / (period + 1);
+    let value = closes[0];
+    for (let i = 1; i < closes.length; i += 1) value = closes[i] * k + value * (1 - k);
+    return value;
+  };
+  const fast = ema(fastPeriod);
+  const slow = ema(slowPeriod);
+  let atr = Number(bars[0]?.high) - Number(bars[0]?.low);
+  for (let i = 1; i <= index; i += 1) {
+    const high = Number(bars[i]?.high), low = Number(bars[i]?.low), prevClose = Number(bars[i - 1]?.close);
+    const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+    atr = (atr * 13 + tr) / 14;
+  }
+  let latestHigh = null, latestLow = null;
+  for (let pivot = Math.max(strength, index - lookback); pivot <= index - strength; pivot += 1) {
+    const ph = Number(bars[pivot]?.high), pl = Number(bars[pivot]?.low);
+    let isHigh = true, isLow = true;
+    for (let offset = 1; offset <= strength; offset += 1) {
+      isHigh = isHigh && ph > Number(bars[pivot - offset]?.high) && ph >= Number(bars[pivot + offset]?.high);
+      isLow = isLow && pl < Number(bars[pivot - offset]?.low) && pl <= Number(bars[pivot + offset]?.low);
+    }
+    if (isHigh) latestHigh = ph;
+    if (isLow) latestLow = pl;
+  }
+  const open = Number(current?.open), high = Number(current?.high), low = Number(current?.low), close = Number(current?.close);
+  const range = high - low, body = Math.max(Math.abs(close - open), atr * 0.02);
+  const bullishRisk = Math.max(close - low + stopBufferAtr * atr, minimumStopAtr * atr) / atr;
+  const bearishRisk = Math.max(high - close + stopBufferAtr * atr, minimumStopAtr * atr) / atr;
+  const bullish = Number.isFinite(latestLow) && low < latestLow - penetrationAtr * atr && close > latestLow &&
+    (Math.min(open, close) - low) / body >= wickBodyRatio && close >= low + range * closeFraction && fast > slow && bullishRisk <= maximumStopAtr;
+  const bearish = Number.isFinite(latestHigh) && high > latestHigh + penetrationAtr * atr && close < latestHigh &&
+    (high - Math.max(open, close)) / body >= wickBodyRatio && close <= high - range * closeFraction && fast < slow && bearishRisk <= maximumStopAtr;
+  const matchedBias = bias === "bullish" ? bullish : bias === "bearish" ? bearish : bullish || bearish;
+  if (!matchedBias) return false;
+  const selectedBias = bias === "bullish" || (bias !== "bearish" && bullish) ? "bullish" : "bearish";
+  const match = buildSyntheticMatch({
+    functionName: "london_trend_sweep",
+    timeframe: currentTimeframe(ctx),
+    bar: current,
+    price: close,
+    bias: selectedBias,
+    level: selectedBias === "bullish" ? latestLow : latestHigh,
+    payload: { session: "London first " + sessionHours + "h", ema_fast: fast, ema_slow: slow },
+  });
+  return buildArtifactResult("london_trend_sweep", match ? [match] : [], { timeframe: currentTimeframe(ctx), bias: selectedBias });
+}
+
 function mergeArtifactResults(operator = "and", values = []) {
   const normalized = Array.isArray(values) ? values : [];
   if (operator === "and" || operator === "then") {
@@ -1139,6 +1209,10 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
       evaluatedArgs[3],
       ctx,
     );
+  }
+  if (lowerName === "london_trend_sweep") {
+    const evaluatedArgs = (Array.isArray(rawArgs) ? rawArgs : []).map((arg) => resolve(arg));
+    return evaluateLondonTrendSweep(evaluatedArgs, ctx);
   }
   if (lowerName === "three_candles_sl") {
     const evaluatedArgs = (Array.isArray(rawArgs) ? rawArgs : []).map((arg) => resolve(arg));

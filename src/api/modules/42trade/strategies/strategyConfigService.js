@@ -540,8 +540,53 @@ async function validateStrategyPayload(
       }
     }
   }
-  if (!Array.isArray(normalizedRules) || !normalizedRules.length) {
+  const usesBuiltinEntryEngine =
+    strategy.metadata &&
+    typeof strategy.metadata === "object" &&
+    String(strategy.metadata.entry_engine || "").trim().toLowerCase() === "builtin";
+  if ((!Array.isArray(normalizedRules) || !normalizedRules.length) && !usesBuiltinEntryEngine) {
     errors.push("rules must contain at least one rule");
+  }
+  const autoExit = strategy.auto_exit;
+  if (autoExit !== undefined && autoExit !== null) {
+    if (typeof autoExit !== "object" || Array.isArray(autoExit)) {
+      errors.push("auto_exit must be null or an object");
+    } else {
+      if (!String(autoExit.id || "").trim()) {
+        errors.push("auto_exit.id is required");
+      }
+      if (!String(autoExit.description || "").trim()) {
+        errors.push("auto_exit.description is required");
+      }
+      if (
+        autoExit.evaluate_on !== undefined &&
+        String(autoExit.evaluate_on || "").trim() !== "closed_bar"
+      ) {
+        errors.push("auto_exit.evaluate_on must be closed_bar");
+      }
+      for (const directionKey of ["long_when", "short_when"]) {
+        let compiledCondition = null;
+        try {
+          compiledCondition = compileRuleExpression(autoExit[directionKey]);
+        } catch (error) {
+          errors.push(`auto_exit.${directionKey}: ${error.message}`);
+        }
+        if (
+          !compiledCondition ||
+          typeof compiledCondition !== "object" ||
+          Array.isArray(compiledCondition)
+        ) {
+          errors.push(`auto_exit.${directionKey} is required`);
+          continue;
+        }
+        validateExpression(
+          compiledCondition,
+          errors,
+          `auto_exit.${directionKey}`,
+          { supportedOperators, supportedFunctions },
+        );
+      }
+    }
   }
   if (!strategy.risk || typeof strategy.risk !== "object" || Array.isArray(strategy.risk)) {
     errors.push("risk must be an object");
@@ -568,6 +613,17 @@ async function validateStrategyPayload(
           : "42trade.strategy.v1",
       kind: "custom",
       status: String(strategy.status || "draft"),
+      auto_exit:
+        autoExit && typeof autoExit === "object" && !Array.isArray(autoExit)
+          ? {
+              id: normalizeEventId(autoExit.id, "auto_exit"),
+              description: String(autoExit.description || "").trim(),
+              evaluate_on: "closed_bar",
+              timeframe: String(autoExit.timeframe || "strategy").trim() || "strategy",
+              long_when: autoExit.long_when,
+              short_when: autoExit.short_when,
+            }
+          : null,
       market:
         strategy.market && typeof strategy.market === "object" ? strategy.market : {},
       settings:
@@ -672,6 +728,7 @@ function buildExampleStrategy() {
     engine_version: "42trade.strategy.v3",
     kind: "custom",
     status: "draft",
+    auto_exit: null,
     market: {
       symbol: "EURAUD",
       tf: "15"

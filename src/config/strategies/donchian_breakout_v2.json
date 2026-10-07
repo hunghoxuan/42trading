@@ -1,0 +1,47 @@
+{
+  "id": "donchian_breakout_v2",
+  "key": "donchian_breakout_v2",
+  "name": "Donchian Tenkan Pullback",
+  "description": "Uses the Donchian Momentum Breakout signal and quality gates, then places a pullback entry halfway between the directional event-candle wick and Ichimoku Tenkan-sen (9). The event wick defines the structural stop distance; TP is controlled by the visible cTrader Trade Config parameter.",
+  "engine_version": "42trade.strategy.v3",
+  "kind": "custom",
+  "status": "active",
+  "auto_exit": {
+    "id": "opposite_donchian_10",
+    "description": "Exit a long on a close below the previous 10-bar low; exit a short on a close above the previous 10-bar high.",
+    "evaluate_on": "closed_bar",
+    "timeframe": "strategy",
+    "long_when": { "fn": "donchian_opposite_breakout", "args": ["long", 10] },
+    "short_when": { "fn": "donchian_opposite_breakout", "args": ["short", 10] }
+  },
+  "market": { "symbol": "", "tf": "" },
+  "settings": {
+    "trade_config": {
+      "entry": "event_wick_tenkan_midpoint",
+      "sl": "event_wick_reference_half_distance",
+      "tp": "visible_trade_config"
+    }
+  },
+  "params": {
+    "entry_period": 20,
+    "exit_period": 10,
+    "tenkan_period": 9,
+    "fresh_cross_required": true,
+    "min_body_atr": 0.25,
+    "close_location_min": 0.6,
+    "max_breakout_extension_atr": 1.0,
+    "ema_fast": 50,
+    "ema_slow": 200,
+    "adx_period": 14,
+    "adx_min": 18,
+    "max_same_direction_positions": 2,
+    "pyramid_requires_breakeven": true,
+    "execution_gap_risk_reserve_percent": 15,
+    "drawdown_risk_multipliers": { "5_percent": 0.5, "8_percent": 0.25, "10_percent": 0.1 }
+  },
+  "indicators": [],
+  "rules": [],
+  "risk": {},
+  "conditions": { "symbols": [], "timeframes": [], "sessions": [], "regime_tags": [] },
+  "metadata": { "author": "42trade", "preset_scope": "ctrader", "entry_engine": "builtin" }
+}
