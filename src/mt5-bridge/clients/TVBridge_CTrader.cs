@@ -22,14 +22,14 @@ namespace cAlgo.Robots
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class TVBridgeCBot : Robot
     {
-        private const string BuildVersion = "v2026.10.07 - entry-leg-guides-v112";
+        private const string BuildVersion = "v2026.10.08 - causal-replay-v113";
         private const string BridgeSourceId = "Ctrader";
         private const string BridgeSourceType = "ctrader_bridge";
         private const int TransientErrorLogThresholdCount = 10;
         private const int TransientErrorLogThresholdSeconds = 30;
         private const string CustomUiSettingsFileName = "ctrader_ui_settings.txt";
         private const string CanonicalEventCacheFileName = "canonical_events.tsv";
-        private const string CanonicalEventCacheVersion = "20"; // Geographic session clocks changed; rebuild old session evidence.
+        private const string CanonicalEventCacheVersion = "21"; // Rebuild evidence produced before causal replay boundaries.
         private const int DefaultCachedFileMaxBars = 2000;
         private const string CandlePatternCacheFileName = "candle_patterns.tsv";
         private const string CandlePatternCacheVersion = "2";
@@ -72,6 +72,257 @@ namespace cAlgo.Robots
         private readonly Dictionary<string, Dictionary<string, object>> _sharedEventCatalog = new Dictionary<string, Dictionary<string, object>>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, Dictionary<string, object>> _sharedStrategyCatalog = new Dictionary<string, Dictionary<string, object>>(StringComparer.OrdinalIgnoreCase);
         private readonly CTraderStructureEngine _structureEngine = new CTraderStructureEngine();
+        // Analysis is a prefix of market history, not a view of today's entire Bars object.
+        // The scope is synchronous and restored before broker submission/account checks.
+        private CausalDecisionContext _causalDecision;
+        private readonly Dictionary<string, List<TradeTriggerEvent>> _causalTriggerBarCache = new Dictionary<string, List<TradeTriggerEvent>>();
+        private readonly Queue<string> _causalTriggerBarCacheOrder = new Queue<string>();
+        private readonly Dictionary<string, List<ChartLevelCandidate>> _causalLevelCandidateCache = new Dictionary<string, List<ChartLevelCandidate>>();
+        private readonly Queue<string> _causalLevelCandidateCacheOrder = new Queue<string>();
+        private bool _causalChartReplayPending;
+        private sealed class CausalReplayProgress
+        {
+            public int NextIndex;
+            public DateTime LastProcessedTime;
+            public List<TradeTriggerEvent> Candidates;
+        }
+        private readonly Dictionary<string, CausalReplayProgress> _causalReplayProgress = new Dictionary<string, CausalReplayProgress>();
+        private readonly Queue<string> _causalReplayProgressOrder = new Queue<string>();
+        private readonly Dictionary<string, List<CanonicalMarketEvent>> _causalSweepProofBarCache = new Dictionary<string, List<CanonicalMarketEvent>>();
+        private readonly Queue<string> _causalSweepProofBarCacheOrder = new Queue<string>();
+        private new Bars Bars { get { return GetCausalBars(base.Bars); } }
+
+        private sealed class CausalDecisionContext
+        {
+            public DateTime Utc;
+            public string SymbolName;
+            public TimeFrame TimeFrame;
+            public string AnalysisSettingsKey;
+            public readonly Dictionary<Bars, Bars> Views = new Dictionary<Bars, Bars>();
+        }
+
+        private sealed class CausalDecisionScope : IDisposable
+        {
+            private readonly TVBridgeCBot _owner;
+            private readonly CausalDecisionContext _previous;
+            public CausalDecisionScope(TVBridgeCBot owner, CausalDecisionContext previous)
+            { _owner = owner; _previous = previous; }
+            public void Dispose() { _owner._causalDecision = _previous; }
+        }
+
+        private IDisposable BeginCausalDecision(DateTime utc, string symbolName = null, TimeFrame timeFrame = null)
+        {
+            var previous = _causalDecision;
+            utc = NormalizeBotTimeToUtc(utc);
+            if (previous == null || utc < previous.Utc)
+                _causalDecision = new CausalDecisionContext { Utc = utc,
+                    SymbolName = symbolName ?? (previous != null ? previous.SymbolName : null),
+                    TimeFrame = timeFrame ?? (previous != null ? previous.TimeFrame : null),
+                    AnalysisSettingsKey = previous != null ? previous.AnalysisSettingsKey : null };
+            // A nested resolver may narrow the boundary, but must never widen it.
+            return new CausalDecisionScope(this, previous);
+        }
+
+        private IDisposable BeginCausalBarDecision(Bars bars, TimeFrame frame, int index, string symbolName = null)
+        {
+            var utc = IsValidBarIndex(bars, index)
+                ? ResolveSourceBarEndTime(bars, bars.OpenTimes[index], frame)
+                : DateTime.MinValue;
+            return BeginCausalDecision(utc, symbolName, frame);
+        }
+
+        private IDisposable BeginCausalSignalDecision(string symbolName, BacktestStrategySignal signal)
+        {
+            var time = signal.EntryConfirmationTime != DateTime.MinValue ? signal.EntryConfirmationTime : signal.SignalTime;
+            Bars raw = null;
+            if (signal.SourceTimeFrame != null && !string.IsNullOrWhiteSpace(symbolName))
+                try { raw = GetBarsForCurrentMasterTimer(signal.SourceTimeFrame, symbolName); } catch { }
+            return BeginCausalDecision(time != DateTime.MinValue && signal.SourceTimeFrame != null
+                ? ResolveSourceBarEndTime(raw, time, signal.SourceTimeFrame) : DateTime.MinValue,
+                symbolName, signal.SourceTimeFrame);
+        }
+
+        private IDisposable BeginLatestCausalDecision(string symbolName, TimeFrame frame)
+        {
+            Bars bars = null;
+            try { bars = GetBarsForCurrentMasterTimer(frame, symbolName); } catch { }
+            return BeginCausalBarDecision(bars, frame, bars != null ? bars.Count - 2 : -1, symbolName);
+        }
+
+        private Bars GetCausalMarketBars(TimeFrame frame, string symbolName)
+        {
+            return GetCausalBars(MarketData.GetBars(frame, symbolName), frame);
+        }
+
+        private string GetCausalAnalysisSettingsKey()
+        {
+            if (_causalDecision != null && !string.IsNullOrEmpty(_causalDecision.AnalysisSettingsKey))
+                return _causalDecision.AnalysisSettingsKey;
+            var key = BuildChartCacheKey(BuildDashboardAnalysisToggleKey(),
+                BuildNamedConfluenceCacheKey(), BuildConfiguredStrategyModesStateKey());
+            if (_causalDecision != null) _causalDecision.AnalysisSettingsKey = key;
+            return key;
+        }
+
+        private Bars GetCausalBars(Bars bars, TimeFrame frame = null)
+        {
+            if (bars == null || _causalDecision == null)
+                return bars;
+            var existing = bars as CTraderCausalDataProxy;
+            if (existing != null && existing.RawBars != null)
+                bars = existing.RawBars;
+            Bars view;
+            if (_causalDecision.Views.TryGetValue(bars, out view))
+                return view;
+            frame = frame ?? bars.TimeFrame ?? _causalDecision.TimeFrame;
+            var utc = _causalDecision.Utc;
+            var lastClosed = -1;
+            // Native Bars has a forming last bar. Never expose its final historical OHLC.
+            // Use binary search; replay can request thousands of prefixes of the same feed.
+            var left = 0;
+            var right = bars.Count - 2;
+            while (left <= right)
+            {
+                var middle = left + (right - left) / 2;
+                var end = ResolveNominalBarEnd(bars.OpenTimes[middle], frame);
+                var next = bars.OpenTimes[middle + 1];
+                if (next < end) end = next;
+                if (end <= utc) { lastClosed = middle; left = middle + 1; }
+                else right = middle - 1;
+            }
+            var count = utc == DateTime.MinValue ? 0 : lastClosed + 2;
+            var boundaryIndex = lastClosed + 1;
+            var hasBoundaryOpen = count > 0 && boundaryIndex < bars.Count && bars.OpenTimes[boundaryIndex] <= utc;
+            var boundaryTime = hasBoundaryOpen ? bars.OpenTimes[boundaryIndex] : utc;
+            var raw = bars;
+            var data = new Dictionary<string, object>(StringComparer.Ordinal);
+            foreach (var property in new[] { "OpenPrices", "HighPrices", "LowPrices", "ClosePrices", "TickVolumes", "AveragePrices", "MedianPrices", "TypicalPrices", "WeightedPrices" })
+            {
+                var series = (DataSeries)typeof(Bars).GetProperty(property).GetValue(raw);
+                var kind = property;
+                data[property] = CTraderCausalDataProxy.Create<DataSeries>((method, args) =>
+                {
+                    if (method.Name == "get_Count") return count;
+                    if (method.Name == "GetEnumerator")
+                        return Enumerable.Range(0, count).Select(i => i <= lastClosed ? series[i]
+                            : kind == "OpenPrices" && hasBoundaryOpen ? series[i]
+                            : kind == "TickVolumes" ? 0.0 : double.NaN).GetEnumerator();
+                    var index = method.Name == "get_Item" ? (int)args[0]
+                        : count - 1 - (method.Name == "Last" ? (int)args[0] : 0);
+                    if (index < 0 || index >= count) return double.NaN;
+                    if (index <= lastClosed) return series[index];
+                    // Only the new candle's opening price exists at the decision boundary.
+                    // Unavailable OHLC is NaN, not the eventual high/low/close or invented data.
+                    if (kind == "OpenPrices" && hasBoundaryOpen) return series[index];
+                    return kind == "TickVolumes" ? 0.0 : double.NaN;
+                });
+            }
+            Func<int, DateTime> timeAt = index => index >= 0 && index < count
+                ? (index <= lastClosed ? raw.OpenTimes[index] : boundaryTime) : DateTime.MinValue;
+            data["OpenTimes"] = CTraderCausalDataProxy.Create<TimeSeries>((method, args) =>
+            {
+                if (method.Name == "get_Count") return count;
+                if (method.Name == "GetEnumerator")
+                    return Enumerable.Range(0, count).Select(timeAt).GetEnumerator();
+                if (method.Name == "GetIndexByTime" || method.Name == "GetIndexByExactTime")
+                {
+                    var target = (DateTime)args[0];
+                    var lo = 0;
+                    var hi = count - 1;
+                    var found = -1;
+                    while (lo <= hi)
+                    {
+                        var middle = lo + (hi - lo) / 2;
+                        if (timeAt(middle) <= target) { found = middle; lo = middle + 1; }
+                        else hi = middle - 1;
+                    }
+                    return method.Name == "GetIndexByExactTime" && (found < 0 || timeAt(found) != target) ? -1 : found;
+                }
+                return timeAt(method.Name == "get_Item" ? (int)args[0]
+                    : count - 1 - (method.Name == "Last" ? (int)args[0] : 0));
+            });
+            view = CTraderCausalDataProxy.Create<Bars>((method, args) =>
+            {
+                switch (method.Name)
+                {
+                    case "get_Count": return count;
+                    case "get_TimeFrame": return frame;
+                    case "get_SymbolName": return raw.SymbolName;
+                    case "get_Item": case "Last": case "get_LastBar":
+                        var index = method.Name == "get_Item" ? (int)args[0]
+                            : count - 1 - (method.Name == "Last" ? (int)args[0] : 0);
+                        if (index < 0 || index > lastClosed)
+                            throw new InvalidOperationException("Causal analysis cannot read an uncompleted bar.");
+                        return raw[index];
+                    case "GetPrices":
+                        var priceName = args[0].ToString();
+                        object priceSeries;
+                        if (data.TryGetValue(priceName + "Prices", out priceSeries)) return priceSeries;
+                        throw new NotSupportedException("Unsupported causal price series: " + priceName);
+                    case "GetEnumerator":
+                        return Enumerable.Range(0, Math.Max(0, lastClosed + 1)).Select(i => raw[i]).GetEnumerator();
+                }
+                object value;
+                if (method.Name.StartsWith("get_", StringComparison.Ordinal) && data.TryGetValue(method.Name.Substring(4), out value)) return value;
+                throw new NotSupportedException("Causal Bars is a read-only analysis view: " + method.Name);
+            });
+            ((CTraderCausalDataProxy)view).RawBars = raw;
+            _causalDecision.Views[raw] = view;
+            return view;
+        }
+
+        private DateTime ResolveNominalBarEnd(DateTime open, TimeFrame frame)
+        {
+            if (frame == TimeFrame.Monthly) return open.AddMonths(1);
+            return open.AddMinutes(Math.Max(1, TimeFrameToMinutes(frame)));
+        }
+
+        // Durable startup regression: extending a feed must not extend a past decision.
+        // The exhaustive SL/TP/entry + marker replay harness additionally lives in .local/.
+        private void ValidateCausalDecisionBoundaryContracts()
+        {
+            var start = new DateTime(2026, 9, 28, 0, 0, 0, DateTimeKind.Utc);
+            var count = 40;
+            var mutateFuture = false;
+            var series = CTraderCausalDataProxy.Create<DataSeries>((method, args) =>
+            {
+                if (method.Name == "get_Count") return count;
+                var index = method.Name == "get_Item" ? (int)args[0] : count - 1;
+                return mutateFuture && index >= 10 ? 999999.0 : 100.0 + index;
+            });
+            var times = CTraderCausalDataProxy.Create<TimeSeries>((method, args) =>
+                method.Name == "get_Count" ? (object)count : start.AddMinutes(15.0 * (int)args[0]));
+            var feed = CTraderCausalDataProxy.Create<Bars>((method, args) =>
+            {
+                if (method.Name == "get_Count") return count;
+                if (method.Name == "get_TimeFrame") return TimeFrame.Minute15;
+                if (method.Name == "get_SymbolName") return "CAUSAL_CONTRACT";
+                if (method.Name == "get_OpenTimes") return times;
+                return series;
+            });
+            var cutoff = start.AddMinutes(150);
+            using (BeginCausalDecision(cutoff, "CAUSAL_CONTRACT", TimeFrame.Minute15))
+            {
+                var prefix = GetCausalBars(feed);
+                if (prefix.Count != 11 || prefix.ClosePrices[9] != 109 ||
+                    !double.IsNaN(prefix.ClosePrices[10]) || !double.IsNaN(prefix.HighPrices.LastValue) ||
+                    !double.IsNaN(prefix.LowPrices.Last(0)) || !double.IsNaN(prefix.OpenPrices[11]) ||
+                    prefix.ClosePrices.Take(10).Last() != 109)
+                    throw new InvalidOperationException("Causal completed-bar boundary contract failed.");
+                mutateFuture = true;
+                count = 80;
+                if (prefix.Count != 11 || prefix.ClosePrices[9] != 109 || prefix.OpenPrices[10] != 999999)
+                    throw new InvalidOperationException("Causal prefix/suffix independence contract failed.");
+                using (BeginCausalDecision(cutoff.AddDays(1)))
+                    if (GetCausalBars(feed).Count != 11)
+                        throw new InvalidOperationException("Nested causal scope widened its boundary.");
+                using (BeginCausalDecision(cutoff.AddMinutes(-30)))
+                    if (GetCausalBars(feed).Count != 9)
+                        throw new InvalidOperationException("Nested causal scope failed to narrow its boundary.");
+            }
+            if (GetCausalBars(feed) != feed)
+                throw new InvalidOperationException("Causal scope did not restore live context.");
+        }
         private bool _sharedCatalogLoaded;
         private int _backtestingRuntimeState = -1;
         private StackPanel _chartButtonPanel;
@@ -4245,7 +4496,7 @@ namespace cAlgo.Robots
 
         private DateTime GetReferenceNow()
         {
-            return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, GetReferenceTimeZone());
+            return TimeZoneInfo.ConvertTimeFromUtc(_causalDecision != null ? _causalDecision.Utc : DateTime.UtcNow, GetReferenceTimeZone());
         }
 
         private DateTime ConvertUtcToReferenceTime(DateTime utcTime)
@@ -4884,6 +5135,9 @@ namespace cAlgo.Robots
         {
             if (sourceBars == null || sourceTimeFrame == null || barTime == DateTime.MinValue)
                 return false;
+            using var causalScope = BeginCausalBarDecision(sourceBars, sourceTimeFrame,
+                ResolveSourceBarIndex(sourceBars, barTime), symbolName);
+            sourceBars = GetCausalBars(sourceBars, sourceTimeFrame);
 
             var cacheKey = string.Format(
                 CultureInfo.InvariantCulture,
@@ -5857,10 +6111,20 @@ namespace cAlgo.Robots
 
         private void ClearRuntimeAnalysisCaches()
         {
+            _structureEngine.ClearSnapshots();
             _dashboardEventCache.Clear();
             _dashboardEventCacheClosedBarTicks.Clear();
             _tradeTriggerSequenceCache.Clear();
             _tradeTriggerFrameCache.Clear();
+            _causalTriggerBarCache.Clear();
+            _causalTriggerBarCacheOrder.Clear();
+            _causalLevelCandidateCache.Clear();
+            _causalLevelCandidateCacheOrder.Clear();
+            _causalSweepProofBarCache.Clear();
+            _causalSweepProofBarCacheOrder.Clear();
+            _causalChartReplayPending = false;
+            _causalReplayProgress.Clear();
+            _causalReplayProgressOrder.Clear();
             _persistedCanonicalEventCache.Clear();
             _persistedCandlePatternCache.Clear();
             _persistedScoredZoneCache.Clear();
@@ -8569,6 +8833,8 @@ namespace cAlgo.Robots
             if (!IsValidBarIndex(sourceBars, barIndex) || barIndex >= sourceBars.Count - 1 ||
                 sourceTimeFrame == null)
                 return false;
+            using var causalScope = BeginCausalBarDecision(sourceBars, sourceTimeFrame, barIndex, symbolName);
+            sourceBars = GetCausalBars(sourceBars, sourceTimeFrame);
             var symbol = ResolveLoadedSymbol(symbolName);
             if (symbol == null)
                 return false;
@@ -8581,7 +8847,7 @@ namespace cAlgo.Robots
             // Bid/Ask, a broker fill, or later candles as the entry of an older setup.
             var referenceEntry = sourceBars.OpenPrices[barIndex + 1];
             if (!(referenceEntry > 0))
-                referenceEntry = sourceBars.ClosePrices[barIndex];
+                return false; // The execution open is not known yet; do not invent a fill.
             var mode = GetConfiguredStrategyModes().FirstOrDefault();
             if (mode == BacktestStrategyMode.Off)
                 mode = BacktestStrategyMode.CustomTrade;
@@ -8637,13 +8903,24 @@ namespace cAlgo.Robots
             if (!TryValidateProtectionPrices(symbol, trigger.IsBullish ? "BUY" : "SELL",
                 entryPrice, stopLoss, takeProfit, out rejectReason))
                 return false;
-            var legs = CTraderStrategyEngine.BuildEntryLegPlan(symbol, signal.TradeType,
-                referenceEntry, entryPrice, stopLoss, useLimit, useStop, preset.NumberOfTrades, MinStopPips);
+            var legs = BuildCausalStrategyEntryLegPlan(symbol, symbolName, signal,
+                referenceEntry, entryPrice, stopLoss, useLimit, useStop, preset.NumberOfTrades);
             if (legs.Count == 0)
                 return false;
             if (plannedEntries != null)
                 plannedEntries.AddRange(legs);
             return true;
+        }
+
+        private List<CTraderStrategyEntryLeg> BuildCausalStrategyEntryLegPlan(
+            Symbol symbol, string symbolName, BacktestStrategySignal signal,
+            double executionPrice, double entryPrice, double stopLoss,
+            bool useLimitOrder, bool useStopOrder, int numberOfTrades)
+        {
+            using var causalScope = BeginCausalSignalDecision(symbolName, signal);
+            return CTraderStrategyEngine.BuildEntryLegPlan(symbol, signal.TradeType,
+                executionPrice, entryPrice, stopLoss, useLimitOrder, useStopOrder,
+                numberOfTrades, ResolveMinStopPips(symbol));
         }
 
         // The price chart may show its own timeframe plus enabled higher-timeframe context.
@@ -8962,6 +9239,8 @@ namespace cAlgo.Robots
 
         private double ResolveMinStopPips(Symbol symbol, Bars sourceBars = null)
         {
+            if (_causalDecision != null && _causalDecision.TimeFrame != null && symbol != null)
+                try { sourceBars = GetBarsForCurrentMasterTimer(_causalDecision.TimeFrame, symbol.Name); } catch { sourceBars = null; }
             var fixedFloor = SelectedRiskMode == RiskMode.Risky ? 5.0 : 15.0;
             var spreadMultiplier = SelectedRiskMode == RiskMode.Risky ? 3.0 : 5.0;
             var atrMultiplier = SelectedRiskMode == RiskMode.Risky ? 0.25 : 0.5;
@@ -8980,6 +9259,10 @@ namespace cAlgo.Robots
             if (symbol == null || symbol.PipSize <= 0)
                 return 0.0;
 
+            // Historical OHLC has no spread tape. Use the same deterministic floor for
+            // strategy plans in replay and live analysis; broker checks still use quotes.
+            if (_causalDecision != null)
+                return Math.Max(symbol.TickSize, symbol.PipSize * 0.5) / symbol.PipSize;
             var ask = !double.IsNaN(symbol.Ask) ? symbol.Ask : 0.0;
             var bid = !double.IsNaN(symbol.Bid) ? symbol.Bid : 0.0;
             if (ask > 0 && bid > 0 && ask >= bid)
@@ -8994,12 +9277,13 @@ namespace cAlgo.Robots
             if (symbol == null || symbol.PipSize <= 0)
                 return 0.0;
 
-            var bars = sourceBars;
+            var bars = GetCausalBars(sourceBars);
             if (bars == null)
             {
                 try
                 {
-                    var tf = Chart != null ? Chart.TimeFrame : TimeFrame.Minute;
+                    var tf = _causalDecision != null && _causalDecision.TimeFrame != null
+                        ? _causalDecision.TimeFrame : Chart != null ? Chart.TimeFrame : TimeFrame.Minute;
                     bars = GetBarsForCurrentMasterTimer(tf, symbol.Name);
                 }
                 catch
@@ -9338,7 +9622,7 @@ namespace cAlgo.Robots
             if (chartBars == null || chartBars.Count < 5)
                 return;
             // cTrader's ChartIndicators.Add() requires a DataSeries from the robot's own
-            // native Bars object. A DataSeries from MarketData.GetBars() (a different Bars
+            // native Bars object. A DataSeries from GetCausalMarketBars() (a different Bars
             // instance) is silently rejected, returning null for the indicator. Always use
             // Bars.ClosePrices when available; fall back to chartBars only as last resort.
             var indicatorSeriesOsc = (Bars != null && Bars.Count >= 5) ? Bars.ClosePrices : chartBars.ClosePrices;
@@ -9806,7 +10090,7 @@ namespace cAlgo.Robots
             if (chartBars == null || chartBars.Count < 5)
                 return;
             // cTrader's ChartIndicators.Add() requires a DataSeries from the robot's own
-            // native Bars object. A DataSeries from MarketData.GetBars() (a different Bars
+            // native Bars object. A DataSeries from GetCausalMarketBars() (a different Bars
             // instance) is silently rejected, returning null for the indicator. Always use
             // Bars.ClosePrices when available; fall back to chartBars only as last resort.
             var indicatorSeries = (Bars != null && Bars.Count >= 5) ? Bars.ClosePrices : chartBars.ClosePrices;
@@ -11306,6 +11590,8 @@ namespace cAlgo.Robots
             LogSlowChartStep("visuals." + phaseLabel, phaseStopwatch, "objects=" + (objectIndex - before).ToString(CultureInfo.InvariantCulture));
             WriteBridgeDebugLog("Visuals: " + phaseLabel + " complete added=" + (objectIndex - before).ToString(CultureInfo.InvariantCulture));
 
+            if (_pendingDetectionsPhase == 0 && _causalChartReplayPending)
+                return objectIndex; // Resume the same chronological replay on the next timer pass.
             _pendingDetectionsPhase++;
             if (_pendingDetectionsPhase >= DetectionRefreshPhaseCount)
             {
@@ -11546,7 +11832,7 @@ namespace cAlgo.Robots
                 _last4HSplitterBarsCount = Bars.Count;
                 _last4HSplitterStateKey = Build4HSplitterStateKey();
 
-                if (!transientEmptyEventRebuild)
+                if (!transientEmptyEventRebuild && !_causalChartReplayPending)
                 {
                     _lastFullOverlayBarsCount = Bars.Count;
                     _lastFullOverlayStateKey = fullStateKey;
@@ -13687,6 +13973,27 @@ namespace cAlgo.Robots
             int scanBarsOverride = 0,
             bool includeRawDetections = false)
         {
+            return CollectTradeTriggerCandidatesCore(symbolName, timeFrame, scanBarsOverride, includeRawDetections, false, 0);
+        }
+
+        private List<TradeTriggerEvent> CollectTradeTriggerCandidatesAtDecisionBar(
+            string symbolName, TimeFrame timeFrame, int scanBars, bool includeRawDetections)
+        {
+            // A single-bar evaluator needs historical context, not detection of every old
+            // candle again. The exact same per-bar detector/cache serves full chart replay.
+            return CollectTradeTriggerCandidatesCore(symbolName, timeFrame, scanBars, includeRawDetections, true, 0);
+        }
+
+        private List<TradeTriggerEvent> CollectTradeTriggerCandidatesIncrementally(
+            string symbolName, TimeFrame timeFrame, int scanBars, bool includeRawDetections)
+        {
+            return CollectTradeTriggerCandidatesCore(symbolName, timeFrame, scanBars, includeRawDetections, false, 150);
+        }
+
+        private List<TradeTriggerEvent> CollectTradeTriggerCandidatesCore(
+            string symbolName, TimeFrame timeFrame, int scanBarsOverride, bool includeRawDetections,
+            bool onlyDecisionBar, int replayBudgetMilliseconds)
+        {
             RefreshRuntimeEventToggleState();
             var candidates = new List<TradeTriggerEvent>();
             Bars sourceBars;
@@ -13716,21 +14023,16 @@ namespace cAlgo.Robots
                 BuildNamedConfluenceCacheKey(),
                 scanBars,
                 includeRawDetections ? "1" : "0",
-                BuildConfiguredStrategyModesStateKey());
+                BuildConfiguredStrategyModesStateKey()) + (onlyDecisionBar ? "|decision-only" : "");
             TimedCacheEntry<List<TradeTriggerEvent>> frameCached;
             if (_tradeTriggerFrameCache.TryGetValue(frameCacheKey, out frameCached) &&
                 frameCached != null && frameCached.Value != null)
                 return frameCached.Value.ToList();
 
-            var firstIndex = Math.Max(1, latestClosedIndex - scanBars + 1);
-            var canonicalEvents = GetCanonicalEventsForSymbolTimeFrame(
-                    symbolName,
-                    timeFrame,
-                    Math.Max(256, scanBars),
-                    Math.Max(180, scanBars))
-                .OrderBy(evt => evt.BarTime)
-                .ThenByDescending(evt => evt.Score)
-                .ToList();
+            var firstIndex = onlyDecisionBar ? latestClosedIndex : Math.Max(1, latestClosedIndex - scanBars + 1);
+            var replayTimer = Stopwatch.StartNew();
+            var replayIncomplete = false;
+            var canonicalEvents = new List<CanonicalMarketEvent>();
             var canonicalEventsByBarTime = IndexCanonicalEventsByBarTime(canonicalEvents);
             var noCanonicalEvents = new List<CanonicalMarketEvent>();
             var configuredFileMarkerOptions = GetConfiguredFileBackedUnifiedEventMarkerModes()
@@ -13743,8 +14045,43 @@ namespace cAlgo.Robots
             // Reconstruct the chart exactly in decision-time order. Each iteration represents
             // the state available when that closed candle completed; later candles must never
             // influence an earlier event merely because the chart is being rebuilt today.
+            var replayBars = sourceBars;
+            var causalSettingsKey = BuildChartCacheKey(normalizedSymbol, TimeFrameToMinutes(timeFrame),
+                BuildDashboardAnalysisToggleKey(), BuildNamedConfluenceCacheKey(), BuildConfiguredStrategyModesStateKey());
+            var progressKey = BuildChartCacheKey(causalSettingsKey, replayBars.GetHashCode(),
+                scanBars >= latestClosedIndex ? "all" : scanBars.ToString(CultureInfo.InvariantCulture), includeRawDetections);
+            CausalReplayProgress progress;
+            if (replayBudgetMilliseconds > 0 && _causalReplayProgress.TryGetValue(progressKey, out progress) &&
+                progress.NextIndex >= firstIndex && progress.NextIndex <= latestClosedIndex + 1 &&
+                progress.NextIndex > 0 && replayBars.OpenTimes[progress.NextIndex - 1] == progress.LastProcessedTime)
+            {
+                candidates.AddRange(progress.Candidates.Where(item => item.BarTime >= replayBars.OpenTimes[firstIndex]));
+                firstIndex = progress.NextIndex;
+            }
+            var nextReplayIndex = firstIndex;
             for (var barIndex = firstIndex; barIndex <= latestClosedIndex; barIndex++)
             {
+                var decisionScanBars = Math.Min(scanBars, barIndex);
+                var barCacheKey = BuildChartCacheKey(causalSettingsKey, replayBars.GetHashCode(),
+                    replayBars.OpenTimes[barIndex].Ticks, Math.Max(180, decisionScanBars));
+                List<TradeTriggerEvent> barCached;
+                if (_causalTriggerBarCache.TryGetValue(barCacheKey, out barCached))
+                { candidates.AddRange(barCached); nextReplayIndex = barIndex + 1; continue; }
+                if (replayBudgetMilliseconds > 0 && replayTimer.ElapsedMilliseconds >= replayBudgetMilliseconds && barIndex > firstIndex)
+                {
+                    replayIncomplete = true;
+                    _causalChartReplayPending = true;
+                    _forceChartVisualsRefresh = true;
+                    break;
+                }
+                var firstCandidate = candidates.Count;
+                using var causalScope = BeginCausalBarDecision(replayBars, timeFrame, barIndex, symbolName);
+                sourceBars = GetCausalBars(replayBars, timeFrame);
+                // Full-history canonical records can backdate a newly confirmed artifact.
+                // Rebuild the evidence as it was known at THIS candle's close instead.
+                canonicalEvents = GetCanonicalEventsForSymbolTimeFrame(symbolName, timeFrame,
+                    Math.Max(256, decisionScanBars), Math.Max(180, decisionScanBars)).OrderBy(evt => evt.BarTime).ToList();
+                canonicalEventsByBarTime = IndexCanonicalEventsByBarTime(canonicalEvents);
                 var previous = BuildSharedIndicatorSnapshot(sourceBars, barIndex - 1);
                 var current = BuildSharedIndicatorSnapshot(sourceBars, barIndex);
                 var patterns = GetDetectedSharedRulePatternSet(sourceBars, timeFrame, barIndex);
@@ -13836,8 +14173,18 @@ namespace cAlgo.Robots
                             bearishArtifactMatches));
                     }
                 }
+                CTraderCacheEngine.StoreBoundedFifo(_causalTriggerBarCache, _causalTriggerBarCacheOrder,
+                    barCacheKey, candidates.Skip(firstCandidate).ToList(), 4096);
+                nextReplayIndex = barIndex + 1;
             }
 
+            if (replayIncomplete)
+                CTraderCacheEngine.StoreBoundedFifo(_causalReplayProgress, _causalReplayProgressOrder,
+                    progressKey, new CausalReplayProgress { NextIndex = nextReplayIndex,
+                        LastProcessedTime = replayBars.OpenTimes[nextReplayIndex - 1], Candidates = candidates.ToList() }, 32);
+            else if (replayBudgetMilliseconds > 0)
+                _causalReplayProgress.Remove(progressKey);
+            sourceBars = replayBars;
             List<TradeTriggerEvent> resolved;
             if (includeRawDetections)
             {
@@ -13867,7 +14214,8 @@ namespace cAlgo.Robots
                 resolved = ApplyMinimumConfluenceFilter(
                     AttachOpposingEvidenceCounts(alignedEvidence, qualifiedEvidence));
             }
-            _tradeTriggerFrameCache[frameCacheKey] = new TimedCacheEntry<List<TradeTriggerEvent>>
+            if (!replayIncomplete)
+                _tradeTriggerFrameCache[frameCacheKey] = new TimedCacheEntry<List<TradeTriggerEvent>>
             {
                 CreatedAtUtc = DateTime.UtcNow,
                 Value = resolved
@@ -13886,6 +14234,9 @@ namespace cAlgo.Robots
 
         private bool IsCanonicalArtifactValidAtEventBar(Bars sourceBars, TradeTriggerEvent trigger)
         {
+            using var causalScope = BeginCausalBarDecision(sourceBars, trigger.SourceTimeFrame,
+                ResolveSourceBarIndex(sourceBars, trigger.BarTime), trigger.SymbolName);
+            sourceBars = GetCausalBars(sourceBars, trigger.SourceTimeFrame);
             if (!trigger.HasCanonicalEvent || string.IsNullOrWhiteSpace(trigger.CanonicalEvent.LevelKind))
                 return true;
 
@@ -14048,6 +14399,9 @@ namespace cAlgo.Robots
             Bars sourceBars,
             TradeTriggerEvent trigger)
         {
+            using var causalScope = BeginCausalBarDecision(sourceBars, trigger.SourceTimeFrame,
+                ResolveSourceBarIndex(sourceBars, trigger.BarTime), symbolName);
+            sourceBars = GetCausalBars(sourceBars, trigger.SourceTimeFrame);
             var failures = new List<string>();
             AddNamedConfluenceFailure(failures, "volume_surge", ConfluenceVolumeSurge, NamedConfluenceKind.VolumeSurge, symbolName, sourceBars, trigger);
             AddNamedConfluenceFailure(failures, "trend_bias", ConfluenceTrendBias, NamedConfluenceKind.TrendBias, symbolName, sourceBars, trigger);
@@ -14604,6 +14958,9 @@ namespace cAlgo.Robots
             if (barIndex > bars.Count - 2)
                 return false;
 
+            using var causalScope = BeginCausalBarDecision(bars, timeFrame, barIndex, symbolName);
+            bars = GetCausalBars(bars, timeFrame);
+
             var barTime = bars.OpenTimes[barIndex];
             context = new ConfluenceEvaluationContext
             {
@@ -14627,6 +14984,7 @@ namespace cAlgo.Robots
             bool? requireBullishDirection,
             out ConfluenceEvaluationContext context)
         {
+            using var causalScope = BeginCausalDecision(decisionTime, symbolName, timeFrame);
             context = null;
             if (string.IsNullOrWhiteSpace(symbolName) || timeFrame == null || decisionTime == DateTime.MinValue)
                 return false;
@@ -15102,6 +15460,8 @@ namespace cAlgo.Robots
             if (selected.Count == 0 || sourceBars == null ||
                 barIndex < 1 || barIndex > sourceBars.Count - 2)
                 return new List<TradeTriggerEvent>();
+            using var causalScope = BeginCausalBarDecision(sourceBars, timeFrame, barIndex, symbolName);
+            sourceBars = GetCausalBars(sourceBars, timeFrame);
 
             var barTime = sourceBars.OpenTimes[barIndex];
             var requiredScanBars = Math.Max(1, (sourceBars.Count - 2) - barIndex + 1);
@@ -15109,7 +15469,7 @@ namespace cAlgo.Robots
             // Detection/naming is independent from Trigger eligibility. Resolve every enabled
             // candle, structure and momentum event on this bar first; the selected Trigger
             // options are evaluated later by BuildSelectedTriggerOptionStates (AND/OR).
-            var matching = CollectTradeTriggerCandidates(symbolName, timeFrame, effectiveScanBars, true)
+            var matching = CollectTradeTriggerCandidatesAtDecisionBar(symbolName, timeFrame, effectiveScanBars, true)
                 .Where(trigger => !trigger.IsDirectionless)
                 .Where(trigger => trigger.BarTime == barTime)
                 .Where(trigger => IsCombinedTradeTriggerFamily(trigger.Family) ||
@@ -16356,7 +16716,7 @@ namespace cAlgo.Robots
                 "{0}|{1}|{2}",
                 string.IsNullOrWhiteSpace(symbolName) ? "" : symbolName.Trim().ToUpperInvariant(),
                 GetMiniChartLabel(timeFrame),
-                GetCanonicalStructureToggleCacheKey());
+                GetCanonicalStructureToggleCacheKey()) + (_causalDecision != null ? "|asof:" + _causalDecision.Utc.Ticks : "");
         }
 
         private string GetCanonicalStructureToggleCacheKey()
@@ -16519,6 +16879,7 @@ namespace cAlgo.Robots
             bool includeVisibleReactionArtifacts = false)
         {
             var candidates = new List<ChartLevelCandidate>();
+            sourceBars = GetCausalBars(sourceBars, sourceTimeFrame);
             if (symbol == null || sourceBars == null || sourceBars.Count < 5)
                 return candidates;
 
@@ -16527,10 +16888,22 @@ namespace cAlgo.Robots
             var asOf = asOfBarIndex >= 0 ? Math.Min(latestClosedIndex, asOfBarIndex) : latestClosedIndex;
             if (asOf < 2)
                 return candidates;
+            var settingsKey = GetCausalAnalysisSettingsKey();
+            using var causalLevelScope = BeginCausalBarDecision(sourceBars, sourceTimeFrame, asOf, symbol.Name);
+            sourceBars = GetCausalBars(sourceBars, sourceTimeFrame);
+            var levelCacheKey = BuildChartCacheKey(symbol.Name, sourceBars.GetHashCode(),
+                sourceBars.OpenTimes[asOf].Ticks, settingsKey,
+                requireNamedConfluenceScope, includeVisibleReactionArtifacts,
+                Chart != null ? TimeFrameToMinutes(Chart.TimeFrame) : 0);
+            List<ChartLevelCandidate> cachedLevels;
+            if (_causalLevelCandidateCache.TryGetValue(levelCacheKey, out cachedLevels))
+                return cachedLevels.ToList();
             var maxArtifacts = Math.Max(1, ResolveZoneMaxCount(ZoneMaxCount));
-            var snapshot = lifecycleSnapshot ?? BuildStructureSnapshotV2(
+            // A later snapshot can know future swing confirmations and zone lifecycles.
+            var snapshot = lifecycleSnapshot != null && lifecycleSnapshot.LastClosedBarIndex == asOf
+                ? lifecycleSnapshot : BuildStructureSnapshotV2(
                 sourceBars,
-                ResolveWorkingLookbackBars(sourceBars, sourceTimeFrame));
+                ResolveWorkingLookbackBars(sourceBars, sourceTimeFrame), asOf);
 
             if (_toggleKeyLevels && IsScopeEnabledForTimeFrame(DrawKeyLevels, sourceTimeFrame) &&
                 (!requireNamedConfluenceScope ||
@@ -16565,7 +16938,7 @@ namespace cAlgo.Robots
                  DoesNamedConfluenceScopeIncludeFrame(ConfluenceSwing, sourceTimeFrame, sourceTimeFrame)))
             {
                 foreach (var swing in snapshot.Swings
-                    .Where(value => value.BarIndex + 2 <= asOf)
+                    .Where(value => value.BarIndex <= asOf)
                     .GroupBy(value => value.IsHigh)
                     .Select(group => group.OrderByDescending(value => value.BarIndex).First()))
                 {
@@ -16673,7 +17046,7 @@ namespace cAlgo.Robots
                 .ThenBy(x => Math.Abs(x.Price - sourceBars.ClosePrices[asOf]))
                 .ToList();
             var collapsed = CollapseOverlappingChartLevelCandidates(ranked, tolerance);
-            return collapsed
+            var resolved = collapsed
                 .Where(value => IsTechnicalPriceArtifactKind(value.Kind) ||
                     string.Equals(value.Kind, "ICHI", StringComparison.OrdinalIgnoreCase))
                 .Concat(collapsed
@@ -16681,6 +17054,9 @@ namespace cAlgo.Robots
                         !string.Equals(value.Kind, "ICHI", StringComparison.OrdinalIgnoreCase))
                     .Take(maxArtifacts))
                 .ToList();
+            CTraderCacheEngine.StoreBoundedFifo(_causalLevelCandidateCache, _causalLevelCandidateCacheOrder,
+                levelCacheKey, resolved, 4096);
+            return resolved.ToList();
         }
 
         private static List<ChartLevelCandidate> CollapseOverlappingChartLevelCandidates(
@@ -17163,8 +17539,17 @@ namespace cAlgo.Robots
         private List<ChartLevelCandidate> CollectTrendlineLevelCandidatesAtBar(Bars sourceBars, TimeFrame sourceTimeFrame, int barIndex)
         {
             var candidates = new List<ChartLevelCandidate>();
-            if (sourceBars == null || barIndex < 6 || barIndex >= sourceBars.Count)
+            sourceBars = GetCausalBars(sourceBars, sourceTimeFrame);
+            if (sourceBars == null || barIndex < 6 || barIndex > sourceBars.Count - 2)
                 return candidates;
+            var settingsKey = GetCausalAnalysisSettingsKey();
+            using var causalTrendlineScope = BeginCausalBarDecision(sourceBars, sourceTimeFrame, barIndex, sourceBars.SymbolName);
+            sourceBars = GetCausalBars(sourceBars, sourceTimeFrame);
+            var trendlineCacheKey = BuildChartCacheKey("TL", sourceBars.GetHashCode(),
+                sourceBars.OpenTimes[barIndex].Ticks, settingsKey);
+            List<ChartLevelCandidate> cachedTrendlines;
+            if (_causalLevelCandidateCache.TryGetValue(trendlineCacheKey, out cachedTrendlines))
+                return cachedTrendlines.ToList();
 
             // End the structure snapshot before the event bar so historical TL events cannot
             // use a swing that was only confirmed later.
@@ -17207,7 +17592,9 @@ namespace cAlgo.Robots
                     });
                 }
             }
-            return candidates;
+            CTraderCacheEngine.StoreBoundedFifo(_causalLevelCandidateCache, _causalLevelCandidateCacheOrder,
+                trendlineCacheKey, candidates, 4096);
+            return candidates.ToList();
         }
 
         private bool TryDetectTrendlineConfirmationAtIndex(
@@ -18409,6 +18796,12 @@ namespace cAlgo.Robots
                     Value = canonical
                 };
                 _dashboardEventCacheClosedBarTicks[cacheKey] = bars.OpenTimes[latestClosedIndex].Ticks;
+                if (_dashboardEventCache.Count > 256)
+                {
+                    foreach (var key in _dashboardEventCache.OrderBy(pair => pair.Value.CreatedAtUtc)
+                        .Take(_dashboardEventCache.Count - 192).Select(pair => pair.Key).ToList())
+                    { _dashboardEventCache.Remove(key); _dashboardEventCacheClosedBarTicks.Remove(key); }
+                }
                 LogSlowChartStep("CanonicalEvents.Total", started, string.Format(CultureInfo.InvariantCulture, "{0} {1} -> {2}", normalizedSymbol, GetMiniChartLabel(timeFrame), canonical.Count));
                 return canonical.Take(Math.Max(1, maxEvents)).ToList();
             }
@@ -18738,7 +19131,7 @@ namespace cAlgo.Robots
             var lastClosedIndex = endIndex >= 0
                 ? Math.Max(1, Math.Min(latestClosedIndex, endIndex))
                 : latestClosedIndex;
-            var useLatestCache = lastClosedIndex == latestClosedIndex;
+            var useLatestCache = _causalDecision == null && lastClosedIndex == latestClosedIndex;
             sourceTimeFrame = sourceTimeFrame ?? (Chart != null ? Chart.TimeFrame : TimeFrame.Minute);
             var cacheKey = "zones|" + BuildDashboardEventCacheKey(symbol.Name, sourceTimeFrame);
             var lastClosedBarTimeUnix = ToUnixSecondsSafe(sourceBars.OpenTimes[lastClosedIndex]);
@@ -19664,7 +20057,9 @@ namespace cAlgo.Robots
                 StochasticIndicatorConfig stochastic,
                 MacdIndicatorConfig macd)
             {
-                _sourceBars = sourceBars;
+                // These indicators depend only on <= barIndex, so prefix views share a
+                // native identity. Structure/zone caches still include their as-of close.
+                _sourceBars = (sourceBars as CTraderCausalDataProxy)?.RawBars ?? sourceBars;
                 _barIndex = barIndex;
                 _barOpenTimeTicks = barOpenTime.Ticks;
                 _ema = ema;
@@ -19798,7 +20193,7 @@ namespace cAlgo.Robots
 
             public SharedPatternDetectionCacheKey(Bars sourceBars, int barIndex, DateTime barOpenTime)
             {
-                _sourceBars = sourceBars;
+                _sourceBars = (sourceBars as CTraderCausalDataProxy)?.RawBars ?? sourceBars;
                 _barIndex = barIndex;
                 _barOpenTimeTicks = barOpenTime.Ticks;
             }
@@ -20356,7 +20751,8 @@ namespace cAlgo.Robots
 
         private void EnsureHistoricalWickFlipMarkers()
         {
-            if (StructureEventsCombo == StructureEventComboMode.No || Chart == null || Bars == null || Bars.Count < 3 ||
+            var visualBars = GetCurrentChartVisualBars();
+            if (StructureEventsCombo == StructureEventComboMode.No || Chart == null || visualBars == null || visualBars.Count < 3 ||
                 !GetConfiguredStrategyModes().Any(mode =>
                     mode == BacktestStrategyMode.WickFlipContinuation ||
                     mode == BacktestStrategyMode.wick_flip))
@@ -20365,7 +20761,7 @@ namespace cAlgo.Robots
             // Multi-candle WFC is reconstructed directly from completed chart bars. Runtime
             // position tracking only knows about signals created after the cBot starts;
             // without this bounded scan, restarting cTrader makes historical boxes disappear.
-            var lastCompletedIndex = Bars.Count - 2;
+            var lastCompletedIndex = visualBars.Count - 2;
             // Keep enough completed M5 history for the prior trading day. The former
             // 240-bar limit covered only 20 hours, so a valid 16 Sep evening pattern was
             // already outside reconstruction by 17 Sep evening and could not be displayed.
@@ -20390,14 +20786,14 @@ namespace cAlgo.Robots
                 int patternStartIndex;
                 int firstWickIndex;
                 if (!CTraderStrategyEngine.TryResolveMultiCandleWickFlipContinuationPattern(
-                        Bars,
+                        visualBars,
                         secondIndex,
                         out direction,
                         out patternStartIndex,
                         out firstWickIndex))
                     continue;
 
-                var signalTime = Bars.OpenTimes[secondIndex];
+                var signalTime = visualBars.OpenTimes[secondIndex];
                 var patternSpan = secondIndex - patternStartIndex + 1;
                 var label = GetMiniChartLabel(sourceTimeFrame) + ".mwfc" +
                     patternSpan.ToString(CultureInfo.InvariantCulture) +
@@ -20410,7 +20806,7 @@ namespace cAlgo.Robots
                 double sl;
                 double tp;
                 var plannedEntries = new List<CTraderStrategyEntryLeg>();
-                var hasProtection = TryResolveChartSignalProtection(Chart.SymbolName, Bars, sourceTimeFrame,
+                var hasProtection = TryResolveChartSignalProtection(Chart.SymbolName, visualBars, sourceTimeFrame,
                     secondIndex, new TradeTriggerEvent { IsBullish = direction == TradeType.Buy }, label,
                     out entry, out sl, out tp, plannedEntries);
                 if (StructureEventsCombo == StructureEventComboMode.Trades && !hasProtection)
@@ -20430,8 +20826,8 @@ namespace cAlgo.Robots
                     Kind = StrategyMarkerKind.Trigger,
                     Time = signalTime,
                     Price = direction == TradeType.Buy
-                        ? Bars.LowPrices[secondIndex]
-                        : Bars.HighPrices[secondIndex],
+                        ? visualBars.LowPrices[secondIndex]
+                        : visualBars.HighPrices[secondIndex],
                     Pnl = 0,
                     IsWinning = false,
                     Text = label,
@@ -20838,6 +21234,12 @@ namespace cAlgo.Robots
             index = -1;
             if (sourceBars == null || sourceBars.Count < 2)
                 return false;
+            if (_causalDecision != null)
+            {
+                sourceBars = GetCausalBars(sourceBars, timeFrame);
+                index = sourceBars.Count - 2;
+                return index >= 0;
+            }
 
             // Anchor to the chart's last (current/forming) LTF bar rather than Server.Time, so
             // the resolved HTF bar always matches what is actually visible on the chart. The
@@ -21373,6 +21775,8 @@ namespace cAlgo.Robots
             bool forceAllNear = false,
             bool forceArtifactScope = false)
         {
+            using var causalScope = BeginCausalBarDecision(sourceBars, sourceTimeFrame, barIndex, symbolNameOverride);
+            sourceBars = GetCausalBars(sourceBars, sourceTimeFrame);
             matches = new List<CandleConfluenceMatch>();
             if (CandleConfluenceWith == CandleConfluenceMode.None && !forceTouch && !forceAllNear)
                 return true;
@@ -24015,12 +24419,32 @@ namespace cAlgo.Robots
             var boundedLookback = Math.Min(
                 Math.Max(20, lookbackBars),
                 Math.Min(512, Math.Max(20, sourceBars.Count - 2)));
-            var canonicalEvents = CollectSweepReclaimChains(
-                NormalizeSymbolAlias(symbolName),
-                symbol,
-                sourceBars,
-                timeFrame,
-                boundedLookback);
+            var canonicalEvents = new List<CanonicalMarketEvent>();
+            var settingsKey = GetCausalAnalysisSettingsKey();
+            var proofTimer = Stopwatch.StartNew();
+            var firstProofIndex = Math.Max(1, sourceBars.Count - 2 - boundedLookback + 1);
+            for (var index = firstProofIndex; index <= sourceBars.Count - 2; index++)
+            {
+                var proofKey = BuildChartCacheKey("SWEEP_PROOF", symbolName, sourceBars.GetHashCode(),
+                    sourceBars.OpenTimes[index].Ticks, Math.Min(boundedLookback, index), settingsKey);
+                List<CanonicalMarketEvent> proofCached;
+                if (_causalSweepProofBarCache.TryGetValue(proofKey, out proofCached))
+                { canonicalEvents.AddRange(proofCached); continue; }
+                if (proofTimer.ElapsedMilliseconds >= 150 && index > firstProofIndex)
+                {
+                    _causalChartReplayPending = true;
+                    _forceChartVisualsRefresh = true;
+                    break;
+                }
+                using var causalScope = BeginCausalBarDecision(sourceBars, timeFrame, index, symbolName);
+                var prefix = GetCausalBars(sourceBars, timeFrame);
+                var proof = CollectSweepReclaimChains(NormalizeSymbolAlias(symbolName), symbol,
+                    prefix, timeFrame, Math.Min(boundedLookback, index))
+                    .Where(evt => evt.BarTime == sourceBars.OpenTimes[index]).ToList();
+                CTraderCacheEngine.StoreBoundedFifo(_causalSweepProofBarCache, _causalSweepProofBarCacheOrder,
+                    proofKey, proof, 4096);
+                canonicalEvents.AddRange(proof);
+            }
             var latestClosedBarTime = sourceBars.OpenTimes[Math.Max(0, sourceBars.Count - 2)];
             var summaryKey = string.Format(
                 CultureInfo.InvariantCulture,
@@ -24028,7 +24452,7 @@ namespace cAlgo.Robots
                 NormalizeSymbolAlias(symbolName),
                 TimeFrameToMinutes(timeFrame),
                 latestClosedBarTime.Ticks);
-            if (_loggedSweepReclaimProofSummaryKeys.Add(summaryKey))
+            if (!_causalChartReplayPending && _loggedSweepReclaimProofSummaryKeys.Add(summaryKey))
             {
                 PrintAlways(
                     "[SweepReclaimProof] symbol={0} tf={1} sweep={2} sweep_reclaim={3} lookback={4}",
@@ -24109,6 +24533,9 @@ namespace cAlgo.Robots
         // PerItem keeps configured analytical evidence; Yes includes all enabled families.
         private int DrawUnifiedTradeTriggerEventsOnChart(int objectIndex)
         {
+            _causalChartReplayPending = false;
+            if (Chart != null)
+                Chart.RemoveObject("TRG_REPLAY_STATE");
             if (!ShouldDrawChartMarkers() || Chart == null || Bars == null || Symbol == null)
                 return objectIndex;
 
@@ -24173,9 +24600,7 @@ namespace cAlgo.Robots
                 Bars sourceBars;
                 try
                 {
-                    sourceBars = sourceTimeFrame == Chart.TimeFrame
-                        ? Bars
-                        : GetBarsForCurrentMasterTimer(sourceTimeFrame, symbolName);
+                    sourceBars = GetBarsForCurrentMasterTimer(sourceTimeFrame, symbolName);
                 }
                 catch
                 {
@@ -24192,7 +24617,7 @@ namespace cAlgo.Robots
                             sourceTimeFrame,
                             sourceBars,
                             visualLookbackBars)
-                        : CollectTradeTriggerCandidates(symbolName, sourceTimeFrame, visualLookbackBars, true))
+                        : CollectTradeTriggerCandidatesIncrementally(symbolName, sourceTimeFrame, visualLookbackBars, true))
                     .Where(trigger => !trigger.IsDirectionless)
                     .ToList();
                 var eventMarkerTriggers = ApplyConfluencesToEvents
@@ -24547,6 +24972,9 @@ namespace cAlgo.Robots
 
             // Deliberately no broker-history fallback: every event above is reconstructed
             // from market data under the current parameters, including historical bars.
+            if (_causalChartReplayPending)
+                Chart.DrawStaticText("TRG_REPLAY_STATE", "Rebuilding past-only event markers...",
+                    VerticalAlignment.Bottom, HorizontalAlignment.Left, Color.Yellow);
             return objectIndex;
         }
 
@@ -26800,16 +27228,17 @@ namespace cAlgo.Robots
 
         private DateTime ResolveSourceBarEndTime(Bars sourceBars, DateTime barTime, TimeFrame sourceTimeFrame)
         {
+            var nominalEnd = ResolveNominalBarEnd(barTime, sourceTimeFrame);
             if (sourceBars != null && sourceBars.Count > 1)
             {
                 for (var i = 0; i < sourceBars.Count - 1; i++)
                 {
                     if (sourceBars.OpenTimes[i] == barTime)
-                        return sourceBars.OpenTimes[i + 1];
+                        return sourceBars.OpenTimes[i + 1] < nominalEnd ? sourceBars.OpenTimes[i + 1] : nominalEnd;
                 }
             }
 
-            return barTime.AddMinutes(Math.Max(1, TimeFrameToMinutes(sourceTimeFrame)));
+            return nominalEnd;
         }
 
         private int ResolveSourceBarIndex(Bars sourceBars, DateTime barTime)
@@ -30050,7 +30479,7 @@ namespace cAlgo.Robots
 
         private bool IsAnalysisFileCacheEnabled()
         {
-            return Is42TradeServerSyncEnabled() && UseCachedFiles == YesNoMode.Yes;
+            return _causalDecision == null && Is42TradeServerSyncEnabled() && UseCachedFiles == YesNoMode.Yes;
         }
 
         private int GetCachedFileMaxBars()
@@ -30177,6 +30606,7 @@ namespace cAlgo.Robots
             // cTrader's responsiveness watchdog. Release compilation is the live gate.
             if (ValidateContractsOnLiveStartup)
             {
+                ValidateCausalDecisionBoundaryContracts();
                 ValidateStructureEngineV2Contracts();
                 ValidateStrategyEngineContracts();
                 ValidateCombinedEventNameContracts();
@@ -31262,21 +31692,21 @@ namespace cAlgo.Robots
             // symbol in its global symbol collection. Chart.TryChangeTimeFrameAndSymbol can
             // change the visible symbol without changing the robot's Bars/ Symbol context, so
             // only reuse Bars when the requested symbol also matches the attached robot symbol.
-            if (Bars != null && Chart != null && timeFrame == Chart.TimeFrame &&
+            if (Bars != null && Bars.TimeFrame == timeFrame && Chart != null && timeFrame == Chart.TimeFrame &&
                 Symbol != null &&
                 string.Equals(NormalizeSymbolAlias(symbolName), NormalizeSymbolAlias(Chart.SymbolName), StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(NormalizeSymbolAlias(symbolName), NormalizeSymbolAlias(Symbol.Name), StringComparison.OrdinalIgnoreCase))
-                return Bars;
+                return GetCausalBars(Bars, timeFrame);
 
             string brokerSymbol;
             if (!TryResolveBrokerSymbol(symbolName, out brokerSymbol))
                 return null;
 
-            return _cacheEngine.GetOrLoadMasterTimerBars(
+            return GetCausalBars(_cacheEngine.GetOrLoadMasterTimerBars(
                 Thread.CurrentThread.ManagedThreadId,
                 brokerSymbol,
                 timeFrame,
-                () => MarketData.GetBars(timeFrame, brokerSymbol));
+                () => MarketData.GetBars(timeFrame, brokerSymbol)), timeFrame);
         }
 
         // The visible chart can be switched to another symbol while the cBot remains attached
@@ -33255,7 +33685,7 @@ namespace cAlgo.Robots
         {
             try
             {
-                var bars = MarketData.GetBars(evt.SourceTimeFrame, symbolName);
+                var bars = GetCausalMarketBars(evt.SourceTimeFrame, symbolName);
                 if (bars == null || bars.Count < 3)
                     return false;
                 var thresholdTime = bars.OpenTimes[Math.Max(0, bars.Count - 3)];
@@ -33748,6 +34178,8 @@ namespace cAlgo.Robots
             out bool matchesDirectionless,
             out string shortLabel)
         {
+            using var causalScope = BeginCausalBarDecision(sourceBars, strategyTimeFrame, latestClosedIndex, symbolName);
+            sourceBars = GetCausalBars(sourceBars, strategyTimeFrame);
             if (ShouldIgnoreInsidePreviousCandleEvent(option, sourceBars, latestClosedIndex))
             {
                 matchesBullish = false;
@@ -34375,7 +34807,7 @@ namespace cAlgo.Robots
             Bars sourceBars = null;
             try
             {
-                sourceBars = MarketData.GetBars(strategyTimeFrame, symbolName);
+                sourceBars = GetCausalMarketBars(strategyTimeFrame, symbolName);
             }
             catch
             {
@@ -34445,6 +34877,8 @@ namespace cAlgo.Robots
                 sourceBars,
                 sourceBars.OpenTimes[strategyBarIndex],
                 strategyTimeFrame);
+            using var causalScope = BeginCausalDecision(strategyExecutionTime, symbolName, strategyTimeFrame);
+            sourceBars = GetCausalBars(sourceBars, strategyTimeFrame);
             if (!ShouldAllowChartSignalTime(strategyExecutionTime))
                 return false;
 
@@ -35755,6 +36189,8 @@ namespace cAlgo.Robots
             out bool matches,
             out string shortLabel)
         {
+            using var causalScope = BeginCausalBarDecision(sourceBars, strategyTimeFrame, latestClosedIndex, symbolName);
+            sourceBars = GetCausalBars(sourceBars, strategyTimeFrame);
             matches = false;
             shortLabel = "";
             if (option == StrategyCustomRuleOption.Off)
@@ -36367,7 +36803,7 @@ namespace cAlgo.Robots
             Bars sourceBars;
             try
             {
-                sourceBars = MarketData.GetBars(strategyTimeFrame, symbolName);
+                sourceBars = GetCausalMarketBars(strategyTimeFrame, symbolName);
             }
             catch
             {
@@ -36450,7 +36886,7 @@ namespace cAlgo.Robots
             Bars sourceBars;
             try
             {
-                sourceBars = MarketData.GetBars(strategyTimeFrame, symbolName);
+                sourceBars = GetCausalMarketBars(strategyTimeFrame, symbolName);
             }
             catch
             {
@@ -37357,6 +37793,7 @@ namespace cAlgo.Robots
             TimeFrame strategyTimeFrame,
             out BacktestStrategySignal signal)
         {
+            using var causalScope = BeginLatestCausalDecision(symbolName, strategyTimeFrame);
             signal = default(BacktestStrategySignal);
             Symbol symbol;
             Bars sourceBars;
@@ -37509,6 +37946,7 @@ namespace cAlgo.Robots
 
         private bool TryBuildCustomTradeSignal(string symbolName, TimeFrame strategyTimeFrame, out BacktestStrategySignal signal)
         {
+            using var causalScope = BeginLatestCausalDecision(symbolName, strategyTimeFrame);
             signal = default(BacktestStrategySignal);
             TradeType tradeType;
             DateTime signalTime;
@@ -37834,6 +38272,7 @@ namespace cAlgo.Robots
             int tradeChainSlot,
             out BacktestStrategySignal signal)
         {
+            using var causalScope = BeginLatestCausalDecision(symbolName, strategyTimeFrame);
             signal = default(BacktestStrategySignal);
             if (ResolveStrategyTradeChainPreset(tradeChainSlot).Timing != StrategyTradeTiming.WaitConfirm)
                 return false;
@@ -38255,6 +38694,7 @@ namespace cAlgo.Robots
 
         private bool TryBuildEventDrivenStrategySignal(string symbolName, TimeFrame strategyTimeFrame, BacktestStrategyMode mode, out BacktestStrategySignal signal)
         {
+            using var causalScope = BeginLatestCausalDecision(symbolName, strategyTimeFrame);
             signal = default(BacktestStrategySignal);
             if (string.IsNullOrWhiteSpace(symbolName))
                 return false;
@@ -38820,6 +39260,7 @@ namespace cAlgo.Robots
 
         private bool ApplySharedStrategyEntryType(Symbol symbol, string symbolName, BacktestStrategySignal signal, StrategyEntryType entryMode, TradeType tradeType, double executionPrice, ref bool useLimitOrder, ref bool useStopOrder, ref double entryPrice, ref double stopLoss, ref double takeProfit, out double protectionBuffer, out string rejectReason)
         {
+            using var causalScope = BeginCausalSignalDecision(symbolName, signal);
             protectionBuffer = 0;
             var currentEntry = entryPrice;
             var currentStopLoss = stopLoss;
@@ -39884,6 +40325,7 @@ namespace cAlgo.Robots
             out string rejectReason,
             bool forEventMarker = false)
         {
+            using var causalScope = BeginCausalSignalDecision(symbolName, signal);
             rejectReason = "";
             if (forEventMarker ? !ApplyConfluencesToEvents : !ApplyConfluencesToTrades)
                 return true;
@@ -41167,6 +41609,7 @@ namespace cAlgo.Robots
             if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || !(entryPrice > 0))
                 return;
 
+            using var causalConfirmationScope = BeginCausalSignalDecision(symbolName, signal);
             Bars sourceBars;
             try
             {
@@ -41461,6 +41904,7 @@ namespace cAlgo.Robots
                 }
                 else
                 {
+                    using var causalSeedScope = BeginCausalSignalDecision(symbolName, signal);
                     var fallbackProtection = BuildSharedChartProtectionPrices(symbol, symbolName, signal.TradeType, referencePrice, ResolveChartFallbackStopPips(symbol), profileRaw);
                     if (fallbackProtection == null)
                     {
@@ -41608,9 +42052,9 @@ namespace cAlgo.Robots
             var orderCountOverride = tradePreset.NumberOfTrades;
             // The deterministic price/order-type ladder is also used by chart replay.
             // Live account affordability, caps and broker approval remain below.
-            var entryLegPlan = CTraderStrategyEngine.BuildEntryLegPlan(symbol, signal.TradeType,
+            var entryLegPlan = BuildCausalStrategyEntryLegPlan(symbol, symbolName, signal,
                 executionPrice, effectiveEntryPrice, sl, effectiveUseLimitOrder, effectiveUseStopOrder,
-                orderCountOverride, MinStopPips);
+                orderCountOverride);
             var splitEntries = (effectiveUseLimitOrder || effectiveUseStopOrder
                 ? entryLegPlan : entryLegPlan.Skip(1)).Select(leg => leg.EntryPrice).ToList();
             if (orderCountOverride > 1 && splitEntries.Count == 0 &&
@@ -42996,6 +43440,7 @@ namespace cAlgo.Robots
 
         private bool TryBuildIndicatorStrategySignal(string symbolName, TimeFrame strategyTimeFrame, BacktestStrategyMode mode, out BacktestStrategySignal signal)
         {
+            using var causalScope = BeginLatestCausalDecision(symbolName, strategyTimeFrame);
             signal = default(BacktestStrategySignal);
 
             Symbol symbol;
@@ -43444,6 +43889,7 @@ namespace cAlgo.Robots
             TimeFrame strategyTimeFrame,
             out BacktestStrategySignal signal)
         {
+            using var causalScope = BeginLatestCausalDecision(symbolName, strategyTimeFrame);
             signal = default(BacktestStrategySignal);
 
             Symbol symbol;
@@ -43529,6 +43975,7 @@ namespace cAlgo.Robots
 
         private bool TryBuildPriceActionTriggerSignal(string symbolName, TimeFrame strategyTimeFrame, BacktestStrategyMode strategyMode, string strategyId, bool useSuggestedLevels, int slRank, int tpRank, bool useLimitBodyMidEntry, out BacktestStrategySignal signal)
         {
+            using var causalScope = BeginLatestCausalDecision(symbolName, strategyTimeFrame);
             signal = default(BacktestStrategySignal);
 
             Symbol symbol;
@@ -43601,6 +44048,7 @@ namespace cAlgo.Robots
 
         private bool TryBuildPriceActionFvgContextSignal(string symbolName, TimeFrame strategyTimeFrame, out BacktestStrategySignal signal)
         {
+            using var causalScope = BeginLatestCausalDecision(symbolName, strategyTimeFrame);
             signal = default(BacktestStrategySignal);
 
             Symbol symbol;
@@ -44366,7 +44814,7 @@ namespace cAlgo.Robots
         {
             var items = new List<Dictionary<string, object>>();
             var tf = GetSharedArtifactTimeFrameLabel(timeFrame);
-            var sourceBars = MarketData.GetBars(timeFrame, symbolName);
+            var sourceBars = GetCausalMarketBars(timeFrame, symbolName);
             if (sourceBars != null && sourceBars.Count >= 20)
             {
                 var structure = BuildStructureSnapshotV2(sourceBars, 180);
@@ -45727,7 +46175,7 @@ namespace cAlgo.Robots
             try
             {
                 var normalizedSymbol = symbolName.Trim().ToUpperInvariant();
-                var bars = MarketData.GetBars(timeFrame, normalizedSymbol);
+                var bars = GetCausalMarketBars(timeFrame, normalizedSymbol);
                 if (bars == null || bars.Count < 20)
                     return false;
 
@@ -45840,7 +46288,7 @@ namespace cAlgo.Robots
                 }
 
                 var started = Stopwatch.StartNew();
-                var bars = MarketData.GetBars(timeFrame, normalizedSymbol);
+                var bars = GetCausalMarketBars(timeFrame, normalizedSymbol);
                 var score = 0;
                 if (bars != null && bars.Count >= 10)
                 {
@@ -47767,6 +48215,7 @@ namespace cAlgo.Robots
             out string stopLossSourceCode,
             out string takeProfitSourceCode)
         {
+            using var causalScope = BeginCausalSignalDecision(symbolName, signal);
             stopLossSourceCode = NormalizeStrategyProtectionSourceCode(signal.StopLossSourceCode);
             takeProfitSourceCode = NormalizeStrategyProtectionSourceCode(signal.TakeProfitSourceCode);
             if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || entryPrice <= 0)
@@ -48823,7 +49272,9 @@ namespace cAlgo.Robots
 
             var riskFactor = SelectedRiskMode == RiskMode.Risky ? 3.0 : 5.0;
             var entrySlDistancePips = Math.Max(0, entrySlDistance) / symbol.PipSize;
-            var spreadPips = ResolveSpreadPips(symbol);
+            // Historical bars contain no spread tape. Use a stable tick floor in BOTH
+            // strategy paths, never today's Bid/Ask while rebuilding an older TP.
+            var spreadPips = (symbol.TickSize > 0 ? symbol.TickSize : symbol.PipSize) / symbol.PipSize;
             var atrPips = atrPeriod > 0 ? ResolveAtrPips(symbol, sourceBars, atrPeriod) : 0;
             var bufferPips = CTraderStrategyEngine.ResolveProtectionBufferPips(
                 riskFactor,
@@ -49229,7 +49680,7 @@ namespace cAlgo.Robots
                 return false;
 
             Bars sourceBars;
-            try { sourceBars = MarketData.GetBars(signal.SourceTimeFrame, symbolName); }
+            try { sourceBars = GetCausalMarketBars(signal.SourceTimeFrame, symbolName); }
             catch { sourceBars = null; }
             if (sourceBars == null || sourceBars.Count < 2)
                 return false;
@@ -49243,8 +49694,6 @@ namespace cAlgo.Robots
                 ? signal.EntryConfirmationTime
                 : signal.SignalTime;
             var sourceIndex = ResolveSourceBarIndex(sourceBars, rangeEndTime);
-            if (!IsValidBarIndex(sourceBars, sourceIndex))
-                sourceIndex = sourceBars.Count - 2;
             if (!IsValidBarIndex(sourceBars, sourceIndex))
                 return false;
 
@@ -49276,14 +49725,12 @@ namespace cAlgo.Robots
                 return false;
 
             Bars sourceBars;
-            try { sourceBars = MarketData.GetBars(signal.SourceTimeFrame, symbolName); }
+            try { sourceBars = GetCausalMarketBars(signal.SourceTimeFrame, symbolName); }
             catch { sourceBars = null; }
             if (sourceBars == null || sourceBars.Count < 2)
                 return false;
 
             var sourceIndex = ResolveSourceBarIndex(sourceBars, signal.SignalTime);
-            if (!IsValidBarIndex(sourceBars, sourceIndex))
-                sourceIndex = sourceBars.Count - 2;
             if (!IsValidBarIndex(sourceBars, sourceIndex))
                 return false;
 
@@ -49308,14 +49755,12 @@ namespace cAlgo.Robots
                 return false;
 
             Bars sourceBars;
-            try { sourceBars = MarketData.GetBars(signal.SourceTimeFrame, symbolName); }
+            try { sourceBars = GetCausalMarketBars(signal.SourceTimeFrame, symbolName); }
             catch { sourceBars = null; }
             if (sourceBars == null || sourceBars.Count < 2)
                 return false;
 
             var sourceIndex = ResolveSourceBarIndex(sourceBars, signal.SignalTime);
-            if (!IsValidBarIndex(sourceBars, sourceIndex))
-                sourceIndex = sourceBars.Count - 2;
             if (!IsValidBarIndex(sourceBars, sourceIndex))
                 return false;
 
@@ -49348,8 +49793,6 @@ namespace cAlgo.Robots
                 return false;
 
             var sourceIndex = ResolveSourceBarIndex(sourceBars, signal.SignalTime);
-            if (!IsValidBarIndex(sourceBars, sourceIndex))
-                sourceIndex = sourceBars.Count - 2;
             if (!IsValidBarIndex(sourceBars, sourceIndex))
                 return false;
 
@@ -49440,6 +49883,7 @@ namespace cAlgo.Robots
             IEnumerable<TimeFrame> frames,
             out double stopLoss)
         {
+            using var causalScope = BeginCausalSignalDecision(symbolName, signal);
             stopLoss = 0;
             if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || !(entryPrice > 0))
                 return false;
@@ -49457,9 +49901,7 @@ namespace cAlgo.Robots
                 if (sourceBars == null || sourceBars.Count < 3)
                     continue;
 
-                var endIndex = ResolveSourceBarIndex(sourceBars, referenceTime);
-                if (!IsValidBarIndex(sourceBars, endIndex))
-                    endIndex = sourceBars.Count - 2;
+                var endIndex = sourceBars.Count - 2; // Last COMPLETED frame at the signal's close.
                 if (!IsValidBarIndex(sourceBars, endIndex))
                     continue;
 
@@ -49496,14 +49938,12 @@ namespace cAlgo.Robots
                 return false;
 
             Bars sourceBars;
-            try { sourceBars = MarketData.GetBars(signal.SourceTimeFrame, symbolName); }
+            try { sourceBars = GetCausalMarketBars(signal.SourceTimeFrame, symbolName); }
             catch { sourceBars = null; }
             if (sourceBars == null || sourceBars.Count < 2)
                 return false;
 
             var sourceIndex = ResolveSourceBarIndex(sourceBars, signal.SignalTime);
-            if (!IsValidBarIndex(sourceBars, sourceIndex))
-                sourceIndex = sourceBars.Count - 2;
             if (!IsValidBarIndex(sourceBars, sourceIndex))
                 return false;
 
@@ -49543,7 +49983,7 @@ namespace cAlgo.Robots
                 return false;
 
             Bars sourceBars;
-            try { sourceBars = MarketData.GetBars(signal.SourceTimeFrame, symbolName); }
+            try { sourceBars = GetCausalMarketBars(signal.SourceTimeFrame, symbolName); }
             catch { sourceBars = null; }
             var signalIndex = ResolveSourceBarIndex(sourceBars, signal.SignalTime);
             if (!IsValidBarIndex(sourceBars, signalIndex))
@@ -49581,6 +50021,7 @@ namespace cAlgo.Robots
             double outboundBoundary,
             out double price)
         {
+            using var causalScope = BeginCausalSignalDecision(symbolName, signal);
             price = 0;
             if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || !(entryPrice > 0))
                 return false;
@@ -49602,9 +50043,7 @@ namespace cAlgo.Robots
                 if (sourceBars == null || sourceBars.Count < 3)
                     continue;
 
-                var endIndex = ResolveSourceBarIndex(sourceBars, referenceTime);
-                if (!IsValidBarIndex(sourceBars, endIndex))
-                    endIndex = sourceBars.Count - 2;
+                var endIndex = sourceBars.Count - 2;
 
                 candidates.AddRange(CollectConfirmedSwings(sourceBars, 160, endIndex)
                     .Where(swing => swing.IsHigh == wantHigh)
@@ -49631,6 +50070,7 @@ namespace cAlgo.Robots
             double baseBuffer,
             out double stopLoss)
         {
+            using var causalScope = BeginCausalSignalDecision(symbolName, signal);
             stopLoss = 0;
             if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || !(entryPrice > 0))
                 return false;
@@ -49648,9 +50088,7 @@ namespace cAlgo.Robots
                 if (sourceBars == null || sourceBars.Count < 3)
                     continue;
 
-                var endIndex = ResolveSourceBarIndex(sourceBars, referenceTime);
-                if (!IsValidBarIndex(sourceBars, endIndex))
-                    endIndex = sourceBars.Count - 2;
+                var endIndex = sourceBars.Count - 2;
                 candidates.AddRange(CollectConfirmedSwings(sourceBars, 200, endIndex)
                     .Where(swing => swing.IsHigh == wantHigh)
                     .Select(swing => swing.Price)
@@ -49852,7 +50290,11 @@ namespace cAlgo.Robots
         {
             if (symbol == null || entryPrice <= 0 || symbol.PipSize <= 0)
                 return 0;
-            var atrPips = ResolveAtrPips(symbol, null, 14);
+            Bars atrBars = null;
+            try { if (_causalDecision != null && _causalDecision.TimeFrame != null)
+                atrBars = GetBarsForCurrentMasterTimer(_causalDecision.TimeFrame, symbol.Name); } catch { }
+            var atrPips = ResolveAtrPips(symbol, atrBars, 14);
+            if (!(atrPips > 0)) return 0;
             var distance = Math.Max(ResolveMinStopPips(symbol), atrPips * Math.Max(0.1, multiplier)) * symbol.PipSize;
             return CTraderStrategyEngine.ResolveDistanceTarget(symbol, tradeType, entryPrice, isStopLoss, distance);
         }
@@ -50001,7 +50443,7 @@ namespace cAlgo.Robots
             Bars sourceBars;
             // Never use attached/chart Bars here: execution and marker replay can have
             // different timeframes. Resolve the exact signal symbol/timeframe explicitly.
-            try { sourceBars = MarketData.GetBars(signal.SourceTimeFrame, symbolName); }
+            try { sourceBars = GetCausalMarketBars(signal.SourceTimeFrame, symbolName); }
             catch { sourceBars = null; }
             var sourceIndex = ResolveSourceBarIndex(sourceBars, signal.SignalTime);
             // Normalize every level BEFORE side/RR filtering: an inadequate rounded
@@ -50020,7 +50462,7 @@ namespace cAlgo.Robots
                 return false;
 
             Bars sourceBars;
-            try { sourceBars = MarketData.GetBars(signal.SourceTimeFrame, symbolName); }
+            try { sourceBars = GetCausalMarketBars(signal.SourceTimeFrame, symbolName); }
             catch { sourceBars = null; }
             var sourceIndex = ResolveSourceBarIndex(sourceBars, signal.SignalTime);
             if (!IsValidBarIndex(sourceBars, sourceIndex))
@@ -50060,7 +50502,7 @@ namespace cAlgo.Robots
                         ? !_toggleFvgZones || !IsScopeEnabledForTimeFrame(DrawFvgZones, sourceTimeFrame)
                         : !_toggleOrderBlocks || !IsScopeEnabledForTimeFrame(DrawOrderBlocks, sourceTimeFrame))
                         continue;
-                    var sourceBars = MarketData.GetBars(sourceTimeFrame, symbolName);
+                    var sourceBars = GetCausalMarketBars(sourceTimeFrame, symbolName);
                     if (sourceBars == null || sourceBars.Count < 5)
                         continue;
                     foreach (var zone in BuildStructureSnapshotV2(sourceBars, ResolveWorkingLookbackBars(sourceBars, sourceTimeFrame)).Zones
@@ -50101,7 +50543,7 @@ namespace cAlgo.Robots
             {
                 try
                 {
-                    var sourceBars = MarketData.GetBars(sourceTimeFrame, symbolName);
+                    var sourceBars = GetCausalMarketBars(sourceTimeFrame, symbolName);
                     if (sourceBars == null || sourceBars.Count < 5)
                         continue;
                     candidates.AddRange(CollectTimeFrameStructuralLevelCandidates(symbol, sourceBars, sourceTimeFrame));
@@ -51097,7 +51539,11 @@ namespace cAlgo.Robots
 
         private StructureSnapshotV2 BuildStructureSnapshotV2(Bars sourceBars, int lookbackBars, int endIndex = -1)
         {
+            sourceBars = GetCausalBars(sourceBars);
             var lastClosedBarIndex = ResolveStructureLastClosedBarIndex(sourceBars, endIndex);
+            // Requests wider than the available prefix describe the same analysis. Keep
+            // their cache keys identical when later source candles are appended.
+            lookbackBars = Math.Min(Math.Max(10, lookbackBars), Math.Max(10, lastClosedBarIndex + 1));
             string cacheKey = null;
             if (sourceBars != null && lastClosedBarIndex >= 0)
             {
@@ -51444,31 +51890,37 @@ namespace cAlgo.Robots
 
         private void AddSessionLiquidityLevelCandidates(List<double> candidates, string sessionName, double tolerance)
         {
-            if (Bars == null || Bars.Count < 10)
+            var sourceBars = Bars;
+            if (_causalDecision != null && _causalDecision.TimeFrame != null && !string.IsNullOrWhiteSpace(_causalDecision.SymbolName))
+                try { sourceBars = GetBarsForCurrentMasterTimer(_causalDecision.TimeFrame, _causalDecision.SymbolName); } catch { sourceBars = null; }
+            if (sourceBars == null || sourceBars.Count < 10)
                 return;
-
-            var prevDate = GetReferenceNow().Date.AddDays(-1);
-            DateTime startUtc;
-            DateTime endUtc;
-            if (!TryGetSessionUtcRange(sessionName, prevDate, out startUtc, out endUtc))
+            var utc = _causalDecision != null ? _causalDecision.Utc
+                : NormalizeBotTimeToUtc(sourceBars.OpenTimes[sourceBars.Count - 1]);
+            SessionWindowDefinition definition;
+            TimeZoneInfo sessionZone;
+            if (!TryGetSessionWindowDefinition(sessionName, out definition) || !TryGetSessionTimeZone(definition, out sessionZone))
                 return;
-
-            double high;
-            double low;
-            DateTime highTime;
-            DateTime lowTime;
-            if (!TryGetRangeHighLow(Bars, startUtc, endUtc, out high, out low, out highTime, out lowTime))
-                return;
-
-            AddDistinctChartLevel(candidates, high, tolerance);
-            AddDistinctChartLevel(candidates, low, tolerance);
+            var sessionDate = TimeZoneInfo.ConvertTimeFromUtc(utc, sessionZone).Date;
+            for (var offset = 0; offset >= -7; offset--)
+            {
+                DateTime startUtc, endUtc, highTime, lowTime;
+                double high, low;
+                if (!TryGetSessionUtcRange(sessionName, sessionDate.AddDays(offset), out startUtc, out endUtc) || endUtc > utc)
+                    continue;
+                if (sourceBars.OpenTimes[0] > startUtc || !TryGetRangeHighLow(sourceBars, startUtc, endUtc,
+                    out high, out low, out highTime, out lowTime)) continue;
+                AddDistinctChartLevel(candidates, high, tolerance);
+                AddDistinctChartLevel(candidates, low, tolerance);
+                break;
+            }
         }
 
         private void AddPreviousPeriodLevelCandidates(List<double> candidates, string symbolName, TimeFrame timeFrame, double tolerance)
         {
             try
             {
-                var sourceBars = MarketData.GetBars(timeFrame, symbolName);
+                var sourceBars = GetCausalMarketBars(timeFrame, symbolName);
                 if (sourceBars == null || sourceBars.Count < 1)
                     return;
 
@@ -51504,7 +51956,7 @@ namespace cAlgo.Robots
             var swings = CollectConfirmedSwings(sourceBars, ResolveWorkingSwingLookbackBars(sourceBars), endIndex);
             var closeCount = endIndex >= 0
                 ? Math.Min(sourceBars.Count, endIndex + 1)
-                : sourceBars.Count;
+                : sourceBars.Count - 1;
             var closes = Enumerable.Range(0, closeCount).Select(index => sourceBars.ClosePrices[index]).ToList();
             return _structureEngine.DetectSwingLevelPatterns(
                     swings.Select(value => new CTraderStructureSwing
@@ -51631,7 +52083,7 @@ namespace cAlgo.Robots
             {
                 foreach (var sourceTimeFrame in GetChartProtectionSourceTimeFrames(profileRaw))
                 {
-                    var sourceBars = MarketData.GetBars(sourceTimeFrame, symbolName);
+                    var sourceBars = GetCausalMarketBars(sourceTimeFrame, symbolName);
                     if (sourceBars == null || sourceBars.Count < 5)
                         continue;
 
@@ -51692,7 +52144,7 @@ namespace cAlgo.Robots
             {
                 foreach (var sourceTimeFrame in GetChartProtectionSourceTimeFrames(profileRaw))
                 {
-                    var sourceBars = MarketData.GetBars(sourceTimeFrame, symbolName);
+                    var sourceBars = GetCausalMarketBars(sourceTimeFrame, symbolName);
                     if (sourceBars == null || sourceBars.Count < 5)
                         continue;
 
@@ -51751,7 +52203,7 @@ namespace cAlgo.Robots
             try
             {
                 var sourceTimeFrame = GetChartEntrySourceTimeFrame(profileRaw);
-                var sourceBars = MarketData.GetBars(sourceTimeFrame, symbolName);
+                var sourceBars = GetCausalMarketBars(sourceTimeFrame, symbolName);
                 if (sourceBars == null || sourceBars.Count < 5)
                     return candidates;
 
@@ -51959,7 +52411,7 @@ namespace cAlgo.Robots
             {
                 foreach (var sourceTimeFrame in GetChartTradeStructureTimeFrames(profileRaw))
                 {
-                    var sourceBars = MarketData.GetBars(sourceTimeFrame, symbolName);
+                    var sourceBars = GetCausalMarketBars(sourceTimeFrame, symbolName);
                     if (sourceBars == null || sourceBars.Count < 5)
                         continue;
 
@@ -52339,6 +52791,7 @@ namespace cAlgo.Robots
                     }
                     else
                     {
+                        using var causalSeedScope = BeginCausalSignalDecision(symbolName, signal);
                         var fallback = BuildSharedChartProtectionPrices(symbol, symbolName, signal.TradeType, entry, ResolveChartFallbackStopPips(symbol), profileRaw);
                         if (fallback != null)
                         {
@@ -53234,7 +53687,7 @@ namespace cAlgo.Robots
             try
             {
                 var sourceTimeFrame = Chart != null ? Chart.TimeFrame : TimeFrame.Minute;
-                var sourceBars = MarketData.GetBars(sourceTimeFrame, symbolName);
+                var sourceBars = GetCausalMarketBars(sourceTimeFrame, symbolName);
                 if (sourceBars == null || sourceBars.Count < 5)
                     return candidates;
 
@@ -55974,7 +56427,7 @@ namespace cAlgo.Robots
                                     default: continue;
                                 }
 
-                                var bars = MarketData.GetBars(tf, resolvedSymbol.Name);
+                                var bars = GetCausalMarketBars(tf, resolvedSymbol.Name);
                                 if (bars == null || bars.Count < 1) continue;
 
                                 var lastBar = bars.LastBar;
@@ -56210,7 +56663,7 @@ namespace cAlgo.Robots
                                     default: continue;
                                 }
 
-                                var bars = MarketData.GetBars(tf, resolvedSymbol.Name);
+                                var bars = GetCausalMarketBars(tf, resolvedSymbol.Name);
                                 if (bars == null || bars.Count < 1) continue;
                                 var latestBar = bars.LastBar;
                                 long latestTime = ToUnixTime(latestBar.OpenTime);
@@ -57898,6 +58351,8 @@ namespace cAlgo.Robots
             TimeSpan ttl,
             Func<List<T>> factory)
         {
+            if (_causalDecision != null)
+                return factory(); // Never reuse latest-chart caches for an earlier decision.
             return CTraderCacheEngine.GetOrCreateTimedList(cache, key, ttl, factory);
         }
 
@@ -58212,6 +58667,8 @@ namespace cAlgo.Robots
             out string note,
             out double eventSlDistance)
         {
+            using var causalScope = BeginCausalBarDecision(sourceBars, strategyTimeFrame, latestClosedIndex, symbolName);
+            sourceBars = GetCausalBars(sourceBars, strategyTimeFrame);
             resolvedTradeType = TradeType.Buy;
             signalTime = DateTime.MinValue;
             sourceLabel = "";
@@ -58414,14 +58871,14 @@ namespace cAlgo.Robots
             // Use the same qualified candidates as trade markers (not raw canonical
             // detections), including direction, confluences and minimum evidence count.
             var qualifiedChains = (IsSweepReclaimStrategySelected()
-                ? CollectTradeTriggerCandidates(symbolName, strategyTimeFrame, Math.Max(256, scanBars))
+                ? CollectTradeTriggerCandidatesAtDecisionBar(symbolName, strategyTimeFrame, Math.Max(256, scanBars), false)
                 : new List<TradeTriggerEvent>())
                 .Where(item => item.BarTime == exactBarTime && item.Option == StrategyCustomEventOption.sweep_reclaim)
                 .ToList();
             predicates["sweep_reclaim_bullish"] = qualifiedChains.Any(item => item.IsBullish);
             predicates["sweep_reclaim_bearish"] = qualifiedChains.Any(item => !item.IsBullish);
 
-            var triggersOnBar = CollectTradeTriggerCandidates(
+            var triggersOnBar = CollectTradeTriggerCandidatesAtDecisionBar(
                     symbolName,
                     strategyTimeFrame,
                     Math.Max(256, scanBars),
@@ -58525,7 +58982,7 @@ namespace cAlgo.Robots
                     var strategyScanBars = Math.Max(
                         0,
                         (int)Math.Round(ToSharedRuleNumber(GetDictionaryValue(context, "__strategy_scan_bars"))));
-                    var matchingTriggers = ApplyMinimumConfluenceFilter(CollectTradeTriggerCandidates(symbolName, timeFrame, strategyScanBars)
+                    var matchingTriggers = ApplyMinimumConfluenceFilter(CollectTradeTriggerCandidatesAtDecisionBar(symbolName, timeFrame, strategyScanBars, false)
                         .Where(item => TradeTriggerMatchesSelectedOption(item, eventOption))
                         .Where(item => item.SourceTimeFrame == timeFrame && item.BarTime == exactBarTime)
                         .Where(item => !requireBullishDirection.HasValue || item.IsDirectionless || item.IsBullish == requireBullishDirection.Value));
@@ -58794,7 +59251,7 @@ namespace cAlgo.Robots
             foreach (var watcher in watchers)
             {
                 Bars bars;
-                try { bars = MarketData.GetBars(watcher.TimeFrame, watcher.Position.SymbolName); }
+                try { bars = GetCausalMarketBars(watcher.TimeFrame, watcher.Position.SymbolName); }
                 catch { bars = null; }
                 if (bars == null || bars.Count < 3)
                     continue;
@@ -58977,11 +59434,13 @@ namespace cAlgo.Robots
 
         private Dictionary<string, object> BuildSharedRuleContext(Bars sourceBars, int barIndex, Symbol symbol, TimeFrame timeFrame, Dictionary<string, object> extraContext = null)
         {
+            using var causalScope = BeginCausalBarDecision(sourceBars, timeFrame, barIndex, symbol != null ? symbol.Name : null);
+            sourceBars = GetCausalBars(sourceBars, timeFrame);
             var context = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
             var barsList = new List<Dictionary<string, object>>();
             if (sourceBars != null)
             {
-                for (var i = 0; i < sourceBars.Count; i++)
+                for (var i = 0; i <= Math.Min(barIndex, sourceBars.Count - 2); i++)
                     barsList.Add(BuildSharedRuleBarContext(sourceBars, i));
             }
 
@@ -59950,6 +60409,21 @@ namespace cAlgo.Robots
     }
 
     // Owns strategy signal and price-plan semantics that do not depend on live account state.
+    // Public because DispatchProxy creates a runtime subclass; not a cBot/indicator entry point.
+    public class CTraderCausalDataProxy : DispatchProxy
+    {
+        internal Bars RawBars;
+        public override int GetHashCode() { return RawBars != null ? RawBars.GetHashCode() : base.GetHashCode(); }
+        private Func<MethodInfo, object[], object> _read;
+        internal static T Create<T>(Func<MethodInfo, object[], object> read) where T : class
+        {
+            var proxy = DispatchProxy.Create<T, CTraderCausalDataProxy>();
+            ((CTraderCausalDataProxy)(object)proxy)._read = read;
+            return proxy;
+        }
+        protected override object Invoke(MethodInfo method, object[] args) { return _read(method, args); }
+    }
+
     internal static class CTraderStrategyEngine
     {
         public const int AutoStopLossSourceCount = 8;
@@ -64294,6 +64768,7 @@ namespace cAlgo.Robots
     {
         private readonly FortyTwo.Trading.Analysis.MarketAnalysisService _service = new FortyTwo.Trading.Analysis.MarketAnalysisService();
         private readonly Dictionary<string, object> _snapshotCache = new Dictionary<string, object>(StringComparer.Ordinal);
+        private readonly Queue<string> _snapshotCacheOrder = new Queue<string>();
 
         public FortyTwo.Trading.Analysis.MarketAnalysisResult Analyze(FortyTwo.Trading.Analysis.MarketAnalysisRequest request)
         {
@@ -64617,11 +65092,19 @@ namespace cAlgo.Robots
             var snapshot = factory != null ? factory() : default(T);
             if (!string.IsNullOrWhiteSpace(cacheKey))
             {
-                if (_snapshotCache.Count >= maximumEntries)
-                    _snapshotCache.Clear();
+                if (!_snapshotCache.ContainsKey(cacheKey))
+                    _snapshotCacheOrder.Enqueue(cacheKey);
                 _snapshotCache[cacheKey] = snapshot;
+                while (_snapshotCache.Count > Math.Max(1, maximumEntries) && _snapshotCacheOrder.Count > 0)
+                    _snapshotCache.Remove(_snapshotCacheOrder.Dequeue());
             }
             return snapshot;
+        }
+
+        public void ClearSnapshots()
+        {
+            _snapshotCache.Clear();
+            _snapshotCacheOrder.Clear();
         }
     }
 
