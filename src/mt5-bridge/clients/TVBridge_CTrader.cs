@@ -22,7 +22,7 @@ namespace cAlgo.Robots
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class TVBridgeCBot : Robot
     {
-        private const string BuildVersion = "v2026.10.08 - explicit-decision-bar-v114";
+        private const string BuildVersion = "v2026.10.08 - responsive-causal-markers-v115";
         private const string BridgeSourceId = "Ctrader";
         private const string BridgeSourceType = "ctrader_bridge";
         private const int TransientErrorLogThresholdCount = 10;
@@ -88,6 +88,28 @@ namespace cAlgo.Robots
         }
         private readonly Dictionary<string, CausalReplayProgress> _causalReplayProgress = new Dictionary<string, CausalReplayProgress>();
         private readonly Queue<string> _causalReplayProgressOrder = new Queue<string>();
+        private sealed class ChartEventQualification
+        {
+            public List<TradeTriggerEvent> Triggers;
+            public bool IsTradeEvent;
+            public List<StrategyCustomEventOption> NamingOptions;
+        }
+        private sealed class ChartEventProtectionPlan
+        {
+            public bool IsValid;
+            public double Entry, StopLoss, TakeProfit;
+            public List<CTraderStrategyEntryLeg> Entries;
+        }
+        private static readonly PropertyInfo[] ChartEventParameterProperties = typeof(TVBridgeCBot)
+            .GetProperties(BindingFlags.Instance | BindingFlags.Public)
+            .Where(property => property.IsDefined(typeof(ParameterAttribute), true))
+            .OrderBy(property => property.Name, StringComparer.Ordinal).ToArray();
+        private readonly Dictionary<string, List<ChartEventQualification>> _chartEventQualificationCache = new Dictionary<string, List<ChartEventQualification>>();
+        private readonly Queue<string> _chartEventQualificationCacheOrder = new Queue<string>();
+        private readonly Dictionary<string, ChartEventProtectionPlan> _chartEventProtectionCache = new Dictionary<string, ChartEventProtectionPlan>();
+        private readonly Queue<string> _chartEventProtectionCacheOrder = new Queue<string>();
+        private readonly Dictionary<string, List<TradeTriggerEvent>> _chartRecentDecisionTriggers = new Dictionary<string, List<TradeTriggerEvent>>();
+        private readonly Queue<string> _chartRecentDecisionTriggersOrder = new Queue<string>();
         private readonly Dictionary<string, List<CanonicalMarketEvent>> _causalSweepProofBarCache = new Dictionary<string, List<CanonicalMarketEvent>>();
         private readonly Queue<string> _causalSweepProofBarCacheOrder = new Queue<string>();
         private new Bars Bars { get { return GetCausalBars(base.Bars); } }
@@ -233,7 +255,7 @@ namespace cAlgo.Robots
             if (_causalDecision != null && !string.IsNullOrEmpty(_causalDecision.AnalysisSettingsKey))
                 return _causalDecision.AnalysisSettingsKey;
             var key = BuildChartCacheKey(BuildDashboardAnalysisToggleKey(),
-                BuildNamedConfluenceCacheKey(), BuildConfiguredStrategyModesStateKey());
+                BuildNamedConfluenceCacheKey(), BuildConfiguredStrategyModesStateKey(), BuildChartEventConfigurationKey());
             if (_causalDecision != null) _causalDecision.AnalysisSettingsKey = key;
             return key;
         }
@@ -379,6 +401,7 @@ namespace cAlgo.Robots
             {
                 var prefix = GetCausalBars(feed);
                 if (prefix.Count != 11 || prefix.ClosePrices[9] != 109 ||
+                    GetCausalFeedIdentity(prefix) != GetCausalFeedIdentity(feed) ||
                     !double.IsNaN(prefix.ClosePrices[10]) || !double.IsNaN(prefix.HighPrices.LastValue) ||
                     !double.IsNaN(prefix.LowPrices.Last(0)) || !double.IsNaN(prefix.OpenPrices[11]) ||
                     prefix.ClosePrices.Take(10).Last() != 109)
@@ -409,6 +432,14 @@ namespace cAlgo.Robots
             using (BeginCausalDecision(cutoff.AddMinutes(-30)))
                 if (IsDecisionBarUsable(currentBar) || GetDecisionBars(currentBar, TimeFrame.Minute15) != null)
                     throw new InvalidOperationException("A future DecisionBar escaped an earlier caller's cutoff.");
+            var chartTrigger = new TradeTriggerEvent { SymbolName = "CAUSAL_CONTRACT",
+                SourceTimeFrame = TimeFrame.Minute15, BarTime = start, IsBullish = true,
+                Option = StrategyCustomEventOption.pin_PinBar, Name = "m15.pin", Family = "candle",
+                OpposingEvidenceNames = new List<string>() };
+            var duplicate = chartTrigger;
+            duplicate.OpposingEvidenceNames = new List<string>();
+            if (MergeChartTriggerCandidates(new[] { chartTrigger, duplicate }).Count != 1)
+                throw new InvalidOperationException("Current/backfill chart streams duplicated one event.");
         }
         private bool _sharedCatalogLoaded;
         private int _backtestingRuntimeState = -1;
@@ -6212,6 +6243,12 @@ namespace cAlgo.Robots
             _causalChartReplayPending = false;
             _causalReplayProgress.Clear();
             _causalReplayProgressOrder.Clear();
+            _chartEventQualificationCache.Clear();
+            _chartEventQualificationCacheOrder.Clear();
+            _chartEventProtectionCache.Clear();
+            _chartEventProtectionCacheOrder.Clear();
+            _chartRecentDecisionTriggers.Clear();
+            _chartRecentDecisionTriggersOrder.Clear();
             _persistedCanonicalEventCache.Clear();
             _persistedCandlePatternCache.Clear();
             _persistedScoredZoneCache.Clear();
@@ -11177,6 +11214,7 @@ namespace cAlgo.Robots
                     currentSymbol,
                     currentTimeFrame,
                     BuildDirectionalPaletteStateKey(),
+                    "eventparams:" + BuildChartEventConfigurationKey(),
                     "strategies:" + BuildConfiguredStrategyModesStateKey(),
                     "mincfl:" + MinimumConfluences,
                     "events:" + StructureEventsCombo,
@@ -14089,9 +14127,68 @@ namespace cAlgo.Robots
             return CollectTradeTriggerCandidatesCore(symbolName, timeFrame, scanBars, includeRawDetections, false, 150);
         }
 
+        private string BuildChartEventConfigurationKey()
+        {
+            // Parameter changes must invalidate BOTH accepted and rejected historical plans.
+            // This key is private/in-memory (never logged); it contains no quotes or broker history.
+            var state = BuildChartCacheKey(Chart != null ? Chart.SymbolName : "",
+                Chart != null ? TimeFrameToMinutes(Chart.TimeFrame) : 0,
+                BuildDashboardAnalysisToggleKey(), BuildNamedConfluenceCacheKey(),
+                string.Join("|", ChartEventParameterProperties.Select(property =>
+                    property.Name + "=" + Convert.ToString(property.GetValue(this), CultureInfo.InvariantCulture))));
+            using var hash = System.Security.Cryptography.SHA256.Create();
+            return Convert.ToBase64String(hash.ComputeHash(Encoding.UTF8.GetBytes(state)));
+        }
+
+        private static int GetCausalFeedIdentity(Bars bars)
+        {
+            // Views are newly allocated per decision scope. Cache identity belongs to the
+            // underlying feed; all data access still goes through the bounded view.
+            return ((bars as CTraderCausalDataProxy)?.RawBars ?? bars).GetHashCode();
+        }
+
+        private List<TradeTriggerEvent> MergeChartTriggerCandidates(IEnumerable<TradeTriggerEvent> candidates)
+        {
+            // TradeTriggerEvent contains list fields: default struct equality compares their
+            // references, not event identity. The current and backfill streams must not count
+            // one detection twice merely because each has its own diagnostic lists.
+            return candidates.GroupBy(trigger => BuildChartCacheKey(trigger.SymbolName,
+                TimeFrameToMinutes(trigger.SourceTimeFrame), trigger.BarTime.Ticks, trigger.IsBullish,
+                trigger.Option, trigger.Family, trigger.Name,
+                trigger.HasCanonicalEvent ? trigger.CanonicalEvent.ArtifactId : ""))
+                .Select(group => group.First()).ToList();
+        }
+
+        private List<TradeTriggerEvent> CollectChartTradeTriggerCandidates(
+            string symbolName, TimeFrame timeFrame, int scanBars, string configurationKey)
+        {
+            var sourceBars = GetBarsForCurrentMasterTimer(timeFrame, symbolName);
+            if (sourceBars == null || sourceBars.Count < 4)
+                return new List<TradeTriggerEvent>();
+            // The current decision is independent of how far background reconstruction has
+            // progressed. It still reconstructs its complete PAST context via the same detector.
+            var current = CollectTradeTriggerCandidatesAtDecisionBar(symbolName, timeFrame, scanBars, true);
+            var recentKey = BuildChartCacheKey(configurationKey, NormalizeSymbolAlias(symbolName),
+                TimeFrameToMinutes(timeFrame), GetCausalFeedIdentity(sourceBars),
+                scanBars >= sourceBars.Count - 2 ? "all" : scanBars.ToString(CultureInfo.InvariantCulture));
+            List<TradeTriggerEvent> remembered;
+            if (!_chartRecentDecisionTriggers.TryGetValue(recentKey, out remembered))
+                remembered = new List<TradeTriggerEvent>();
+            var firstTime = sourceBars.OpenTimes[Math.Max(1, sourceBars.Count - 2 - Math.Max(1, scanBars) + 1)];
+            remembered = MergeChartTriggerCandidates(current.Concat(remembered)
+                .Where(trigger => trigger.BarTime >= firstTime));
+            CTraderCacheEngine.StoreBoundedFifo(_chartRecentDecisionTriggers, _chartRecentDecisionTriggersOrder,
+                recentKey, remembered, 32);
+            // Rebuild the nearby chart first as a separate bounded, LEFT-TO-RIGHT replay.
+            // Only the decision range changes; scanBars (the historical context) stays identical.
+            var recent = CollectTradeTriggerCandidatesCore(symbolName, timeFrame, scanBars, true, false, 150, 64);
+            var history = CollectTradeTriggerCandidatesIncrementally(symbolName, timeFrame, scanBars, true);
+            return MergeChartTriggerCandidates(history.Concat(recent).Concat(remembered));
+        }
+
         private List<TradeTriggerEvent> CollectTradeTriggerCandidatesCore(
             string symbolName, TimeFrame timeFrame, int scanBarsOverride, bool includeRawDetections,
-            bool onlyDecisionBar, int replayBudgetMilliseconds)
+            bool onlyDecisionBar, int replayBudgetMilliseconds, int recentDecisionBars = 0)
         {
             RefreshRuntimeEventToggleState();
             var candidates = new List<TradeTriggerEvent>();
@@ -14122,13 +14219,17 @@ namespace cAlgo.Robots
                 BuildNamedConfluenceCacheKey(),
                 scanBars,
                 includeRawDetections ? "1" : "0",
-                BuildConfiguredStrategyModesStateKey()) + (onlyDecisionBar ? "|decision-only" : "");
+                BuildConfiguredStrategyModesStateKey()) + "|params:" + BuildChartEventConfigurationKey() +
+                (onlyDecisionBar ? "|decision-only" : "") +
+                (recentDecisionBars > 0 ? "|recent:" + recentDecisionBars.ToString(CultureInfo.InvariantCulture) : "");
             TimedCacheEntry<List<TradeTriggerEvent>> frameCached;
             if (_tradeTriggerFrameCache.TryGetValue(frameCacheKey, out frameCached) &&
                 frameCached != null && frameCached.Value != null)
                 return frameCached.Value.ToList();
 
             var firstIndex = onlyDecisionBar ? latestClosedIndex : Math.Max(1, latestClosedIndex - scanBars + 1);
+            if (!onlyDecisionBar && recentDecisionBars > 0)
+                firstIndex = Math.Max(firstIndex, latestClosedIndex - recentDecisionBars + 1);
             var replayTimer = Stopwatch.StartNew();
             var replayIncomplete = false;
             var canonicalEvents = new List<CanonicalMarketEvent>();
@@ -14146,9 +14247,10 @@ namespace cAlgo.Robots
             // influence an earlier event merely because the chart is being rebuilt today.
             var replayBars = sourceBars;
             var causalSettingsKey = BuildChartCacheKey(normalizedSymbol, TimeFrameToMinutes(timeFrame),
-                BuildDashboardAnalysisToggleKey(), BuildNamedConfluenceCacheKey(), BuildConfiguredStrategyModesStateKey());
-            var progressKey = BuildChartCacheKey(causalSettingsKey, replayBars.GetHashCode(),
-                scanBars >= latestClosedIndex ? "all" : scanBars.ToString(CultureInfo.InvariantCulture), includeRawDetections);
+                GetCausalAnalysisSettingsKey());
+            var progressKey = BuildChartCacheKey(causalSettingsKey, GetCausalFeedIdentity(replayBars),
+                scanBars >= latestClosedIndex ? "all" : scanBars.ToString(CultureInfo.InvariantCulture), includeRawDetections,
+                recentDecisionBars);
             CausalReplayProgress progress;
             if (replayBudgetMilliseconds > 0 && _causalReplayProgress.TryGetValue(progressKey, out progress) &&
                 progress.NextIndex >= firstIndex && progress.NextIndex <= latestClosedIndex + 1 &&
@@ -14161,8 +14263,9 @@ namespace cAlgo.Robots
             for (var barIndex = firstIndex; barIndex <= latestClosedIndex; barIndex++)
             {
                 var decisionScanBars = Math.Min(scanBars, barIndex);
-                var barCacheKey = BuildChartCacheKey(causalSettingsKey, replayBars.GetHashCode(),
-                    replayBars.OpenTimes[barIndex].Ticks, Math.Max(180, decisionScanBars));
+                var barCacheKey = BuildChartCacheKey(causalSettingsKey, GetCausalFeedIdentity(replayBars),
+                    replayBars.OpenTimes[0].Ticks, replayBars.OpenTimes[barIndex].Ticks,
+                    Math.Max(180, decisionScanBars));
                 List<TradeTriggerEvent> barCached;
                 if (_causalTriggerBarCache.TryGetValue(barCacheKey, out barCached))
                 { candidates.AddRange(barCached); nextReplayIndex = barIndex + 1; continue; }
@@ -24662,6 +24765,7 @@ namespace cAlgo.Robots
 
             var symbolName = !string.IsNullOrWhiteSpace(Chart.SymbolName) ? Chart.SymbolName : Symbol.Name;
             var selectedOptions = GetSelectedStrategyCustomEventOptions();
+            var eventConfigurationKey = BuildChartEventConfigurationKey();
             var strategyEligibilityCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
             var chartMinutes = Math.Max(1, TimeFrameToMinutes(Chart.TimeFrame));
             var frames = new List<TimeFrame> { Chart.TimeFrame };
@@ -24716,10 +24820,10 @@ namespace cAlgo.Robots
                             sourceTimeFrame,
                             sourceBars,
                             visualLookbackBars)
-                        : CollectTradeTriggerCandidatesIncrementally(symbolName, sourceTimeFrame, visualLookbackBars, true))
+                        : CollectChartTradeTriggerCandidates(symbolName, sourceTimeFrame, visualLookbackBars, eventConfigurationKey))
                     .Where(trigger => !trigger.IsDirectionless)
                     .ToList();
-                var eventMarkerTriggers = ApplyConfluencesToEvents
+                var eventMarkerTriggers = !UseExecutionRulesForChartMarkers() && ApplyConfluencesToEvents
                     ? ApplyConfiguredConfluencesToEventMarkers(
                         symbolName,
                         sourceBars,
@@ -24734,14 +24838,12 @@ namespace cAlgo.Robots
                     sourceTimeFrame,
                     detectedTriggers,
                     eventMarkerTriggers);
-                visibleTriggers = AttachOpposingEvidenceCounts(
-                    visibleTriggers,
-                    ApplyConfluencesToEvents
-                        ? eventMarkerTriggers
-                        : detectedTriggers,
-                    symbolName,
-                    sourceBars,
-                    sourceTimeFrame);
+                // Trades obtains direction/confluence/opposing evidence from the shared
+                // execution qualifier below. Do not repeat analytical scans over the entire
+                // accumulated history on every 150ms replay batch.
+                if (!UseExecutionRulesForChartMarkers())
+                    visibleTriggers = AttachOpposingEvidenceCounts(
+                        visibleTriggers, eventMarkerTriggers, symbolName, sourceBars, sourceTimeFrame);
                 visibleTriggers = visibleTriggers
                     .GroupBy(trigger => trigger.BarTime)
                     .Where(group => group.Any(IsNamedChartEventTrigger) ||
@@ -24767,8 +24869,14 @@ namespace cAlgo.Robots
                     .OrderByDescending(group => group[0].BarTime)
                     .ToList();
 
-                var renderGroups = new List<Tuple<List<TradeTriggerEvent>, bool, List<StrategyCustomEventOption>>>();
-                foreach (var rawGroup in candidateGroups)
+                var renderGroups = new List<ChartEventQualification>();
+                var qualificationTimer = Stopwatch.StartNew();
+                var newQualificationCount = 0;
+                var latestDecisionTime = sourceBars.OpenTimes[sourceBars.Count - 2];
+                foreach (var rawGroup in candidateGroups
+                    .OrderBy(group => group[0].BarTime == latestDecisionTime ? 0 :
+                        ResolveSourceBarIndex(sourceBars, group[0].BarTime) >= sourceBars.Count - 2 - 63 ? 1 : 2)
+                    .ThenBy(group => group[0].BarTime))
                 {
                     var primaryRaw = rawGroup[0];
                     var rawBarIndex = ResolveSourceBarIndex(sourceBars, primaryRaw.BarTime);
@@ -24777,14 +24885,37 @@ namespace cAlgo.Robots
                         !ShouldAllowChartSignalTime(ResolveSourceBarEndTime(sourceBars,
                             primaryRaw.BarTime, sourceTimeFrame)))
                         continue;
+                    var qualificationKey = BuildChartCacheKey(eventConfigurationKey, sourceBars.GetHashCode(),
+                        TimeFrameToMinutes(sourceTimeFrame), primaryRaw.BarTime.Ticks, primaryRaw.IsBullish,
+                        Math.Min(visualLookbackBars, rawBarIndex), sourceBars.OpenTimes[0].Ticks,
+                        sourceBars.OpenPrices[rawBarIndex], sourceBars.HighPrices[rawBarIndex],
+                        sourceBars.LowPrices[rawBarIndex], sourceBars.ClosePrices[rawBarIndex]);
+                    List<ChartEventQualification> cachedQualification;
+                    if (_chartEventQualificationCache.TryGetValue(qualificationKey, out cachedQualification))
+                    {
+                        renderGroups.AddRange(cachedQualification);
+                        continue;
+                    }
+                    // Always qualify the current decision, then spend only a bounded slice
+                    // on historical decisions. Cached markers remain drawable during backfill.
+                    if (primaryRaw.BarTime != latestDecisionTime && newQualificationCount > 0 &&
+                        qualificationTimer.ElapsedMilliseconds >= 150)
+                    {
+                        _causalChartReplayPending = true;
+                        _forceChartVisualsRefresh = true;
+                        continue;
+                    }
+                    newQualificationCount++;
+                    var firstRenderGroup = renderGroups.Count;
                     var isSweepReclaimProofGroup = sweepReclaimOnly &&
                         rawGroup.Any(IsSweepReclaimDetectorProofTrigger);
                     if (isSweepReclaimProofGroup && showRawEvents)
                     {
-                        renderGroups.Add(Tuple.Create(
-                            rawGroup,
-                            false,
-                            new List<StrategyCustomEventOption> { StrategyCustomEventOption.sweep_reclaim }));
+                        renderGroups.Add(new ChartEventQualification {
+                            Triggers = rawGroup, IsTradeEvent = false,
+                            NamingOptions = new List<StrategyCustomEventOption> { StrategyCustomEventOption.sweep_reclaim } });
+                        CTraderCacheEngine.StoreBoundedFifo(_chartEventQualificationCache, _chartEventQualificationCacheOrder,
+                            qualificationKey, renderGroups.Skip(firstRenderGroup).ToList(), 4096);
                         continue;
                     }
                     var groupKey = string.Format(
@@ -24834,28 +24965,31 @@ namespace cAlgo.Robots
                         var namingOptions = isFileBackedStrategyEvent
                             ? matchedFileBackedOptions
                             : selectedOptions;
-                        renderGroups.Add(Tuple.Create(qualifiedGroup, true, namingOptions));
+                        renderGroups.Add(new ChartEventQualification {
+                            Triggers = qualifiedGroup, IsTradeEvent = true, NamingOptions = namingOptions });
                     }
                     else if (showRawEvents)
                     {
                         var rawNamingOptions = isSweepReclaimProofEvent
                             ? new List<StrategyCustomEventOption> { StrategyCustomEventOption.sweep_reclaim }
                             : selectedOptions;
-                        renderGroups.Add(Tuple.Create(rawGroup, false, rawNamingOptions));
+                        renderGroups.Add(new ChartEventQualification {
+                            Triggers = rawGroup, IsTradeEvent = false, NamingOptions = rawNamingOptions });
                     }
+                    CTraderCacheEngine.StoreBoundedFifo(_chartEventQualificationCache, _chartEventQualificationCacheOrder,
+                        qualificationKey, renderGroups.Skip(firstRenderGroup).ToList(), 4096);
                 }
 
-                // renderGroups are newest-first. The configured limit is per event type,
+                // Draw the qualified groups newest-first. The configured limit is per event type,
                 // not one total marker per timeframe. Apply the limit only after a group
                 // has produced an enabled, non-empty label; otherwise a hidden newest
                 // candidate can consume the slot and make every valid marker disappear.
-                var triggers = renderGroups;
+                var triggers = renderGroups.OrderByDescending(group => group.Triggers[0].BarTime);
 
                 foreach (var renderGroup in triggers)
                 {
-                    var sameBarTriggers = renderGroup.Item1;
-                    var isTradeEvent = renderGroup.Item2;
-                    var namingOptions = renderGroup.Item3;
+                    var sameBarTriggers = renderGroup.Triggers;
+                    var isTradeEvent = renderGroup.IsTradeEvent;
                     var primary = sameBarTriggers[0];
                     var isCompletedSweepReclaimChain = IsSweepReclaimStrategySelected() &&
                         sameBarTriggers.Any(IsCompletedSweepReclaimChainTrigger);
@@ -24894,13 +25028,28 @@ namespace cAlgo.Robots
                         !IsChartEventLabelEnabledByArtifactParameters(labelText))
                         continue;
 
-                    double plannedEntry;
-                    double plannedStopLoss;
-                    double plannedTakeProfit;
-                    var plannedEntries = new List<CTraderStrategyEntryLeg>();
-                    var hasProtection = TryResolveChartSignalProtection(
-                        symbolName, sourceBars, sourceTimeFrame, barIndex, primary,
-                        labelText, out plannedEntry, out plannedStopLoss, out plannedTakeProfit, plannedEntries);
+                    var planKey = BuildChartCacheKey(eventConfigurationKey, triggerKey, sourceBars.GetHashCode(),
+                        sourceBars.OpenTimes[0].Ticks, sourceBars.OpenPrices[barIndex + 1], labelText,
+                        sourceBars.HighPrices[barIndex], sourceBars.LowPrices[barIndex]);
+                    ChartEventProtectionPlan protectionPlan;
+                    if (!_chartEventProtectionCache.TryGetValue(planKey, out protectionPlan))
+                    {
+                        protectionPlan = new ChartEventProtectionPlan { Entries = new List<CTraderStrategyEntryLeg>() };
+                        protectionPlan.IsValid = TryResolveChartSignalProtection(
+                            symbolName, sourceBars, sourceTimeFrame, barIndex, primary, labelText,
+                            out protectionPlan.Entry, out protectionPlan.StopLoss, out protectionPlan.TakeProfit,
+                            protectionPlan.Entries);
+                        // Missing auxiliary feeds may become available on the next tick.
+                        // Do not turn a transient inability to plan into a permanent rejection.
+                        if (protectionPlan.IsValid)
+                            CTraderCacheEngine.StoreBoundedFifo(_chartEventProtectionCache, _chartEventProtectionCacheOrder,
+                                planKey, protectionPlan, 4096);
+                    }
+                    var hasProtection = protectionPlan.IsValid;
+                    var plannedEntry = protectionPlan.Entry;
+                    var plannedStopLoss = protectionPlan.StopLoss;
+                    var plannedTakeProfit = protectionPlan.TakeProfit;
+                    var plannedEntries = protectionPlan.Entries;
                     // A qualified setup needs usable protection under the selected SL/TP.
                     // Analytical PerItem/Yes may still display the detector evidence.
                     if (isTradeEvent && !hasProtection)
