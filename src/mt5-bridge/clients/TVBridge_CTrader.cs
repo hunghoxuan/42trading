@@ -22,7 +22,7 @@ namespace cAlgo.Robots
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class TVBridgeCBot : Robot
     {
-        private const string BuildVersion = "v2026.10.08 - strategy-marker-parity-v116";
+        private const string BuildVersion = "v2026.10.09 - chart-timeframe-isolation-v120";
         private const string BridgeSourceId = "Ctrader";
         private const string BridgeSourceType = "ctrader_bridge";
         private const int TransientErrorLogThresholdCount = 10;
@@ -687,6 +687,7 @@ namespace cAlgo.Robots
         private DateTime _lastTechOverlayRedrawAtUtc = DateTime.MinValue;
         private int _lastFullOverlayBarsCount = -1;
         private string _lastFullOverlayStateKey = "";
+        private string _chartVisualContextKey = "";
         private int _lastTechnicalOverlayBarsCount = -1;
         private string _lastTechnicalOverlayStateKey = "";
         private DateTime _lastFullOverlayRedrawAtUtc = DateTime.MinValue;
@@ -9081,11 +9082,40 @@ namespace cAlgo.Robots
         // upward creates duplicated labels and boxes (for example m5.r.tl on an m15 chart).
         private bool IsChartArtifactTimeFrameVisible(TimeFrame sourceTimeFrame)
         {
-            if (Chart == null || sourceTimeFrame == null)
+            return Chart != null && IsChartArtifactTimeFrameVisible(sourceTimeFrame, Chart.TimeFrame);
+        }
+
+        // Display-only policy. Never use this to prune strategy targets or analysis feeds.
+        private bool IsChartArtifactTimeFrameVisible(TimeFrame sourceTimeFrame, TimeFrame chartTimeFrame)
+        {
+            if (sourceTimeFrame == null || chartTimeFrame == null)
                 return false;
-            var chartMinutes = Math.Max(1, TimeFrameToMinutes(Chart.TimeFrame));
+            var chartMinutes = TimeFrameToMinutes(chartTimeFrame);
             var sourceMinutes = TimeFrameToMinutes(sourceTimeFrame);
-            return sourceMinutes >= chartMinutes;
+            return chartMinutes > 0 && sourceMinutes > 0 && sourceMinutes >= chartMinutes;
+        }
+
+        private TimeFrame ResolveStrategyChartMarkerSourceTimeFrame(StrategyChartMarker marker)
+        {
+            if (marker.SourceTimeFrame != null)
+                return marker.SourceTimeFrame;
+            // Older fill/exit records have no TF field. Recover ownership from their
+            // matching signal record, not from whichever chart is currently visible.
+            var trigger = _strategyChartMarkers.FirstOrDefault(candidate =>
+                candidate.Kind == StrategyMarkerKind.Trigger && candidate.SourceTimeFrame != null &&
+                (candidate.PositionId == marker.PositionId || candidate.PositionId == -marker.PositionId) &&
+                marker.PositionId != 0 &&
+                string.Equals(candidate.SymbolName, marker.SymbolName, StringComparison.OrdinalIgnoreCase));
+            if (trigger.SourceTimeFrame != null)
+                return trigger.SourceTimeFrame;
+            TimeFrame parsed;
+            return TryResolveStrategyTriggerTimeFrame(marker.Text, out parsed) ? parsed : null;
+        }
+
+        private bool IsStrategyChartMarkerTimeFrameVisible(StrategyChartMarker marker)
+        {
+            // Unknown source TF fails closed; never relabel a legacy LTF fill as chart TF.
+            return IsChartArtifactTimeFrameVisible(ResolveStrategyChartMarkerSourceTimeFrame(marker));
         }
 
         private void ApplySurroundingBoxStyle(
@@ -10986,9 +11016,10 @@ namespace cAlgo.Robots
         // over - so splitters no longer redraw on every forming-bar tick.
         private string Build4HSplitterStateKey()
         {
+            var chartBars = GetCurrentChartVisualBars();
             var currentSymbol = GetChartSymbolKey();
             var currentTimeFrame = GetChartTimeFrameKey();
-            var chartStart = Bars != null && Bars.Count > 0 ? Bars.OpenTimes[0] : DateTime.MinValue;
+            var chartStart = chartBars != null && chartBars.Count > 0 ? chartBars.OpenTimes[0] : DateTime.MinValue;
             var chartEnd = GetCurrentChartEndTime();
 
             var firstBoundaryTicks = 0L;
@@ -11154,10 +11185,11 @@ namespace cAlgo.Robots
         // bar, capped further by LiteRedrawMinIntervalSeconds on fast timeframes.
         private string BuildDetectionsStateKey()
         {
+            var chartBars = GetCurrentChartVisualBars();
             var currentSymbol = GetChartSymbolKey();
             var currentTimeFrame = GetChartTimeFrameKey();
-            var completedIndex = Bars != null && Bars.Count >= 2 ? Bars.Count - 2 : -1;
-            var completedOpenTime = completedIndex >= 0 ? Bars.OpenTimes[completedIndex].Ticks.ToString(CultureInfo.InvariantCulture) : "";
+            var completedIndex = chartBars != null && chartBars.Count >= 2 ? chartBars.Count - 2 : -1;
+            var completedOpenTime = completedIndex >= 0 ? chartBars.OpenTimes[completedIndex].Ticks.ToString(CultureInfo.InvariantCulture) : "";
             var patternToggles = (_togglePinBarPatterns || _toggleEngulfingPatterns || _toggleBigCandlePatterns ||
                 _toggleMorningStarPatterns || _toggleEveningStarPatterns || _toggleHammerPatterns ||
                 _toggleHangingManPatterns || _toggleShootingStarPatterns || _toggleInvertedHammerPatterns ||
@@ -11219,10 +11251,11 @@ namespace cAlgo.Robots
         // the heavy remove+redraw only happens when something it draws actually changed.
         private string BuildFullOverlayStateKey()
         {
+            var chartBars = GetCurrentChartVisualBars();
             var currentSymbol = Chart != null ? (Chart.SymbolName ?? "") : (Symbol != null ? Symbol.Name ?? "" : "");
             var currentTimeFrame = Chart != null ? Convert.ToString(Chart.TimeFrame, CultureInfo.InvariantCulture) ?? "" : "";
-            var completedIndex = Bars != null && Bars.Count >= 2 ? Bars.Count - 2 : -1;
-            var completedOpenTime = completedIndex >= 0 ? Bars.OpenTimes[completedIndex].Ticks.ToString(CultureInfo.InvariantCulture) : "";
+            var completedIndex = chartBars != null && chartBars.Count >= 2 ? chartBars.Count - 2 : -1;
+            var completedOpenTime = completedIndex >= 0 ? chartBars.OpenTimes[completedIndex].Ticks.ToString(CultureInfo.InvariantCulture) : "";
 
             return string.Join(
                 "|",
@@ -11300,7 +11333,7 @@ namespace cAlgo.Robots
                     _toggleMacdEvents ? "macd:on" : "macd:off",
                     _toggleStrategyMarkers ? "sm:on" : "sm:off",
                     "trades:" + ClosedTradesVisuals,
-                    Bars != null ? Bars.Count.ToString(CultureInfo.InvariantCulture) : "",
+                    chartBars != null ? chartBars.Count.ToString(CultureInfo.InvariantCulture) : "",
                     completedOpenTime,
                     _strategyChartMarkers.Count.ToString(CultureInfo.InvariantCulture),
                     GetClosedTradeVisualStateStamp(),
@@ -11308,10 +11341,32 @@ namespace cAlgo.Robots
                 });
         }
 
+        private void EnsureChartVisualContext()
+        {
+            if (Chart == null)
+                return;
+            var contextKey = GetChartSymbolKey() + "|" + GetChartTimeFrameKey();
+            if (string.Equals(_chartVisualContextKey, contextKey, StringComparison.Ordinal))
+                return;
+            // Never preserve objects from the old chart merely because a bar-count
+            // advance and a timeframe switch happened in the same refresh.
+            RemoveChartVisualObjects();
+            _chartVisualContextKey = contextKey;
+            _drawnSurroundingBoxKeys.Clear();
+            _lastFullOverlayStateKey = "";
+            _lastDetectionsStateKey = "";
+            _pendingDetectionsStateKey = "";
+            _pendingDetectionsBarsCount = -1;
+            _pendingDetectionsPhase = 0;
+            _forceChartVisualsRefresh = true;
+        }
+
         private void DrawLiteZoneOverlays()
         {
+            var chartBars = GetCurrentChartVisualBars();
             try
             {
+                EnsureChartVisualContext();
                 if (!AreChartVisualsEnabled())
                 {
                     RemoveChartVisualObjects();
@@ -11323,7 +11378,7 @@ namespace cAlgo.Robots
                     return;
                 }
 
-                if (Chart == null || Bars == null || Bars.Count < 5)
+                if (Chart == null || chartBars == null || chartBars.Count < 5)
                     return;
 
                 // Native chart display prefs (grid / period separators) may not be available
@@ -11394,12 +11449,14 @@ namespace cAlgo.Robots
         // 4H splitter grid: only changes at 4H boundaries / visible window edge / day rollover.
         private int RefreshLite4HSplitters(int objectIndex, List<string> breakdown)
         {
+            var chartBars = GetCurrentChartVisualBars();
+            if (chartBars == null) return objectIndex;
             var stateKey = Build4HSplitterStateKey();
             if (!CTraderChartEngine.ShouldRefresh(
-                    _last4HSplitterBarsCount, _last4HSplitterStateKey, Bars.Count, stateKey,
+                    _last4HSplitterBarsCount, _last4HSplitterStateKey, chartBars.Count, stateKey,
                     DateTime.MinValue, DateTime.UtcNow, 0))
                 return objectIndex;
-            _last4HSplitterBarsCount = Bars.Count;
+            _last4HSplitterBarsCount = chartBars.Count;
             _last4HSplitterStateKey = stateKey;
 
             var before = objectIndex;
@@ -11526,6 +11583,8 @@ namespace cAlgo.Robots
 
         private void DrawSingleMiniLiveCandle(TimeFrame timeFrame, double futureOffsetBars, double slotWidthBars, int miniBarCount, int chartBaseBarIndex)
         {
+            if (!IsChartArtifactTimeFrameVisible(timeFrame))
+                return;
             var sourceBars = GetBarsForCurrentMasterTimer(timeFrame, Chart.SymbolName);
             if (sourceBars == null || sourceBars.Count < 2)
                 return;
@@ -11601,12 +11660,14 @@ namespace cAlgo.Robots
         // HTF background candles: only change when a completed 1D/4H/NY-30 bar changes.
         private int RefreshLiteHtfBackground(int objectIndex, List<string> breakdown)
         {
+            var chartBars = GetCurrentChartVisualBars();
+            if (chartBars == null) return objectIndex;
             var stateKey = BuildHtfBackgroundStateKey();
             if (!CTraderChartEngine.ShouldRefresh(
-                    _lastHtfBackgroundBarsCount, _lastHtfBackgroundStateKey, Bars.Count, stateKey,
+                    _lastHtfBackgroundBarsCount, _lastHtfBackgroundStateKey, chartBars.Count, stateKey,
                     DateTime.MinValue, DateTime.UtcNow, 0))
                 return objectIndex;
-            _lastHtfBackgroundBarsCount = Bars.Count;
+            _lastHtfBackgroundBarsCount = chartBars.Count;
             _lastHtfBackgroundStateKey = stateKey;
 
             var before = objectIndex;
@@ -11625,14 +11686,16 @@ namespace cAlgo.Robots
         // timeframes so the strip doesn't rebuild every few seconds.
         private int RefreshLiteMiniCharts(int objectIndex, List<string> breakdown)
         {
+            var chartBars = GetCurrentChartVisualBars();
+            if (chartBars == null) return objectIndex;
             var stateKey = BuildMiniChartStateKey();
             var nowUtc = DateTime.UtcNow;
             if (!IsHtfMiniChartAnchorStale() &&
                 !CTraderChartEngine.ShouldRefresh(
-                    _lastMiniChartBarsCount, _lastMiniChartStateKey, Bars.Count, stateKey,
+                    _lastMiniChartBarsCount, _lastMiniChartStateKey, chartBars.Count, stateKey,
                     _lastMiniChartRedrawAtUtc, nowUtc, LiteRedrawMinIntervalSeconds))
                 return objectIndex;
-            _lastMiniChartBarsCount = Bars.Count;
+            _lastMiniChartBarsCount = chartBars.Count;
             _lastMiniChartStateKey = stateKey;
             _lastMiniChartRedrawAtUtc = nowUtc;
 
@@ -11670,6 +11733,8 @@ namespace cAlgo.Robots
         // and throttled so fast timeframes can't redraw the heavy set every few seconds.
         private int RefreshLiteDetections(int objectIndex, List<string> breakdown)
         {
+            var chartBars = GetCurrentChartVisualBars();
+            if (chartBars == null) return objectIndex;
             RefreshRuntimeEventToggleState();
             RemoveLowerTimeFrameChartArtifacts();
             var stateKey = BuildDetectionsStateKey();
@@ -11677,7 +11742,7 @@ namespace cAlgo.Robots
             var refreshPending = !string.IsNullOrEmpty(_pendingDetectionsStateKey);
             if (!refreshPending)
             {
-                if (_lastDetectionsBarsCount == Bars.Count &&
+                if (_lastDetectionsBarsCount == chartBars.Count &&
                     string.Equals(_lastDetectionsStateKey, stateKey, StringComparison.Ordinal))
                     return objectIndex;
                 if (_lastDetectionsRedrawAtUtc != DateTime.MinValue &&
@@ -11685,15 +11750,15 @@ namespace cAlgo.Robots
                     return objectIndex;
 
                 _pendingDetectionsStateKey = stateKey;
-                _pendingDetectionsBarsCount = Bars.Count;
+                _pendingDetectionsBarsCount = chartBars.Count;
                 _pendingDetectionsPhase = 0;
             }
-            else if (_pendingDetectionsBarsCount != Bars.Count ||
+            else if (_pendingDetectionsBarsCount != chartBars.Count ||
                      !string.Equals(_pendingDetectionsStateKey, stateKey, StringComparison.Ordinal))
             {
                 // A newer completed bar or setting change supersedes the unfinished cycle.
                 _pendingDetectionsStateKey = stateKey;
-                _pendingDetectionsBarsCount = Bars.Count;
+                _pendingDetectionsBarsCount = chartBars.Count;
                 _pendingDetectionsPhase = 0;
             }
 
@@ -11827,7 +11892,8 @@ namespace cAlgo.Robots
 
         private int DrawLiteTrendOverlays(int objectIndex)
         {
-            if (Chart == null || Bars == null || Bars.Count < 24)
+            var chartBars = GetCurrentChartVisualBars();
+            if (Chart == null || chartBars == null || chartBars.Count < 24)
                 return objectIndex;
 
             try
@@ -11836,30 +11902,30 @@ namespace cAlgo.Robots
                 {
                     var emaFastColor = GetTechnicalBullishColor(120);
                     var emaSlowColor = GetTechnicalBearishColor(120);
-                    var emaFastValues = BuildExponentialMovingAverageSeries(Bars, _resolvedEmaOverlayConfig.FastPeriod);
-                    var emaMidValues = BuildExponentialMovingAverageSeries(Bars, _resolvedEmaOverlayConfig.MidPeriod);
+                    var emaFastValues = BuildExponentialMovingAverageSeries(chartBars, _resolvedEmaOverlayConfig.FastPeriod);
+                    var emaMidValues = BuildExponentialMovingAverageSeries(chartBars, _resolvedEmaOverlayConfig.MidPeriod);
                     objectIndex = DrawIndicatorSeriesLine(objectIndex, "EMA20_", index => emaFastValues[index], emaFastColor, 1, "Dots", 180);
                     objectIndex = DrawIndicatorSeriesLine(objectIndex, "EMA50_", index => emaMidValues[index], emaSlowColor, 1, "Dots", 180);
                     if (_resolvedEmaOverlayConfig.SlowPeriod > 0 && _resolvedEmaOverlayConfig.SlowPeriod != _resolvedEmaOverlayConfig.MidPeriod)
                     {
-                        var emaSlowValues = BuildExponentialMovingAverageSeries(Bars, _resolvedEmaOverlayConfig.SlowPeriod);
+                        var emaSlowValues = BuildExponentialMovingAverageSeries(chartBars, _resolvedEmaOverlayConfig.SlowPeriod);
                         objectIndex = DrawIndicatorSeriesLine(objectIndex, "EMA200_", index => emaSlowValues[index], emaSlowColor, 2, "Solid", 220, GetEmaOverlayPairLabel(), 9, 1);
                     }
                     else
-                        DrawRightEdgeIndicatorLabel("EMA200_", objectIndex, emaMidValues[Bars.Count - 1], emaSlowColor, GetEmaOverlayPairLabel(), 9, 1);
+                        DrawRightEdgeIndicatorLabel("EMA200_", objectIndex, emaMidValues[chartBars.Count - 1], emaSlowColor, GetEmaOverlayPairLabel(), 9, 1);
                 }
 
                 if (_toggleVwapOverlay && !NativeVwapOverlayActive())
                 {
                     var vwapColor = Color.FromArgb(255, 250, 204, 21);
-                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "VWAP20_", index => ComputeRollingVwapAtIndex(Bars, _resolvedVwapOverlayConfig.Length, index), vwapColor, 1, "Dots", 180, GetVwapOverlayPairLabel(), 9, 0);
+                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "VWAP20_", index => ComputeRollingVwapAtIndex(chartBars, _resolvedVwapOverlayConfig.Length, index), vwapColor, 1, "Dots", 180, GetVwapOverlayPairLabel(), 9, 0);
                 }
 
                 if (_toggleBollingerOverlay && !NativeBollingerOverlayActive())
                 {
                     var bollingerColor = Color.FromArgb(120, 168, 85, 247);
-                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "BBUP_", index => ComputeBollingerUpper(Bars, index, _resolvedBollingerOverlayConfig.Period, _resolvedBollingerOverlayConfig.StdDevMultiplier), bollingerColor, 1, "Dots", 180);
-                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "BBDN_", index => ComputeBollingerLower(Bars, index, _resolvedBollingerOverlayConfig.Period, _resolvedBollingerOverlayConfig.StdDevMultiplier), bollingerColor, 1, "Dots", 180);
+                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "BBUP_", index => ComputeBollingerUpper(chartBars, index, _resolvedBollingerOverlayConfig.Period, _resolvedBollingerOverlayConfig.StdDevMultiplier), bollingerColor, 1, "Dots", 180);
+                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "BBDN_", index => ComputeBollingerLower(chartBars, index, _resolvedBollingerOverlayConfig.Period, _resolvedBollingerOverlayConfig.StdDevMultiplier), bollingerColor, 1, "Dots", 180);
                 }
 
                 if (_toggleIchimokuOverlay && !NativeIchimokuOverlayActive())
@@ -11877,6 +11943,8 @@ namespace cAlgo.Robots
 
         private void DrawChartVisualOverlays()
         {
+            var chartBars = GetCurrentChartVisualBars();
+            EnsureChartVisualContext();
             if (!AreChartVisualsEnabled())
             {
                 RemoveChartVisualObjects();
@@ -11893,7 +11961,7 @@ namespace cAlgo.Robots
                 // don't force a full remove+redraw every few seconds.
                 var fullStateKey = BuildFullOverlayStateKey();
                 var fullNeedsRefresh = _forceChartVisualsRefresh ||
-                                       _lastFullOverlayBarsCount != (Bars != null ? Bars.Count : -1) ||
+                                       _lastFullOverlayBarsCount != (chartBars != null ? chartBars.Count : -1) ||
                                        !string.Equals(_lastFullOverlayStateKey, fullStateKey, StringComparison.Ordinal);
                 if (!fullNeedsRefresh)
                     return;
@@ -11911,8 +11979,8 @@ namespace cAlgo.Robots
 
                 var existingUnifiedEventObjectCount = CountChartObjectsByPrefixes("TRG_", "RAW_EVT_", "TRG_ART_");
                 var isCompletedBarAdvance = _lastFullOverlayBarsCount >= 0 &&
-                    Bars != null &&
-                    _lastFullOverlayBarsCount != Bars.Count;
+                    chartBars != null &&
+                    _lastFullOverlayBarsCount != chartBars.Count;
                 var isSameRenderConfiguration = !string.IsNullOrEmpty(_lastFullOverlayStateKey) &&
                     string.Equals(_lastFullOverlayStateKey, fullStateKey, StringComparison.Ordinal);
                 var preserveUnifiedEventMarkers = existingUnifiedEventObjectCount > 0 &&
@@ -11925,7 +11993,7 @@ namespace cAlgo.Robots
                 // the chart blank and the empty pass is incorrectly treated as current.
                 RemoveChartVisualObjects(preserveUnifiedEventMarkers);
                 _drawnSurroundingBoxKeys.Clear();
-                if (Bars == null || Bars.Count < 5 || Chart == null)
+                if (chartBars == null || chartBars.Count < 5 || Chart == null)
                     return;
 
                 var objectIndex = 0;
@@ -11983,17 +12051,17 @@ namespace cAlgo.Robots
                 // Draw them last so event visuals retain first access to the chart-object budget.
                 objectIndex = DrawAllowedTradingTimeAreas(objectIndex);
                 objectIndex = DrawFourHourSplitters(objectIndex);
-                _last4HSplitterBarsCount = Bars.Count;
+                _last4HSplitterBarsCount = chartBars.Count;
                 _last4HSplitterStateKey = Build4HSplitterStateKey();
 
                 if (!transientEmptyEventRebuild && !_causalChartReplayPending)
                 {
-                    _lastFullOverlayBarsCount = Bars.Count;
+                    _lastFullOverlayBarsCount = chartBars.Count;
                     _lastFullOverlayStateKey = fullStateKey;
                 }
                 if (_toggleEmaOverlay || _toggleVwapOverlay || _toggleBollingerOverlay || _toggleIchimokuOverlay || _toggleDonchianOverlay)
                 {
-                    _lastTechnicalOverlayBarsCount = Bars.Count;
+                    _lastTechnicalOverlayBarsCount = chartBars.Count;
                     _lastTechnicalOverlayStateKey = BuildTechnicalOverlayStateKey();
                 }
                 else
@@ -12291,7 +12359,7 @@ namespace cAlgo.Robots
 
         private int DrawBackgroundCandleOverlayAtIndex(int objectIndex, Bars sourceBars, TimeFrame sourceTimeFrame, int sourceIndex, string objectPrefix, string overlayLabel = null)
         {
-            if (!IsValidChartOhlcBar(sourceBars, sourceIndex))
+            if (!IsChartArtifactTimeFrameVisible(sourceTimeFrame) || !IsValidChartOhlcBar(sourceBars, sourceIndex))
                 return objectIndex;
 
             var startTime = sourceBars.OpenTimes[sourceIndex];
@@ -12366,6 +12434,8 @@ namespace cAlgo.Robots
 
         private int DrawHtfCompletedBarHighLowGuides(int objectIndex, Bars sourceBars, TimeFrame sourceTimeFrame, int sourceIndex, string objectPrefix)
         {
+            if (!IsChartArtifactTimeFrameVisible(sourceTimeFrame))
+                return objectIndex;
             if (Chart == null || !IsValidChartOhlcBar(sourceBars, sourceIndex))
                 return objectIndex;
 
@@ -13127,6 +13197,8 @@ namespace cAlgo.Robots
 
         private int DrawSingleMiniChart(TimeFrame timeFrame, int chartTfMinutes, double futureOffsetBars, int miniSlotIndex, int objectIndex, double sharedLabelPrice = 0, int miniBarCount = 0, double slotWidthBars = 0)
         {
+            if (!IsChartArtifactTimeFrameVisible(timeFrame))
+                return objectIndex;
             var sourceBars = GetBarsForCurrentMasterTimer(timeFrame, Chart.SymbolName);
             var chartBars = GetCurrentChartVisualBars();
             var chartSymbol = ResolveLoadedSymbol(Chart != null ? Chart.SymbolName : "") ?? Symbol;
@@ -19145,14 +19217,16 @@ namespace cAlgo.Robots
 
         private int DrawScoredPriceZones(int objectIndex)
         {
-            if (Bars == null || Bars.Count < 20 || Symbol == null)
+            var chartBars = GetCurrentChartVisualBars();
+            var chartSymbol = Chart != null ? ResolveLoadedSymbol(Chart.SymbolName) : null;
+            if (chartBars == null || chartBars.Count < 20 || chartSymbol == null)
                 return objectIndex;
 
-            var zones = DetectScoredPriceZones(Bars, Symbol, ResolveWorkingLookbackBars(Bars, Chart != null ? Chart.TimeFrame : TimeFrame.Minute), Chart != null ? Chart.TimeFrame : TimeFrame.Minute);
+            var zones = DetectScoredPriceZones(chartBars, chartSymbol, ResolveWorkingLookbackBars(chartBars, Chart.TimeFrame), Chart.TimeFrame);
             if (zones.Count == 0)
                 return objectIndex;
 
-            var currentPrice = Symbol.Bid > 0 ? Symbol.Bid : (Symbol.Ask > 0 ? Symbol.Ask : 0);
+            var currentPrice = chartSymbol.Bid > 0 ? chartSymbol.Bid : (chartSymbol.Ask > 0 ? chartSymbol.Ask : 0);
             if (currentPrice <= 0)
                 return objectIndex;
 
@@ -19169,7 +19243,7 @@ namespace cAlgo.Robots
 
             // Collapse overlapping scored bands before selecting the two nearest zones per
             // side. Score is the quality key; the newest origin wins equal-score ties.
-            var uniqueResolved = CollapseOverlappingScoredPriceZones(resolved, Symbol.PipSize * 2.0);
+            var uniqueResolved = CollapseOverlappingScoredPriceZones(resolved, chartSymbol.PipSize * 2.0);
             var shown = uniqueResolved
                 .Where(zone => zone.High < currentPrice)
                 .OrderByDescending(zone => zone.High)
@@ -19263,6 +19337,7 @@ namespace cAlgo.Robots
 
         private int DrawSessionHighLow(int objectIndex, string label, DateTime date, Color color)
         {
+            var chartBars = GetCurrentChartVisualBars();
             DateTime startUtc;
             DateTime endUtc;
             if (!TryGetSessionUtcRange(label, date, out startUtc, out endUtc))
@@ -19272,7 +19347,7 @@ namespace cAlgo.Robots
             double low;
             DateTime highTime;
             DateTime lowTime;
-            if (!TryGetRangeHighLow(Bars, startUtc, endUtc, out high, out low, out highTime, out lowTime))
+            if (!TryGetRangeHighLow(chartBars, startUtc, endUtc, out high, out low, out highTime, out lowTime))
                 return objectIndex;
 
             objectIndex = DrawHorizontalGuide(objectIndex, label, highTime, high, color, true);
@@ -19342,6 +19417,9 @@ namespace cAlgo.Robots
 
         private int DrawSwingAndSrLevels(int objectIndex)
         {
+            var chartBars = GetCurrentChartVisualBars();
+            if (chartBars == null || chartBars.Count < 5)
+                return objectIndex;
             var resistance = double.MinValue;
             var support = double.MaxValue;
             var recentHigh = double.MinValue;
@@ -19351,33 +19429,33 @@ namespace cAlgo.Robots
             var recentHighTime = DateTime.MinValue;
             var recentLowTime = DateTime.MinValue;
 
-            var start = ResolveWorkingStartIndex(Bars, 2, 2, Chart != null ? Chart.TimeFrame : TimeFrame.Minute);
-            for (var i = start; i < Bars.Count - 2; i++)
+            var start = ResolveWorkingStartIndex(chartBars, 2, 2, Chart != null ? Chart.TimeFrame : TimeFrame.Minute);
+            for (var i = start; i < chartBars.Count - 2; i++)
             {
-                var high = Bars.HighPrices[i];
-                var low = Bars.LowPrices[i];
+                var high = chartBars.HighPrices[i];
+                var low = chartBars.LowPrices[i];
                 if (high > resistance)
                 {
                     resistance = high;
-                    resistanceTime = Bars.OpenTimes[i];
+                    resistanceTime = chartBars.OpenTimes[i];
                 }
                 if (low < support)
                 {
                     support = low;
-                    supportTime = Bars.OpenTimes[i];
+                    supportTime = chartBars.OpenTimes[i];
                 }
 
-                if (Bars.HighPrices[i] > Bars.HighPrices[i - 1] && Bars.HighPrices[i] > Bars.HighPrices[i - 2] &&
-                    Bars.HighPrices[i] > Bars.HighPrices[i + 1] && Bars.HighPrices[i] > Bars.HighPrices[i + 2])
+                if (chartBars.HighPrices[i] > chartBars.HighPrices[i - 1] && chartBars.HighPrices[i] > chartBars.HighPrices[i - 2] &&
+                    chartBars.HighPrices[i] > chartBars.HighPrices[i + 1] && chartBars.HighPrices[i] > chartBars.HighPrices[i + 2])
                 {
                     recentHigh = high;
-                    recentHighTime = Bars.OpenTimes[i];
+                    recentHighTime = chartBars.OpenTimes[i];
                 }
-                if (Bars.LowPrices[i] < Bars.LowPrices[i - 1] && Bars.LowPrices[i] < Bars.LowPrices[i - 2] &&
-                    Bars.LowPrices[i] < Bars.LowPrices[i + 1] && Bars.LowPrices[i] < Bars.LowPrices[i + 2])
+                if (chartBars.LowPrices[i] < chartBars.LowPrices[i - 1] && chartBars.LowPrices[i] < chartBars.LowPrices[i - 2] &&
+                    chartBars.LowPrices[i] < chartBars.LowPrices[i + 1] && chartBars.LowPrices[i] < chartBars.LowPrices[i + 2])
                 {
                     recentLow = low;
-                    recentLowTime = Bars.OpenTimes[i];
+                    recentLowTime = chartBars.OpenTimes[i];
                 }
             }
 
@@ -20538,12 +20616,13 @@ namespace cAlgo.Robots
 
         private int FindBarIndexForMarkerTime(DateTime time)
         {
-            if (Bars == null || Bars.Count == 0 || time == DateTime.MinValue)
+            var chartBars = GetCurrentChartVisualBars();
+            if (chartBars == null || chartBars.Count == 0 || time == DateTime.MinValue)
                 return -1;
 
-            for (var i = Bars.Count - 1; i >= 0; i--)
+            for (var i = chartBars.Count - 1; i >= 0; i--)
             {
-                if (Bars.OpenTimes[i] <= time)
+                if (chartBars.OpenTimes[i] <= time)
                     return i;
             }
 
@@ -20552,13 +20631,14 @@ namespace cAlgo.Robots
 
         private double ResolveStrategyMarkerAnchorPrice(StrategyChartMarker marker)
         {
+            var chartBars = GetCurrentChartVisualBars();
             var pad = Math.Max(Symbol.PipSize * 2.0, 0.0000001);
             var barIndex = FindBarIndexForMarkerTime(marker.Time);
-            if (Bars != null && barIndex >= 0 && barIndex < Bars.Count)
+            if (chartBars != null && barIndex >= 0 && barIndex < chartBars.Count)
             {
                 return marker.TradeType == TradeType.Buy
-                    ? Bars.LowPrices[barIndex] - pad
-                    : Bars.HighPrices[barIndex] + pad;
+                    ? chartBars.LowPrices[barIndex] - pad
+                    : chartBars.HighPrices[barIndex] + pad;
             }
 
             return marker.TradeType == TradeType.Buy
@@ -20703,7 +20783,8 @@ namespace cAlgo.Robots
 
         private int DrawLiquidityLevelsOnChart(int objectIndex)
         {
-            if (Bars == null || Bars.Count < 12)
+            var chartBars = GetCurrentChartVisualBars();
+            if (chartBars == null || chartBars.Count < 12)
                 return objectIndex;
 
             try
@@ -20715,6 +20796,7 @@ namespace cAlgo.Robots
                 var maxLevels = Math.Min(10, levels.Count);
                 var labeled = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var level in levels
+                    .Where(level => IsChartArtifactTimeFrameVisible(level.SourceTimeFrame))
                     .OrderByDescending(x => x.Time)
                     .Take(maxLevels))
                 {
@@ -20807,7 +20889,8 @@ namespace cAlgo.Robots
         private int DrawStrategyMarkersOnChart(int objectIndex)
         {
             objectIndex = DrawIchimokuStrategyDebugOnChart(objectIndex);
-            if (!ShouldDrawChartMarkers() || Chart == null || Bars == null)
+            var chartBars = GetCurrentChartVisualBars();
+            if (!ShouldDrawChartMarkers() || Chart == null || chartBars == null || chartBars.Count == 0)
                 return objectIndex;
 
             EnsureHistoricalWickFlipMarkers();
@@ -20815,12 +20898,13 @@ namespace cAlgo.Robots
                 return objectIndex;
 
             var chartSymbolName = Chart.SymbolName ?? "";
-            var chartStartTime = Bars.OpenTimes[0];
+            var chartStartTime = chartBars.OpenTimes[0];
             var chartEndTime = GetCurrentChartEndTime();
             var visibleMarkers = _strategyChartMarkers
                 .Where(marker => marker.Kind == StrategyMarkerKind.Trigger ? marker.IsAnalytical : _toggleStrategyMarkers)
                 .Where(marker => string.Equals(marker.SymbolName, chartSymbolName, StringComparison.OrdinalIgnoreCase))
                 .Where(IsSelectedStrategyChartMarker)
+                .Where(IsStrategyChartMarkerTimeFrameVisible)
                 .Where(marker => marker.Time >= chartStartTime.AddDays(-2) && marker.Time <= chartEndTime.AddMinutes(5))
                 .Where(IsStrategyChartMarkerInsideCurrentTradingTime)
                 .OrderBy(marker => marker.Time)
@@ -20941,7 +21025,8 @@ namespace cAlgo.Robots
 
         private int DrawIchimokuStrategyDebugOnChart(int objectIndex)
         {
-            if (EnableStrategyDebug != YesNoMode.Yes || Chart == null || Bars == null || Symbol == null || Bars.Count < 3)
+            var chartBars = GetCurrentChartVisualBars();
+            if (EnableStrategyDebug != YesNoMode.Yes || Chart == null || chartBars == null || Symbol == null || chartBars.Count < 3)
                 return objectIndex;
 
             var modes = GetConfiguredStrategyModes()
@@ -20952,7 +21037,7 @@ namespace cAlgo.Robots
             if (modes.Count == 0)
                 return objectIndex;
 
-            var lastCompletedIndex = Bars.Count - 2;
+            var lastCompletedIndex = chartBars.Count - 2;
             var firstIndex = Math.Max(0, lastCompletedIndex - 59);
             var fontSize = Math.Max(8, GetNormalChartLabelFontSize());
             var yellow = Color.Yellow;
@@ -20965,12 +21050,12 @@ namespace cAlgo.Robots
                 for (var barIndex = firstIndex; barIndex <= lastCompletedIndex; barIndex++)
                 {
                     IchimokuStrategyState state;
-                    if (!TryBuildIchimokuStrategyState(Bars, barIndex, strict, out state))
+                    if (!TryBuildIchimokuStrategyState(chartBars, barIndex, strict, out state))
                         continue;
 
                     IchimokuStrategyState previousState = default(IchimokuStrategyState);
                     var previousReady = barIndex > 0 &&
-                        TryBuildIchimokuStrategyState(Bars, barIndex - 1, strict, out previousState);
+                        TryBuildIchimokuStrategyState(chartBars, barIndex - 1, strict, out previousState);
                     var previousSameDirection = previousReady &&
                         ((state.Bullish && previousState.Bullish) || (state.Bearish && previousState.Bearish));
                     var newSignal = (state.Bullish || state.Bearish) && !previousSameDirection;
@@ -20994,11 +21079,11 @@ namespace cAlgo.Robots
                 foreach (var barIndex in importantBarIndexes)
                 {
                     IchimokuStrategyState state;
-                    if (!TryBuildIchimokuStrategyState(Bars, barIndex, strict, out state))
+                    if (!TryBuildIchimokuStrategyState(chartBars, barIndex, strict, out state))
                         continue;
 
                     var isSignal = barIndex == previousSignalIndex || barIndex == latestSignalIndex;
-                    var barRange = Math.Max(Bars.HighPrices[barIndex] - Bars.LowPrices[barIndex], Symbol.PipSize * 8.0);
+                    var barRange = Math.Max(chartBars.HighPrices[barIndex] - chartBars.LowPrices[barIndex], Symbol.PipSize * 8.0);
                     var modeLabel = mode == BacktestStrategyMode.ichimoku
                         ? "ICHI"
                         : mode == BacktestStrategyMode.ichimoku_strict ? "ICHI.S" : "ICHI.FC";
@@ -21008,12 +21093,12 @@ namespace cAlgo.Robots
                         modeLabel,
                         FormatIchimokuDebugFlags(state),
                         isSignal ? " SIGNAL" : "");
-                    var y = Bars.HighPrices[barIndex] +
+                    var y = chartBars.HighPrices[barIndex] +
                         (barRange * (0.18 + (modeIndex * 0.14)));
                     var text = Chart.DrawText(
-                        "DBG_ICHI_" + modeIndex.ToString(CultureInfo.InvariantCulture) + "_" + Bars.OpenTimes[barIndex].Ticks.ToString(CultureInfo.InvariantCulture),
+                        "DBG_ICHI_" + modeIndex.ToString(CultureInfo.InvariantCulture) + "_" + chartBars.OpenTimes[barIndex].Ticks.ToString(CultureInfo.InvariantCulture),
                         label,
-                        Bars.OpenTimes[barIndex],
+                        chartBars.OpenTimes[barIndex],
                         y,
                         yellow);
                     TryStyleChartText(text, fontSize, "Courier New", isSignal);
@@ -21204,16 +21289,22 @@ namespace cAlgo.Robots
 
             var label = Convert.ToString(deal.Label, CultureInfo.InvariantCulture) ?? "";
             var comment = Convert.ToString(deal.Comment, CultureInfo.InvariantCulture) ?? "";
-            var haystack = (label + "|" + comment).ToLowerInvariant();
-            if (string.IsNullOrWhiteSpace(haystack))
-                return false;
+            TimeFrame sourceTimeFrame;
+            return TryResolveTradeAuditTimeFrame(label, comment, out sourceTimeFrame) &&
+                IsChartArtifactTimeFrameVisible(sourceTimeFrame, chartTimeFrame);
+        }
 
-            foreach (var token in GetChartTimeFrameTokens(chartTimeFrame))
-            {
-                if (!string.IsNullOrWhiteSpace(token) && haystack.Contains(token))
+        private bool TryResolveTradeAuditTimeFrame(string label, string comment, out TimeFrame sourceTimeFrame)
+        {
+            // The primary event owns the trade. A later "h1" SL/TP/confluence reference
+            // cannot make an M5 trade eligible for an H1 chart (nor can m1 match m15).
+            var eventLabel = (comment ?? "").Split('|')[0].Trim();
+            if (TryResolveStrategyTriggerTimeFrame(eventLabel, out sourceTimeFrame))
+                return true;
+            foreach (var token in (label ?? "").Split(new[] { '.', '|', ':', ' ', '_', '-' }, StringSplitOptions.RemoveEmptyEntries))
+                if (TryParseTimeFrameToken(token, out sourceTimeFrame))
                     return true;
-            }
-
+            sourceTimeFrame = null;
             return false;
         }
 
@@ -21247,7 +21338,8 @@ namespace cAlgo.Robots
 
         private int DrawClosedTradesOnChart(int objectIndex)
         {
-            if (!ShouldDrawChartMarkers() || ClosedTradesVisuals == ClosedTradeVisualMode.No || Chart == null || Bars == null || History == null)
+            var chartBars = GetCurrentChartVisualBars();
+            if (!ShouldDrawChartMarkers() || ClosedTradesVisuals == ClosedTradeVisualMode.No || Chart == null || chartBars == null || chartBars.Count == 0 || History == null)
                 return objectIndex;
 
             var chartSymbolName = Chart.SymbolName ?? "";
@@ -21255,7 +21347,7 @@ namespace cAlgo.Robots
                 return objectIndex;
             var chartSymbol = ResolveLoadedSymbol(chartSymbolName) ?? Symbol;
 
-            var chartStartTime = Bars.OpenTimes[0];
+            var chartStartTime = chartBars.OpenTimes[0];
             var chartEndTime = GetCurrentChartEndTime();
             var chartTfMinutes = Math.Max(1, TimeFrameToMinutes(Chart.TimeFrame));
             var visibleClosedTrades = History
@@ -21476,7 +21568,7 @@ namespace cAlgo.Robots
             double low;
             DateTime highTime;
             DateTime lowTime;
-            if (!TryGetRangeHighLow(Bars, startUtc, endUtc, out high, out low, out highTime, out lowTime))
+            if (!TryGetRangeHighLow(GetCurrentChartVisualBars(), startUtc, endUtc, out high, out low, out highTime, out lowTime))
                 return;
 
             AddLiquidityLevel(levels, label, high, true, highTime, color, Chart != null ? Chart.TimeFrame : TimeFrame.Minute);
@@ -21551,7 +21643,10 @@ namespace cAlgo.Robots
 
         private void AddRecentSwingLiquidityLevels(List<LiquidityLevel> levels)
         {
-            foreach (var swing in CollectConfirmedSwings(ResolveWorkingSwingLookbackBars(Bars, Chart != null ? Chart.TimeFrame : TimeFrame.Minute)).TakeLast(8))
+            var chartBars = GetCurrentChartVisualBars();
+            if (chartBars == null || Chart == null)
+                return;
+            foreach (var swing in CollectConfirmedSwings(chartBars, ResolveWorkingSwingLookbackBars(chartBars, Chart.TimeFrame)).TakeLast(8))
             {
                 AddLiquidityLevel(levels, swing.IsHigh ? "BSL" : "SSL", swing.Price, swing.IsHigh, swing.Time, GetTimeFrameStructureColor(Chart != null ? Chart.TimeFrame : TimeFrame.Minute), Chart != null ? Chart.TimeFrame : TimeFrame.Minute);
             }
@@ -23660,10 +23755,11 @@ namespace cAlgo.Robots
 
         private int DrawIndicatorOverlaysOnChart(int objectIndex)
         {
+            var chartBars = GetCurrentChartVisualBars();
             if (DisableTechnicalVisualRenderingForIsolation)
                 return objectIndex;
 
-            if (Chart == null || Bars == null || Bars.Count < 24)
+            if (Chart == null || chartBars == null || chartBars.Count < 24)
                 return objectIndex;
 
             try
@@ -23672,30 +23768,30 @@ namespace cAlgo.Robots
                 {
                     var emaFastColor = GetTechnicalBullishColor(120);
                     var emaSlowColor = GetTechnicalBearishColor(120);
-                    var emaFastValues = BuildExponentialMovingAverageSeries(Bars, _resolvedEmaOverlayConfig.FastPeriod);
-                    var emaMidValues = BuildExponentialMovingAverageSeries(Bars, _resolvedEmaOverlayConfig.MidPeriod);
+                    var emaFastValues = BuildExponentialMovingAverageSeries(chartBars, _resolvedEmaOverlayConfig.FastPeriod);
+                    var emaMidValues = BuildExponentialMovingAverageSeries(chartBars, _resolvedEmaOverlayConfig.MidPeriod);
                     objectIndex = DrawIndicatorSeriesLine(objectIndex, "EMA20_", index => emaFastValues[index], emaFastColor, 1, "Dots", 180);
                     objectIndex = DrawIndicatorSeriesLine(objectIndex, "EMA50_", index => emaMidValues[index], emaSlowColor, 1, "Dots", 180);
                     if (_resolvedEmaOverlayConfig.SlowPeriod > 0 && _resolvedEmaOverlayConfig.SlowPeriod != _resolvedEmaOverlayConfig.MidPeriod)
                     {
-                        var emaSlowValues = BuildExponentialMovingAverageSeries(Bars, _resolvedEmaOverlayConfig.SlowPeriod);
+                        var emaSlowValues = BuildExponentialMovingAverageSeries(chartBars, _resolvedEmaOverlayConfig.SlowPeriod);
                         objectIndex = DrawIndicatorSeriesLine(objectIndex, "EMA200_", index => emaSlowValues[index], emaSlowColor, 2, "Solid", 220, GetEmaOverlayPairLabel(), 9, 1);
                     }
                     else
-                        DrawRightEdgeIndicatorLabel("EMA200_", objectIndex, emaMidValues[Bars.Count - 1], emaSlowColor, GetEmaOverlayPairLabel(), 9, 1);
+                        DrawRightEdgeIndicatorLabel("EMA200_", objectIndex, emaMidValues[chartBars.Count - 1], emaSlowColor, GetEmaOverlayPairLabel(), 9, 1);
                 }
 
                 if (_toggleVwapOverlay && !NativeVwapOverlayActive())
                 {
                     var vwapColor = Color.FromArgb(255, 250, 204, 21);
-                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "VWAP20_", index => ComputeRollingVwapAtIndex(Bars, _resolvedVwapOverlayConfig.Length, index), vwapColor, 1, "Dots", 180, GetVwapOverlayPairLabel(), 9, 0);
+                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "VWAP20_", index => ComputeRollingVwapAtIndex(chartBars, _resolvedVwapOverlayConfig.Length, index), vwapColor, 1, "Dots", 180, GetVwapOverlayPairLabel(), 9, 0);
                 }
 
                 if (_toggleBollingerOverlay && !NativeBollingerOverlayActive())
                 {
                     var bollingerColor = Color.FromArgb(120, 168, 85, 247);
-                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "BBUP_", index => ComputeBollingerUpper(Bars, index, _resolvedBollingerOverlayConfig.Period, _resolvedBollingerOverlayConfig.StdDevMultiplier), bollingerColor, 1, "Dots", 180);
-                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "BBDN_", index => ComputeBollingerLower(Bars, index, _resolvedBollingerOverlayConfig.Period, _resolvedBollingerOverlayConfig.StdDevMultiplier), bollingerColor, 1, "Dots", 180);
+                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "BBUP_", index => ComputeBollingerUpper(chartBars, index, _resolvedBollingerOverlayConfig.Period, _resolvedBollingerOverlayConfig.StdDevMultiplier), bollingerColor, 1, "Dots", 180);
+                    objectIndex = DrawIndicatorSeriesLine(objectIndex, "BBDN_", index => ComputeBollingerLower(chartBars, index, _resolvedBollingerOverlayConfig.Period, _resolvedBollingerOverlayConfig.StdDevMultiplier), bollingerColor, 1, "Dots", 180);
                 }
 
                 if (_toggleIchimokuOverlay && !NativeIchimokuOverlayActive())
@@ -23713,13 +23809,14 @@ namespace cAlgo.Robots
 
         private int DrawIndicatorSeriesLine(int objectIndex, string prefix, Func<int, double> valueSelector, Color color, int thickness, string lineStyle, int lookbackBars, string labelText = null, int labelFontSize = 9, int labelSlot = 0)
         {
-            if (Chart == null || Bars == null || valueSelector == null || Bars.Count < 2)
+            var chartBars = GetCurrentChartVisualBars();
+            if (Chart == null || chartBars == null || valueSelector == null || chartBars.Count < 2)
                 return objectIndex;
 
-            var start = Math.Max(1, Bars.Count - Math.Max(lookbackBars, 10));
+            var start = Math.Max(1, chartBars.Count - Math.Max(lookbackBars, 10));
             var lastValidIndex = -1;
             var lastValidValue = double.NaN;
-            var lastIndex = Bars.Count - 1;
+            var lastIndex = chartBars.Count - 1;
             var indexSpan = Math.Max(1, lastIndex - start);
             var sampleStep = Math.Max(1, (int)Math.Ceiling(indexSpan / (double)MaxIndicatorSegmentsPerSeries));
             var previousIndex = start;
@@ -23741,9 +23838,9 @@ namespace cAlgo.Robots
 
                 var line = Chart.DrawTrendLine(
                     prefix + objectIndex.ToString(CultureInfo.InvariantCulture),
-                    Bars.OpenTimes[previousIndex],
+                    chartBars.OpenTimes[previousIndex],
                     previousValue,
-                    Bars.OpenTimes[i],
+                    chartBars.OpenTimes[i],
                     currentValue,
                     GetChartLineColor(color));
                 TrySetPropertyValue(line, "Thickness", 1);
@@ -23761,8 +23858,8 @@ namespace cAlgo.Robots
             if (!string.IsNullOrWhiteSpace(labelText) && lastValidIndex >= start && IsFiniteNumber(lastValidValue))
             {
                 var labelTime = GetRightEdgeLabelColumnTime(null);
-                var recentHigh = Bars.HighPrices.Skip(start).Take(Bars.Count - start).DefaultIfEmpty(lastValidValue).Max();
-                var recentLow = Bars.LowPrices.Skip(start).Take(Bars.Count - start).DefaultIfEmpty(lastValidValue).Min();
+                var recentHigh = chartBars.HighPrices.Skip(start).Take(chartBars.Count - start).DefaultIfEmpty(lastValidValue).Max();
+                var recentLow = chartBars.LowPrices.Skip(start).Take(chartBars.Count - start).DefaultIfEmpty(lastValidValue).Min();
                 var recentRange = Math.Max(0.0, recentHigh - recentLow);
                 var verticalStep = Math.Max(Symbol != null ? Symbol.PipSize * 30.0 : 0.0, recentRange * 0.035);
                 var familyOffset = verticalStep * labelSlot;
@@ -23783,11 +23880,12 @@ namespace cAlgo.Robots
 
         private int RenderIchimokuOverlay(int objectIndex, int lookbackBars)
         {
-            if (Chart == null || Bars == null || Bars.Count < Math.Max(lookbackBars / 2, _resolvedIchimokuOverlayConfig.SpanBPeriod + 2))
+            var chartBars = GetCurrentChartVisualBars();
+            if (Chart == null || chartBars == null || chartBars.Count < Math.Max(lookbackBars / 2, _resolvedIchimokuOverlayConfig.SpanBPeriod + 2))
                 return objectIndex;
 
-            var requestedStart = Math.Max(1, Bars.Count - Math.Max(lookbackBars, _resolvedIchimokuOverlayConfig.SpanBPeriod + 20));
-            var start = Math.Max(requestedStart, Bars.Count - MaxIndicatorSegmentsPerSeries - 1);
+            var requestedStart = Math.Max(1, chartBars.Count - Math.Max(lookbackBars, _resolvedIchimokuOverlayConfig.SpanBPeriod + 20));
+            var start = Math.Max(requestedStart, chartBars.Count - MaxIndicatorSegmentsPerSeries - 1);
             // Match the configured native view: Conversion + Base + Lagging + cloud fill.
             // The two Senkou boundary lines stay hidden.
             var bullishCloudColor = SurroundingBoxBullishColor;
@@ -23796,22 +23894,22 @@ namespace cAlgo.Robots
             var kijunColor = ResolveIchimokuLineColor("Kijun Sen");
             var chikouColor = ResolveIchimokuLineColor("Chikou Span");
 
-            for (var i = start; i < Bars.Count; i++)
+            for (var i = start; i < chartBars.Count; i++)
             {
                 if (ChartObjectsOverBudget())
                     break;
 
-                var conversion = ComputeIchimokuConversionLine(Bars, i, _resolvedIchimokuOverlayConfig);
-                var baseLine = ComputeIchimokuBaseLine(Bars, i, _resolvedIchimokuOverlayConfig);
-                var spanA = ComputeIchimokuSpanA(Bars, i, _resolvedIchimokuOverlayConfig);
-                var spanB = ComputeIchimokuSpanB(Bars, i, _resolvedIchimokuOverlayConfig);
+                var conversion = ComputeIchimokuConversionLine(chartBars, i, _resolvedIchimokuOverlayConfig);
+                var baseLine = ComputeIchimokuBaseLine(chartBars, i, _resolvedIchimokuOverlayConfig);
+                var spanA = ComputeIchimokuSpanA(chartBars, i, _resolvedIchimokuOverlayConfig);
+                var spanB = ComputeIchimokuSpanB(chartBars, i, _resolvedIchimokuOverlayConfig);
 
                 if (i > start)
                 {
-                    var prevConversion = ComputeIchimokuConversionLine(Bars, i - 1, _resolvedIchimokuOverlayConfig);
-                    var prevBaseLine = ComputeIchimokuBaseLine(Bars, i - 1, _resolvedIchimokuOverlayConfig);
-                    var prevSpanA = ComputeIchimokuSpanA(Bars, i - 1, _resolvedIchimokuOverlayConfig);
-                    var prevSpanB = ComputeIchimokuSpanB(Bars, i - 1, _resolvedIchimokuOverlayConfig);
+                    var prevConversion = ComputeIchimokuConversionLine(chartBars, i - 1, _resolvedIchimokuOverlayConfig);
+                    var prevBaseLine = ComputeIchimokuBaseLine(chartBars, i - 1, _resolvedIchimokuOverlayConfig);
+                    var prevSpanA = ComputeIchimokuSpanA(chartBars, i - 1, _resolvedIchimokuOverlayConfig);
+                    var prevSpanB = ComputeIchimokuSpanB(chartBars, i - 1, _resolvedIchimokuOverlayConfig);
 
                     if (IsFiniteNumber(prevConversion) && IsFiniteNumber(conversion))
                         objectIndex = DrawIndicatorSegment(objectIndex, "ICHI_TENKAN_", i, prevConversion, conversion, tenkanColor, 1, "Solid");
@@ -23820,14 +23918,14 @@ namespace cAlgo.Robots
 
                     var shiftedIndex = i - Math.Max(1, _resolvedIchimokuOverlayConfig.BasePeriod);
                     if (shiftedIndex >= 1 &&
-                        IsFiniteNumber(Bars.ClosePrices[i - 1]) && IsFiniteNumber(Bars.ClosePrices[i]))
+                        IsFiniteNumber(chartBars.ClosePrices[i - 1]) && IsFiniteNumber(chartBars.ClosePrices[i]))
                     {
                         objectIndex = DrawIndicatorSegment(
                             objectIndex,
                             "ICHI_CHIKOU_",
                             shiftedIndex,
-                            Bars.ClosePrices[i - 1],
-                            Bars.ClosePrices[i],
+                            chartBars.ClosePrices[i - 1],
+                            chartBars.ClosePrices[i],
                             chikouColor,
                             1,
                             "Solid");
@@ -23861,20 +23959,22 @@ namespace cAlgo.Robots
 
         private int DrawIndicatorSegment(int objectIndex, string prefix, int index, double previousValue, double currentValue, Color color, int thickness, string lineStyle)
         {
+            var chartBars = GetCurrentChartVisualBars();
             return CTraderChartEngine.DrawIndicatorSegment(
-                Chart, Bars, objectIndex, prefix, index, previousValue, currentValue,
+                Chart, chartBars, objectIndex, prefix, index, previousValue, currentValue,
                 color, thickness, lineStyle);
         }
 
         private void DrawRightEdgeIndicatorLabel(string prefix, int objectIndex, double value, Color color, string labelText, int labelFontSize = 9, int labelSlot = 0)
         {
-            if (Chart == null || Bars == null || Bars.Count < 2 || string.IsNullOrWhiteSpace(labelText) || !IsFiniteNumber(value))
+            var chartBars = GetCurrentChartVisualBars();
+            if (Chart == null || chartBars == null || chartBars.Count < 2 || string.IsNullOrWhiteSpace(labelText) || !IsFiniteNumber(value))
                 return;
 
             var labelTime = GetRightEdgeLabelColumnTime(null);
-            var start = Math.Max(1, Bars.Count - 180);
-            var recentHigh = Bars.HighPrices.Skip(start).Take(Bars.Count - start).DefaultIfEmpty(value).Max();
-            var recentLow = Bars.LowPrices.Skip(start).Take(Bars.Count - start).DefaultIfEmpty(value).Min();
+            var start = Math.Max(1, chartBars.Count - 180);
+            var recentHigh = chartBars.HighPrices.Skip(start).Take(chartBars.Count - start).DefaultIfEmpty(value).Max();
+            var recentLow = chartBars.LowPrices.Skip(start).Take(chartBars.Count - start).DefaultIfEmpty(value).Min();
             var recentRange = Math.Max(0.0, recentHigh - recentLow);
             var verticalStep = Math.Max(Symbol != null ? Symbol.PipSize * 30.0 : 0.0, recentRange * 0.035);
             var familyOffset = verticalStep * labelSlot;
@@ -23919,6 +24019,8 @@ namespace cAlgo.Robots
 
         private void DrawRightEdgeZoneLabel(string prefix, int objectIndex, double value, Color color, string labelText, int labelFontSize = 9, TimeFrame sourceTimeFrame = null)
         {
+            if (!IsChartArtifactTimeFrameVisible(sourceTimeFrame ?? (Chart != null ? Chart.TimeFrame : null)))
+                return;
             labelText = NormalizeArtifactDisplayLabel(labelText, sourceTimeFrame);
             if (Chart == null || Bars == null || Bars.Count < 2 || string.IsNullOrWhiteSpace(labelText) || !IsFiniteNumber(value))
                 return;
@@ -23941,6 +24043,8 @@ namespace cAlgo.Robots
 
         private void DrawArtifactZoneLabel(string prefix, int objectIndex, double value, Color color, string labelText, DateTime artifactEndTime, DateTime chartEndTime, int labelFontSize = 9, TimeFrame sourceTimeFrame = null)
         {
+            if (!IsChartArtifactTimeFrameVisible(sourceTimeFrame ?? (Chart != null ? Chart.TimeFrame : null)))
+                return;
             if (artifactEndTime >= chartEndTime)
             {
                 DrawRightEdgeZoneLabel(prefix, objectIndex, value, color, labelText, labelFontSize, sourceTimeFrame);
@@ -24860,6 +24964,7 @@ namespace cAlgo.Robots
             // supplied by the chart, HTF visuals and Trade Config as separate instances.
             foreach (var sourceTimeFrame in frames
                 .Where(frame => frame != null)
+                .Where(IsChartArtifactTimeFrameVisible)
                 .GroupBy(frame => TimeFrameToMinutes(frame))
                 .Select(group => group.First())
                 .OrderByDescending(TimeFrameToMinutes))
@@ -25499,7 +25604,8 @@ namespace cAlgo.Robots
             var tolerance = Math.Max(Symbol != null ? Symbol.PipSize * 0.5 : 0.0, 0.0000001);
             foreach (var match in matches.Take(Math.Max(1, ResolveZoneMaxCount(ZoneMaxCount))))
             {
-                if (match == null || match.OriginTime == DateTime.MinValue || match.OriginTime > reactionTime)
+                if (match == null || !IsChartArtifactTimeFrameVisible(match.SourceTimeFrame ?? trigger.SourceTimeFrame) ||
+                    match.OriginTime == DateTime.MinValue || match.OriginTime > reactionTime)
                     continue;
                 var isTrendline = string.Equals(match.Kind, "TL", StringComparison.OrdinalIgnoreCase);
                 // A sloped trendline is not a horizontal price band and must not disappear
@@ -26637,7 +26743,7 @@ namespace cAlgo.Robots
 
         private bool ShouldDrawStructureVisualFrame(TimeFrame sourceTimeFrame)
         {
-            if (SwingVisuals == SwingVisualMode.No || Chart == null || sourceTimeFrame == null)
+            if (SwingVisuals == SwingVisualMode.No || !IsChartArtifactTimeFrameVisible(sourceTimeFrame))
                 return false;
             var isLtf = TimeFrameToMinutes(sourceTimeFrame) == TimeFrameToMinutes(Chart.TimeFrame);
             return isLtf ? IsLtfSwingVisualEnabled() : IsHtfSwingVisualEnabled();
@@ -26722,9 +26828,7 @@ namespace cAlgo.Robots
                 Bars sourceBars;
                 try
                 {
-                    sourceBars = TimeFrameToMinutes(sourceTimeFrame) == chartMinutes
-                        ? Bars
-                        : GetBarsForCurrentMasterTimer(sourceTimeFrame, Chart.SymbolName);
+                    sourceBars = GetBarsForCurrentMasterTimer(sourceTimeFrame, Chart.SymbolName);
                 }
                 catch
                 {
@@ -26867,6 +26971,8 @@ namespace cAlgo.Robots
 
         private int DrawHorizontalGuide(int objectIndex, string label, DateTime startTime, double price, Color color, bool drawLabel = true, TimeFrame sourceTimeFrame = null, string lineStyle = "Solid")
         {
+            if (!IsChartArtifactTimeFrameVisible(sourceTimeFrame ?? (Chart != null ? Chart.TimeFrame : null)))
+                return objectIndex;
             if (startTime == DateTime.MinValue)
                 startTime = GetCurrentChartEndTime();
             var endTime = ResolveLiveArtifactEndTime(sourceTimeFrame);
@@ -26933,6 +27039,7 @@ namespace cAlgo.Robots
 
         private int DrawSessionContextBox(int objectIndex, string sessionName, DateTime date, bool useFullSession, string displayLabel)
         {
+            var chartBars = GetCurrentChartVisualBars();
             DateTime startUtc;
             DateTime endUtc;
             if (!TryGetContextUtcRange(sessionName, date, useFullSession, out startUtc, out endUtc))
@@ -26942,14 +27049,14 @@ namespace cAlgo.Robots
             double low;
             DateTime highTime;
             DateTime lowTime;
-            if (!TryGetRangeHighLow(Bars, startUtc, endUtc, out high, out low, out highTime, out lowTime))
+            if (!TryGetRangeHighLow(chartBars, startUtc, endUtc, out high, out low, out highTime, out lowTime))
             {
                 // Session window has no bars yet (future session today): still draw the box so
                 // the whole day's sessions are visible ahead of time. Anchor it to the last price.
-                if (Bars == null || Bars.Count == 0)
+                if (chartBars == null || chartBars.Count == 0)
                     return objectIndex;
-                var lastIndex = Bars.Count - 1;
-                var anchor = Bars.ClosePrices[lastIndex];
+                var lastIndex = chartBars.Count - 1;
+                var anchor = chartBars.ClosePrices[lastIndex];
                 var buffer = Math.Max(Symbol.PipSize * 20.0, Math.Abs(anchor) * 0.0005);
                 high = anchor + buffer;
                 low = anchor - buffer;
@@ -26979,7 +27086,7 @@ namespace cAlgo.Robots
                     double killerZoneLow;
                     DateTime killerZoneHighTime;
                     DateTime killerZoneLowTime;
-                    if (TryGetRangeHighLow(Bars, killerZoneStartUtc, killerZoneEndUtc, out killerZoneHigh, out killerZoneLow, out killerZoneHighTime, out killerZoneLowTime))
+                    if (TryGetRangeHighLow(chartBars, killerZoneStartUtc, killerZoneEndUtc, out killerZoneHigh, out killerZoneLow, out killerZoneHighTime, out killerZoneLowTime))
                     {
                         topStartUtc = killerZoneStartUtc;
                         topEndUtc = killerZoneEndUtc;
@@ -27083,7 +27190,7 @@ namespace cAlgo.Robots
                     frames.AddRange(GetAutoHigherTimeframes(Chart.TimeFrame).Take(2));
                 foreach (var timeFrame in frames.Where(frame => frame != null).Distinct())
                 {
-                    var sourceBars = timeFrame == Chart.TimeFrame ? Bars : GetBarsForCurrentMasterTimer(timeFrame, Chart.SymbolName);
+                    var sourceBars = GetBarsForCurrentMasterTimer(timeFrame, Chart.SymbolName);
                     objectIndex = DrawTrendlineSet(objectIndex, sourceBars, timeFrame);
                 }
             }
@@ -27097,7 +27204,7 @@ namespace cAlgo.Robots
 
         private int DrawTrendlineSet(int objectIndex, Bars sourceBars, TimeFrame sourceTimeFrame)
         {
-            if (sourceBars == null || sourceBars.Count < 20)
+            if (!IsChartArtifactTimeFrameVisible(sourceTimeFrame) || sourceBars == null || sourceBars.Count < 20)
                 return objectIndex;
             var swings = CollectConfirmedSwings(sourceBars, ResolveWorkingSwingLookbackBars(sourceBars, sourceTimeFrame));
             var highs = swings.Where(swing => swing.IsHigh).TakeLast(8).ToList();
@@ -27321,7 +27428,7 @@ namespace cAlgo.Robots
                     frames.AddRange(GetAutoHigherTimeframes(Chart.TimeFrame).Take(2));
                 foreach (var timeFrame in frames.Where(frame => frame != null).Distinct())
                 {
-                    var sourceBars = timeFrame == Chart.TimeFrame ? Bars : GetBarsForCurrentMasterTimer(timeFrame, Chart.SymbolName);
+                    var sourceBars = GetBarsForCurrentMasterTimer(timeFrame, Chart.SymbolName);
                     objectIndex = DrawDivergenceForBars(objectIndex, sourceBars, timeFrame);
                 }
             }
@@ -27335,7 +27442,7 @@ namespace cAlgo.Robots
 
         private int DrawDivergenceForBars(int objectIndex, Bars sourceBars, TimeFrame sourceTimeFrame)
         {
-            if (sourceBars == null || sourceBars.Count < 40)
+            if (!IsChartArtifactTimeFrameVisible(sourceTimeFrame) || sourceBars == null || sourceBars.Count < 40)
                 return objectIndex;
             try
             {
@@ -27462,6 +27569,7 @@ namespace cAlgo.Robots
 
         private int DrawRecentFvgZones(Bars sourceBars, TimeFrame sourceTimeFrame, string objectPrefix, int objectIndex, DateTime endTime)
         {
+            if (!IsChartArtifactTimeFrameVisible(sourceTimeFrame)) return objectIndex;
             var maxZones = Math.Max(1, ResolveZoneMaxCount(ZoneMaxCount));
             if (sourceBars == null || sourceBars.Count < 3) return objectIndex;
             var lookbackBars = ResolveZoneLookbackBars(ZoneLookback);
@@ -27494,6 +27602,7 @@ namespace cAlgo.Robots
 
         private int DrawRecentOrderBlocks(Bars sourceBars, TimeFrame sourceTimeFrame, string objectPrefix, int objectIndex, DateTime endTime)
         {
+            if (!IsChartArtifactTimeFrameVisible(sourceTimeFrame)) return objectIndex;
             var maxBlocks = Math.Max(1, ResolveZoneMaxCount(ZoneMaxCount));
             if (sourceBars == null || sourceBars.Count < 4) return objectIndex;
             var lookbackBars = ResolveZoneLookbackBars(ZoneLookback);
@@ -53373,18 +53482,19 @@ namespace cAlgo.Robots
         // order-submission, marker, or trade-history paths.
         private int DrawLatestTradePreviews(int objectIndex)
         {
-            if (Chart == null || Bars == null || Bars.Count < 3)
+            var chartBars = GetCurrentChartVisualBars();
+            if (Chart == null || chartBars == null || chartBars.Count < 3)
                 return objectIndex;
 
-            var latestClosedIndex = Bars.Count - 2;
-            var latestClosedTime = Bars.OpenTimes[latestClosedIndex];
+            var latestClosedIndex = chartBars.Count - 2;
+            var latestClosedTime = chartBars.OpenTimes[latestClosedIndex];
             var symbolName = Chart.SymbolName;
             if (string.IsNullOrWhiteSpace(symbolName))
                 return objectIndex;
 
             // Prefer the same directional trigger source used by execution. A bar without a
             // trigger still gets a hypothetical plan, using its closed-candle direction.
-            var tradeType = Bars.ClosePrices[latestClosedIndex] >= Bars.OpenPrices[latestClosedIndex]
+            var tradeType = chartBars.ClosePrices[latestClosedIndex] >= chartBars.OpenPrices[latestClosedIndex]
                 ? TradeType.Buy
                 : TradeType.Sell;
             try
