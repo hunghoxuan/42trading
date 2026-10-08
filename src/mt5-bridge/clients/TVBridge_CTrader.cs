@@ -22,7 +22,7 @@ namespace cAlgo.Robots
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class TVBridgeCBot : Robot
     {
-        private const string BuildVersion = "v2026.10.08 - causal-replay-v113";
+        private const string BuildVersion = "v2026.10.08 - explicit-decision-bar-v114";
         private const string BridgeSourceId = "Ctrader";
         private const string BridgeSourceType = "ctrader_bridge";
         private const int TransientErrorLogThresholdCount = 10;
@@ -99,6 +99,80 @@ namespace cAlgo.Robots
             public TimeFrame TimeFrame;
             public string AnalysisSettingsKey;
             public readonly Dictionary<Bars, Bars> Views = new Dictionary<Bars, Bars>();
+        }
+
+        // Mandatory input to market-data-based trade planning. Index belongs to SourceBars;
+        // other timeframes are mapped by CloseTimeUtc, never by the same integer index.
+        // Pure price arithmetic does not need this context because it reads no market data.
+        private sealed class DecisionBar
+        {
+            public Bars SourceBars { get; }
+            public int Index { get; }
+            public string SymbolName { get; }
+            public TimeFrame TimeFrame { get; }
+            public DateTime CloseTimeUtc { get; }
+            public DecisionBar(Bars bars, int index, string symbolName, TimeFrame frame, DateTime closeTimeUtc)
+            { SourceBars = bars; Index = index; SymbolName = symbolName; TimeFrame = frame; CloseTimeUtc = closeTimeUtc; }
+        }
+
+        private DecisionBar CreateDecisionBar(Bars bars, TimeFrame frame, int index, string symbolName)
+        {
+            if (bars == null || frame == null || bars.TimeFrame != frame ||
+                string.IsNullOrWhiteSpace(symbolName) ||
+                !string.Equals(bars.SymbolName, symbolName, StringComparison.OrdinalIgnoreCase) ||
+                index < 0 || index >= bars.Count - 1)
+                return null;
+            var close = ResolveSourceBarEndTime(bars, bars.OpenTimes[index], frame);
+            if (close == DateTime.MinValue || (_causalDecision != null && close > _causalDecision.Utc))
+                return null; // Do not substitute a latest bar or widen a caller's boundary.
+            using var causalScope = BeginCausalDecision(close, symbolName, frame);
+            return new DecisionBar(GetCausalBars(bars, frame), index, symbolName, frame, close);
+        }
+
+        private DecisionBar CreateSignalDecisionBar(string symbolName, BacktestStrategySignal signal)
+        {
+            if (signal.SourceTimeFrame == null || string.IsNullOrWhiteSpace(symbolName)) return null;
+            var time = signal.EntryConfirmationTime != DateTime.MinValue ? signal.EntryConfirmationTime : signal.SignalTime;
+            if (time == DateTime.MinValue) return null;
+            try
+            {
+                var bars = GetBarsForCurrentMasterTimer(signal.SourceTimeFrame, symbolName);
+                // Exact source candle required: a missing timestamp must not select another bar.
+                var index = bars != null ? bars.OpenTimes.GetIndexByExactTime(time) : -1;
+                return CreateDecisionBar(bars, signal.SourceTimeFrame, index, symbolName);
+            }
+            catch { return null; }
+        }
+
+        private IDisposable BeginDecisionBar(DecisionBar currentBar)
+        {
+            return BeginCausalDecision(currentBar != null ? currentBar.CloseTimeUtc : DateTime.MinValue,
+                currentBar != null ? currentBar.SymbolName : null, currentBar != null ? currentBar.TimeFrame : null);
+        }
+
+        private Bars GetDecisionBars(DecisionBar currentBar, TimeFrame frame)
+        {
+            if (currentBar == null || frame == null) return null;
+            using var causalScope = BeginDecisionBar(currentBar);
+            if (!IsDecisionBarUsable(currentBar)) return null;
+            try { return GetCausalBars(frame == currentBar.TimeFrame ? currentBar.SourceBars
+                : GetBarsForCurrentMasterTimer(frame, currentBar.SymbolName), frame); }
+            catch { return null; }
+        }
+
+        private bool IsDecisionBarUsable(DecisionBar currentBar)
+        {
+            return currentBar != null && currentBar.SourceBars != null && currentBar.TimeFrame != null &&
+                currentBar.Index >= 0 && currentBar.Index < currentBar.SourceBars.Count - 1 &&
+                currentBar.CloseTimeUtc != DateTime.MinValue &&
+                (_causalDecision == null || currentBar.CloseTimeUtc <= _causalDecision.Utc);
+        }
+
+        private int GetDecisionSourceIndex(DecisionBar currentBar, Bars bars, DateTime time)
+        {
+            if (currentBar == null || bars == null || time == DateTime.MinValue) return -1;
+            var index = bars.OpenTimes.GetIndexByExactTime(time);
+            return index >= 0 && index <= currentBar.Index && index < bars.Count - 1 ? index : -1;
         }
 
         private sealed class CausalDecisionScope : IDisposable
@@ -322,6 +396,19 @@ namespace cAlgo.Robots
             }
             if (GetCausalBars(feed) != feed)
                 throw new InvalidOperationException("Causal scope did not restore live context.");
+            var currentBar = CreateDecisionBar(feed, TimeFrame.Minute15, 9, "CAUSAL_CONTRACT");
+            if (currentBar == null || currentBar.Index != 9 || currentBar.CloseTimeUtc != cutoff ||
+                CreateDecisionBar(feed, TimeFrame.Minute5, 9, "CAUSAL_CONTRACT") != null ||
+                CreateDecisionBar(feed, TimeFrame.Minute15, -1, "CAUSAL_CONTRACT") != null ||
+                CreateDecisionBar(feed, TimeFrame.Minute15, count - 1, "CAUSAL_CONTRACT") != null ||
+                CreateDecisionBar(feed, TimeFrame.Minute15, 9, "OTHER_SYMBOL") != null ||
+                GetDecisionBars(null, TimeFrame.Minute15) != null)
+                throw new InvalidOperationException("Explicit decision-bar identity contract failed.");
+            if (GetDecisionBars(currentBar, TimeFrame.Minute15).Count != 11 || _causalDecision != null)
+                throw new InvalidOperationException("Explicit decision-bar lookup requires hidden outer state.");
+            using (BeginCausalDecision(cutoff.AddMinutes(-30)))
+                if (IsDecisionBarUsable(currentBar) || GetDecisionBars(currentBar, TimeFrame.Minute15) != null)
+                    throw new InvalidOperationException("A future DecisionBar escaped an earlier caller's cutoff.");
         }
         private bool _sharedCatalogLoaded;
         private int _backtestingRuntimeState = -1;
@@ -8833,7 +8920,9 @@ namespace cAlgo.Robots
             if (!IsValidBarIndex(sourceBars, barIndex) || barIndex >= sourceBars.Count - 1 ||
                 sourceTimeFrame == null)
                 return false;
-            using var causalScope = BeginCausalBarDecision(sourceBars, sourceTimeFrame, barIndex, symbolName);
+            var currentBar = CreateDecisionBar(sourceBars, sourceTimeFrame, barIndex, symbolName);
+            if (currentBar == null) return false;
+            using var causalScope = BeginDecisionBar(currentBar);
             sourceBars = GetCausalBars(sourceBars, sourceTimeFrame);
             var symbol = ResolveLoadedSymbol(symbolName);
             if (symbol == null)
@@ -8882,19 +8971,19 @@ namespace cAlgo.Robots
             stopLoss = signal.StopLoss;
             string slSource;
             string tpSource;
-            ApplyStrategyProtectionModes(symbol, symbolName, signal, entryPrice, profile,
+            ApplyStrategyProtectionAtBar(currentBar, symbol, symbolName, signal, entryPrice, profile,
                 preset.StopLossMode, preset.TakeProfitMode, ref stopLoss, ref takeProfit, out slSource, out tpSource);
             var useLimit = false;
             var useStop = false;
             double entryBuffer;
             string rejectReason;
-            if (!ApplySharedStrategyEntryType(symbol, symbolName, signal, preset.EntryMode,
+            if (!ApplySharedStrategyEntryAtBar(currentBar, symbol, symbolName, signal, preset.EntryMode,
                 signal.TradeType, referenceEntry, ref useLimit, ref useStop, ref entryPrice,
                 ref stopLoss, ref takeProfit, out entryBuffer, out rejectReason))
                 return false;
             // Resolve again from raw historical levels at the selected entry. The shared
             // resolver applies the selected SL Buffer once, before rebuilding RR targets.
-            ApplyStrategyProtectionModes(symbol, symbolName, signal, entryPrice, profile,
+            ApplyStrategyProtectionAtBar(currentBar, symbol, symbolName, signal, entryPrice, profile,
                 preset.StopLossMode, preset.TakeProfitMode, ref stopLoss, ref takeProfit, out slSource, out tpSource);
             ApplyStrategySignalRewardRisk(symbol, signal, entryPrice, stopLoss, preset.TakeProfitMode, ref takeProfit);
             if (!(stopLoss > 0) || (!(takeProfit > 0) &&
@@ -8903,7 +8992,7 @@ namespace cAlgo.Robots
             if (!TryValidateProtectionPrices(symbol, trigger.IsBullish ? "BUY" : "SELL",
                 entryPrice, stopLoss, takeProfit, out rejectReason))
                 return false;
-            var legs = BuildCausalStrategyEntryLegPlan(symbol, symbolName, signal,
+            var legs = BuildStrategyEntryLegPlanAtBar(currentBar, symbol, signal,
                 referenceEntry, entryPrice, stopLoss, useLimit, useStop, preset.NumberOfTrades);
             if (legs.Count == 0)
                 return false;
@@ -8917,10 +9006,20 @@ namespace cAlgo.Robots
             double executionPrice, double entryPrice, double stopLoss,
             bool useLimitOrder, bool useStopOrder, int numberOfTrades)
         {
-            using var causalScope = BeginCausalSignalDecision(symbolName, signal);
+            return BuildStrategyEntryLegPlanAtBar(CreateSignalDecisionBar(symbolName, signal), symbol, signal,
+                executionPrice, entryPrice, stopLoss, useLimitOrder, useStopOrder, numberOfTrades);
+        }
+
+        private List<CTraderStrategyEntryLeg> BuildStrategyEntryLegPlanAtBar(
+            DecisionBar currentBar, Symbol symbol, BacktestStrategySignal signal,
+            double executionPrice, double entryPrice, double stopLoss,
+            bool useLimitOrder, bool useStopOrder, int numberOfTrades)
+        {
+            if (!IsDecisionBarUsable(currentBar)) return new List<CTraderStrategyEntryLeg>();
+            using var causalScope = BeginDecisionBar(currentBar);
             return CTraderStrategyEngine.BuildEntryLegPlan(symbol, signal.TradeType,
                 executionPrice, entryPrice, stopLoss, useLimitOrder, useStopOrder,
-                numberOfTrades, ResolveMinStopPips(symbol));
+                numberOfTrades, ResolveMinStopPips(symbol, GetDecisionBars(currentBar, currentBar.TimeFrame)));
         }
 
         // The price chart may show its own timeframe plus enabled higher-timeframe context.
@@ -39260,8 +39359,23 @@ namespace cAlgo.Robots
 
         private bool ApplySharedStrategyEntryType(Symbol symbol, string symbolName, BacktestStrategySignal signal, StrategyEntryType entryMode, TradeType tradeType, double executionPrice, ref bool useLimitOrder, ref bool useStopOrder, ref double entryPrice, ref double stopLoss, ref double takeProfit, out double protectionBuffer, out string rejectReason)
         {
-            using var causalScope = BeginCausalSignalDecision(symbolName, signal);
+            return ApplySharedStrategyEntryAtBar(CreateSignalDecisionBar(symbolName, signal), symbol, symbolName,
+                signal, entryMode, tradeType, executionPrice, ref useLimitOrder, ref useStopOrder, ref entryPrice,
+                ref stopLoss, ref takeProfit, out protectionBuffer, out rejectReason);
+        }
+
+        private bool ApplySharedStrategyEntryAtBar(DecisionBar currentBar, Symbol symbol, string symbolName,
+            BacktestStrategySignal signal, StrategyEntryType entryMode, TradeType tradeType, double executionPrice,
+            ref bool useLimitOrder, ref bool useStopOrder, ref double entryPrice, ref double stopLoss,
+            ref double takeProfit, out double protectionBuffer, out string rejectReason)
+        {
+            using var causalScope = BeginDecisionBar(currentBar);
             protectionBuffer = 0;
+            if (!IsDecisionBarUsable(currentBar))
+            {
+                rejectReason = "invalid_decision_bar";
+                return false;
+            }
             var currentEntry = entryPrice;
             var currentStopLoss = stopLoss;
             var currentTakeProfit = takeProfit;
@@ -39278,7 +39392,7 @@ namespace cAlgo.Robots
                 () =>
                 {
                     double specialEntry;
-                    return TryResolveStrategySpecialEntryPrice(
+                    return TryResolveStrategySpecialEntryPrice(currentBar,
                         symbol, symbolName, signal, entryMode, tradeType, executionPrice,
                         currentEntry, currentStopLoss, currentTakeProfit, out specialEntry)
                         ? (double?)specialEntry
@@ -39300,6 +39414,7 @@ namespace cAlgo.Robots
         }
 
         private bool TryResolveStrategySpecialEntryPrice(
+            DecisionBar currentBar,
             Symbol symbol,
             string symbolName,
             BacktestStrategySignal signal,
@@ -39311,25 +39426,26 @@ namespace cAlgo.Robots
             double takeProfit,
             out double entryPrice)
         {
+            using var causalScope = BeginDecisionBar(currentBar);
             entryPrice = 0;
-            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || currentEntry <= 0 || stopLoss <= 0)
+            if (currentBar == null || symbol == null || string.IsNullOrWhiteSpace(symbolName) || currentEntry <= 0 || stopLoss <= 0)
                 return false;
 
             switch (entryMode)
             {
                 case StrategyEntryType.candle_mid:
-                    return TryResolveStrategyCandleEntryPrice(symbol, symbolName, signal, tradeType, executionPrice, true, out entryPrice);
+                    return TryResolveStrategyCandleEntryPrice(currentBar, symbol, symbolName, signal, tradeType, executionPrice, true, out entryPrice);
                 case StrategyEntryType.candle_retest:
-                    return TryResolveStrategyCandleEntryPrice(symbol, symbolName, signal, tradeType, executionPrice, false, out entryPrice);
+                    return TryResolveStrategyCandleEntryPrice(currentBar, symbol, symbolName, signal, tradeType, executionPrice, false, out entryPrice);
                 case StrategyEntryType.ltf_Key_levels:
                 case StrategyEntryType.reclaim_retest:
-                    return TryResolveStrategyEntryFromLevels(symbol, symbolName, tradeType, executionPrice, stopLoss, takeProfit, ResolveStrategyTargetRewardRisk(signal), GetStrategyLtfProtectionFrames(signal).Concat(GetStrategyHtfProtectionFrames(signal)), out entryPrice);
+                    return TryResolveStrategyEntryFromLevels(currentBar, symbol, symbolName, tradeType, executionPrice, stopLoss, takeProfit, ResolveStrategyTargetRewardRisk(signal), GetStrategyLtfProtectionFrames(signal).Concat(GetStrategyHtfProtectionFrames(signal)), out entryPrice);
                 case StrategyEntryType.HTF_Key_levels:
-                    return TryResolveStrategyEntryFromLevels(symbol, symbolName, tradeType, executionPrice, stopLoss, takeProfit, ResolveStrategyTargetRewardRisk(signal), GetStrategyHtfProtectionFrames(signal), out entryPrice);
+                    return TryResolveStrategyEntryFromLevels(currentBar, symbol, symbolName, tradeType, executionPrice, stopLoss, takeProfit, ResolveStrategyTargetRewardRisk(signal), GetStrategyHtfProtectionFrames(signal), out entryPrice);
                 case StrategyEntryType.fvg_mid:
-                    return TryResolveStrategyZoneMidEntry(symbol, symbolName, signal, tradeType, executionPrice, stopLoss, true, out entryPrice);
+                    return TryResolveStrategyZoneMidEntry(currentBar, symbol, symbolName, signal, tradeType, executionPrice, stopLoss, true, out entryPrice);
                 case StrategyEntryType.ob_mid:
-                    return TryResolveStrategyZoneMidEntry(symbol, symbolName, signal, tradeType, executionPrice, stopLoss, false, out entryPrice);
+                    return TryResolveStrategyZoneMidEntry(currentBar, symbol, symbolName, signal, tradeType, executionPrice, stopLoss, false, out entryPrice);
                 case StrategyEntryType.breakout_close:
                     return false;
                 default:
@@ -39337,16 +39453,17 @@ namespace cAlgo.Robots
             }
         }
 
-        private bool TryResolveStrategyCandleEntryPrice(Symbol symbol, string symbolName, BacktestStrategySignal signal, TradeType tradeType, double executionPrice, bool midpoint, out double entryPrice)
+        private bool TryResolveStrategyCandleEntryPrice(DecisionBar currentBar, Symbol symbol, string symbolName, BacktestStrategySignal signal, TradeType tradeType, double executionPrice, bool midpoint, out double entryPrice)
         {
+            using var causalScope = BeginDecisionBar(currentBar);
             entryPrice = 0;
-            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || executionPrice <= 0)
+            if (currentBar == null || symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || executionPrice <= 0)
                 return false;
 
             Bars sourceBars;
-            try { sourceBars = GetBarsForCurrentMasterTimer(signal.SourceTimeFrame, symbolName); }
+            try { sourceBars = GetDecisionBars(currentBar, signal.SourceTimeFrame); }
             catch { sourceBars = null; }
-            var sourceIndex = ResolveSourceBarIndex(sourceBars, signal.SignalTime);
+            var sourceIndex = GetDecisionSourceIndex(currentBar, sourceBars, signal.SignalTime);
             if (!IsValidBarIndex(sourceBars, sourceIndex))
                 return false;
 
@@ -39359,10 +39476,11 @@ namespace cAlgo.Robots
                 out entryPrice);
         }
 
-        private bool TryResolveStrategyEntryFromLevels(Symbol symbol, string symbolName, TradeType tradeType, double executionPrice, double stopLoss, double takeProfit, double minimumRewardRisk, IEnumerable<TimeFrame> sourceTimeFrames, out double entryPrice)
+        private bool TryResolveStrategyEntryFromLevels(DecisionBar currentBar, Symbol symbol, string symbolName, TradeType tradeType, double executionPrice, double stopLoss, double takeProfit, double minimumRewardRisk, IEnumerable<TimeFrame> sourceTimeFrames, out double entryPrice)
         {
+            using var causalScope = BeginDecisionBar(currentBar);
             entryPrice = 0;
-            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || executionPrice <= 0 || stopLoss <= 0 || sourceTimeFrames == null)
+            if (currentBar == null || symbol == null || string.IsNullOrWhiteSpace(symbolName) || executionPrice <= 0 || stopLoss <= 0 || sourceTimeFrames == null)
                 return false;
 
             var levels = new List<ChartLevelCandidate>();
@@ -39370,10 +39488,10 @@ namespace cAlgo.Robots
             {
                 try
                 {
-                    var sourceBars = GetBarsForCurrentMasterTimer(sourceTimeFrame, symbolName);
+                    var sourceBars = GetDecisionBars(currentBar, sourceTimeFrame);
                     if (sourceBars == null || sourceBars.Count < 5)
                         continue;
-                    levels.AddRange(CollectTimeFrameStructuralLevelCandidates(symbol, sourceBars, sourceTimeFrame));
+                    levels.AddRange(CollectTimeFrameStructuralLevelCandidates(symbol, sourceBars, sourceTimeFrame, sourceBars.Count - 2));
                 }
                 catch
                 {
@@ -39405,10 +39523,11 @@ namespace cAlgo.Robots
                 : 1.0;
         }
 
-        private bool TryResolveStrategyZoneMidEntry(Symbol symbol, string symbolName, BacktestStrategySignal signal, TradeType tradeType, double executionPrice, double stopLoss, bool useFvg, out double entryPrice)
+        private bool TryResolveStrategyZoneMidEntry(DecisionBar currentBar, Symbol symbol, string symbolName, BacktestStrategySignal signal, TradeType tradeType, double executionPrice, double stopLoss, bool useFvg, out double entryPrice)
         {
+            using var causalScope = BeginDecisionBar(currentBar);
             entryPrice = 0;
-            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || executionPrice <= 0 || stopLoss <= 0)
+            if (currentBar == null || symbol == null || string.IsNullOrWhiteSpace(symbolName) || executionPrice <= 0 || stopLoss <= 0)
                 return false;
 
             var frames = GetStrategyLtfProtectionFrames(signal)
@@ -39424,10 +39543,10 @@ namespace cAlgo.Robots
                         ? !_toggleFvgZones || !IsScopeEnabledForTimeFrame(DrawFvgZones, sourceTimeFrame)
                         : !_toggleOrderBlocks || !IsScopeEnabledForTimeFrame(DrawOrderBlocks, sourceTimeFrame))
                         continue;
-                    var sourceBars = GetBarsForCurrentMasterTimer(sourceTimeFrame, symbolName);
+                    var sourceBars = GetDecisionBars(currentBar, sourceTimeFrame);
                     if (sourceBars == null || sourceBars.Count < 5)
                         continue;
-                    foreach (var zone in BuildStructureSnapshotV2(sourceBars, ResolveWorkingLookbackBars(sourceBars, sourceTimeFrame)).Zones
+                    foreach (var zone in BuildStructureSnapshotV2(sourceBars, ResolveWorkingLookbackBars(sourceBars, sourceTimeFrame), sourceBars.Count - 2).Zones
                         .Where(zone => zone.State == StructureZoneStateV2.Active)
                         .Where(zone => useFvg
                             ? zone.Type == StructureZoneTypeV2.Fvg || zone.Type == StructureZoneTypeV2.InverseFvg
@@ -41863,6 +41982,14 @@ namespace cAlgo.Robots
                 return;
             }
 
+            var currentBar = CreateSignalDecisionBar(symbolName, signal);
+            if (currentBar == null)
+            {
+                LogStrategyReject(signal.StrategyId, symbolName, "invalid_decision_bar");
+                _backtestStrategyHandledEventKeys.Add(eventKey);
+                return;
+            }
+
             var action = signal.TradeType == TradeType.Buy ? "BUY" : "SELL";
             var executionPrice = signal.TradeType == TradeType.Buy ? symbol.Ask : symbol.Bid;
             if (!IsFiniteNumber(executionPrice) || executionPrice <= 0)
@@ -41890,10 +42017,13 @@ namespace cAlgo.Robots
             var tp = signal.TakeProfit;
             if (!(sl > 0) || !(tp > 0))
             {
+                using var seedDecisionScope = BeginDecisionBar(currentBar);
                 if (signal.EventSlDistance > 0)
                 {
                     // Default SL = height of the related event (candle / OB / FVG zone), floored at the min stop distance.
-                    var slDistance = Math.Max(signal.EventSlDistance, Math.Max(ResolveMinStopPips(symbol) * symbol.PipSize, symbol.PipSize * 2.0));
+                    var slDistance = Math.Max(signal.EventSlDistance,
+                        Math.Max(ResolveMinStopPips(symbol, GetDecisionBars(currentBar, currentBar.TimeFrame)) * symbol.PipSize,
+                            symbol.PipSize * 2.0));
                     sl = signal.TradeType == TradeType.Buy
                         ? NormalizePriceToSymbol(symbol, referencePrice - slDistance)
                         : NormalizePriceToSymbol(symbol, referencePrice + slDistance);
@@ -41904,7 +42034,6 @@ namespace cAlgo.Robots
                 }
                 else
                 {
-                    using var causalSeedScope = BeginCausalSignalDecision(symbolName, signal);
                     var fallbackProtection = BuildSharedChartProtectionPrices(symbol, symbolName, signal.TradeType, referencePrice, ResolveChartFallbackStopPips(symbol), profileRaw);
                     if (fallbackProtection == null)
                     {
@@ -41922,7 +42051,7 @@ namespace cAlgo.Robots
 
             string stopLossSourceCode;
             string takeProfitSourceCode;
-            ApplyStrategyProtectionModes(symbol, symbolName, signal, referencePrice, profileRaw, tradePreset.StopLossMode, tradePreset.TakeProfitMode, ref sl, ref tp, out stopLossSourceCode, out takeProfitSourceCode);
+            ApplyStrategyProtectionAtBar(currentBar, symbol, symbolName, signal, referencePrice, profileRaw, tradePreset.StopLossMode, tradePreset.TakeProfitMode, ref sl, ref tp, out stopLossSourceCode, out takeProfitSourceCode);
             signal.StopLossSourceCode = stopLossSourceCode;
             signal.TakeProfitSourceCode = takeProfitSourceCode;
             if (!(sl > 0))
@@ -41949,7 +42078,7 @@ namespace cAlgo.Robots
             var effectiveEntryPrice = referencePrice;
             double entryProtectionBuffer;
             string entryModeRejectReason;
-            if (!ApplySharedStrategyEntryType(symbol, symbolName, signal, tradePreset.EntryMode, signal.TradeType, executionPrice, ref effectiveUseLimitOrder, ref effectiveUseStopOrder, ref effectiveEntryPrice, ref sl, ref tp, out entryProtectionBuffer, out entryModeRejectReason))
+            if (!ApplySharedStrategyEntryAtBar(currentBar, symbol, symbolName, signal, tradePreset.EntryMode, signal.TradeType, executionPrice, ref effectiveUseLimitOrder, ref effectiveUseStopOrder, ref effectiveEntryPrice, ref sl, ref tp, out entryProtectionBuffer, out entryModeRejectReason))
             {
                 if (waitConfirmAddOnReleased)
                     LogWaitConfirmAddOnStage(signal, symbolName, "BLOCKED", "reason=" + entryModeRejectReason);
@@ -41961,7 +42090,7 @@ namespace cAlgo.Robots
                 signal.EntryConfirmationTime != DateTime.MinValue &&
                 signal.EntryConfirmationTime != signal.SignalTime)
                 RebuildConfirmedEntryProtection(symbol, symbolName, signal, effectiveEntryPrice, ref sl, ref tp);
-            ApplyStrategyProtectionModes(symbol, symbolName, signal, effectiveEntryPrice, profileRaw, tradePreset.StopLossMode, tradePreset.TakeProfitMode, ref sl, ref tp, out stopLossSourceCode, out takeProfitSourceCode);
+            ApplyStrategyProtectionAtBar(currentBar, symbol, symbolName, signal, effectiveEntryPrice, profileRaw, tradePreset.StopLossMode, tradePreset.TakeProfitMode, ref sl, ref tp, out stopLossSourceCode, out takeProfitSourceCode);
             signal.StopLossSourceCode = stopLossSourceCode;
             signal.TakeProfitSourceCode = takeProfitSourceCode;
             ApplyStrategySignalRewardRisk(symbol, signal, effectiveEntryPrice, sl, tradePreset.TakeProfitMode, ref tp);
@@ -42052,7 +42181,7 @@ namespace cAlgo.Robots
             var orderCountOverride = tradePreset.NumberOfTrades;
             // The deterministic price/order-type ladder is also used by chart replay.
             // Live account affordability, caps and broker approval remain below.
-            var entryLegPlan = BuildCausalStrategyEntryLegPlan(symbol, symbolName, signal,
+            var entryLegPlan = BuildStrategyEntryLegPlanAtBar(currentBar, symbol, signal,
                 executionPrice, effectiveEntryPrice, sl, effectiveUseLimitOrder, effectiveUseStopOrder,
                 orderCountOverride);
             var splitEntries = (effectiveUseLimitOrder || effectiveUseStopOrder
@@ -48203,6 +48332,19 @@ namespace cAlgo.Robots
         }
 
         private void ApplyStrategyProtectionModes(
+            Symbol symbol, string symbolName, BacktestStrategySignal signal, double entryPrice,
+            string profileRaw, StrategyStopLossMode stopLossMode, StrategyTakeProfitMode takeProfitMode,
+            ref double stopLoss, ref double takeProfit, out string stopLossSourceCode, out string takeProfitSourceCode)
+        {
+            // Signal adapter for execution/diagnostic callers. This maps an exact timestamp;
+            // it is not permission to select the latest candle when that timestamp is missing.
+            ApplyStrategyProtectionAtBar(CreateSignalDecisionBar(symbolName, signal), symbol, symbolName,
+                signal, entryPrice, profileRaw, stopLossMode, takeProfitMode, ref stopLoss, ref takeProfit,
+                out stopLossSourceCode, out takeProfitSourceCode);
+        }
+
+        private void ApplyStrategyProtectionAtBar(
+            DecisionBar currentBar,
             Symbol symbol,
             string symbolName,
             BacktestStrategySignal signal,
@@ -48215,15 +48357,19 @@ namespace cAlgo.Robots
             out string stopLossSourceCode,
             out string takeProfitSourceCode)
         {
-            using var causalScope = BeginCausalSignalDecision(symbolName, signal);
+            using var causalScope = BeginDecisionBar(currentBar);
             stopLossSourceCode = NormalizeStrategyProtectionSourceCode(signal.StopLossSourceCode);
             takeProfitSourceCode = NormalizeStrategyProtectionSourceCode(signal.TakeProfitSourceCode);
-            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || entryPrice <= 0)
+            if (!IsDecisionBarUsable(currentBar) || symbol == null || string.IsNullOrWhiteSpace(symbolName) || entryPrice <= 0)
+            {
+                stopLoss = takeProfit = 0;
+                stopLossSourceCode = takeProfitSourceCode = "";
                 return;
+            }
 
             var action = signal.TradeType == TradeType.Buy ? "BUY" : "SELL";
             Bars protectionBars;
-            try { protectionBars = signal.SourceTimeFrame != null ? GetBarsForCurrentMasterTimer(signal.SourceTimeFrame, symbolName) : null; }
+            try { protectionBars = signal.SourceTimeFrame != null ? GetDecisionBars(currentBar, signal.SourceTimeFrame) : null; }
             catch { protectionBars = null; }
             // Strategy definitions may own SL only. Entry, TP and n.Trades remain controlled
             // by the cTrader Trade Config. Preserve a valid strategy-computed invalidation,
@@ -48277,7 +48423,7 @@ namespace cAlgo.Robots
                     {
                         double resolved;
                         string sourceCode;
-                        if (TryResolveStrategyAutoStopLoss(symbol, symbolName, signal, entryPrice, shortBuffer, structuralBuffer, out resolved, out sourceCode))
+                        if (TryResolveStrategyAutoStopLoss(currentBar, symbol, symbolName, signal, entryPrice, shortBuffer, structuralBuffer, out resolved, out sourceCode))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = sourceCode;
@@ -48295,7 +48441,7 @@ namespace cAlgo.Robots
                         double reactedTarget;
                         string reactedStopKind;
                         string reactedTargetKind;
-                        if (TryResolveNearestEventProtectionLevels(
+                        if (TryResolveNearestEventProtectionAtBar(currentBar,
                                 symbol,
                                 symbolName,
                                 signal,
@@ -48328,7 +48474,7 @@ namespace cAlgo.Robots
                         double resolved;
                         // Event uses the reacted box-zone edge. Line reactions deliberately
                         // delegate to Wick because a line has no zone width or far edge.
-                        if (TryResolveStrategyLtfEventStopLoss(symbol, symbolName, signal, entryPrice, shortBuffer, out resolved))
+                        if (TryResolveStrategyLtfEventStopLoss(currentBar, symbol, symbolName, signal, entryPrice, shortBuffer, out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = "EV";
@@ -48349,7 +48495,7 @@ namespace cAlgo.Robots
                 case StrategyStopLossMode.ichi_tenkan:
                 case StrategyStopLossMode.donchian_edge:
                 case StrategyStopLossMode.donchian_mid:
-                    TryResolveStrategyIndicatorProtection(
+                    TryResolveStrategyIndicatorProtection(currentBar,
                         symbol, symbolName, signal, entryPrice, true, stopLossMode.ToString(),
                         0, out stopLoss, out stopLossSourceCode);
                     break;
@@ -48373,7 +48519,7 @@ namespace cAlgo.Robots
                 case StrategyStopLossMode.structure:
                     {
                         double resolved;
-                        if (TryResolveStrategySwingStopLoss(symbol, symbolName, signal, entryPrice, GetStrategyLtfProtectionFrames(signal), out resolved))
+                        if (TryResolveStrategySwingStopLoss(currentBar, symbol, symbolName, signal, entryPrice, GetStrategyLtfProtectionFrames(signal), out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = "ST";
@@ -48388,7 +48534,7 @@ namespace cAlgo.Robots
                 case StrategyStopLossMode.candle_wick:
                     {
                         double resolved;
-                        if (TryResolveStrategyCandleWickStopLoss(symbol, symbolName, signal, entryPrice, 1.0, 0, out resolved))
+                        if (TryResolveStrategyCandleWickStopLoss(currentBar, symbol, symbolName, signal, entryPrice, 1.0, 0, out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = "CW";
@@ -48403,7 +48549,7 @@ namespace cAlgo.Robots
                 case StrategyStopLossMode.candle_extreme_5:
                     {
                         double resolved;
-                        if (TryResolveStrategyCandleExtremeStopLoss(symbol, symbolName, signal, entryPrice, 5, shortBuffer, out resolved))
+                        if (TryResolveStrategyCandleExtremeStopLoss(currentBar, symbol, symbolName, signal, entryPrice, 5, shortBuffer, out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = "CE5";
@@ -48418,7 +48564,7 @@ namespace cAlgo.Robots
                 case StrategyStopLossMode.candle_extreme_10:
                     {
                         double resolved;
-                        if (TryResolveStrategyCandleExtremeStopLoss(symbol, symbolName, signal, entryPrice, 10, shortBuffer, out resolved))
+                        if (TryResolveStrategyCandleExtremeStopLoss(currentBar, symbol, symbolName, signal, entryPrice, 10, shortBuffer, out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = "CE10";
@@ -48433,7 +48579,7 @@ namespace cAlgo.Robots
                 case StrategyStopLossMode.candle_range:
                     {
                         double resolved;
-                        if (TryResolveStrategyCandleRangeStopLoss(symbol, symbolName, signal, entryPrice, out resolved))
+                        if (TryResolveStrategyCandleRangeStopLoss(currentBar, symbol, symbolName, signal, entryPrice, out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = "CR";
@@ -48448,7 +48594,7 @@ namespace cAlgo.Robots
                 case StrategyStopLossMode.candle_wick_1_5:
                     {
                         double resolved;
-                        if (TryResolveStrategyCandleWickStopLoss(symbol, symbolName, signal, entryPrice, 1.5, 0, out resolved))
+                        if (TryResolveStrategyCandleWickStopLoss(currentBar, symbol, symbolName, signal, entryPrice, 1.5, 0, out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = "CW15";
@@ -48463,7 +48609,7 @@ namespace cAlgo.Robots
                 case StrategyStopLossMode.candle_wick_2:
                     {
                         double resolved;
-                        if (TryResolveStrategyCandleWickStopLoss(symbol, symbolName, signal, entryPrice, 2.0, 0, out resolved))
+                        if (TryResolveStrategyCandleWickStopLoss(currentBar, symbol, symbolName, signal, entryPrice, 2.0, 0, out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = "CW2";
@@ -48493,7 +48639,7 @@ namespace cAlgo.Robots
                 case StrategyStopLossMode.protective_swing:
                     {
                         double resolved;
-                        if (TryResolveStrategyProtectiveSwingStopLoss(symbol, symbolName, signal, entryPrice, structuralBuffer, out resolved))
+                        if (TryResolveStrategyProtectiveSwingStopLoss(currentBar, symbol, symbolName, signal, entryPrice, structuralBuffer, out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = "SW";
@@ -48524,7 +48670,7 @@ namespace cAlgo.Robots
                 case StrategyStopLossMode.SwingLTF:
                     {
                         double resolved;
-                        if (TryResolveStrategySwingStopLoss(symbol, symbolName, signal, entryPrice, GetStrategyLtfProtectionFrames(signal), out resolved))
+                        if (TryResolveStrategySwingStopLoss(currentBar, symbol, symbolName, signal, entryPrice, GetStrategyLtfProtectionFrames(signal), out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = "SLTF";
@@ -48547,7 +48693,7 @@ namespace cAlgo.Robots
                     {
                         double resolved;
                         var wickMultiplier = ResolveStrategyWickMultiplier(stopLossMode);
-                        if (TryResolveStrategyCandleWickStopLoss(symbol, symbolName, signal, entryPrice, wickMultiplier, 0, out resolved))
+                        if (TryResolveStrategyCandleWickStopLoss(currentBar, symbol, symbolName, signal, entryPrice, wickMultiplier, 0, out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = ResolveStrategyWickSourceCode(stopLossMode);
@@ -48564,7 +48710,7 @@ namespace cAlgo.Robots
                     {
                         double resolved;
                         bool usedWickFallback;
-                        if (TryResolveStrategyCandleBodyStopLoss(symbol, symbolName, signal, entryPrice, out resolved, out usedWickFallback))
+                        if (TryResolveStrategyCandleBodyStopLoss(currentBar, symbol, symbolName, signal, entryPrice, out resolved, out usedWickFallback))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = usedWickFallback ? "CW" : "BDY";
@@ -48583,7 +48729,7 @@ namespace cAlgo.Robots
                     {
                         double resolved;
                         var atrPeriod = ResolveStrategyAtrPeriod(stopLossMode);
-                        if (TryResolveStrategyAtrStopLoss(symbol, symbolName, signal, entryPrice, atrPeriod, out resolved))
+                        if (TryResolveStrategyAtrStopLoss(currentBar, symbol, symbolName, signal, entryPrice, atrPeriod, out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = "AT" + atrPeriod.ToString(CultureInfo.InvariantCulture);
@@ -48598,7 +48744,7 @@ namespace cAlgo.Robots
                 case StrategyStopLossMode.Range24:
                     {
                         double resolved;
-                        if (TryResolveStrategyCandleExtremeStopLoss(
+                        if (TryResolveStrategyCandleExtremeStopLoss(currentBar,
                                 symbol,
                                 symbolName,
                                 signal,
@@ -48624,7 +48770,7 @@ namespace cAlgo.Robots
                     {
                         double resolved;
                         var swingFrames = ResolveStrategySwingFrames(stopLossMode, signal);
-                        if (TryResolveStrategySwingStopLoss(symbol, symbolName, signal, entryPrice, swingFrames, out resolved))
+                        if (TryResolveStrategySwingStopLoss(currentBar, symbol, symbolName, signal, entryPrice, swingFrames, out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = ResolveStrategySwingSourceCode(stopLossMode);
@@ -48639,7 +48785,7 @@ namespace cAlgo.Robots
                 case StrategyStopLossMode.ltf_Key_levels:
                     {
                         double resolved;
-                        if (TryResolveStrategyKeyLevelProtection(symbol, symbolName, signal.TradeType, entryPrice, true, GetStrategyLtfProtectionFrames(signal), out resolved))
+                        if (TryResolveStrategyKeyLevelProtection(currentBar, symbol, symbolName, signal.TradeType, entryPrice, true, GetStrategyLtfProtectionFrames(signal), out resolved))
                         {
                             stopLoss = AddStrategyProtectionBuffer(symbol, signal.TradeType, resolved, true, shortBuffer);
                             stopLossSourceCode = "LK";
@@ -48654,7 +48800,7 @@ namespace cAlgo.Robots
                 case StrategyStopLossMode.HTF_Key_levels:
                     {
                         double resolved;
-                        if (TryResolveStrategyKeyLevelProtection(symbol, symbolName, signal.TradeType, entryPrice, true, GetStrategyHtfProtectionFrames(signal), out resolved))
+                        if (TryResolveStrategyKeyLevelProtection(currentBar, symbol, symbolName, signal.TradeType, entryPrice, true, GetStrategyHtfProtectionFrames(signal), out resolved))
                         {
                             stopLoss = AddStrategyProtectionBuffer(symbol, signal.TradeType, resolved, true, shortBuffer);
                             stopLossSourceCode = "HK";
@@ -48684,7 +48830,7 @@ namespace cAlgo.Robots
                 case StrategyStopLossMode.ob_edge:
                     {
                         double resolved;
-                        if (TryResolveStrategyZoneEdgeProtection(symbol, symbolName, signal, entryPrice, true, false, out resolved))
+                        if (TryResolveStrategyZoneEdgeProtection(currentBar, symbol, symbolName, signal, entryPrice, true, false, out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = "OB";
@@ -48699,7 +48845,7 @@ namespace cAlgo.Robots
                 case StrategyStopLossMode.fvg_edge:
                     {
                         double resolved;
-                        if (TryResolveStrategyZoneEdgeProtection(symbol, symbolName, signal, entryPrice, true, true, out resolved))
+                        if (TryResolveStrategyZoneEdgeProtection(currentBar, symbol, symbolName, signal, entryPrice, true, true, out resolved))
                         {
                             stopLoss = resolved;
                             stopLossSourceCode = "FG";
@@ -48714,7 +48860,7 @@ namespace cAlgo.Robots
                     case StrategyStopLossMode.session_high_low:
                         {
                             double resolved;
-                            if (TryResolveStrategySessionProtection(symbol, signal.TradeType, entryPrice, true, out resolved))
+                            if (TryResolveStrategySessionProtection(currentBar, symbol, signal.TradeType, entryPrice, true, out resolved))
                             {
                                 stopLoss = resolved;
                                 stopLossSourceCode = "SH";
@@ -48738,7 +48884,7 @@ namespace cAlgo.Robots
                 IsStrategyAutoStopLossTradeChainMode(signal.TradeChainSlot > 0
                     ? ResolveStrategyTradeChainMode(signal.TradeChainSlot) : StrategyTradeChainMode.Now))
             {
-                if (TryResolveStrategyAutoStopLoss(symbol, symbolName, signal, entryPrice, 0, 0,
+                if (TryResolveStrategyAutoStopLoss(currentBar, symbol, symbolName, signal, entryPrice, 0, 0,
                         out stopLoss, out stopLossSourceCode))
                     stopLossMode = StrategyStopLossMode.Auto; // Keep fallback provenance in the source label.
             }
@@ -48764,7 +48910,7 @@ namespace cAlgo.Robots
                     {
                         double resolved;
                         string sourceCode;
-                        if (TryResolveStrategyAutoTakeProfit(symbol, symbolName, signal, entryPrice, stopLoss, profileRaw, buffer, out resolved, out sourceCode))
+                        if (TryResolveStrategyAutoTakeProfit(currentBar, symbol, symbolName, signal, entryPrice, stopLoss, profileRaw, buffer, out resolved, out sourceCode))
                         {
                             takeProfit = resolved;
                             takeProfitSourceCode = sourceCode;
@@ -48783,7 +48929,7 @@ namespace cAlgo.Robots
                         double reactedRewardRisk;
                         string reactedStopKind;
                         string reactedTargetKind;
-                        if (TryResolveNearestEventProtectionLevels(
+                        if (TryResolveNearestEventProtectionAtBar(currentBar,
                                 symbol,
                                 symbolName,
                                 signal,
@@ -48836,7 +48982,7 @@ namespace cAlgo.Robots
                         double resolved;
                         double eventStopBoundary;
                         double eventTargetBoundary;
-                        TryResolveComparableEventProtection(
+                        TryResolveComparableEventProtection(currentBar,
                             symbol,
                             symbolName,
                             signal,
@@ -48844,7 +48990,7 @@ namespace cAlgo.Robots
                             buffer,
                             out eventStopBoundary,
                             out eventTargetBoundary);
-                        if (TryResolveStrategyNearestHtfSwingProtection(symbol, symbolName, signal, entryPrice, false, buffer, eventTargetBoundary, out resolved))
+                        if (TryResolveStrategyNearestHtfSwingProtection(currentBar, symbol, symbolName, signal, entryPrice, false, buffer, eventTargetBoundary, out resolved))
                         {
                             takeProfit = resolved;
                             takeProfitSourceCode = "ST";
@@ -48859,7 +49005,7 @@ namespace cAlgo.Robots
                 case StrategyTakeProfitMode.candle:
                     {
                         double resolved;
-                        if (TryResolveStrategyCandleTakeProfit(symbol, symbolName, signal, entryPrice, 1, buffer, out resolved))
+                        if (TryResolveStrategyCandleTakeProfit(currentBar, symbol, symbolName, signal, entryPrice, 1, buffer, out resolved))
                         {
                             takeProfit = resolved;
                             takeProfitSourceCode = "CD";
@@ -48874,7 +49020,7 @@ namespace cAlgo.Robots
                 case StrategyTakeProfitMode.ltf_Key_levels:
                     {
                         double resolved;
-                        if (TryResolveStrategyKeyLevelProtection(symbol, symbolName, signal.TradeType, entryPrice, false, GetStrategyLtfProtectionFrames(signal), out resolved))
+                        if (TryResolveStrategyKeyLevelProtection(currentBar, symbol, symbolName, signal.TradeType, entryPrice, false, GetStrategyLtfProtectionFrames(signal), out resolved))
                         {
                             takeProfit = AddStrategyProtectionBuffer(symbol, signal.TradeType, resolved, false, buffer);
                             takeProfitSourceCode = "LK";
@@ -48889,7 +49035,7 @@ namespace cAlgo.Robots
                 case StrategyTakeProfitMode.HTF_Key_levels:
                     {
                         double resolved;
-                        if (TryResolveStrategyKeyLevelProtection(symbol, symbolName, signal.TradeType, entryPrice, false, GetStrategyHtfProtectionFrames(signal), out resolved))
+                        if (TryResolveStrategyKeyLevelProtection(currentBar, symbol, symbolName, signal.TradeType, entryPrice, false, GetStrategyHtfProtectionFrames(signal), out resolved))
                         {
                             takeProfit = AddStrategyProtectionBuffer(symbol, signal.TradeType, resolved, false, buffer);
                             takeProfitSourceCode = "HK";
@@ -48904,7 +49050,7 @@ namespace cAlgo.Robots
                 case StrategyTakeProfitMode.next_liquidity:
                     {
                         double resolved;
-                        if (TryResolveStrategyLiquidityTakeProfit(symbol, symbolName, signal.TradeType, entryPrice, profileRaw, out resolved))
+                        if (TryResolveStrategyLiquidityTakeProfit(currentBar, symbol, symbolName, signal.TradeType, entryPrice, profileRaw, out resolved))
                         {
                             takeProfit = AddStrategyProtectionBuffer(symbol, signal.TradeType, resolved, false, buffer);
                             takeProfitSourceCode = "LQ";
@@ -48919,7 +49065,7 @@ namespace cAlgo.Robots
                 case StrategyTakeProfitMode.session_high_low:
                     {
                         double resolved;
-                        if (TryResolveStrategySessionProtection(symbol, signal.TradeType, entryPrice, false, out resolved))
+                        if (TryResolveStrategySessionProtection(currentBar, symbol, signal.TradeType, entryPrice, false, out resolved))
                         {
                             takeProfit = AddStrategyProtectionBuffer(symbol, signal.TradeType, resolved, false, buffer);
                             takeProfitSourceCode = "SH";
@@ -48934,7 +49080,7 @@ namespace cAlgo.Robots
                 case StrategyTakeProfitMode.ob_edge:
                     {
                         double resolved;
-                        if (TryResolveStrategyZoneEdgeProtection(symbol, symbolName, signal, entryPrice, false, false, out resolved))
+                        if (TryResolveStrategyZoneEdgeProtection(currentBar, symbol, symbolName, signal, entryPrice, false, false, out resolved))
                         {
                             takeProfit = AddStrategyProtectionBuffer(symbol, signal.TradeType, resolved, false, buffer);
                             takeProfitSourceCode = "OB";
@@ -48949,7 +49095,7 @@ namespace cAlgo.Robots
                 case StrategyTakeProfitMode.fvg_edge:
                     {
                         double resolved;
-                        if (TryResolveStrategyZoneEdgeProtection(symbol, symbolName, signal, entryPrice, false, true, out resolved))
+                        if (TryResolveStrategyZoneEdgeProtection(currentBar, symbol, symbolName, signal, entryPrice, false, true, out resolved))
                         {
                             takeProfit = AddStrategyProtectionBuffer(symbol, signal.TradeType, resolved, false, buffer);
                             takeProfitSourceCode = "FG";
@@ -48964,7 +49110,7 @@ namespace cAlgo.Robots
                 case StrategyTakeProfitMode.vwap:
                     {
                         double resolved;
-                        if (TryResolveStrategyIndicatorTakeProfit(symbol, symbolName, signal, entryPrice, true, out resolved))
+                        if (TryResolveStrategyIndicatorTakeProfit(currentBar, symbol, symbolName, signal, entryPrice, true, out resolved))
                         {
                             takeProfit = resolved;
                             takeProfitSourceCode = "VWAP";
@@ -48985,20 +49131,20 @@ namespace cAlgo.Robots
                 case StrategyTakeProfitMode.ichi_tenkan:
                 case StrategyTakeProfitMode.donchian_edge:
                 case StrategyTakeProfitMode.donchian_mid:
-                    TryResolveStrategyIndicatorProtection(
+                    TryResolveStrategyIndicatorProtection(currentBar,
                         symbol, symbolName, signal, entryPrice, false, takeProfitMode.ToString(),
                         0, out takeProfit, out takeProfitSourceCode);
                     break;
                 case StrategyTakeProfitMode.atr_1:
-                    takeProfit = ResolveStrategyAtrProtection(symbol, signal.TradeType, entryPrice, false, 1.0);
+                    takeProfit = ResolveStrategyAtrProtection(currentBar, symbol, signal.TradeType, entryPrice, false, 1.0);
                     takeProfitSourceCode = "ATR1";
                     break;
                 case StrategyTakeProfitMode.atr_2:
-                    takeProfit = ResolveStrategyAtrProtection(symbol, signal.TradeType, entryPrice, false, 2.0);
+                    takeProfit = ResolveStrategyAtrProtection(currentBar, symbol, signal.TradeType, entryPrice, false, 2.0);
                     takeProfitSourceCode = "ATR2";
                     break;
                 case StrategyTakeProfitMode.atr_3:
-                    takeProfit = ResolveStrategyAtrProtection(symbol, signal.TradeType, entryPrice, false, 3.0);
+                    takeProfit = ResolveStrategyAtrProtection(currentBar, symbol, signal.TradeType, entryPrice, false, 3.0);
                     takeProfitSourceCode = "ATR3";
                     break;
                 case StrategyTakeProfitMode.trail_only:
@@ -49406,6 +49552,7 @@ namespace cAlgo.Robots
         }
 
         private bool TryResolveStrategyAutoStopLoss(
+            DecisionBar currentBar,
             Symbol symbol,
             string symbolName,
             BacktestStrategySignal signal,
@@ -49415,15 +49562,16 @@ namespace cAlgo.Robots
             out double stopLoss,
             out string sourceCode)
         {
+            using var causalScope = BeginDecisionBar(currentBar);
             stopLoss = 0;
             sourceCode = "";
-            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || entryPrice <= 0)
+            if (!IsDecisionBarUsable(currentBar) || symbol == null || string.IsNullOrWhiteSpace(symbolName) || entryPrice <= 0)
                 return false;
 
             double eventInvalidation;
             double protectiveSwing;
             var hasEventInvalidation = TryResolveStrategyEventInvalidationStopLoss(symbol, signal, entryPrice, structuralBuffer, out eventInvalidation);
-            var hasProtectiveSwing = TryResolveStrategyProtectiveSwingStopLoss(symbol, symbolName, signal, entryPrice, structuralBuffer, out protectiveSwing);
+            var hasProtectiveSwing = TryResolveStrategyProtectiveSwingStopLoss(currentBar, symbol, symbolName, signal, entryPrice, structuralBuffer, out protectiveSwing);
             if (hasProtectiveSwing)
             {
                 if (hasEventInvalidation)
@@ -49464,15 +49612,15 @@ namespace cAlgo.Robots
                         found = TryResolveStrategyPatternStopLoss(symbol, signal, entryPrice, shortBuffer, out resolved);
                         break;
                     case CTraderStrategyStopSource.CandleWick:
-                        found = TryResolveStrategyCandleWickStopLoss(symbol, symbolName, signal, entryPrice, 1.0, shortBuffer, out resolved);
+                        found = TryResolveStrategyCandleWickStopLoss(currentBar, symbol, symbolName, signal, entryPrice, 1.0, shortBuffer, out resolved);
                         break;
                     case CTraderStrategyStopSource.CandleExtreme5:
-                        found = TryResolveStrategyCandleExtremeStopLoss(symbol, symbolName, signal, entryPrice, 5, shortBuffer, out resolved);
+                        found = TryResolveStrategyCandleExtremeStopLoss(currentBar, symbol, symbolName, signal, entryPrice, 5, shortBuffer, out resolved);
                         break;
                     case CTraderStrategyStopSource.Ema:
                     case CTraderStrategyStopSource.Ichimoku:
                     case CTraderStrategyStopSource.Donchian:
-                        found = TryResolveStrategyIndicatorProtection(symbol, symbolName, signal, entryPrice, true,
+                        found = TryResolveStrategyIndicatorProtection(currentBar, symbol, symbolName, signal, entryPrice, true,
                             source == CTraderStrategyStopSource.Ema ? "ema" :
                             source == CTraderStrategyStopSource.Ichimoku ? "ichi" : "donchian",
                             0, out resolved, out indicatorSourceCode);
@@ -49493,6 +49641,7 @@ namespace cAlgo.Robots
         }
 
         private bool TryResolveStrategyAutoTakeProfit(
+            DecisionBar currentBar,
             Symbol symbol,
             string symbolName,
             BacktestStrategySignal signal,
@@ -49503,9 +49652,10 @@ namespace cAlgo.Robots
             out double takeProfit,
             out string sourceCode)
         {
+            using var causalScope = BeginDecisionBar(currentBar);
             takeProfit = 0;
             sourceCode = "";
-            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || !IsFiniteNumber(entryPrice) || entryPrice <= 0 ||
+            if (!IsDecisionBarUsable(currentBar) || symbol == null || string.IsNullOrWhiteSpace(symbolName) || !IsFiniteNumber(entryPrice) || entryPrice <= 0 ||
                 !IsFiniteNumber(stopLoss) || stopLoss <= 0 ||
                 !(signal.TradeType == TradeType.Buy ? stopLoss < entryPrice : stopLoss > entryPrice))
                 return false;
@@ -49527,27 +49677,27 @@ namespace cAlgo.Robots
                 switch (source)
                 {
                     case CTraderStrategyTargetSource.Liquidity:
-                        found = TryResolveStrategyLiquidityTakeProfit(symbol, symbolName, signal.TradeType, entryPrice, profileRaw, out resolved);
+                        found = TryResolveStrategyLiquidityTakeProfit(currentBar, symbol, symbolName, signal.TradeType, entryPrice, profileRaw, out resolved);
                         break;
                     case CTraderStrategyTargetSource.HtfKeyLevel:
-                        found = TryResolveStrategyKeyLevelProtection(symbol, symbolName, signal.TradeType, entryPrice, false, GetStrategyHtfProtectionFrames(signal), out resolved);
+                        found = TryResolveStrategyKeyLevelProtection(currentBar, symbol, symbolName, signal.TradeType, entryPrice, false, GetStrategyHtfProtectionFrames(signal), out resolved);
                         break;
                     case CTraderStrategyTargetSource.LtfKeyLevel:
-                        found = TryResolveStrategyKeyLevelProtection(symbol, symbolName, signal.TradeType, entryPrice, false, GetStrategyLtfProtectionFrames(signal), out resolved);
+                        found = TryResolveStrategyKeyLevelProtection(currentBar, symbol, symbolName, signal.TradeType, entryPrice, false, GetStrategyLtfProtectionFrames(signal), out resolved);
                         break;
                     case CTraderStrategyTargetSource.SessionHighLow:
-                        found = TryResolveStrategySessionProtection(symbol, signal.TradeType, entryPrice, false, out resolved);
+                        found = TryResolveStrategySessionProtection(currentBar, symbol, signal.TradeType, entryPrice, false, out resolved);
                         break;
                     case CTraderStrategyTargetSource.OrderBlockEdge:
-                        found = TryResolveStrategyZoneEdgeProtection(symbol, symbolName, signal, entryPrice, false, false, out resolved);
+                        found = TryResolveStrategyZoneEdgeProtection(currentBar, symbol, symbolName, signal, entryPrice, false, false, out resolved);
                         break;
                     case CTraderStrategyTargetSource.FvgEdge:
-                        found = TryResolveStrategyZoneEdgeProtection(symbol, symbolName, signal, entryPrice, false, true, out resolved);
+                        found = TryResolveStrategyZoneEdgeProtection(currentBar, symbol, symbolName, signal, entryPrice, false, true, out resolved);
                         break;
                     case CTraderStrategyTargetSource.Ema:
                     case CTraderStrategyTargetSource.Ichimoku:
                     case CTraderStrategyTargetSource.Donchian:
-                        found = TryResolveStrategyIndicatorProtection(symbol, symbolName, signal, entryPrice, false,
+                        found = TryResolveStrategyIndicatorProtection(currentBar, symbol, symbolName, signal, entryPrice, false,
                             source == CTraderStrategyTargetSource.Ema ? "ema" :
                             source == CTraderStrategyTargetSource.Ichimoku ? "ichi" : "donchian",
                             Math.Abs(entryPrice - stopLoss) * minimumRewardRisk + Math.Max(0, buffer),
@@ -49582,7 +49732,7 @@ namespace cAlgo.Robots
 
         private List<TimeFrame> GetStrategyLtfProtectionFrames(BacktestStrategySignal signal)
         {
-            return new List<TimeFrame> { signal.SourceTimeFrame ?? (Chart != null ? Chart.TimeFrame : TimeFrame.Minute) }
+            return new List<TimeFrame> { signal.SourceTimeFrame }
                 .Where(tf => tf != null)
                 .Distinct()
                 .ToList();
@@ -49590,7 +49740,8 @@ namespace cAlgo.Robots
 
         private List<TimeFrame> GetStrategyHtfProtectionFrames(BacktestStrategySignal signal)
         {
-            var baseTimeFrame = signal.SourceTimeFrame ?? (Chart != null ? Chart.TimeFrame : TimeFrame.Minute);
+            var baseTimeFrame = signal.SourceTimeFrame;
+            if (baseTimeFrame == null) return new List<TimeFrame>();
             var baseMinutes = Math.Max(1, TimeFrameToMinutes(baseTimeFrame));
             return GetAutoHigherTimeframes(baseTimeFrame)
                 .Where(tf => tf != null && TimeFrameToMinutes(tf) > baseMinutes)
@@ -49667,6 +49818,7 @@ namespace cAlgo.Robots
         }
 
         private bool TryResolveStrategyCandleExtremeStopLoss(
+            DecisionBar currentBar,
             Symbol symbol,
             string symbolName,
             BacktestStrategySignal signal,
@@ -49675,12 +49827,13 @@ namespace cAlgo.Robots
             double buffer,
             out double stopLoss)
         {
+            using var causalScope = BeginDecisionBar(currentBar);
             stopLoss = 0;
-            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || entryPrice <= 0)
+            if (!IsDecisionBarUsable(currentBar) || symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || entryPrice <= 0)
                 return false;
 
             Bars sourceBars;
-            try { sourceBars = GetCausalMarketBars(signal.SourceTimeFrame, symbolName); }
+            try { sourceBars = GetDecisionBars(currentBar, signal.SourceTimeFrame); }
             catch { sourceBars = null; }
             if (sourceBars == null || sourceBars.Count < 2)
                 return false;
@@ -49693,7 +49846,7 @@ namespace cAlgo.Robots
             var rangeEndTime = signal.EntryConfirmationTime != DateTime.MinValue
                 ? signal.EntryConfirmationTime
                 : signal.SignalTime;
-            var sourceIndex = ResolveSourceBarIndex(sourceBars, rangeEndTime);
+            var sourceIndex = GetDecisionSourceIndex(currentBar, sourceBars, rangeEndTime);
             if (!IsValidBarIndex(sourceBars, sourceIndex))
                 return false;
 
@@ -49712,6 +49865,7 @@ namespace cAlgo.Robots
         }
 
         private bool TryResolveStrategyCandleWickStopLoss(
+            DecisionBar currentBar,
             Symbol symbol,
             string symbolName,
             BacktestStrategySignal signal,
@@ -49720,17 +49874,18 @@ namespace cAlgo.Robots
             double buffer,
             out double stopLoss)
         {
+            using var causalScope = BeginDecisionBar(currentBar);
             stopLoss = 0;
-            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || entryPrice <= 0)
+            if (!IsDecisionBarUsable(currentBar) || symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || entryPrice <= 0)
                 return false;
 
             Bars sourceBars;
-            try { sourceBars = GetCausalMarketBars(signal.SourceTimeFrame, symbolName); }
+            try { sourceBars = GetDecisionBars(currentBar, signal.SourceTimeFrame); }
             catch { sourceBars = null; }
             if (sourceBars == null || sourceBars.Count < 2)
                 return false;
 
-            var sourceIndex = ResolveSourceBarIndex(sourceBars, signal.SignalTime);
+            var sourceIndex = GetDecisionSourceIndex(currentBar, sourceBars, signal.SignalTime);
             if (!IsValidBarIndex(sourceBars, sourceIndex))
                 return false;
 
@@ -49744,23 +49899,25 @@ namespace cAlgo.Robots
         }
 
         private bool TryResolveStrategyCandleRangeStopLoss(
+            DecisionBar currentBar,
             Symbol symbol,
             string symbolName,
             BacktestStrategySignal signal,
             double entryPrice,
             out double stopLoss)
         {
+            using var causalScope = BeginDecisionBar(currentBar);
             stopLoss = 0;
-            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || entryPrice <= 0)
+            if (!IsDecisionBarUsable(currentBar) || symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || entryPrice <= 0)
                 return false;
 
             Bars sourceBars;
-            try { sourceBars = GetCausalMarketBars(signal.SourceTimeFrame, symbolName); }
+            try { sourceBars = GetDecisionBars(currentBar, signal.SourceTimeFrame); }
             catch { sourceBars = null; }
             if (sourceBars == null || sourceBars.Count < 2)
                 return false;
 
-            var sourceIndex = ResolveSourceBarIndex(sourceBars, signal.SignalTime);
+            var sourceIndex = GetDecisionSourceIndex(currentBar, sourceBars, signal.SignalTime);
             if (!IsValidBarIndex(sourceBars, sourceIndex))
                 return false;
 
@@ -49774,6 +49931,7 @@ namespace cAlgo.Robots
         }
 
         private bool TryResolveStrategyCandleBodyStopLoss(
+            DecisionBar currentBar,
             Symbol symbol,
             string symbolName,
             BacktestStrategySignal signal,
@@ -49781,18 +49939,19 @@ namespace cAlgo.Robots
             out double stopLoss,
             out bool usedWickFallback)
         {
+            using var causalScope = BeginDecisionBar(currentBar);
             stopLoss = 0;
             usedWickFallback = false;
-            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || !(entryPrice > 0))
+            if (!IsDecisionBarUsable(currentBar) || symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || !(entryPrice > 0))
                 return false;
 
             Bars sourceBars;
-            try { sourceBars = GetBarsForCurrentMasterTimer(signal.SourceTimeFrame, symbolName); }
+            try { sourceBars = GetDecisionBars(currentBar, signal.SourceTimeFrame); }
             catch { sourceBars = null; }
             if (sourceBars == null || sourceBars.Count < 2)
                 return false;
 
-            var sourceIndex = ResolveSourceBarIndex(sourceBars, signal.SignalTime);
+            var sourceIndex = GetDecisionSourceIndex(currentBar, sourceBars, signal.SignalTime);
             if (!IsValidBarIndex(sourceBars, sourceIndex))
                 return false;
 
@@ -49826,6 +49985,7 @@ namespace cAlgo.Robots
         }
 
         private bool TryResolveStrategyAtrStopLoss(
+            DecisionBar currentBar,
             Symbol symbol,
             string symbolName,
             BacktestStrategySignal signal,
@@ -49833,13 +49993,14 @@ namespace cAlgo.Robots
             int period,
             out double stopLoss)
         {
+            using var causalScope = BeginDecisionBar(currentBar);
             stopLoss = 0;
-            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null ||
+            if (!IsDecisionBarUsable(currentBar) || symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null ||
                 !(entryPrice > 0) || period < 1)
                 return false;
 
             Bars sourceBars;
-            try { sourceBars = GetBarsForCurrentMasterTimer(signal.SourceTimeFrame, symbolName); }
+            try { sourceBars = GetDecisionBars(currentBar, signal.SourceTimeFrame); }
             catch { sourceBars = null; }
             if (sourceBars == null || sourceBars.Count < period + 1)
                 return false;
@@ -49847,9 +50008,7 @@ namespace cAlgo.Robots
             var referenceTime = signal.EntryConfirmationTime != DateTime.MinValue
                 ? signal.EntryConfirmationTime
                 : signal.SignalTime;
-            var sourceIndex = ResolveSourceBarIndex(sourceBars, referenceTime);
-            if (!IsValidBarIndex(sourceBars, sourceIndex))
-                sourceIndex = sourceBars.Count - 2;
+            var sourceIndex = GetDecisionSourceIndex(currentBar, sourceBars, referenceTime);
             if (!IsValidBarIndex(sourceBars, sourceIndex) || sourceIndex < period)
                 return false;
 
@@ -49876,6 +50035,7 @@ namespace cAlgo.Robots
         }
 
         private bool TryResolveStrategySwingStopLoss(
+            DecisionBar currentBar,
             Symbol symbol,
             string symbolName,
             BacktestStrategySignal signal,
@@ -49883,9 +50043,9 @@ namespace cAlgo.Robots
             IEnumerable<TimeFrame> frames,
             out double stopLoss)
         {
-            using var causalScope = BeginCausalSignalDecision(symbolName, signal);
+            using var causalScope = BeginDecisionBar(currentBar);
             stopLoss = 0;
-            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || !(entryPrice > 0))
+            if (!IsDecisionBarUsable(currentBar) || symbol == null || string.IsNullOrWhiteSpace(symbolName) || !(entryPrice > 0))
                 return false;
 
             var referenceTime = signal.EntryConfirmationTime != DateTime.MinValue
@@ -49896,7 +50056,7 @@ namespace cAlgo.Robots
             foreach (var sourceTimeFrame in (frames ?? Enumerable.Empty<TimeFrame>()).Where(frame => frame != null).Distinct())
             {
                 Bars sourceBars;
-                try { sourceBars = GetBarsForCurrentMasterTimer(sourceTimeFrame, symbolName); }
+                try { sourceBars = GetDecisionBars(currentBar, sourceTimeFrame); }
                 catch { sourceBars = null; }
                 if (sourceBars == null || sourceBars.Count < 3)
                     continue;
@@ -49925,6 +50085,7 @@ namespace cAlgo.Robots
         }
 
         private bool TryResolveStrategyCandleTakeProfit(
+            DecisionBar currentBar,
             Symbol symbol,
             string symbolName,
             BacktestStrategySignal signal,
@@ -49933,17 +50094,18 @@ namespace cAlgo.Robots
             double buffer,
             out double takeProfit)
         {
+            using var causalScope = BeginDecisionBar(currentBar);
             takeProfit = 0;
-            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || entryPrice <= 0)
+            if (!IsDecisionBarUsable(currentBar) || symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || entryPrice <= 0)
                 return false;
 
             Bars sourceBars;
-            try { sourceBars = GetCausalMarketBars(signal.SourceTimeFrame, symbolName); }
+            try { sourceBars = GetDecisionBars(currentBar, signal.SourceTimeFrame); }
             catch { sourceBars = null; }
             if (sourceBars == null || sourceBars.Count < 2)
                 return false;
 
-            var sourceIndex = ResolveSourceBarIndex(sourceBars, signal.SignalTime);
+            var sourceIndex = GetDecisionSourceIndex(currentBar, sourceBars, signal.SignalTime);
             if (!IsValidBarIndex(sourceBars, sourceIndex))
                 return false;
 
@@ -49968,10 +50130,11 @@ namespace cAlgo.Robots
                 signal.OriginalPatternLow, signal.OriginalPatternHigh, buffer, out stopLoss);
         }
 
-        private bool TryResolveStrategyProtectiveSwingStopLoss(Symbol symbol, string symbolName, BacktestStrategySignal signal, double entryPrice, double buffer, out double stopLoss)
+        private bool TryResolveStrategyProtectiveSwingStopLoss(DecisionBar currentBar, Symbol symbol, string symbolName, BacktestStrategySignal signal, double entryPrice, double buffer, out double stopLoss)
         {
+            using var causalScope = BeginDecisionBar(currentBar);
             stopLoss = 0;
-            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || entryPrice <= 0)
+            if (!IsDecisionBarUsable(currentBar) || symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || entryPrice <= 0)
                 return false;
 
             var patternEdge = signal.TradeType == TradeType.Buy ? signal.OriginalPatternLow : signal.OriginalPatternHigh;
@@ -49983,9 +50146,9 @@ namespace cAlgo.Robots
                 return false;
 
             Bars sourceBars;
-            try { sourceBars = GetCausalMarketBars(signal.SourceTimeFrame, symbolName); }
+            try { sourceBars = GetDecisionBars(currentBar, signal.SourceTimeFrame); }
             catch { sourceBars = null; }
-            var signalIndex = ResolveSourceBarIndex(sourceBars, signal.SignalTime);
+            var signalIndex = GetDecisionSourceIndex(currentBar, sourceBars, signal.SignalTime);
             if (!IsValidBarIndex(sourceBars, signalIndex))
                 return false;
 
@@ -50012,6 +50175,7 @@ namespace cAlgo.Robots
         }
 
         private bool TryResolveStrategyNearestHtfSwingProtection(
+            DecisionBar currentBar,
             Symbol symbol,
             string symbolName,
             BacktestStrategySignal signal,
@@ -50021,9 +50185,9 @@ namespace cAlgo.Robots
             double outboundBoundary,
             out double price)
         {
-            using var causalScope = BeginCausalSignalDecision(symbolName, signal);
+            using var causalScope = BeginDecisionBar(currentBar);
             price = 0;
-            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || !(entryPrice > 0))
+            if (!IsDecisionBarUsable(currentBar) || symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || !(entryPrice > 0))
                 return false;
 
             var higherFrames = GetStrategyHtfProtectionFrames(signal);
@@ -50038,7 +50202,7 @@ namespace cAlgo.Robots
             foreach (var higherFrame in higherFrames)
             {
                 Bars sourceBars;
-                try { sourceBars = GetBarsForCurrentMasterTimer(higherFrame, symbolName); }
+                try { sourceBars = GetDecisionBars(currentBar, higherFrame); }
                 catch { sourceBars = null; }
                 if (sourceBars == null || sourceBars.Count < 3)
                     continue;
@@ -50063,6 +50227,7 @@ namespace cAlgo.Robots
         }
 
         private bool TryResolveStrategyNearestLtfSwingStopLoss(
+            DecisionBar currentBar,
             Symbol symbol,
             string symbolName,
             BacktestStrategySignal signal,
@@ -50070,9 +50235,9 @@ namespace cAlgo.Robots
             double baseBuffer,
             out double stopLoss)
         {
-            using var causalScope = BeginCausalSignalDecision(symbolName, signal);
+            using var causalScope = BeginDecisionBar(currentBar);
             stopLoss = 0;
-            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || !(entryPrice > 0))
+            if (!IsDecisionBarUsable(currentBar) || symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || !(entryPrice > 0))
                 return false;
 
             var referenceTime = signal.EntryConfirmationTime != DateTime.MinValue
@@ -50083,7 +50248,7 @@ namespace cAlgo.Robots
             foreach (var sourceTimeFrame in GetStrategyLtfProtectionFrames(signal))
             {
                 Bars sourceBars;
-                try { sourceBars = GetBarsForCurrentMasterTimer(sourceTimeFrame, symbolName); }
+                try { sourceBars = GetDecisionBars(currentBar, sourceTimeFrame); }
                 catch { sourceBars = null; }
                 if (sourceBars == null || sourceBars.Count < 3)
                     continue;
@@ -50123,6 +50288,7 @@ namespace cAlgo.Robots
         }
 
         private bool TryResolveComparableEventProtection(
+            DecisionBar currentBar,
             Symbol symbol,
             string symbolName,
             BacktestStrategySignal signal,
@@ -50131,9 +50297,11 @@ namespace cAlgo.Robots
             out double eventStopLoss,
             out double eventTakeProfit)
         {
+            using var causalScope = BeginDecisionBar(currentBar);
             eventStopLoss = 0;
             eventTakeProfit = 0;
-            if (!TryResolveStrategyLtfEventStopLoss(
+            if (!IsDecisionBarUsable(currentBar)) return false;
+            if (!TryResolveStrategyLtfEventStopLoss(currentBar,
                     symbol,
                     symbolName,
                     signal,
@@ -50173,6 +50341,7 @@ namespace cAlgo.Robots
         }
 
         private bool TryResolveStrategyLtfEventStopLoss(
+            DecisionBar currentBar,
             Symbol symbol,
             string symbolName,
             BacktestStrategySignal signal,
@@ -50180,8 +50349,9 @@ namespace cAlgo.Robots
             double buffer,
             out double stopLoss)
         {
+            using var causalScope = BeginDecisionBar(currentBar);
             stopLoss = 0;
-            if (symbol == null || !(entryPrice > 0))
+            if (!IsDecisionBarUsable(currentBar) || symbol == null || !(entryPrice > 0))
                 return false;
 
             var isBuy = signal.TradeType == TradeType.Buy;
@@ -50223,14 +50393,11 @@ namespace cAlgo.Robots
             {
                 try
                 {
-                    var effectiveSymbolName = !string.IsNullOrWhiteSpace(signal.SymbolName)
-                        ? signal.SymbolName
-                        : symbolName;
-                    var sourceBars = GetBarsForCurrentMasterTimer(signal.SourceTimeFrame, effectiveSymbolName);
+                    var sourceBars = GetDecisionBars(currentBar, signal.SourceTimeFrame);
                     var referenceTime = signal.EntryConfirmationTime != DateTime.MinValue
                         ? signal.EntryConfirmationTime
                         : signal.SignalTime;
-                    var sourceIndex = sourceBars == null ? -1 : ResolveSourceBarIndex(sourceBars, referenceTime);
+                    var sourceIndex = sourceBars == null ? -1 : GetDecisionSourceIndex(currentBar, sourceBars, referenceTime);
                     if (sourceIndex >= 0 && sourceIndex < sourceBars.Count)
                     {
                         eventCandleLow = sourceBars.LowPrices[sourceIndex];
@@ -50286,38 +50453,122 @@ namespace cAlgo.Robots
                 buffer, false, out stopLoss);
         }
 
-        private double ResolveStrategyAtrProtection(Symbol symbol, TradeType tradeType, double entryPrice, bool isStopLoss, double multiplier)
+        private double ResolveStrategyAtrProtection(DecisionBar currentBar, Symbol symbol, TradeType tradeType, double entryPrice, bool isStopLoss, double multiplier)
         {
-            if (symbol == null || entryPrice <= 0 || symbol.PipSize <= 0)
+            using var causalScope = BeginDecisionBar(currentBar);
+            if (!IsDecisionBarUsable(currentBar) || symbol == null || entryPrice <= 0 || symbol.PipSize <= 0)
                 return 0;
             Bars atrBars = null;
-            try { if (_causalDecision != null && _causalDecision.TimeFrame != null)
-                atrBars = GetBarsForCurrentMasterTimer(_causalDecision.TimeFrame, symbol.Name); } catch { }
+            try { atrBars = GetDecisionBars(currentBar, currentBar.TimeFrame); } catch { }
+            if (atrBars == null) return 0;
             var atrPips = ResolveAtrPips(symbol, atrBars, 14);
             if (!(atrPips > 0)) return 0;
-            var distance = Math.Max(ResolveMinStopPips(symbol), atrPips * Math.Max(0.1, multiplier)) * symbol.PipSize;
+            var distance = Math.Max(ResolveMinStopPips(symbol, atrBars), atrPips * Math.Max(0.1, multiplier)) * symbol.PipSize;
             return CTraderStrategyEngine.ResolveDistanceTarget(symbol, tradeType, entryPrice, isStopLoss, distance);
         }
 
-        private bool TryResolveStrategySessionProtection(Symbol symbol, TradeType tradeType, double entryPrice, bool isStopLoss, out double price)
+        private bool TryResolveStrategySessionProtection(DecisionBar currentBar, Symbol symbol, TradeType tradeType, double entryPrice, bool isStopLoss, out double price)
         {
+            using var causalScope = BeginDecisionBar(currentBar);
             price = 0;
-            if (symbol == null || entryPrice <= 0)
+            if (!IsDecisionBarUsable(currentBar) || symbol == null || entryPrice <= 0)
                 return false;
 
             var tolerance = Math.Max(symbol.PipSize * 2.0, 0.0000001);
             var levels = new List<double>();
-            AddSessionLiquidityLevelCandidates(levels, "Asia", tolerance);
-            AddSessionLiquidityLevelCandidates(levels, "London", tolerance);
-            AddSessionLiquidityLevelCandidates(levels, "NewYork", tolerance);
+            AddSessionLiquidityLevelCandidatesAtBar(currentBar, levels, "Asia", tolerance);
+            AddSessionLiquidityLevelCandidatesAtBar(currentBar, levels, "London", tolerance);
+            AddSessionLiquidityLevelCandidatesAtBar(currentBar, levels, "NewYork", tolerance);
             return CTraderStrategyEngine.TrySelectDirectionalLevel(levels, tradeType, entryPrice, isStopLoss, out price);
         }
 
-        private bool TryResolveStrategyLiquidityTakeProfit(Symbol symbol, string symbolName, TradeType tradeType, double entryPrice, string profileRaw, out double price)
+        private bool TryResolveStrategyLiquidityTakeProfit(DecisionBar currentBar, Symbol symbol, string symbolName, TradeType tradeType, double entryPrice, string profileRaw, out double price)
         {
+            using var causalScope = BeginDecisionBar(currentBar);
             price = 0;
-            var levels = CollectChartLiquidityLevels(symbol, symbolName, profileRaw);
+            if (!IsDecisionBarUsable(currentBar) || symbol == null) return false;
+            var levels = CollectStrategyLiquidityLevelsAtBar(currentBar, symbol, profileRaw);
             return CTraderStrategyEngine.TrySelectDirectionalLevel(levels, tradeType, entryPrice, false, out price);
+        }
+
+        private bool TryResolveNearestEventProtectionAtBar(
+            DecisionBar currentBar, Symbol symbol, string symbolName, BacktestStrategySignal signal,
+            out double stopLoss, out double takeProfit, out string stopKind, out string targetKind)
+        {
+            using var causalScope = BeginDecisionBar(currentBar);
+            stopLoss = takeProfit = 0;
+            stopKind = targetKind = "";
+            if (!IsDecisionBarUsable(currentBar)) return false;
+            var bars = GetDecisionBars(currentBar, currentBar.TimeFrame);
+            var index = GetDecisionSourceIndex(currentBar, bars, signal.SignalTime);
+            if (index < 0) return false;
+            return TryResolveNearestEventProtectionLevels(symbol, symbolName, bars, currentBar.TimeFrame,
+                index, signal.TradeType == TradeType.Buy, out stopLoss, out takeProfit, out stopKind, out targetKind);
+        }
+
+        private void AddSessionLiquidityLevelCandidatesAtBar(
+            DecisionBar currentBar, List<double> candidates, string sessionName, double tolerance)
+        {
+            if (!IsDecisionBarUsable(currentBar) || candidates == null) return;
+            using var causalScope = BeginDecisionBar(currentBar);
+            var bars = GetDecisionBars(currentBar, currentBar.TimeFrame);
+            if (bars == null || bars.Count < 10) return;
+            SessionWindowDefinition definition;
+            TimeZoneInfo zone;
+            if (!TryGetSessionWindowDefinition(sessionName, out definition) || !TryGetSessionTimeZone(definition, out zone)) return;
+            var sessionDate = TimeZoneInfo.ConvertTimeFromUtc(currentBar.CloseTimeUtc, zone).Date;
+            for (var offset = 0; offset >= -7; offset--)
+            {
+                DateTime startUtc, endUtc, highTime, lowTime;
+                double high, low;
+                if (!TryGetSessionUtcRange(sessionName, sessionDate.AddDays(offset), out startUtc, out endUtc) ||
+                    endUtc > currentBar.CloseTimeUtc || bars.OpenTimes[0] > startUtc ||
+                    !TryGetRangeHighLow(bars, startUtc, endUtc, out high, out low, out highTime, out lowTime)) continue;
+                AddDistinctChartLevel(candidates, high, tolerance);
+                AddDistinctChartLevel(candidates, low, tolerance);
+                break;
+            }
+        }
+
+        private List<double> CollectStrategyLiquidityLevelsAtBar(DecisionBar currentBar, Symbol symbol, string profileRaw)
+        {
+            var candidates = new List<double>();
+            if (!IsDecisionBarUsable(currentBar) || symbol == null) return candidates;
+            using var causalScope = BeginDecisionBar(currentBar);
+            var tolerance = Math.Max(symbol.PipSize * 2.0, 0.0000001);
+            var sourceMinutes = Math.Max(1, TimeFrameToMinutes(currentBar.TimeFrame));
+            var frames = GetAutoHigherTimeframes(currentBar.TimeFrame)
+                .Where(frame => frame != null && TimeFrameToMinutes(frame) > sourceMinutes).ToList();
+            var structureFrame = GetChartTradeStructureTimeFrame(profileRaw);
+            if (structureFrame != null && (TimeFrameToMinutes(structureFrame) > sourceMinutes || frames.Count == 0))
+                frames.Add(structureFrame);
+            foreach (var frame in frames.Concat(new[] { TimeFrame.Weekly }).Distinct())
+            {
+                var bars = GetDecisionBars(currentBar, frame);
+                if (bars == null || bars.Count < 2) continue;
+                var endIndex = bars.Count - 2; // Last closed candle as of currentBar, not today's latest.
+                AddDistinctChartLevel(candidates, bars.HighPrices[endIndex], tolerance);
+                AddDistinctChartLevel(candidates, bars.LowPrices[endIndex], tolerance);
+                if (frame == TimeFrame.Weekly || bars.Count < 5) continue;
+                foreach (var swing in CollectConfirmedSwings(bars, ResolveWorkingSwingLookbackBars(bars, frame), endIndex).TakeLast(12))
+                    AddDistinctChartLevel(candidates, swing.Price, tolerance);
+                foreach (var pattern in DetectSwingLevelPatterns(bars, tolerance, endIndex))
+                {
+                    AddDistinctChartLevel(candidates, pattern.Level, tolerance);
+                    if (pattern.HasNeckline && pattern.NecklineBroken &&
+                        (pattern.Type == SwingLevelPatternType.DoubleTop || pattern.Type == SwingLevelPatternType.DoubleBottom))
+                        AddDistinctChartLevel(candidates, pattern.NecklinePrice, tolerance);
+                }
+                var clusteredSwings = CollectConfirmedSwings(bars, ResolveWorkingSwingLookbackBars(bars), endIndex)
+                    .TakeLast(20).ToList();
+                foreach (var cluster in clusteredSwings.GroupBy(swing => new { swing.IsHigh,
+                    Band = Math.Round(swing.Price / (tolerance * 2.0)) }).Where(group => group.Count() >= 2))
+                    AddDistinctChartLevel(candidates, cluster.Average(swing => swing.Price), tolerance);
+            }
+            AddSessionLiquidityLevelCandidatesAtBar(currentBar, candidates, "Asia", tolerance);
+            AddSessionLiquidityLevelCandidatesAtBar(currentBar, candidates, "London", tolerance);
+            AddSessionLiquidityLevelCandidatesAtBar(currentBar, candidates, "NewYork", tolerance);
+            return candidates.OrderBy(value => value).ToList();
         }
 
         private EmaIndicatorConfig ResolveProtectionEmaConfig()
@@ -50433,19 +50684,21 @@ namespace cAlgo.Robots
         }
 
         private bool TryResolveStrategyIndicatorProtection(
+            DecisionBar currentBar,
             Symbol symbol, string symbolName, BacktestStrategySignal signal, double entryPrice,
             bool isStopLoss, string mode, double minimumTargetDistance, out double price, out string sourceCode)
         {
+            using var causalScope = BeginDecisionBar(currentBar);
             price = 0;
             sourceCode = "";
-            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null)
+            if (!IsDecisionBarUsable(currentBar) || symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null)
                 return false;
             Bars sourceBars;
             // Never use attached/chart Bars here: execution and marker replay can have
             // different timeframes. Resolve the exact signal symbol/timeframe explicitly.
-            try { sourceBars = GetCausalMarketBars(signal.SourceTimeFrame, symbolName); }
+            try { sourceBars = GetDecisionBars(currentBar, signal.SourceTimeFrame); }
             catch { sourceBars = null; }
-            var sourceIndex = ResolveSourceBarIndex(sourceBars, signal.SignalTime);
+            var sourceIndex = GetDecisionSourceIndex(currentBar, sourceBars, signal.SignalTime);
             // Normalize every level BEFORE side/RR filtering: an inadequate rounded
             // nearest line must not hide a farther qualifying line in the same family.
             var levels = BuildStrategyIndicatorProtectionLevels(sourceBars, sourceIndex, signal.TradeType, isStopLoss, mode)
@@ -50455,16 +50708,17 @@ namespace cAlgo.Robots
                 minimumTargetDistance, out price, out sourceCode);
         }
 
-        private bool TryResolveStrategyIndicatorTakeProfit(Symbol symbol, string symbolName, BacktestStrategySignal signal, double entryPrice, bool useVwap, out double takeProfit)
+        private bool TryResolveStrategyIndicatorTakeProfit(DecisionBar currentBar, Symbol symbol, string symbolName, BacktestStrategySignal signal, double entryPrice, bool useVwap, out double takeProfit)
         {
+            using var causalScope = BeginDecisionBar(currentBar);
             takeProfit = 0;
-            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || entryPrice <= 0)
+            if (!IsDecisionBarUsable(currentBar) || symbol == null || string.IsNullOrWhiteSpace(symbolName) || signal.SourceTimeFrame == null || entryPrice <= 0)
                 return false;
 
             Bars sourceBars;
-            try { sourceBars = GetCausalMarketBars(signal.SourceTimeFrame, symbolName); }
+            try { sourceBars = GetDecisionBars(currentBar, signal.SourceTimeFrame); }
             catch { sourceBars = null; }
-            var sourceIndex = ResolveSourceBarIndex(sourceBars, signal.SignalTime);
+            var sourceIndex = GetDecisionSourceIndex(currentBar, sourceBars, signal.SignalTime);
             if (!IsValidBarIndex(sourceBars, sourceIndex))
                 return false;
 
@@ -50483,10 +50737,11 @@ namespace cAlgo.Robots
             return takeProfit > 0;
         }
 
-        private bool TryResolveStrategyZoneEdgeProtection(Symbol symbol, string symbolName, BacktestStrategySignal signal, double entryPrice, bool isStopLoss, bool useFvg, out double price)
+        private bool TryResolveStrategyZoneEdgeProtection(DecisionBar currentBar, Symbol symbol, string symbolName, BacktestStrategySignal signal, double entryPrice, bool isStopLoss, bool useFvg, out double price)
         {
+            using var causalScope = BeginDecisionBar(currentBar);
             price = 0;
-            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || entryPrice <= 0)
+            if (!IsDecisionBarUsable(currentBar) || symbol == null || string.IsNullOrWhiteSpace(symbolName) || entryPrice <= 0)
                 return false;
 
             var candidates = new List<double>();
@@ -50502,10 +50757,10 @@ namespace cAlgo.Robots
                         ? !_toggleFvgZones || !IsScopeEnabledForTimeFrame(DrawFvgZones, sourceTimeFrame)
                         : !_toggleOrderBlocks || !IsScopeEnabledForTimeFrame(DrawOrderBlocks, sourceTimeFrame))
                         continue;
-                    var sourceBars = GetCausalMarketBars(sourceTimeFrame, symbolName);
+                    var sourceBars = GetDecisionBars(currentBar, sourceTimeFrame);
                     if (sourceBars == null || sourceBars.Count < 5)
                         continue;
-                    foreach (var zone in BuildStructureSnapshotV2(sourceBars, ResolveWorkingLookbackBars(sourceBars, sourceTimeFrame)).Zones
+                    foreach (var zone in BuildStructureSnapshotV2(sourceBars, ResolveWorkingLookbackBars(sourceBars, sourceTimeFrame), sourceBars.Count - 2).Zones
                         .Where(zone => zone.State == StructureZoneStateV2.Active)
                         .Where(zone => useFvg
                             ? zone.Type == StructureZoneTypeV2.Fvg || zone.Type == StructureZoneTypeV2.InverseFvg
@@ -50526,6 +50781,7 @@ namespace cAlgo.Robots
         }
 
         private bool TryResolveStrategyKeyLevelProtection(
+            DecisionBar currentBar,
             Symbol symbol,
             string symbolName,
             TradeType tradeType,
@@ -50534,8 +50790,9 @@ namespace cAlgo.Robots
             IEnumerable<TimeFrame> sourceTimeFrames,
             out double price)
         {
+            using var causalScope = BeginDecisionBar(currentBar);
             price = 0;
-            if (symbol == null || string.IsNullOrWhiteSpace(symbolName) || entryPrice <= 0 || sourceTimeFrames == null)
+            if (!IsDecisionBarUsable(currentBar) || symbol == null || string.IsNullOrWhiteSpace(symbolName) || entryPrice <= 0 || sourceTimeFrames == null)
                 return false;
 
             var candidates = new List<ChartLevelCandidate>();
@@ -50543,10 +50800,10 @@ namespace cAlgo.Robots
             {
                 try
                 {
-                    var sourceBars = GetCausalMarketBars(sourceTimeFrame, symbolName);
+                    var sourceBars = GetDecisionBars(currentBar, sourceTimeFrame);
                     if (sourceBars == null || sourceBars.Count < 5)
                         continue;
-                    candidates.AddRange(CollectTimeFrameStructuralLevelCandidates(symbol, sourceBars, sourceTimeFrame));
+                    candidates.AddRange(CollectTimeFrameStructuralLevelCandidates(symbol, sourceBars, sourceTimeFrame, sourceBars.Count - 2));
                 }
                 catch
                 {
