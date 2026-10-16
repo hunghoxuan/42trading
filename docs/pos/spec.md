@@ -156,7 +156,7 @@ Catalog edits, receiving, counts, adjustments, and price changes require connect
 
 ### 5.5 Import, export, dashboard, and reports
 
-1. Import products, barcode aliases, store prices, and opening stock from CSV first. Accept XLSX only after a tested parser is chosen. Show column mapping, dry-run preview, duplicate policy, row errors, and final counts before commit.
+1. Import products, barcode aliases, store prices, and opening stock from CSV or XLSX. The first XLSX adapter accepts the Vietnamese product export columns. Show dry-run preview, duplicate barcode warnings, row errors, and final counts before commit.
 2. Imports are idempotent by store + source file/import key. Large imports run through object_processes, expose progress, and produce a downloadable error file. No partial inventory adjustments without an explicit result report.
 3. Export filtered products, stock, movements, sales, refunds, shifts, and report summaries to CSV; include store, timezone, currency, filter values, and generation time. Limit exports by permission and protect spreadsheet output from formula injection.
 4. Dashboard: today's synced gross/net sales, order count, average basket, refunds, tender mix, low-stock products, current shifts, and recent sync exceptions. On each device, show its pending local sales separately from server totals; the server cannot see another disconnected device's pending sales.

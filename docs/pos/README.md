@@ -23,6 +23,8 @@ For offline sales, sign in while connected, create products and retail prices, r
 - Record partial/full cash returns against synced sales, enforce remaining refundable quantities, optionally restock, and audit each refund. Open and close a register cash shift with expected and counted cash; local pending sales block closing in the PWA.
 - Create a stock count, enter physical quantities, review variances, and post adjustments with a reason. Draft and reviewed counts can be reopened after page reload. Posting rejects stale counts and counts that would consume stock allocated to offline devices.
 - Import products, prices, barcodes, VAT, and opening stock from CSV with preview and row validation. Export products and sales CSV. View daily sales, low stock, and sales by day/cashier/product.
+- Import the Vietnamese product export as XLSX and export the POS catalog as XLSX. Import preserves product numbers, barcodes, categories, units, VND retail and cost prices, minimum stock, and whole-number on-hand stock. Shared barcodes and fractional/negative stock values are shown as warnings; unsupported stock quantities remain in source-stock metadata for review.
+- Switch the interface between Vietnamese (default) and English; the choice is saved on this register.
 - Upload a photo to decode a visible QR/barcode first, then use server OCR to rank products by printed code/name. The cashier confirms a candidate and the shown price comes from the catalog.
 
 ## Requirements still open

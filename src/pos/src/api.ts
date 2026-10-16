@@ -1,6 +1,13 @@
 import type { Bootstrap, LocalSale, Product, SaleLine } from "./storage";
 
 type ApiResult = { ok: boolean; error?: string };
+export type ImportPreview = {
+  count: number;
+  errors: string[];
+  warnings: string[];
+  warning_count: number;
+  preview: Record<string, unknown>[];
+};
 
 export class ApiError extends Error {
   constructor(message: string, public status: number) { super(message); }
@@ -57,10 +64,14 @@ export const posApi = {
   closeShift: (sid: string, counted_cash_minor: number, pending_count: number) => call<ApiResult>(
     "/api/pos/shifts/" + encodeURIComponent(sid) + "/close", "POST", { counted_cash_minor, pending_count }),
   dashboard: () => call<ApiResult & { gross_minor: number; net_minor: number; refunds_minor: number; sales_count: number; low_stock: unknown[] }>("/api/pos/dashboard"),
-  previewImport: (csv: string) => call<ApiResult & { count: number; errors: string[]; preview: Record<string, unknown>[] }>(
+  previewImport: (csv: string) => call<ApiResult & ImportPreview>(
     "/api/pos/imports/preview", "POST", { csv }),
-  commitImport: (csv: string) => call<ApiResult & { run: { count: number }; duplicate: boolean }>(
+  previewImportRows: (rows: Record<string, unknown>[]) => call<ApiResult & ImportPreview>(
+    "/api/pos/imports/preview", "POST", { rows }),
+  commitImport: (csv: string) => call<ApiResult & { run: { count: number; warnings?: number }; duplicate: boolean }>(
     "/api/pos/imports", "POST", { csv }),
+  commitImportRows: (rows: Record<string, unknown>[]) => call<ApiResult & { run: { count: number; warnings: number }; duplicate: boolean }>(
+    "/api/pos/imports", "POST", { rows }),
   reportSales: (groupBy: string, from = "", to = "") => call<ApiResult & { items: {
     key: string; sales_count: number; quantity: number; base_minor: number; vat_minor: number; gross_minor: number;
   }[] }>("/api/pos/reports/sales?" + new URLSearchParams({ group_by: groupBy, from, to })),

@@ -5,10 +5,16 @@ export type Product = {
   barcodes: string[];
   category: string;
   unit: string;
+  family_sku: string;
+  group_code: string;
   image: string;
   status: string;
   price_minor: number | null;
   vat_rate_bps: number;
+  cost_minor: number | null;
+  min_stock: number;
+  source_on_hand: number | null;
+  stock_import_warning: boolean;
   on_hand: number;
   allocated: number;
   offline_available: number;

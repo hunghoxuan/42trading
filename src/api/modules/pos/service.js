@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { createUniversalStoreAdapter } = require("../../shared/universal-store/adapterFactory");
 const { recognizeProductImage } = require("./vision");
-const { parseCsv, validateRows, toCsv } = require("./imports");
+const { parseCsv, parseProductRows, validateRows, toCsv } = require("./imports");
 
 const TENANT = "__42pay__";
 const STORE_ID = "STORE_1";
@@ -149,10 +149,16 @@ function productView(row, priceRow, stockRow, allocationRow) {
     barcodes: Array.isArray(metadata.pos_barcodes) ? metadata.pos_barcodes : [],
     category: metadata.category || product.type || "",
     unit: metadata.pos_unit || "each",
+    family_sku: metadata.pos_family_sku || "",
+    group_code: metadata.pos_group_code || "",
     image: product.image || "",
     status: product.status || "ACTIVE",
     price_minor: price.price_minor ?? null,
     vat_rate_bps: metadata.pos_vat_rate_bps ?? 0,
+    cost_minor: metadata.pos_cost_minor ?? null,
+    min_stock: metadata.pos_min_stock ?? 0,
+    source_on_hand: metadata.pos_source_on_hand ?? null,
+    stock_import_warning: Boolean(metadata.pos_stock_import_warning),
     on_hand: stock.on_hand ?? 0,
     allocated: stock.allocated ?? 0,
     offline_available: Math.max(0, (allocation.issued || 0) - (allocation.consumed || 0)),
@@ -245,15 +251,19 @@ function createPosService(options = {}) {
       .map((value) => String(value).trim()).filter(Boolean))];
     const vatRate = nonNegativeInt(input.vat_rate_bps ?? 0, "VAT rate");
     if (vatRate > 10000) throw new PosError("VAT rate exceeds 100%");
+    const costMinor = input.cost_minor === undefined
+      ? undefined : input.cost_minor === "" || input.cost_minor === null ? null : nonNegativeInt(input.cost_minor, "Cost");
+    const minStock = input.min_stock === undefined ? undefined : Number(input.min_stock);
+    if (minStock !== undefined && (!Number.isFinite(minStock) || minStock < 0)) {
+      throw new PosError("Minimum stock must be a non-negative number");
+    }
     await transact(function* () {
       yield ["lockStore"];
       const products = yield ["listEntities", { tenantId: TENANT, entityType: PRODUCT, limit: 10000 }];
       for (const row of products) {
         if (row.entity_key === sid) continue;
         const other = dataOf(row)?.metadata || {};
-        if (other.pos_sku === sku || barcodes.some((code) => (other.pos_barcodes || []).includes(code))) {
-          throw new PosError("Product number or barcode already exists");
-        }
+        if (other.pos_sku === sku) throw new PosError("Product number already exists");
       }
       const current = yield ["getEntity", TENANT, PRODUCT, sid];
       const previous = dataOf(current) || {};
@@ -266,6 +276,8 @@ function createPosService(options = {}) {
         metadata: {
           ...(previous.metadata || {}), pos_sku: sku, pos_barcodes: barcodes,
           pos_unit: String(input.unit || "each"), pos_vat_rate_bps: vatRate,
+          pos_cost_minor: costMinor === undefined ? previous.metadata?.pos_cost_minor ?? null : costMinor,
+          pos_min_stock: minStock === undefined ? previous.metadata?.pos_min_stock ?? 0 : minStock,
           category: String(input.category || ""),
           description: String(input.description || ""),
         },
@@ -724,18 +736,20 @@ function createPosService(options = {}) {
   }
 
   async function dashboard() {
-    const [saleRows, stockRows] = await Promise.all([list("pos_sale"), list("pos_stock")]);
+    const [saleRows, stockRows, products] = await Promise.all([list("pos_sale"), list("pos_stock"), list(PRODUCT)]);
     const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
     const todays = saleRows.map(dataOf).filter((sale) => sale?.status === "PAID" &&
       new Date(sale.sold_at).toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }) === today);
     const refunds = (await list("pos_return")).map(dataOf).filter((item) => item &&
       new Date(item.returned_at).toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }) === today);
     const refundMinor = refunds.reduce((sum, item) => sum + item.amount_minor, 0);
+    const minimumBySid = new Map(products.map((row) => [row.entity_key, dataOf(row)?.metadata?.pos_min_stock ?? 5]));
     return { ok: true, currency: "VND", sales_count: todays.length,
       gross_minor: todays.reduce((sum, sale) => sum + sale.total_minor, 0),
       refunds_minor: refundMinor,
       net_minor: todays.reduce((sum, sale) => sum + sale.total_minor, 0) - refundMinor,
-      low_stock: stockRows.map(dataOf).filter((stock) => stock && stock.on_hand - stock.allocated <= 5) };
+      low_stock: stockRows.map((row) => dataOf(row)).filter((stock) => stock &&
+        stock.on_hand - stock.allocated <= (minimumBySid.get(stock.product_sid) ?? 5)) };
   }
 
   async function recognizeImage(input) {
@@ -743,20 +757,22 @@ function createPosService(options = {}) {
   }
 
   async function previewImport(input) {
-    const rows = parseCsv(input.csv);
+    const rows = input.rows ? parseProductRows(input.rows) : parseCsv(input.csv);
     const validated = validateRows(rows, await catalog());
     return { ok: true, count: rows.length, errors: validated.errors,
+      warnings: validated.warnings.slice(0, 100), warning_count: validated.warnings.length,
       preview: validated.rows.slice(0, 20).map(({ current, ...row }) => ({ ...row, action: current ? "UPDATE" : "CREATE" })) };
   }
 
   async function commitImport(input, actor) {
-    const csv = requiredText(input.csv, "CSV");
-    const importKey = crypto.createHash("sha256").update(csv).digest("hex");
+    const rows = input.rows ? parseProductRows(input.rows) : parseCsv(requiredText(input.csv, "CSV"));
+    const source = input.rows ? JSON.stringify(rows) : String(input.csv);
+    const importKey = crypto.createHash("sha256").update(source).digest("hex");
     const alreadyImported = await get("pos_import_run", importKey);
     if (alreadyImported) return { ok: true, run: dataOf(alreadyImported), duplicate: true };
-    const preview = await previewImport({ csv });
+    const preview = await previewImport(input.rows ? { rows } : { csv: input.csv });
     if (preview.errors.length) throw new PosError(preview.errors.join("; "));
-    const parsed = parseCsv(csv);
+    const parsed = rows;
     return transact(function* () {
       yield ["lockStore"];
       const prior = yield ["getEntity", TENANT, "pos_import_run", importKey];
@@ -777,7 +793,12 @@ function createPosService(options = {}) {
           created_at: previous.created_at || now(), updated_at: now(),
           metadata: { ...(previous.metadata || {}), pos_sku: row.sku,
             pos_barcodes: row.barcodes, pos_vat_rate_bps: row.vat_rate_bps,
-            category: row.category, pos_unit: previous.metadata?.pos_unit || "each" } };
+            category: row.category, pos_unit: row.unit || previous.metadata?.pos_unit || "each",
+            pos_family_sku: row.family_sku, pos_group_code: row.group_code,
+            pos_cost_minor: row.cost_minor, pos_min_stock: row.min_stock ?? 0,
+            pos_source_on_hand: row.source_on_hand,
+            pos_stock_import_warning: row.source_on_hand !== null &&
+              (!Number.isSafeInteger(row.source_on_hand) || row.source_on_hand < 0) } };
         yield ["upsertEntity", entity(PRODUCT, sid, product, current,
           { title: row.name, category: row.category, scopeModule: "42pay", visibility: "PUBLIC", accessLevel: "PUBLIC_READ" })];
         if (row.price_minor !== null) {
@@ -795,7 +816,8 @@ function createPosService(options = {}) {
         }
       }
       const run = { sid: importKey, store_sid: STORE_ID, actor_id: actor.user_id,
-        count: checked.rows.length, status: "COMPLETED", imported_at: now() };
+        count: checked.rows.length, warnings: checked.warnings.length,
+        status: "COMPLETED", imported_at: now() };
       yield ["upsertEntity", entity("pos_import_run", importKey, run)];
       return { ok: true, run, duplicate: false };
     });
@@ -828,7 +850,7 @@ function createPosService(options = {}) {
   }
 
   async function exportCsv(type) {
-    if (type === "products") return toCsv(["sid", "sku", "name", "barcodes", "category", "price_minor", "vat_rate_bps", "on_hand", "allocated"],
+    if (type === "products") return toCsv(["sid", "sku", "name", "barcodes", "category", "unit", "price_minor", "cost_minor", "min_stock", "vat_rate_bps", "on_hand", "allocated", "source_on_hand", "stock_import_warning"],
       (await catalog()).map((product) => ({ ...product, barcodes: product.barcodes.join("|") })));
     if (type === "sales") return toCsv(["sid", "receipt_id", "sold_at", "cashier_id", "total_minor", "vat_minor", "refunded_minor", "refund_status", "status", "origin"],
       (await list("pos_sale")).map(dataOf).filter(Boolean));

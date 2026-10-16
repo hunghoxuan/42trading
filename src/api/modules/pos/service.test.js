@@ -91,7 +91,28 @@ test("CSV import previews errors, commits once, and exports catalog", async () =
   assert.equal(product.vat_rate_bps, 1000);
   assert.match(await service.exportCsv("products"), /COF-1/);
   const collision = await service.previewImport({ csv: csv.replace("COF-1", "OTHER") });
-  assert.match(collision.errors.join(" "), /barcode belongs to another product/);
+  assert.match(collision.warnings.join(" "), /barcode is shared with another product/);
+});
+
+test("product row import preserves units and source stock while allowing ambiguous barcodes", async () => {
+  const { service, actor } = fixture();
+  const rows = [
+    { row_number: 2, sku: "ITEM-1", name: "Rice 1kg", barcodes: ["123456"], category: "Food",
+      unit: "kg", price_minor: 40000, cost_minor: 32000, min_stock: 0.5, source_on_hand: 2, opening_stock: 2 },
+    { row_number: 3, sku: "ITEM-2", name: "Rice 500g", barcodes: ["123456"], category: "Food",
+      unit: "bag", price_minor: 22000, cost_minor: 17000, min_stock: 1, source_on_hand: 1.5, opening_stock: "" },
+  ];
+  const preview = await service.previewImport({ rows });
+  assert.deepEqual(preview.errors, []);
+  assert.equal(preview.warning_count, 2);
+  const imported = await service.commitImport({ rows }, actor);
+  assert.equal(imported.run.count, 2);
+  const catalog = await service.catalog();
+  assert.deepEqual(catalog.map((product) => product.unit).sort(), ["bag", "kg"]);
+  assert.equal(catalog.find((product) => product.sku === "ITEM-1").cost_minor, 32000);
+  assert.equal(catalog.find((product) => product.sku === "ITEM-2").stock_import_warning, true);
+  assert.equal(catalog.find((product) => product.sku === "ITEM-2").on_hand, 0);
+  assert.equal(catalog.find((product) => product.sku === "ITEM-1").on_hand, 2);
 });
 
 test("cash returns refund only unsold quantities and optionally restock", async () => {
