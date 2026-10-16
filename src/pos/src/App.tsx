@@ -12,6 +12,7 @@ import {
 const money = (value: number) => new Intl.NumberFormat("vi-VN", {
   style: "currency", currency: "VND", maximumFractionDigits: 0,
 }).format(value);
+const todayInVietnam = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(new Date());
 
 function deviceId(): string {
   const key = "42trade-pos-device-id";
@@ -69,6 +70,8 @@ export default function App() {
   const [importCsv, setImportCsv] = useState("");
   const [importPreview, setImportPreview] = useState<{ count: number; errors: string[]; preview: Record<string, unknown>[] } | null>(null);
   const [reportGroup, setReportGroup] = useState("day");
+  const [reportFrom, setReportFrom] = useState(todayInVietnam());
+  const [reportTo, setReportTo] = useState(todayInVietnam());
   const [reportRows, setReportRows] = useState<{ key: string; sales_count: number; quantity: number; base_minor: number; vat_minor: number; gross_minor: number }[]>([]);
   const [query, setQuery] = useState("");
   const [cart, setCart] = useState<SaleLine[]>([]);
@@ -77,6 +80,10 @@ export default function App() {
   const [form, setForm] = useState({ sid: "", name: "", sku: "", barcodes: "", category: "", price: "", vat: "0", image: "" });
   const [stockDelta, setStockDelta] = useState("");
   const [stockReason, setStockReason] = useState("");
+  const [stockCount, setStockCount] = useState<Record<string, unknown> | null>(null);
+  const [stockCountRows, setStockCountRows] = useState<Record<string, unknown>[]>([]);
+  const [stockCountValues, setStockCountValues] = useState<Record<string, string>>({});
+  const [stockCountReason, setStockCountReason] = useState("");
   const [allocation, setAllocation] = useState("");
   const [scanner, setScanner] = useState(false);
   const [receipt, setReceipt] = useState<ReturnType<typeof fromServerSale> | null>(null);
@@ -115,14 +122,15 @@ export default function App() {
   }, []);
 
   const refreshOnline = useCallback(async () => {
-    const [user, catalog, summary, recent, shiftList] = await Promise.all([
-      posApi.auth(), posApi.products(device), posApi.dashboard(), posApi.sales(), posApi.shifts(),
+    const [user, catalog, summary, recent, shiftList, countList] = await Promise.all([
+      posApi.auth(), posApi.products(device), posApi.dashboard(), posApi.sales(), posApi.shifts(), posApi.stockCounts(),
     ]);
     setActor(user.user);
     setProducts(catalog.items);
     setDashboard(summary);
     setServerSales(recent.items as Record<string, unknown>[]);
     setShifts(shiftList.items);
+    setStockCountRows(countList.items);
   }, [device]);
 
   useEffect(() => {
@@ -142,9 +150,9 @@ export default function App() {
   }, [online, pendingKey]);
 
   useEffect(() => {
-    if (online && tab === "reports") posApi.reportSales(reportGroup).then((result) => setReportRows(result.items))
+    if (online && tab === "reports") posApi.reportSales(reportGroup, reportFrom, reportTo).then((result) => setReportRows(result.items))
       .catch((cause) => setError(String(cause)));
-  }, [online, tab, reportGroup]);
+  }, [online, tab, reportGroup, reportFrom, reportTo]);
 
   async function run(action: () => Promise<unknown>, success: string) {
     setBusy(true); setError(""); setMessage("");
@@ -252,6 +260,50 @@ export default function App() {
     await refreshOnline();
   }
 
+  async function voidSelectedSale(sale: Record<string, unknown>) {
+    const reason = prompt("Reason for voiding this cash sale");
+    if (!reason?.trim()) return;
+    await posApi.voidSale(String(sale.sid), reason.trim(), crypto.randomUUID());
+    await refreshOnline();
+  }
+
+  async function startStockCount() {
+    const result = await posApi.createStockCount();
+    setStockCount(result.count);
+    const lines = result.count.lines as { product_sid: string; expected_on_hand: number }[];
+    setStockCountValues(Object.fromEntries(lines.map((line) => [line.product_sid, String(line.expected_on_hand)])));
+    setStockCountReason("");
+  }
+
+  function resumeStockCount(count: Record<string, unknown>) {
+    setStockCount(count);
+    const lines = count.lines as { product_sid: string; counted_on_hand: number | null }[];
+    setStockCountValues(Object.fromEntries(lines.map((line) => [line.product_sid,
+      line.counted_on_hand === null ? "" : String(line.counted_on_hand)])));
+    setStockCountReason(String(count.posting_reason || ""));
+  }
+
+  async function submitCountForReview() {
+    if (!stockCount) throw new Error("Start a stock count first");
+    const lines = (stockCount.lines as { product_sid: string }[]).map((line) => {
+      const value = stockCountValues[line.product_sid];
+      if (value === undefined || value === "") throw new Error("Enter a counted quantity for every product");
+      return { product_sid: line.product_sid, counted_on_hand: Number(value) };
+    });
+    const result = await posApi.submitStockCount(String(stockCount.sid), lines);
+    setStockCount(result.count);
+    await refreshOnline();
+  }
+
+  async function postCount() {
+    if (!stockCount) throw new Error("Select a stock count");
+    await posApi.postStockCount(String(stockCount.sid), stockCountReason);
+    setStockCount(null);
+    setStockCountValues({});
+    setStockCountReason("");
+    await refreshOnline();
+  }
+
   const scanned = useCallback((code: string) => {
     setScanner(false);
     setQuery(code);
@@ -298,7 +350,7 @@ export default function App() {
 
   return <div className="pos-app">
     <header className="pos-header">
-      <div><strong>42Trade POS</strong><span className="pos-muted"> · Main store · VND</span></div>
+      <div><strong>42Trade POS</strong><span className="pos-muted"> · Main store · VND{import.meta.env.VITE_POS_DEMO === "1" ? " · DEMO" : ""}</span></div>
       <div className="pos-row">
         <span className={online ? "pos-online" : "pos-offline"}>{online ? "Online" : "Offline"}</span>
         <span>{pending.length} pending</span>
@@ -324,7 +376,9 @@ export default function App() {
           }} /></label></div></div>
         {bootstrap && <p className="pos-muted">Approved register prices from {new Date(bootstrap.snapshot.issued_at).toLocaleString("vi-VN")}. Refresh the register after price changes.</p>}
         <input className="pos-search" placeholder="Scan or enter product number, barcode, name" value={query}
-          onChange={(event) => setQuery(event.target.value)} autoFocus />
+          onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
+            if (event.key === "Enter" && query.trim()) { event.preventDefault(); scanned(query.trim()); }
+          }} autoFocus />
         {candidates.length > 0 && <div className="pos-candidates"><strong>Possible matches — confirm product</strong>
           {candidates.map((candidate) => <button key={candidate.product_sid} onClick={() => {
             const product = visibleProducts.find((item) => item.sid === candidate.product_sid);
@@ -364,12 +418,29 @@ export default function App() {
     </main>}
 
     {tab === "inventory" && <main className="pos-grid">
-      <section className="pos-panel"><div className="pos-row"><h1>Inventory</h1><div className="pos-row"><button onClick={() => setScanner(true)}>Scan code</button><button onClick={() => { setSelected(null); setForm({ sid: "", name: "", sku: "", barcodes: "", category: "", price: "", vat: "0", image: "" }); }}>New product</button></div></div>
-        <input placeholder="Search products" value={query} onChange={(event) => setQuery(event.target.value)} />
+      <section className="pos-panel"><div className="pos-row"><h1>Inventory</h1><div className="pos-row"><button onClick={() => setScanner(true)}>Scan code</button><button disabled={!online || busy} onClick={() => run(startStockCount, "Stock count started")}>Start stock count</button><button onClick={() => { setSelected(null); setForm({ sid: "", name: "", sku: "", barcodes: "", category: "", price: "", vat: "0", image: "" }); }}>New product</button></div></div>
+        <input placeholder="Search products or scan a product number" value={query} onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => { if (event.key === "Enter" && query.trim()) { event.preventDefault(); scanned(query.trim()); } }} />
         <div className="pos-products">{filtered.map((product) => <button key={product.sid} className="pos-product" onClick={() => selectProduct(product)}>
           <span><strong>{product.name}</strong><small>{product.sku || product.sid}</small></span>
           <span>{money(product.price_minor || 0)}<small>On hand {product.on_hand} · Reserved {product.allocated}</small></span>
-        </button>)}</div></section>
+        </button>)}</div>
+        {!!stockCountRows.length && <div className="pos-count-history"><h2>Stock counts</h2>{stockCountRows.slice(0, 10).map((count) => <button key={String(count.sid)} disabled={!online || busy || count.status === "POSTED"}
+          onClick={() => resumeStockCount(count)}>{String(count.status)} · {new Date(String(count.created_at)).toLocaleString()} · {((count.lines || []) as unknown[]).length} products</button>)}</div>}
+        {stockCount && <div className="pos-count-form"><div className="pos-row"><h2>Stock count · {String(stockCount.status)}</h2>
+          <button onClick={() => { setStockCount(null); setStockCountValues({}); }}>Close count</button></div>
+          {(stockCount.lines as { product_sid: string; name: string; expected_on_hand: number; counted_on_hand: number | null; variance?: number }[]).map((line) => <label className="pos-count-line" key={line.product_sid}>
+            <span>{line.name}<small>System count {line.expected_on_hand}{line.variance !== undefined ? " · variance " + line.variance : ""}</small></span>
+            {stockCount.status === "DRAFT" ? <input aria-label={"Count " + line.name} type="number" min="0" step="1" value={stockCountValues[line.product_sid] ?? ""}
+              onChange={(event) => setStockCountValues({ ...stockCountValues, [line.product_sid]: event.target.value })} /> : <strong>{line.counted_on_hand}</strong>}
+          </label>)}
+          {stockCount.status === "DRAFT" && <button className="pos-primary" disabled={busy} onClick={() => run(submitCountForReview, "Count ready for review")}>Review count</button>}
+          {stockCount.status === "REVIEWED" && <><label>Posting reason<input value={stockCountReason} onChange={(event) => setStockCountReason(event.target.value)} /></label>
+            <button className="pos-danger" disabled={busy || !stockCountReason.trim()} onClick={() => {
+              if (confirm("Post these stock adjustments? This updates on-hand quantities.")) run(postCount, "Stock count posted");
+            }}>Post stock count</button></>}
+        </div>}
+      </section>
       <section className="pos-panel"><h1>{selected ? "Edit product" : "New product"}</h1>
         <div className="pos-form">
           <label>Name<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
@@ -425,7 +496,10 @@ export default function App() {
       </section>
       <section className="pos-panel"><div className="pos-row"><h1>Sales</h1><div className="pos-row"><a href="/api/pos/exports/sales.csv">Sales CSV</a><a href="/api/pos/exports/returns.csv">Returns CSV</a><a href="/api/pos/exports/shifts.csv">Shifts CSV</a></div></div>
         {serverSales.slice(0, 30).map((sale) => <div className="pos-list-line" key={String(sale.sid)}><span>{String(sale.receipt_id)}<small>{String(sale.sold_at)} · {String(sale.refund_status || "PAID")}</small></span><span><strong>{money(Number(sale.total_minor) || 0)}</strong>
-          <button disabled={!online || busy || sale.refund_status === "REFUNDED" || sale.refund_status === "VOIDED"} onClick={() => selectSaleForReturn(sale)}>Return</button></span></div>)}
+          <button disabled={!online || busy || sale.refund_status === "REFUNDED" || sale.refund_status === "VOIDED"} onClick={() => selectSaleForReturn(sale)}>Return</button>
+          <button className="pos-danger" disabled={!online || busy || sale.refund_status === "REFUNDED" || sale.refund_status === "VOIDED"} onClick={() => {
+            if (confirm("Void the remaining refundable quantity and record a cash refund?")) run(() => voidSelectedSale(sale), "Sale voided");
+          }}>Void</button></span></div>)}
         {!serverSales.length && <p className="pos-muted">No synced sales yet.</p>}
         {selectedSale && <div className="pos-return-form"><div className="pos-row"><h2>Cash return · {String(selectedSale.receipt_id)}</h2><button onClick={() => setSelectedSale(null)}>Cancel</button></div>
           {((selectedSale.lines || []) as { product_sid: string; name: string; quantity: number }[]).map((line) => {
@@ -441,7 +515,8 @@ export default function App() {
         </div>}
         <hr/><div className="pos-row"><h2>Report</h2><select value={reportGroup} onChange={(event) => setReportGroup(event.target.value)}>
           <option value="day">By day</option><option value="cashier">By cashier</option><option value="product">By product</option>
-        </select></div>
+        </select><label>From<input type="date" value={reportFrom} onChange={(event) => setReportFrom(event.target.value)} /></label>
+          <label>To<input type="date" value={reportTo} onChange={(event) => setReportTo(event.target.value)} /></label></div>
         {reportRows.map((row) => <div className="pos-list-line" key={row.key}><span>{row.key}<small>{row.sales_count} sales · {row.quantity} units · VAT {money(row.vat_minor)}</small></span><strong>{money(row.gross_minor)}</strong></div>)}
       </section>
     </main>}

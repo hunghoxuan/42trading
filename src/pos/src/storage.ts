@@ -133,6 +133,7 @@ export async function validateBootstrap(value: Bootstrap): Promise<void> {
 }
 
 export async function requestDurableStorage(): Promise<boolean> {
+  if (import.meta.env.VITE_POS_DEMO === "1") return true;
   if (!navigator.storage?.persist || !navigator.storage?.persisted) return false;
   if (await navigator.storage.persisted()) return true;
   return navigator.storage.persist();

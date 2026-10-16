@@ -36,4 +36,8 @@ export default defineConfig({
     strictPort: true,
     proxy: { "/api": { target: apiTarget, changeOrigin: true }, "/auth": { target: apiTarget, changeOrigin: true } },
   },
+  preview: {
+    strictPort: true,
+    proxy: { "/api": { target: apiTarget, changeOrigin: true }, "/auth": { target: apiTarget, changeOrigin: true } },
+  },
 });

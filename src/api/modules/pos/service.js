@@ -315,6 +315,91 @@ function createPosService(options = {}) {
     });
   }
 
+  async function createStockCount(actor) {
+    return transact(function* () {
+      yield ["lockStore"];
+      const products = yield ["listEntities", { tenantId: TENANT, entityType: PRODUCT, limit: 10000 }];
+      const stocks = yield ["listEntities", { tenantId: TENANT, entityType: "pos_stock", limit: 10000 }];
+      const stockBySid = new Map(stocks.map((row) => [row.entity_key, dataOf(row)]));
+      const lines = products.map((row) => dataOf(row)).filter((product) => product?.status === "ACTIVE")
+        .filter((product) => stockBySid.has(product.sid))
+        .map((product) => ({ product_sid: product.sid, name: product.name,
+          expected_on_hand: stockBySid.get(product.sid).on_hand, counted_on_hand: null }));
+      if (!lines.length) throw new PosError("No stock records available to count", 409);
+      const sid = id("COUNT");
+      const count = { sid, store_sid: STORE_ID, status: "DRAFT", actor_id: actor.user_id,
+        created_at: now(), lines };
+      yield ["upsertEntity", entity("pos_stock_count", sid, count)];
+      yield ["appendJournal", { tenantId: TENANT, entityType: "pos_stock_count", entityKey: sid,
+        userId: actor.user_id, entryType: "pos.stock_count.created", data: { line_count: lines.length } }];
+      return { ok: true, count };
+    });
+  }
+
+  async function submitStockCount(input, actor) {
+    const sid = requiredText(input.count_sid, "Count SID");
+    if (!Array.isArray(input.lines)) throw new PosError("Count lines are required");
+    return transact(function* () {
+      yield ["lockStore"];
+      const row = yield ["getEntity", TENANT, "pos_stock_count", sid];
+      const count = dataOf(row);
+      if (!count || count.status !== "DRAFT") throw new PosError("Draft stock count not found", 404);
+      if (count.actor_id !== actor.user_id) throw new PosError("Only the count owner can submit it", 403);
+      const submitted = new Map(input.lines.map((line) => [line.product_sid, line.counted_on_hand]));
+      if (submitted.size !== count.lines.length) throw new PosError("Submit every stock count line", 400);
+      const lines = count.lines.map((line) => {
+        const quantity = nonNegativeInt(submitted.get(line.product_sid), "Counted quantity");
+        return { ...line, counted_on_hand: quantity, variance: quantity - line.expected_on_hand };
+      });
+      const next = { ...count, status: "REVIEWED", lines, submitted_at: now() };
+      yield ["upsertEntity", entity("pos_stock_count", sid, next, row)];
+      yield ["appendJournal", { tenantId: TENANT, entityType: "pos_stock_count", entityKey: sid,
+        userId: actor.user_id, entryType: "pos.stock_count.reviewed",
+        data: { variance_lines: lines.filter((line) => line.variance !== 0).length } }];
+      return { ok: true, count: next };
+    });
+  }
+
+  async function postStockCount(input, actor) {
+    const sid = requiredText(input.count_sid, "Count SID");
+    const reason = requiredText(input.reason, "Posting reason");
+    return transact(function* () {
+      yield ["lockStore"];
+      const row = yield ["getEntity", TENANT, "pos_stock_count", sid];
+      const count = dataOf(row);
+      if (!count || count.status !== "REVIEWED") throw new PosError("Reviewed stock count not found", 404);
+      if (count.actor_id !== actor.user_id) throw new PosError("Only the count owner can post it", 403);
+      for (const line of count.lines) {
+        const stockRow = yield ["getEntity", TENANT, "pos_stock", line.product_sid];
+        const stock = dataOf(stockRow);
+        if (!stock || stock.on_hand !== line.expected_on_hand) {
+          throw new PosError("Stock changed during count for " + line.name + "; start a new count", 409);
+        }
+        if (line.counted_on_hand === null || line.counted_on_hand === undefined) {
+          throw new PosError("Count line is incomplete: " + line.name, 409);
+        }
+        if (line.counted_on_hand < stock.allocated) {
+          throw new PosError("Count is below stock allocated to offline registers for " + line.name, 409);
+        }
+        const delta = line.counted_on_hand - stock.on_hand;
+        if (delta) {
+          yield ["upsertEntity", entity("pos_stock", line.product_sid,
+            { ...stock, on_hand: line.counted_on_hand, updated_at: now() }, stockRow)];
+          yield ["appendJournal", { tenantId: TENANT, entityType: "pos_stock", entityKey: line.product_sid,
+            userId: actor.user_id, entryType: "pos.stock.count_adjustment",
+            data: { count_sid: sid, delta, reason, counted_on_hand: line.counted_on_hand } }];
+        }
+      }
+      const posted = { ...count, status: "POSTED", posted_by: actor.user_id, posted_at: now(), posting_reason: reason };
+      yield ["upsertEntity", entity("pos_stock_count", sid, posted, row)];
+      yield ["appendJournal", { tenantId: TENANT, entityType: "pos_stock_count", entityKey: sid,
+        userId: actor.user_id, entryType: "pos.stock_count.posted", data: { reason } }];
+      return { ok: true, count: posted };
+    });
+  }
+
+  async function stockCounts() { return (await list("pos_stock_count")).map(dataOf).filter(Boolean); }
+
   async function pairDevice(input, actor) {
     const deviceId = requiredText(input.device_id, "Device ID");
     if (!/^[a-zA-Z0-9_-]{8,80}$/.test(deviceId)) throw new PosError("Invalid device ID");
@@ -397,6 +482,8 @@ function createPosService(options = {}) {
       }
       return { ok: true, sale: prior, duplicate: true };
     }
+    const registerRow = yield ["getEntity", TENANT, "pos_register", REGISTER_ID];
+    sale.shift_sid = dataOf(registerRow)?.current_shift_sid || null;
     let deviceRow = null;
     if (mode === "offline") {
       deviceRow = yield ["getEntity", TENANT, "pos_device", claims.device_id];
@@ -461,6 +548,7 @@ function createPosService(options = {}) {
     }
     const saved = { sid: sale.idempotency_key, idempotency_key: sale.idempotency_key,
       receipt_id: sale.receipt_id || id("RCP"), store_sid: STORE_ID, register_sid: REGISTER_ID,
+      shift_sid: sale.shift_sid || null,
       device_id: sale.device_id || null, sequence: sale.sequence || null, cashier_id: sale.cashier_id,
       lines: calculated.lines, total_minor: calculated.total_minor,
       vat_minor: calculated.lines.reduce((sum, line) => sum + line.vat_minor, 0),
@@ -616,9 +704,10 @@ function createPosService(options = {}) {
       const saleRows = yield ["listEntities", { tenantId: TENANT, entityType: "pos_sale", limit: 100000 }];
       const returnRows = yield ["listEntities", { tenantId: TENANT, entityType: "pos_return", limit: 100000 }];
       const salesAmount = saleRows.map(dataOf).filter((sale) => sale?.status === "PAID" &&
-        sale.sold_at >= shift.opened_at && sale.sold_at <= now()).reduce((sum, sale) => sum + sale.total_minor, 0);
+        sale.shift_sid === sid).reduce((sum, sale) => sum + sale.total_minor, 0);
       const returnsAmount = returnRows.map(dataOf).filter((item) => item?.returned_at >= shift.opened_at &&
-        item.returned_at <= now()).reduce((sum, item) => sum + item.amount_minor, 0);
+        item.returned_at <= now() && saleRows.some((saleRow) => dataOf(saleRow)?.sid === item.sale_sid &&
+          dataOf(saleRow)?.shift_sid === sid)).reduce((sum, item) => sum + item.amount_minor, 0);
       const expected = shift.opening_cash_minor + salesAmount - returnsAmount;
       const closed = { ...shift, status: "CLOSED", closed_at: now(), closed_by: actor.user_id,
         sales_minor: salesAmount, refunds_minor: returnsAmount, expected_cash_minor: expected,
@@ -751,7 +840,8 @@ function createPosService(options = {}) {
   }
 
   return { init, catalog, get, upsertProduct, setPrice, adjustStock, pairDevice,
-    allocateStock, bootstrap, checkout, syncSale, sales, refundSale, shifts, openShift, closeShift, dashboard, recognizeImage,
+    allocateStock, createStockCount, submitStockCount, postStockCount, stockCounts,
+    bootstrap, checkout, syncSale, sales, refundSale, shifts, openShift, closeShift, dashboard, recognizeImage,
     previewImport, commitImport, reportSales, exportCsv,
     verifyGrant: (token) => verifyGrant(token, keys) };
 }

@@ -26,6 +26,7 @@ async function handlePosRequest(context) {
   if (write && (route === "/products" || /^\/products\/[^/]+/.test(route))) permission = "apis.pos.catalog.write";
   if (write && route === "/prices") permission = "apis.pos.price.write";
   if (write && route === "/stock/movements") permission = "apis.pos.stock.write";
+  if (write && /^\/stock\/counts/.test(route)) permission = "apis.pos.stock.write";
   if (write && route === "/offline/allocations") permission = "apis.pos.offline.allocate";
   if (write && (/^\/sales\/[^/]+\/(returns|void)$/.test(route))) permission = "apis.pos.refunds.write";
   if (write && /^\/shifts\/[^/]+\/close$/.test(route)) permission = "apis.pos.shifts.write";
@@ -52,6 +53,14 @@ async function handlePosRequest(context) {
       output = await service.setPrice(payload, actor);
     } else if (route === "/stock/movements" && method === "POST") {
       output = await service.adjustStock(payload, actor);
+    } else if (route === "/stock/counts" && method === "GET") {
+      output = { ok: true, items: await service.stockCounts() };
+    } else if (route === "/stock/counts" && method === "POST") {
+      output = await service.createStockCount(actor);
+    } else if (/^\/stock\/counts\/[^/]+\/submit$/.test(route) && method === "POST") {
+      output = await service.submitStockCount({ ...payload, count_sid: decodeURIComponent(route.slice(14, -7)) }, actor);
+    } else if (/^\/stock\/counts\/[^/]+\/post$/.test(route) && method === "POST") {
+      output = await service.postStockCount({ ...payload, count_sid: decodeURIComponent(route.slice(14, -5)) }, actor);
     } else if (route === "/devices/pair" && method === "POST") {
       output = await service.pairDevice(payload, actor);
     } else if (route === "/offline/allocations" && method === "PUT") {

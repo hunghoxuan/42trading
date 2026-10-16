@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Core POS implementation in progress; see README.md for delivered scope and open requirements |
+| Status | One-store cash POS core implemented; see README.md for delivered scope and open requirements |
 | Date | 2026-10-16 |
 | Owner | 42Trade monorepo |
 

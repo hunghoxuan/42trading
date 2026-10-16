@@ -28,6 +28,12 @@ export const posApi = {
   archiveProduct: (sid: string) => call<ApiResult>("/api/pos/products/" + encodeURIComponent(sid) + "/archive", "POST", {}),
   setPrice: (product_sid: string, price_minor: number) => call<ApiResult>("/api/pos/prices", "PUT", { product_sid, price_minor }),
   adjustStock: (product_sid: string, delta: number, reason: string) => call<ApiResult>("/api/pos/stock/movements", "POST", { product_sid, delta, reason }),
+  createStockCount: () => call<ApiResult & { count: Record<string, unknown> }>("/api/pos/stock/counts", "POST", {}),
+  stockCounts: () => call<ApiResult & { items: Record<string, unknown>[] }>("/api/pos/stock/counts"),
+  submitStockCount: (sid: string, lines: { product_sid: string; counted_on_hand: number }[]) => call<ApiResult & { count: Record<string, unknown> }>(
+    "/api/pos/stock/counts/" + encodeURIComponent(sid) + "/submit", "POST", { lines }),
+  postStockCount: (sid: string, reason: string) => call<ApiResult & { count: Record<string, unknown> }>(
+    "/api/pos/stock/counts/" + encodeURIComponent(sid) + "/post", "POST", { reason }),
   pair: (device_id: string) => call<ApiResult>("/api/pos/devices/pair", "POST", { device_id }),
   allocate: (device_id: string, product_sid: string, quantity: number) => call<ApiResult>(
     "/api/pos/offline/allocations", "PUT", { device_id, product_sid, quantity }),
@@ -44,6 +50,8 @@ export const posApi = {
   refundSale: (saleSid: string, reason: string, lines: { product_sid: string; quantity: number; restock: boolean }[],
     idempotencyKey: string) => call<ApiResult>("/api/pos/sales/" + encodeURIComponent(saleSid) + "/returns", "POST",
     { idempotency_key: idempotencyKey, reason, lines }),
+  voidSale: (saleSid: string, reason: string, idempotencyKey: string) => call<ApiResult>(
+    "/api/pos/sales/" + encodeURIComponent(saleSid) + "/void", "POST", { idempotency_key: idempotencyKey, reason }),
   shifts: () => call<ApiResult & { items: Record<string, unknown>[] }>("/api/pos/shifts"),
   openShift: (opening_cash_minor: number) => call<ApiResult>("/api/pos/shifts/open", "POST", { opening_cash_minor }),
   closeShift: (sid: string, counted_cash_minor: number, pending_count: number) => call<ApiResult>(
@@ -53,7 +61,7 @@ export const posApi = {
     "/api/pos/imports/preview", "POST", { csv }),
   commitImport: (csv: string) => call<ApiResult & { run: { count: number }; duplicate: boolean }>(
     "/api/pos/imports", "POST", { csv }),
-  reportSales: (groupBy: string) => call<ApiResult & { items: {
+  reportSales: (groupBy: string, from = "", to = "") => call<ApiResult & { items: {
     key: string; sales_count: number; quantity: number; base_minor: number; vat_minor: number; gross_minor: number;
-  }[] }>("/api/pos/reports/sales?group_by=" + encodeURIComponent(groupBy)),
+  }[] }>("/api/pos/reports/sales?" + new URLSearchParams({ group_by: groupBy, from, to })),
 };

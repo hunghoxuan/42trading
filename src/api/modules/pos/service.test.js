@@ -132,3 +132,30 @@ test("a cash shift totals sales and refunds and rejects local pending sales", as
   assert.equal(closed.expected_cash_minor, 35000);
   assert.equal(closed.variance_minor, 0);
 });
+
+test("stock counts can be reviewed and posted, but reject stale or allocated stock", async () => {
+  const { service, actor } = fixture();
+  await service.upsertProduct({ sid: "P1", name: "Coffee", sku: "COF-1" }, actor);
+  await service.adjustStock({ product_sid: "P1", delta: 5, reason: "received" }, actor);
+  const count = (await service.createStockCount(actor)).count;
+  const reviewed = await service.submitStockCount({ count_sid: count.sid,
+    lines: [{ product_sid: "P1", counted_on_hand: 4 }] }, actor);
+  assert.equal(reviewed.count.lines[0].variance, -1);
+  await service.postStockCount({ count_sid: count.sid, reason: "Physical count" }, actor);
+  assert.equal((await service.catalog())[0].on_hand, 4);
+
+  const stale = (await service.createStockCount(actor)).count;
+  await service.submitStockCount({ count_sid: stale.sid,
+    lines: [{ product_sid: "P1", counted_on_hand: 4 }] }, actor);
+  await service.adjustStock({ product_sid: "P1", delta: 1, reason: "received after count" }, actor);
+  await assert.rejects(service.postStockCount({ count_sid: stale.sid, reason: "Physical count" }, actor),
+    /Stock changed during count/);
+
+  const allocated = (await service.createStockCount(actor)).count;
+  await service.submitStockCount({ count_sid: allocated.sid,
+    lines: [{ product_sid: "P1", counted_on_hand: 1 }] }, actor);
+  await service.pairDevice({ device_id: "device-001" }, actor);
+  await service.allocateStock({ device_id: "device-001", product_sid: "P1", quantity: 2 }, actor);
+  await assert.rejects(service.postStockCount({ count_sid: allocated.sid, reason: "Physical count" }, actor),
+    /below stock allocated/);
+});

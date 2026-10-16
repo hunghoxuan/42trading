@@ -45,6 +45,10 @@ small { display: block; font-size: 11px; color: var(--muted); }
 .pos-form { display: grid; gap: 10px; }
 .pos-form hr { width: 100%; border: 0; border-top: 1px solid var(--border); margin: 5px 0; }
 .pos-import-preview { border: 1px solid var(--border); border-radius: var(--radius-md); padding: 10px; margin-top: 10px; }
+.pos-count-form { display: grid; gap: 8px; margin-top: 14px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.pos-count-history { display: grid; gap: 6px; margin-top: 14px; }
+.pos-count-history button { display: flex; justify-content: space-between; text-align: left; }
+.pos-count-line { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 10px; align-items: center; border-bottom: 1px solid var(--border); padding: 6px 0; }
 .pos-return-form { display: grid; gap: 10px; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 12px; margin: 12px 0; }
 .pos-return-form > label { display: grid; gap: 5px; }
 .pos-return-line { display: grid; grid-template-columns: minmax(0, 1fr) 90px 85px; align-items: center; gap: 8px; }
