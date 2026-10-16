@@ -4,6 +4,7 @@ export type Product = {
   sku: string;
   barcodes: string[];
   category: string;
+  supplier: string;
   unit: string;
   family_sku: string;
   group_code: string;

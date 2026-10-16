@@ -6,6 +6,7 @@ export type ProductImportRow = {
   name: string;
   barcodes: string[];
   category: string;
+  supplier: string;
   unit: string;
   family_sku: string;
   group_code: string;
@@ -66,6 +67,7 @@ export async function parseXlsxProducts(file: File): Promise<ProductImportRow[]>
       name,
       barcodes: barcode ? [barcode] : [],
       category: cellText(sourceValue(raw, ["category", "group_name", "Tên nhóm sản phẩm"])),
+      supplier: cellText(sourceValue(raw, ["supplier", "vendor", "supplier_name", "Nhà cung cấp", "Tên nhà cung cấp"])),
       unit: cellText(sourceValue(raw, ["unit", "unit_name", "Đơn vị tính"])) || "each",
       family_sku: cellText(sourceValue(raw, ["family_sku", "Mã sản phẩm cùng loại"])),
       group_code: cellText(sourceValue(raw, ["group_code", "Mã nhóm sản phẩm"])),
@@ -88,6 +90,7 @@ export async function downloadProductsXlsx(products: Product[]): Promise<void> {
     "Product name": product.name,
     Barcodes: product.barcodes.join("|"),
     Category: product.category,
+    Supplier: product.supplier,
     Unit: product.unit,
     "Price VND": product.price_minor ?? "",
     "Cost VND": product.cost_minor ?? "",

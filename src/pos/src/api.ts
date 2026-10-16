@@ -28,7 +28,14 @@ async function call<T extends ApiResult>(path: string, method = "GET", body?: un
 
 export const posApi = {
   auth: () => call<ApiResult & { user: { user_id: string; name?: string; roles?: string[] } }>("/auth/me?hydrate=0"),
-  products: (deviceId = "") => call<ApiResult & { items: Product[] }>("/api/pos/products" + (deviceId ? "?device_id=" + encodeURIComponent(deviceId) : "")),
+  products: (deviceId = "", includeArchived = false) => {
+    const params = new URLSearchParams();
+    if (deviceId) params.set("device_id", deviceId);
+    if (includeArchived) params.set("include_archived", "1");
+    const serialized = params.toString();
+    const query = serialized ? "?" + serialized : "";
+    return call<ApiResult & { items: Product[] }>("/api/pos/products" + query);
+  },
   saveProduct: (product: Record<string, unknown>) => call<ApiResult & { product: Product }>(
     product.sid ? "/api/pos/products/" + encodeURIComponent(String(product.sid)) : "/api/pos/products",
     product.sid ? "PATCH" : "POST", product),

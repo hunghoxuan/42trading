@@ -148,6 +148,7 @@ function productView(row, priceRow, stockRow, allocationRow) {
     sku: metadata.pos_sku || "",
     barcodes: Array.isArray(metadata.pos_barcodes) ? metadata.pos_barcodes : [],
     category: metadata.category || product.type || "",
+    supplier: metadata.pos_supplier || "",
     unit: metadata.pos_unit || "each",
     family_sku: metadata.pos_family_sku || "",
     group_code: metadata.pos_group_code || "",
@@ -230,7 +231,7 @@ function createPosService(options = {}) {
       ? runSyncScript(tx, script)
       : runAsyncScript(tx, script));
   }
-  async function catalog(deviceId = "") {
+  async function catalog(deviceId = "", includeArchived = false) {
     const [products, prices, stocks, allocations] = await Promise.all([
       list(PRODUCT), list("pos_price"), list("pos_stock"), deviceId ? list("pos_stock_allocation") : [],
     ]);
@@ -240,7 +241,7 @@ function createPosService(options = {}) {
     const allocationByKey = byKey(allocations);
     return products.map((row) => productView(row, priceByKey.get(row.entity_key),
       stockByKey.get(row.entity_key), allocationByKey.get(deviceId + ":" + row.entity_key)))
-      .filter((product) => product.status === "ACTIVE");
+      .filter((product) => includeArchived || product.status === "ACTIVE");
   }
 
   async function upsertProduct(input, actor) {
@@ -268,7 +269,7 @@ function createPosService(options = {}) {
       const current = yield ["getEntity", TENANT, PRODUCT, sid];
       const previous = dataOf(current) || {};
       const product = {
-        ...previous, sid, name, image: String(input.image || previous.image || ""),
+        ...previous, sid, name, image: String(input.image ?? previous.image ?? ""),
         type: String(input.type || previous.type || "retail"),
         status: input.status === "ARCHIVED" ? "ARCHIVED" : "ACTIVE",
         create_sid: previous.create_sid || actor.user_id,
@@ -279,6 +280,7 @@ function createPosService(options = {}) {
           pos_cost_minor: costMinor === undefined ? previous.metadata?.pos_cost_minor ?? null : costMinor,
           pos_min_stock: minStock === undefined ? previous.metadata?.pos_min_stock ?? 0 : minStock,
           category: String(input.category || ""),
+          pos_supplier: String(input.supplier ?? previous.metadata?.pos_supplier ?? ""),
           description: String(input.description || ""),
         },
       };
@@ -287,7 +289,7 @@ function createPosService(options = {}) {
         visibility: "PUBLIC", accessLevel: "PUBLIC_READ",
       })];
     });
-    return { ok: true, product: (await catalog()).find((row) => row.sid === sid) };
+    return { ok: true, product: (await catalog("", true)).find((row) => row.sid === sid) };
   }
 
   async function setPrice(input, actor) {
@@ -793,7 +795,8 @@ function createPosService(options = {}) {
           created_at: previous.created_at || now(), updated_at: now(),
           metadata: { ...(previous.metadata || {}), pos_sku: row.sku,
             pos_barcodes: row.barcodes, pos_vat_rate_bps: row.vat_rate_bps,
-            category: row.category, pos_unit: row.unit || previous.metadata?.pos_unit || "each",
+            category: row.category, pos_supplier: row.supplier || previous.metadata?.pos_supplier || "",
+            pos_unit: row.unit || previous.metadata?.pos_unit || "each",
             pos_family_sku: row.family_sku, pos_group_code: row.group_code,
             pos_cost_minor: row.cost_minor, pos_min_stock: row.min_stock ?? 0,
             pos_source_on_hand: row.source_on_hand,
@@ -850,8 +853,8 @@ function createPosService(options = {}) {
   }
 
   async function exportCsv(type) {
-    if (type === "products") return toCsv(["sid", "sku", "name", "barcodes", "category", "unit", "price_minor", "cost_minor", "min_stock", "vat_rate_bps", "on_hand", "allocated", "source_on_hand", "stock_import_warning"],
-      (await catalog()).map((product) => ({ ...product, barcodes: product.barcodes.join("|") })));
+    if (type === "products") return toCsv(["sid", "sku", "name", "barcodes", "category", "supplier", "unit", "image", "status", "price_minor", "cost_minor", "min_stock", "vat_rate_bps", "on_hand", "allocated", "source_on_hand", "stock_import_warning"],
+      (await catalog("", true)).map((product) => ({ ...product, barcodes: product.barcodes.join("|") })));
     if (type === "sales") return toCsv(["sid", "receipt_id", "sold_at", "cashier_id", "total_minor", "vat_minor", "refunded_minor", "refund_status", "status", "origin"],
       (await list("pos_sale")).map(dataOf).filter(Boolean));
     if (type === "returns") return toCsv(["sid", "sale_sid", "returned_at", "actor_id", "amount_minor", "reason", "voided"],

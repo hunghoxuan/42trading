@@ -96,7 +96,7 @@ function validateRows(rows, existingProducts) {
     if (opening_stock !== null && bySku.has(sku)) {
       errors.push("Row " + rowNumber + ": opening_stock is only allowed before stock exists");
     }
-    return { sku, name, barcodes, category: String(raw.category || ""), unit: String(raw.unit || "each"),
+    return { sku, name, barcodes, category: String(raw.category || ""), supplier: String(raw.supplier || ""), unit: String(raw.unit || "each"),
       family_sku: String(raw.family_sku || ""), group_code: String(raw.group_code || ""),
       price_minor, cost_minor, min_stock, source_on_hand, opening_stock, vat_rate_bps,
       current: bySku.get(sku) || null };

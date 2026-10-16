@@ -39,7 +39,8 @@ async function handlePosRequest(context) {
     const payload = write ? await readPosJson(req) : {};
     let output;
     if (route === "/products" && method === "GET") {
-      output = { ok: true, items: await service.catalog(url.searchParams.get("device_id") || "") };
+      output = { ok: true, items: await service.catalog(url.searchParams.get("device_id") || "",
+        url.searchParams.get("include_archived") === "1") };
     } else if (route === "/products" && method === "POST") {
       output = await service.upsertProduct(payload, actor);
     } else if (/^\/products\/[^/]+$/.test(route) && method === "PATCH") {

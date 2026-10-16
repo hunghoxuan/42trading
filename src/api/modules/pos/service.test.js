@@ -78,8 +78,8 @@ test("online sale cannot use stock reserved for an offline device", async () => 
 
 test("CSV import previews errors, commits once, and exports catalog", async () => {
   const { service, actor } = fixture();
-  const csv = "sku,name,barcodes,category,price_minor,vat_rate_bps,opening_stock\n" +
-    "COF-1,Coffee,1234,Beverage,25000,1000,5\n";
+  const csv = "sku,name,barcodes,category,supplier,price_minor,vat_rate_bps,opening_stock\n" +
+    "COF-1,Coffee,1234,Beverage,Acme,25000,1000,5\n";
   const preview = await service.previewImport({ csv });
   assert.deepEqual(preview.errors, []);
   assert.equal(preview.preview[0].action, "CREATE");
@@ -89,9 +89,25 @@ test("CSV import previews errors, commits once, and exports catalog", async () =
   assert.equal(product.price_minor, 25000);
   assert.equal(product.on_hand, 5);
   assert.equal(product.vat_rate_bps, 1000);
+  assert.equal(product.supplier, "Acme");
   assert.match(await service.exportCsv("products"), /COF-1/);
+  assert.match(await service.exportCsv("products"), /Acme/);
   const collision = await service.previewImport({ csv: csv.replace("COF-1", "OTHER") });
   assert.match(collision.warnings.join(" "), /barcode is shared with another product/);
+});
+
+test("inventory can list inactive products and update supplier and image details", async () => {
+  const { service, actor } = fixture();
+  await service.upsertProduct({ sid: "P1", name: "Coffee", sku: "COF-1", supplier: "Acme", image: "https://example.test/coffee.png" }, actor);
+  assert.equal((await service.catalog()).length, 1);
+  const archived = await service.upsertProduct({ sid: "P1", name: "Coffee", sku: "COF-1", supplier: "Bean Co", image: "data:image/png;base64,abc", status: "ARCHIVED" }, actor);
+  assert.equal(archived.product.supplier, "Bean Co");
+  assert.equal(archived.product.image, "data:image/png;base64,abc");
+  assert.equal((await service.catalog()).length, 0);
+  assert.equal((await service.catalog("", true))[0].status, "ARCHIVED");
+  const restored = await service.upsertProduct({ sid: "P1", name: "Coffee", sku: "COF-1", status: "ACTIVE" }, actor);
+  assert.equal(restored.product.status, "ACTIVE");
+  assert.equal(restored.product.supplier, "Bean Co");
 });
 
 test("product row import preserves units and source stock while allowing ambiguous barcodes", async () => {
