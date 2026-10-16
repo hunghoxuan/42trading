@@ -19,6 +19,7 @@
         "pages.42pay.products",
         "pages.42pay.offers",
         "pages.42pay.orders",
+        "pages.pos",
         "pages.settings.profile",
         "pages.settings.notification",
         "apis.auth.me",
@@ -30,7 +31,8 @@
         "apis.42pay.products.write",
         "apis.42pay.offers.read",
         "apis.42pay.offers.write",
-        "apis.42pay.orders.read"
+        "apis.42pay.orders.read",
+        "apis.pos.*"
       ]
     },
     "buyer": {
@@ -71,9 +73,30 @@
         "apis.auth.profile.write",
         "apis.auth.metadata.write"
       ]
+    },
+    "pos_cashier": {
+      "inherits": [],
+      "permissions": ["pages.pos", "apis.auth.me", "apis.pos.read", "apis.pos.sales.write"]
+    },
+    "pos_manager": {
+      "inherits": ["pos_cashier"],
+      "permissions": ["apis.pos.catalog.write", "apis.pos.price.write", "apis.pos.stock.write", "apis.pos.offline.allocate"]
+    },
+    "pos_stock": {
+      "inherits": [],
+      "permissions": ["pages.pos", "apis.auth.me", "apis.pos.read", "apis.pos.catalog.write", "apis.pos.stock.write"]
+    },
+    "pos_auditor": {
+      "inherits": [],
+      "permissions": ["pages.pos", "apis.auth.me", "apis.pos.read"]
     }
   },
   "pages": [
+    {
+      "label": "POS",
+      "to": "/pos/",
+      "permission": "pages.pos"
+    },
     {
       "label": "42Pay Dashboard",
       "to": "/admin/42pay/dashboard",

@@ -461,6 +461,30 @@ class SqliteUniversalStoreAdapter {
     this.db = new DatabaseSync(sqlitePath);
     this.db.exec("PRAGMA journal_mode = WAL;");
     this.db.exec("PRAGMA foreign_keys = ON;");
+    this.transactionQueue = Promise.resolve();
+  }
+
+  async withTransaction(work) {
+    const previous = this.transactionQueue;
+    let release;
+    this.transactionQueue = new Promise((resolve) => { release = resolve; });
+    await previous;
+    try {
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        const result = work(this);
+        if (result && typeof result.then === "function") {
+          throw new Error("SQLite transaction callback must be synchronous");
+        }
+        this.db.exec("COMMIT");
+        return result;
+      } catch (error) {
+        this.db.exec("ROLLBACK");
+        throw error;
+      }
+    } finally {
+      release();
+    }
   }
 
   init() {
@@ -1194,6 +1218,24 @@ class PostgresUniversalStoreAdapter {
         ? options.pool
         : null;
     this._initPromise = null;
+  }
+
+  async withTransaction(work) {
+    await this.init();
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const transactional = Object.create(this);
+      transactional.pool = { query: (...args) => client.query(...args) };
+      const result = await work(transactional);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async init() {

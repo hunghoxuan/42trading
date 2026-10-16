@@ -1246,6 +1246,7 @@ function create42PayRepo(options = {}) {
       for (let index = 0; index < SEEDED_PRODUCTS.length; index += 1) {
         const product = SEEDED_PRODUCTS[index];
         const current = existingProducts.find((row) => row.sid === product.sid) || null;
+        if (current) continue;
         const createdAt = current?.create_at || nowIso();
         await putType(repo, PRODUCT_TYPE, product.sid, {
           id: current?.id || index + 1,
@@ -1265,6 +1266,7 @@ function create42PayRepo(options = {}) {
       for (let index = 0; index < SEEDED_OFFERS.length; index += 1) {
         const offer = SEEDED_OFFERS[index];
         const current = existingOffers.find((row) => row.sid === offer.sid) || null;
+        if (current) continue;
         const qrCode = createQrPayload(offer);
         const createdAt = current?.create_at || nowIso();
         await putType(repo, OFFER_TYPE, offer.sid, {

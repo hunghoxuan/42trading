@@ -32,6 +32,8 @@ const { createMt5PythonBridgeClient } = require("../shared/clients/mt5PythonBrid
 const tradesDomain = require("../modules/42trade/trades0");
 const usersDomain = require("../modules/system/users");
 const { create42PayService } = require("../modules/42pay/service");
+const { createPosService } = require("../modules/pos/service");
+const { handlePosRequest } = require("../modules/pos/httpHandlers");
 const { createTradesService } = require("../modules/trades/service");
 const { createYtDlpService } = require("../modules/media/ytDlp/service");
 const { createYtDlpHttpHandler } = require("../modules/media/ytDlp/httpHandlers");
@@ -8077,6 +8079,7 @@ function uiDefaultAuthState(emailOverride = "") {
 
 let UI_USER_REPO = null;
 let PAY42_SERVICE = null;
+let POS_SERVICE = null;
 let TRADES_SERVICE = null;
 let UNIVERSAL_STORE_SERVICE = null;
 let PAY42_SEED_PROMISE = null;
@@ -8101,6 +8104,16 @@ function universalStoreService() {
     postgresUrl: CFG.mt5PostgresUrl,
   });
   return UNIVERSAL_STORE_SERVICE;
+}
+
+function posService() {
+  if (POS_SERVICE) return POS_SERVICE;
+  POS_SERVICE = createPosService({
+    provider: String(CFG.mt5StorageBackend || "sqlite").trim().toLowerCase(),
+    sqlitePath: resolveConfiguredSqlitePath(),
+    postgresUrl: CFG.mt5PostgresUrl,
+  });
+  return POS_SERVICE;
 }
 
 function pay42Service() {
@@ -8252,7 +8265,10 @@ async function ensure42PaySeeded() {
         await pay42Service().migrateLegacySqliteToProvider();
         await pay42Service().migrateLegacyActorIds();
       }
-      return pay42Service().seedInitialData();
+      if (asBool(process.env.PAY42_SEED_DEMO, false)) {
+        return pay42Service().seedInitialData();
+      }
+      return { ok: true, seeded: false };
     })().catch((error) => {
       PAY42_SEED_PROMISE = null;
       throw error;
@@ -27298,6 +27314,8 @@ const appHandler = async (req, res) => {
       apiPath.startsWith("/pay42/") ||
       apiPath === "/42pay" ||
       apiPath.startsWith("/42pay/") ||
+      apiPath === "/pos" ||
+      apiPath.startsWith("/pos/") ||
       apiPath === "/sse" ||
       apiPath.startsWith("/sse/")
     ) {
@@ -27345,6 +27363,11 @@ const appHandler = async (req, res) => {
   }
 
   if (await handleYtDlpRequest(req, res, url)) return;
+
+  if (await handlePosRequest({
+    req, res, url, service: posService(), readJson, json,
+    requirePermission: requireUiPermission, getActor: getUiSessionFromReq,
+  })) return;
 
   if (
     LEGACY_TRADES_TEMP_DISABLED &&

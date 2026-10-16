@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && pnpm --dir ../pos build && node -e \"require('fs').cpSync('../pos/dist','dist/pos',{recursive:true})\"",
     "preview": "vite preview",
     "test:unit": "node --test tests/unit/**/*.test.mjs",
     "test:e2e": "playwright test"

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed, not implemented |
+| Status | Core POS implementation in progress; see README.md for delivered scope and open requirements |
 | Date | 2026-10-16 |
 | Owner | 42Trade monorepo |
 
@@ -208,15 +208,11 @@ Add import/export, dashboard and reports, product-photo recognition, low-stock a
 
 Dedicated printer/drawer integrations, local image recognition, loyalty, procurement, additional stores/merchants, and native app-store packages. These are outside the first release.
 
-## 8. Decisions to confirm before implementation
+## 8. Confirmed launch decisions and open choices
 
-Confirmed: offline cash sales are required in the first release; launch with one store.
+Confirmed: one store in Vietnam, VND amounts, cash sales while offline, and VAT added on top of the retail price. New products default to 0% VAT until set per product. The implementation shares the existing 42Pay catalog and uses an eight-hour offline grant.
 
-1. Country, currency, tax rules, and any connected payment provider.
-2. Scanner and receipt-printer models, if hardware integration is required.
-3. Offline grant duration, maximum time since catalog/price refresh, and per-device stock-allocation policy.
-4. Whether the canonical 42Pay catalog is shared with POS immediately or exposed through a staged import/mapping.
-5. Required recovery procedure if a device is lost before its sales sync; browser storage cannot guarantee recovery of unsynced data.
+Open before a production rollout: printer/scanner models if hardware integration is needed; connected payment provider and its reconciliation contract; stock allocation limits for each device; manager recovery procedure for an unsynced lost device. The current implementation scope and operational limits are listed in README.md.
 
 ## 9. Source references
 

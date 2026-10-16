@@ -1,6 +1,7 @@
 packages:
   - "src/api"
   - "src/admin"
+  - "src/pos"
   - "src/db"
 allowBuilds:
   better-sqlite3: set this to true or false
