@@ -4,6 +4,13 @@ import { useRegisterSW } from "virtual:pwa-register/react";
 import { ApiError, posApi, type ImportPreview } from "./api";
 import Receipt, { fromLocalSale, fromServerSale } from "./Receipt";
 import { t, type Language } from "./i18n";
+// Reuse the existing 42trade React components; their sources are JavaScript, not TypeScript.
+// @ts-expect-error shared JS component has no declaration file
+import AdminPageToolbar from "../../admin/shared/components/AdminPageToolbar";
+// @ts-expect-error shared JS component has no declaration file
+import PageHeader from "../../admin/shared/components/PageHeader";
+// @ts-expect-error shared JS component has no declaration file
+import ResponsivePanel from "../../admin/shared/components/ResponsivePanel";
 import {
   commitLocalSale, listLocalSales, readBootstrap, requestDurableStorage,
   saveBootstrap, updateSaleState, validateBootstrap,
@@ -381,20 +388,22 @@ export default function App() {
     if (!available.length) setMessage("No match in this register's approved catalog. Refresh it or try a product number.");
   }
 
-  return <div className="pos-app" lang={language}>
-    <header className="pos-header">
-      <div><strong>42Trade POS</strong><span className="pos-muted"> · {tr("Main store")} · VND{import.meta.env.VITE_POS_DEMO === "1" ? " · DEMO" : ""}</span></div>
-      <div className="pos-row">
-        <button aria-label={language === "vi" ? "Switch to English" : "Chuyển sang Tiếng Việt"} onClick={() => setLanguage(language === "vi" ? "en" : "vi")}>{language === "vi" ? "English" : "Tiếng Việt"}</button>
-        <span className={online ? "pos-online" : "pos-offline"}>{tr(online ? "Online" : "Offline")}</span>
+  return <section className="pos-app logs-page-container trades-page-container stack-layout fadeIn" lang={language}>
+    <PageHeader className="trades-page-header pos-page-header" title="42Trade POS" actions={
+      <div className="pos-header-actions">
+        <span className="pos-muted">{tr("Main store")} · VND{import.meta.env.VITE_POS_DEMO === "1" ? " · DEMO" : ""}</span>
+        <button className="secondary-button" aria-label={language === "vi" ? "Switch to English" : "Chuyển sang Tiếng Việt"} onClick={() => setLanguage(language === "vi" ? "en" : "vi")}>{language === "vi" ? "English" : "Tiếng Việt"}</button>
+        <span className={online ? "pos-online status-dot status-active" : "pos-offline status-dot status-warning"}>{tr(online ? "Online" : "Offline")}</span>
         <span>{pending.length} {tr("pending")}</span>
-        {attention.length > 0 && <span className="pos-error">{attention.length} {tr("needs attention")}</span>}
+        {attention.length > 0 && <span className="pos-error status-dot status-danger">{attention.length} {tr("needs attention")}</span>}
       </div>
-    </header>
-    <nav className="pos-tabs" aria-label="POS sections">
-      {(["sale", "inventory", "reports", "register"] as Tab[]).map((item) =>
-        <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{tr(item[0].toUpperCase() + item.slice(1))}</button>)}
-    </nav>
+    } />
+    <AdminPageToolbar className="trades-toolbar-panel pos-tabs-toolbar" actions={
+      <nav className="pos-tabs" aria-label="POS sections">
+        {(["sale", "inventory", "reports", "register"] as Tab[]).map((item) =>
+          <button key={item} type="button" className={tab === item ? "secondary-button active" : "secondary-button"} onClick={() => setTab(item)}>{tr(item[0].toUpperCase() + item.slice(1))}</button>)}
+      </nav>
+    } />
     {error && <div className="pos-alert pos-error" role="alert">{error}
       {error.includes("AUTH_REQUIRED") && <> · <a href="/login?next=/pos/">{tr("Sign in to 42Trade")}</a></>}
     </div>}
@@ -402,13 +411,12 @@ export default function App() {
       <button disabled={cart.length > 0 || busy} onClick={() => updateServiceWorker(true)}>{tr("Update POS")}</button></div>}
     {message && <div className="pos-alert pos-success" role="status">{message}</div>}
 
-    {tab === "sale" && <main className="pos-checkout">
-      <section className="pos-panel">
-        <div className="pos-row"><h1>{tr("Products")}</h1><div className="pos-row"><button onClick={() => setScanner(true)}>{tr("Scan code")}</button>
+    {tab === "sale" && <main className="pos-checkout pos-page-content">
+      <ResponsivePanel className="pos-panel" style={{ width: "auto" }} title={tr("Products")} subtitle={bootstrap ? tr("Approved register prices from") + " " + new Date(bootstrap.snapshot.issued_at).toLocaleString(language === "vi" ? "vi-VN" : "en-US") : tr("Main store")} showToggle={false} border="always" headerActions={<div className="pos-row"><button className="secondary-button" onClick={() => setScanner(true)}>{tr("Scan code")}</button>
           <label className="pos-upload">{tr("Recognize photo")}<input type="file" accept="image/png,image/jpeg,image/webp" capture="environment" onChange={(event) => {
             const file = event.target.files?.[0]; if (file) run(() => recognizeFile(file), ""); event.target.value = "";
-          }} /></label></div></div>
-        {bootstrap && <p className="pos-muted">{tr("Approved register prices from")} {new Date(bootstrap.snapshot.issued_at).toLocaleString(language === "vi" ? "vi-VN" : "en-US")}. {tr("Refresh the register after price changes.")}</p>}
+          }} /></label></div>}>
+        {bootstrap && <p className="pos-muted">{tr("Refresh the register after price changes.")}</p>}
         <input className="pos-search" placeholder={tr("Scan or enter product number, barcode, name")} value={query}
           onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
             if (event.key === "Enter" && query.trim()) { event.preventDefault(); scanned(query.trim()); }
@@ -429,9 +437,8 @@ export default function App() {
           </button>)}
           {!filtered.length && <p className="pos-muted">{tr("No matching products. Create one in Inventory.")}</p>}
         </div>
-      </section>
-      <section className="pos-panel pos-cart">
-        <h1>{tr("Cart")}</h1>
+      </ResponsivePanel>
+      <ResponsivePanel className="pos-panel pos-cart" style={{ width: "auto" }} title={tr("Cart")} subtitle={`${cartRows.length} ${tr("items")}`} showToggle={false} border="always">
         {cartRows.map((row) => <div className="pos-cart-line" key={row.product_sid}>
           <div><strong>{row.product?.name || row.product_sid}</strong><small>{money(row.product?.price_minor || 0, language)} {tr("each")}</small></div>
           <div className="pos-row"><button aria-label="Decrease quantity" onClick={() => setCart((items) => items.map((item) =>
@@ -445,14 +452,14 @@ export default function App() {
           <div className="pos-total"><span>{tr("Total")}</span><strong>{money(total, language)}</strong></div>
           <label>{tr("Cash received")}<input type="number" min="0" step="1" value={cash} onChange={(event) => setCash(event.target.value)} /></label>
           <p>{tr("Change")}: {money(Math.max(0, Number(cash || 0) - total), language)}</p>
-          <button className="pos-primary" disabled={busy || !cart.length} onClick={() => run(checkout, "")}>{tr("Complete cash sale")}</button>
+          <button className="primary-button" disabled={busy || !cart.length} onClick={() => run(checkout, "")}>{tr("Complete cash sale")}</button>
           <small className="pos-muted">{tr("Offline sales are saved on this device until synced.")}</small>
         </div>
-      </section>
+      </ResponsivePanel>
     </main>}
 
-    {tab === "inventory" && <main className="pos-grid">
-      <section className="pos-panel"><div className="pos-row"><h1>{tr("Inventory")}</h1><div className="pos-row"><button onClick={() => setScanner(true)}>{tr("Scan code")}</button><button disabled={!online || busy} onClick={() => run(startStockCount, "Stock count started")}>{tr("Start stock count")}</button><button onClick={() => { setSelected(null); setForm({ sid: "", name: "", sku: "", barcodes: "", category: "", unit: "cái", price: "", cost: "", minStock: "0", vat: "0", image: "" }); }}>{tr("New product")}</button></div></div>
+    {tab === "inventory" && <main className="pos-grid pos-page-content">
+      <ResponsivePanel className="pos-panel" style={{ width: "auto" }} title={tr("Inventory")} subtitle={`${filtered.length} ${tr("products")}`} showToggle={false} border="always" headerActions={<div className="pos-row"><button className="secondary-button" onClick={() => setScanner(true)}>{tr("Scan code")}</button><button className="secondary-button" disabled={!online || busy} onClick={() => run(startStockCount, "Stock count started")}>{tr("Start stock count")}</button><button className="primary-button" onClick={() => { setSelected(null); setForm({ sid: "", name: "", sku: "", barcodes: "", category: "", unit: "cái", price: "", cost: "", minStock: "0", vat: "0", image: "" }); }}>{tr("New product")}</button></div>}>
         <input placeholder={tr("Search products or scan a product number")} value={query} onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => { if (event.key === "Enter" && query.trim()) { event.preventDefault(); scanned(query.trim()); } }} />
         <div className="pos-products">{filtered.map((product) => <button key={product.sid} className="pos-product" onClick={() => selectProduct(product)}>
@@ -468,14 +475,14 @@ export default function App() {
             {stockCount.status === "DRAFT" ? <input aria-label={"Count " + line.name} type="number" min="0" step="1" value={stockCountValues[line.product_sid] ?? ""}
               onChange={(event) => setStockCountValues({ ...stockCountValues, [line.product_sid]: event.target.value })} /> : <strong>{line.counted_on_hand}</strong>}
           </label>)}
-          {stockCount.status === "DRAFT" && <button className="pos-primary" disabled={busy} onClick={() => run(submitCountForReview, "Count ready for review")}>{tr("Review count")}</button>}
+          {stockCount.status === "DRAFT" && <button className="primary-button" disabled={busy} onClick={() => run(submitCountForReview, "Count ready for review")}>{tr("Review count")}</button>}
           {stockCount.status === "REVIEWED" && <><label>{tr("Posting reason")}<input value={stockCountReason} onChange={(event) => setStockCountReason(event.target.value)} /></label>
-            <button className="pos-danger" disabled={busy || !stockCountReason.trim()} onClick={() => {
+            <button className="danger-button" disabled={busy || !stockCountReason.trim()} onClick={() => {
               if (confirm(tr("Post these stock adjustments? This updates on-hand quantities."))) run(postCount, "Stock count posted");
             }}>{tr("Post stock count")}</button></>}
         </div>}
-      </section>
-      <section className="pos-panel"><h1>{tr(selected ? "Edit product" : "New product")}</h1>
+      </ResponsivePanel>
+      <ResponsivePanel className="pos-panel" style={{ width: "auto" }} title={tr(selected ? "Edit product" : "New product")} subtitle={selected?.sku || tr("Product details")} showToggle={false} border="always">
         <div className="pos-form">
           <label>{tr("Name")}<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
           <label>{tr("Product number")}<input value={form.sku} onChange={(event) => setForm({ ...form, sku: event.target.value })} /></label>
@@ -487,7 +494,7 @@ export default function App() {
           <label>{tr("Minimum stock")}<input type="number" min="0" step="0.01" value={form.minStock} onChange={(event) => setForm({ ...form, minStock: event.target.value })} /></label>
           <label>{tr("VAT added on top (%)")}<input type="number" min="0" max="100" step="0.01" value={form.vat} onChange={(event) => setForm({ ...form, vat: event.target.value })} /></label>
           <label>{tr("Image URL")}<input value={form.image} onChange={(event) => setForm({ ...form, image: event.target.value })} /></label>
-          <button className="pos-primary" disabled={!online || busy} onClick={() => run(saveProduct, "Product saved")}>{tr("Save product")}</button>
+          <button className="primary-button" disabled={!online || busy} onClick={() => run(saveProduct, "Product saved")}>{tr("Save product")}</button>
           {selected && <><hr/><h2>{tr("Stock")}</h2><p>{tr("On hand")} {selected.on_hand} {selected.unit} · {tr("Reserved")} {selected.allocated}</p>
             {selected.stock_import_warning && <p className="pos-error">{tr("Stock source not imported")}: {selected.source_on_hand}</p>}
             <label>{tr("Adjustment (+ receive, − remove)")}<input type="number" step="1" value={stockDelta} onChange={(event) => setStockDelta(event.target.value)} /></label>
@@ -496,7 +503,7 @@ export default function App() {
             <hr/><h2>{tr("Offline allocation")}</h2><p>{tr("Available on this device:")} {selected.offline_available}</p>
             <label>{tr("Allocate to this device")}<input type="number" min="0" step="1" value={allocation} onChange={(event) => setAllocation(event.target.value)} /></label>
             <button disabled={!online || busy} onClick={() => run(async () => { await posApi.allocate(device, selected.sid, Number(allocation)); await provision(); }, "Allocation updated")}>{tr("Save allocation and refresh")}</button>
-            <hr/><button className="pos-danger" disabled={!online || busy} onClick={() => {
+            <hr/><button className="danger-button" disabled={!online || busy} onClick={() => {
               if (confirm(tr("Archive this product?"))) run(async () => { await posApi.archiveProduct(selected.sid); await refreshOnline(); setSelected(null); }, "Product archived");
             }}>{tr("Archive product")}</button></>}
         </div>
@@ -526,29 +533,29 @@ export default function App() {
           {importPreview.errors.map((item) => <p className="pos-error" key={item}>{item}</p>)}
           {importPreview.warnings.slice(0, 12).map((item) => <p className="pos-muted" key={item}>{localizedImportWarning(item)}</p>)}
           {importPreview.preview.slice(0, 5).map((item, index) => <p key={index}>{String(item.action)} · {String(item.sku)} · {String(item.name)}</p>)}
-          <button className="pos-primary" disabled={busy || importPreview.errors.length > 0} onClick={() => run(async () => {
+          <button className="primary-button" disabled={busy || importPreview.errors.length > 0} onClick={() => run(async () => {
             const result = importRows ? await posApi.commitImportRows(importRows) : await posApi.commitImport(importCsv);
             await refreshOnline(); setImportPreview(null); setImportCsv(""); setImportRows(null); setImportFilename("");
             const action = result.duplicate ? tr("Already imported") : tr("Imported");
             setMessage(language === "vi" ? action + " " + result.run.count + " sản phẩm · " + (result.run.warnings || 0) + " cảnh báo" : action + " " + result.run.count + " products · " + (result.run.warnings || 0) + " warnings");
           }, "")}>{tr("Commit import")}</button>
         </div>}
-      </section>
+      </ResponsivePanel>
     </main>}
 
-    {tab === "reports" && <main className="pos-grid">
-      <section className="pos-panel"><h1>{tr("Dashboard")}</h1>
+    {tab === "reports" && <main className="pos-grid pos-page-content">
+      <ResponsivePanel className="pos-panel" style={{ width: "auto" }} title={tr("Dashboard")} subtitle={tr("Main store")} showToggle={false} border="always">
         <div className="pos-kpis"><div><small>{tr("Synced sales today")}</small><strong>{dashboard?.sales_count ?? "—"}</strong></div>
           <div><small>{tr("Gross today")}</small><strong>{money(dashboard?.gross_minor || 0, language)}</strong></div>
           <div><small>{tr("Refunds today")}</small><strong>{money(dashboard?.refunds_minor || 0, language)}</strong></div>
           <div><small>{tr("Net today")}</small><strong>{money(dashboard?.net_minor || 0, language)}</strong></div>
           <div><small>{tr("Pending on this device")}</small><strong>{pending.length}</strong></div></div>
         <h2>{tr("Low stock")}</h2><p>{dashboard?.low_stock.length || 0} {tr("products need review")}</p>
-      </section>
-      <section className="pos-panel"><div className="pos-row"><h1>{tr("Sales")}</h1><div className="pos-row"><a href="/api/pos/exports/sales.csv">{tr("Sales CSV")}</a><a href="/api/pos/exports/returns.csv">{tr("Returns CSV")}</a><a href="/api/pos/exports/shifts.csv">{tr("Shifts CSV")}</a></div></div>
+      </ResponsivePanel>
+      <ResponsivePanel className="pos-panel" style={{ width: "auto" }} title={tr("Sales")} subtitle={tr("Sales and cash returns")} showToggle={false} border="always" headerActions={<div className="pos-row"><a className="secondary-button" href="/api/pos/exports/sales.csv">{tr("Sales CSV")}</a><a className="secondary-button" href="/api/pos/exports/returns.csv">{tr("Returns CSV")}</a><a className="secondary-button" href="/api/pos/exports/shifts.csv">{tr("Shifts CSV")}</a></div>}>
         {serverSales.slice(0, 30).map((sale) => <div className="pos-list-line" key={String(sale.sid)}><span>{String(sale.receipt_id)}<small>{String(sale.sold_at)} · {tr(String(sale.refund_status || "PAID"))}</small></span><span><strong>{money(Number(sale.total_minor) || 0, language)}</strong>
           <button disabled={!online || busy || sale.refund_status === "REFUNDED" || sale.refund_status === "VOIDED"} onClick={() => selectSaleForReturn(sale)}>{tr("Return")}</button>
-          <button className="pos-danger" disabled={!online || busy || sale.refund_status === "REFUNDED" || sale.refund_status === "VOIDED"} onClick={() => {
+          <button className="danger-button" disabled={!online || busy || sale.refund_status === "REFUNDED" || sale.refund_status === "VOIDED"} onClick={() => {
             if (confirm(tr("Void the remaining refundable quantity and record a cash refund?"))) run(() => voidSelectedSale(sale), "Sale voided");
           }}>{tr("Void")}</button></span></div>)}
         {!serverSales.length && <p className="pos-muted">{tr("No synced sales yet.")}</p>}
@@ -562,18 +569,18 @@ export default function App() {
               <label><input type="checkbox" checked={value.restock} onChange={(event) => setReturnLines({ ...returnLines, [line.product_sid]: { ...value, restock: event.target.checked } })} /> {tr("Restock")}</label></div>;
           })}
           <label>{tr("Reason")}<input value={returnReason} onChange={(event) => setReturnReason(event.target.value)} /></label>
-          <button className="pos-primary" disabled={busy || !online} onClick={() => run(submitReturn, "Cash return recorded")}>{tr("Record cash return")}</button>
+          <button className="primary-button" disabled={busy || !online} onClick={() => run(submitReturn, "Cash return recorded")}>{tr("Record cash return")}</button>
         </div>}
         <hr/><div className="pos-row"><h2>{tr("Report")}</h2><select value={reportGroup} onChange={(event) => setReportGroup(event.target.value)}>
           <option value="day">{tr("By day")}</option><option value="cashier">{tr("By cashier")}</option><option value="product">{tr("By product")}</option>
         </select><label>{tr("From")}<input type="date" value={reportFrom} onChange={(event) => setReportFrom(event.target.value)} /></label>
           <label>{tr("To")}<input type="date" value={reportTo} onChange={(event) => setReportTo(event.target.value)} /></label></div>
         {reportRows.map((row) => <div className="pos-list-line" key={row.key}><span>{row.key}<small>{row.sales_count} {tr("sales")} · {row.quantity} {tr("units")} · VAT {money(row.vat_minor, language)}</small></span><strong>{money(row.gross_minor, language)}</strong></div>)}
-      </section>
+      </ResponsivePanel>
     </main>}
 
-    {tab === "register" && <main className="pos-grid">
-      <section className="pos-panel"><h1>{tr("Register")}</h1><p>{tr("Device")}: <code>{device}</code></p>
+    {tab === "register" && <main className="pos-grid pos-page-content">
+      <ResponsivePanel className="pos-panel" style={{ width: "auto" }} title={tr("Register")} subtitle={device} showToggle={false} border="always"><p>{tr("Device")}: <code>{device}</code></p>
         <p>{tr("Cashier")}: {actor?.name || actor?.user_id || tr("Sign in through 42Trade while online")}</p>
         <p>{tr("Offline catalog expires")}: {bootstrap ? new Date(bootstrap.snapshot.expires_at).toLocaleString(language === "vi" ? "vi-VN" : "en-US") : tr("Not provisioned")}</p>
         <div className="pos-row"><button disabled={!online || busy} onClick={() => run(provision, "Offline catalog refreshed")}>{tr("Pair / refresh offline catalog")}</button>
@@ -591,14 +598,14 @@ export default function App() {
           <button disabled={!online || busy || !openingCash} onClick={() => run(async () => {
             await posApi.openShift(Number(openingCash)); setOpeningCash(""); await refreshOnline();
           }, "Shift opened")}>{tr("Open shift")}</button></>}
-      </section>
-      <section className="pos-panel"><h1>{tr("Local receipts")}</h1>{sales.slice().reverse().map((sale) =>
+      </ResponsivePanel>
+      <ResponsivePanel className="pos-panel" style={{ width: "auto" }} title={tr("Local receipts")} subtitle={`${sales.length} ${tr("receipts")}`} showToggle={false} border="always">{sales.slice().reverse().map((sale) =>
         <div className="pos-list-line" key={sale.idempotency_key}><span><strong>{sale.receipt_id}</strong><small>{sale.sync_state} · {sale.sync_error || sale.sold_at}</small></span>
           <span><strong>{money(sale.total_minor, language)}</strong><button onClick={() => setReceipt(fromLocalSale(sale))}>{tr("Receipt")}</button></span></div>)}
         {!sales.length && <p className="pos-muted">{tr("No local receipts yet.")}</p>}
-      </section>
+      </ResponsivePanel>
     </main>}
     {scanner && <Scanner onCode={scanned} onClose={() => setScanner(false)} language={language} />}
     {receipt && <Receipt receipt={receipt} onClose={() => setReceipt(null)} language={language} />}
-  </div>;
+  </section>;
 }

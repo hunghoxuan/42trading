@@ -4,6 +4,7 @@ const vi: Record<string, string> = {
   "Sale": "Bán hàng", "Inventory": "Tồn kho", "Reports": "Báo cáo", "Register": "Quầy thu ngân",
   "Online": "Trực tuyến", "Offline": "Ngoại tuyến", "pending": "chờ đồng bộ", "needs attention": "cần xử lý",
   "Main store": "Cửa hàng chính", "Sign in to 42Trade": "Đăng nhập 42Trade", "A POS update is ready. Finish the current cart before reloading.": "Bản cập nhật POS đã sẵn sàng. Hoàn tất giỏ hàng trước khi tải lại.",
+  "items": "sản phẩm", "receipts": "hóa đơn", "Product details": "Thông tin sản phẩm", "Sales and cash returns": "Giao dịch và hoàn tiền mặt",
   "Update POS": "Cập nhật POS", "Products": "Sản phẩm", "Scan code": "Quét mã", "Recognize photo": "Nhận diện ảnh",
   "Point the camera at a QR code or barcode.": "Đưa camera vào mã QR hoặc mã vạch.", "Close": "Đóng", "Possible matches — confirm product": "Sản phẩm phù hợp — vui lòng xác nhận",
   "approved register price": "giá đã tải về quầy", "current inventory price": "giá hiện tại trong kho",
