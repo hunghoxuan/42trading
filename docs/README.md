@@ -7,6 +7,7 @@ This folder is the current documentation hub for the 42Trade codebase.
 | Doc | Purpose | When to read |
 |---|---|---|
 | [architecture.md](./architecture.md) | System overview, tech stack, and why the stack exists | Start here for onboarding |
+| [pos/spec.md](./pos/spec.md) | Proposed POS PWA architecture, data reuse, and feature scope | Read before building the POS module |
 | [project-structure.md](./project-structure.md) | Folder boundaries and file-placement rules | Read before moving or adding files |
 | [schema-reference.md](./schema-reference.md) | Database schema and JSON contract reference | Read before changing data models |
 | [runtime-realtime.md](./runtime-realtime.md) | Runtime providers, realtime topics, Socket.IO, SSE, and bars updates | Read before touching live delivery |
