@@ -27,6 +27,8 @@ async function handlePosRequest(context) {
   if (write && route === "/prices") permission = "apis.pos.price.write";
   if (write && route === "/stock/movements") permission = "apis.pos.stock.write";
   if (write && route === "/offline/allocations") permission = "apis.pos.offline.allocate";
+  if (write && (/^\/sales\/[^/]+\/(returns|void)$/.test(route))) permission = "apis.pos.refunds.write";
+  if (write && /^\/shifts\/[^/]+\/close$/.test(route)) permission = "apis.pos.shifts.write";
   if (write && (route === "/imports" || route === "/imports/preview")) permission = "apis.pos.catalog.write";
   if (route === "/images/recognize" || route === "/scan/resolve") permission = "apis.pos.read";
   if (!requirePermission(req, res, permission)) return true;
@@ -60,8 +62,18 @@ async function handlePosRequest(context) {
       output = await service.syncSale(payload, actor);
     } else if (route === "/sales/checkout" && method === "POST") {
       output = await service.checkout(payload, actor);
+    } else if (/^\/sales\/[^/]+\/returns$/.test(route) && method === "POST") {
+      output = await service.refundSale({ ...payload, sale_sid: decodeURIComponent(route.slice(7, -8)) }, actor);
+    } else if (/^\/sales\/[^/]+\/void$/.test(route) && method === "POST") {
+      output = await service.refundSale({ ...payload, sale_sid: decodeURIComponent(route.slice(7, -5)) }, actor, true);
     } else if (route === "/sales" && method === "GET") {
       output = { ok: true, items: await service.sales(url.searchParams.get("limit") || 100) };
+    } else if (route === "/shifts" && method === "GET") {
+      output = { ok: true, items: await service.shifts() };
+    } else if (route === "/shifts/open" && method === "POST") {
+      output = await service.openShift(payload, actor);
+    } else if (/^\/shifts\/[^/]+\/close$/.test(route) && method === "POST") {
+      output = await service.closeShift({ ...payload, shift_sid: decodeURIComponent(route.slice(8, -6)) }, actor);
     } else if (route === "/dashboard" && method === "GET") {
       output = await service.dashboard();
     } else if (route === "/reports/sales" && method === "GET") {
@@ -70,7 +82,7 @@ async function handlePosRequest(context) {
       output = await service.previewImport(payload);
     } else if (route === "/imports" && method === "POST") {
       output = await service.commitImport(payload, actor);
-    } else if (/^\/exports\/(products|sales)\.csv$/.test(route) && method === "GET") {
+    } else if (/^\/exports\/(products|sales|returns|shifts)\.csv$/.test(route) && method === "GET") {
       const csv = await service.exportCsv(route.split("/")[2].replace(".csv", ""));
       res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8",
         "Content-Disposition": "attachment; filename=pos-" + route.split("/")[2],

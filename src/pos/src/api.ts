@@ -41,7 +41,14 @@ export const posApi = {
     vat_rate_bps: number; score: number; explanation: string;
   }[] }>("/api/pos/images/recognize", "POST", { image }),
   sales: () => call<ApiResult & { items: unknown[] }>("/api/pos/sales"),
-  dashboard: () => call<ApiResult & { gross_minor: number; sales_count: number; low_stock: unknown[] }>("/api/pos/dashboard"),
+  refundSale: (saleSid: string, reason: string, lines: { product_sid: string; quantity: number; restock: boolean }[],
+    idempotencyKey: string) => call<ApiResult>("/api/pos/sales/" + encodeURIComponent(saleSid) + "/returns", "POST",
+    { idempotency_key: idempotencyKey, reason, lines }),
+  shifts: () => call<ApiResult & { items: Record<string, unknown>[] }>("/api/pos/shifts"),
+  openShift: (opening_cash_minor: number) => call<ApiResult>("/api/pos/shifts/open", "POST", { opening_cash_minor }),
+  closeShift: (sid: string, counted_cash_minor: number, pending_count: number) => call<ApiResult>(
+    "/api/pos/shifts/" + encodeURIComponent(sid) + "/close", "POST", { counted_cash_minor, pending_count }),
+  dashboard: () => call<ApiResult & { gross_minor: number; net_minor: number; refunds_minor: number; sales_count: number; low_stock: unknown[] }>("/api/pos/dashboard"),
   previewImport: (csv: string) => call<ApiResult & { count: number; errors: string[]; preview: Record<string, unknown>[] }>(
     "/api/pos/imports/preview", "POST", { csv }),
   commitImport: (csv: string) => call<ApiResult & { run: { count: number }; duplicate: boolean }>(

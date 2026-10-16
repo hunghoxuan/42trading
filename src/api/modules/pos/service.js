@@ -498,13 +498,154 @@ function createPosService(options = {}) {
     return (await list("pos_sale")).slice(0, Math.min(nonNegativeInt(limit, "Limit"), 1000)).map(dataOf);
   }
 
+  async function refundSale(input, actor, voided = false) {
+    const saleSid = requiredText(input.sale_sid, "Sale SID");
+    const returnKey = requiredText(input.idempotency_key, "Idempotency key");
+    const reason = requiredText(input.reason, "Return reason");
+    return transact(function* () {
+      yield ["lockStore"];
+      const priorReturn = yield ["getEntity", TENANT, "pos_return", returnKey];
+      if (priorReturn) {
+        const prior = dataOf(priorReturn);
+        const requestedLines = Array.isArray(input.lines) ? input.lines : [];
+        const sameLines = voided || (prior.lines.length === requestedLines.length && prior.lines.every((line) =>
+          requestedLines.some((requested) => requested.product_sid === line.product_sid &&
+            Number(requested.quantity) === line.quantity && Boolean(requested.restock) === line.restock)));
+        if (prior.sale_sid !== saleSid || prior.reason !== reason || prior.voided !== voided || !sameLines) {
+          throw new PosError("Idempotency key was already used for a different return", 409);
+        }
+        return { ok: true, return: prior, duplicate: true };
+      }
+      const saleRow = yield ["getEntity", TENANT, "pos_sale", saleSid];
+      const sale = dataOf(saleRow);
+      if (!sale || sale.status !== "PAID" || sale.tender !== "CASH") throw new PosError("Paid cash sale not found", 404);
+      const previous = sale.returned_quantities || {};
+      const requested = voided
+        ? sale.lines.map((line) => ({ product_sid: line.product_sid,
+          quantity: line.quantity - (previous[line.product_sid] || 0), restock: true })).filter((line) => line.quantity > 0)
+        : input.lines;
+      if (!Array.isArray(requested) || !requested.length) throw new PosError("Return needs at least one line");
+      const seen = new Set();
+      const returnLines = [];
+      const nextReturned = { ...previous };
+      let amount = 0;
+      for (const line of requested) {
+        const sid = requiredText(line.product_sid, "Product SID");
+        if (seen.has(sid)) throw new PosError("Duplicate product in return");
+        seen.add(sid);
+        const original = sale.lines.find((item) => item.product_sid === sid);
+        if (!original) throw new PosError("Product was not in original sale", 409);
+        const quantity = positiveInt(line.quantity, "Return quantity");
+        const oldQuantity = previous[sid] || 0;
+        if (oldQuantity + quantity > original.quantity) throw new PosError("Return exceeds remaining quantity", 409);
+        const oldAmount = Math.round(original.total_minor * oldQuantity / original.quantity);
+        const newAmount = Math.round(original.total_minor * (oldQuantity + quantity) / original.quantity);
+        const lineAmount = newAmount - oldAmount;
+        if (line.restock) {
+          const stockRow = yield ["getEntity", TENANT, "pos_stock", sid];
+          const stock = dataOf(stockRow);
+          if (!stock) throw new PosError("Stock not configured: " + sid, 409);
+          yield ["upsertEntity", entity("pos_stock", sid,
+            { ...stock, on_hand: stock.on_hand + quantity, updated_at: now() }, stockRow)];
+          yield ["appendJournal", { tenantId: TENANT, entityType: "pos_stock", entityKey: sid,
+            userId: actor.user_id, entryType: "pos.stock.returned", data: { sale_sid: saleSid, return_key: returnKey, quantity } }];
+        }
+        nextReturned[sid] = oldQuantity + quantity;
+        amount += lineAmount;
+        returnLines.push({ product_sid: sid, name: original.name, quantity,
+          amount_minor: lineAmount, restock: Boolean(line.restock) });
+      }
+      const complete = sale.lines.every((line) => nextReturned[line.product_sid] === line.quantity);
+      if (!Number.isSafeInteger(amount)) throw new PosError("Return total exceeds safe integer range");
+      if (voided && !complete) throw new PosError("Void must return every remaining item", 409);
+      const returnedAt = now();
+      const saved = { sid: returnKey, idempotency_key: returnKey, sale_sid: saleSid,
+        store_sid: STORE_ID, register_sid: REGISTER_ID, actor_id: actor.user_id,
+        reason, lines: returnLines, amount_minor: amount, tender: "CASH",
+        status: "REFUNDED", voided, returned_at: returnedAt };
+      yield ["upsertEntity", entity("pos_return", returnKey, saved)];
+      yield ["upsertEntity", entity("pos_sale", saleSid,
+        { ...sale, returned_quantities: nextReturned,
+          refunded_minor: (sale.refunded_minor || 0) + amount,
+          refund_status: complete ? voided ? "VOIDED" : "REFUNDED" : "PARTIALLY_REFUNDED",
+          updated_at: returnedAt }, saleRow, { userId: sale.cashier_id, currency: "VND" })];
+      yield ["appendJournal", { tenantId: TENANT, entityType: "pos_return", entityKey: returnKey,
+        userId: actor.user_id, entryType: voided ? "pos.sale.voided" : "pos.sale.refunded",
+        data: { sale_sid: saleSid, reason, amount_minor: amount, lines: returnLines } }];
+      return { ok: true, return: saved, duplicate: false };
+    });
+  }
+
+  async function shifts() { return (await list("pos_shift")).map(dataOf).filter(Boolean); }
+
+  async function openShift(input, actor) {
+    const openingCash = nonNegativeInt(input.opening_cash_minor, "Opening cash");
+    return transact(function* () {
+      yield ["lockStore"];
+      const registerRow = yield ["getEntity", TENANT, "pos_register", REGISTER_ID];
+      const register = dataOf(registerRow);
+      if (register.current_shift_sid) throw new PosError("Register already has an open shift", 409);
+      const sid = id("SHIFT");
+      const shift = { sid, store_sid: STORE_ID, register_sid: REGISTER_ID,
+        cashier_id: actor.user_id, status: "OPEN", opening_cash_minor: openingCash,
+        opened_at: now() };
+      yield ["upsertEntity", entity("pos_shift", sid, shift)];
+      yield ["upsertEntity", entity("pos_register", REGISTER_ID,
+        { ...register, current_shift_sid: sid }, registerRow)];
+      yield ["appendJournal", { tenantId: TENANT, entityType: "pos_shift", entityKey: sid,
+        userId: actor.user_id, entryType: "pos.shift.opened", data: { opening_cash_minor: openingCash } }];
+      return { ok: true, shift };
+    });
+  }
+
+  async function closeShift(input, actor) {
+    const sid = requiredText(input.shift_sid, "Shift SID");
+    const countedCash = nonNegativeInt(input.counted_cash_minor, "Counted cash");
+    if (nonNegativeInt(input.pending_count ?? 0, "Pending local sales") !== 0) {
+      throw new PosError("Sync pending local sales before closing the shift", 409);
+    }
+    return transact(function* () {
+      yield ["lockStore"];
+      const registerRow = yield ["getEntity", TENANT, "pos_register", REGISTER_ID];
+      const register = dataOf(registerRow);
+      if (register.current_shift_sid !== sid) throw new PosError("Shift is not open on this register", 409);
+      const shiftRow = yield ["getEntity", TENANT, "pos_shift", sid];
+      const shift = dataOf(shiftRow);
+      if (!shift || shift.status !== "OPEN") throw new PosError("Open shift not found", 404);
+      if (shift.cashier_id !== actor.user_id) throw new PosError("Only the opening cashier can close this shift", 403);
+      const saleRows = yield ["listEntities", { tenantId: TENANT, entityType: "pos_sale", limit: 100000 }];
+      const returnRows = yield ["listEntities", { tenantId: TENANT, entityType: "pos_return", limit: 100000 }];
+      const salesAmount = saleRows.map(dataOf).filter((sale) => sale?.status === "PAID" &&
+        sale.sold_at >= shift.opened_at && sale.sold_at <= now()).reduce((sum, sale) => sum + sale.total_minor, 0);
+      const returnsAmount = returnRows.map(dataOf).filter((item) => item?.returned_at >= shift.opened_at &&
+        item.returned_at <= now()).reduce((sum, item) => sum + item.amount_minor, 0);
+      const expected = shift.opening_cash_minor + salesAmount - returnsAmount;
+      const closed = { ...shift, status: "CLOSED", closed_at: now(), closed_by: actor.user_id,
+        sales_minor: salesAmount, refunds_minor: returnsAmount, expected_cash_minor: expected,
+        counted_cash_minor: countedCash, variance_minor: countedCash - expected };
+      yield ["upsertEntity", entity("pos_shift", sid, closed, shiftRow)];
+      yield ["upsertEntity", entity("pos_register", REGISTER_ID,
+        { ...register, current_shift_sid: null }, registerRow)];
+      yield ["appendJournal", { tenantId: TENANT, entityType: "pos_shift", entityKey: sid,
+        userId: actor.user_id, entryType: "pos.shift.closed", data: {
+          sales_minor: salesAmount, refunds_minor: returnsAmount,
+          expected_cash_minor: expected, counted_cash_minor: countedCash, variance_minor: countedCash - expected } }];
+      return { ok: true, shift: closed };
+    });
+  }
+
   async function dashboard() {
     const [saleRows, stockRows] = await Promise.all([list("pos_sale"), list("pos_stock")]);
     const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
     const todays = saleRows.map(dataOf).filter((sale) => sale?.status === "PAID" &&
       new Date(sale.sold_at).toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }) === today);
+    const refunds = (await list("pos_return")).map(dataOf).filter((item) => item &&
+      new Date(item.returned_at).toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }) === today);
+    const refundMinor = refunds.reduce((sum, item) => sum + item.amount_minor, 0);
     return { ok: true, currency: "VND", sales_count: todays.length,
       gross_minor: todays.reduce((sum, sale) => sum + sale.total_minor, 0),
+      refunds_minor: refundMinor,
+      net_minor: todays.reduce((sum, sale) => sum + sale.total_minor, 0) - refundMinor,
       low_stock: stockRows.map(dataOf).filter((stock) => stock && stock.on_hand - stock.allocated <= 5) };
   }
 
@@ -600,13 +741,17 @@ function createPosService(options = {}) {
   async function exportCsv(type) {
     if (type === "products") return toCsv(["sid", "sku", "name", "barcodes", "category", "price_minor", "vat_rate_bps", "on_hand", "allocated"],
       (await catalog()).map((product) => ({ ...product, barcodes: product.barcodes.join("|") })));
-    if (type === "sales") return toCsv(["sid", "receipt_id", "sold_at", "cashier_id", "total_minor", "vat_minor", "status", "origin"],
+    if (type === "sales") return toCsv(["sid", "receipt_id", "sold_at", "cashier_id", "total_minor", "vat_minor", "refunded_minor", "refund_status", "status", "origin"],
       (await list("pos_sale")).map(dataOf).filter(Boolean));
+    if (type === "returns") return toCsv(["sid", "sale_sid", "returned_at", "actor_id", "amount_minor", "reason", "voided"],
+      (await list("pos_return")).map(dataOf).filter(Boolean));
+    if (type === "shifts") return toCsv(["sid", "cashier_id", "opened_at", "closed_at", "opening_cash_minor", "sales_minor", "refunds_minor", "expected_cash_minor", "counted_cash_minor", "variance_minor", "status"],
+      (await list("pos_shift")).map(dataOf).filter(Boolean));
     throw new PosError("Unknown export type", 404);
   }
 
   return { init, catalog, get, upsertProduct, setPrice, adjustStock, pairDevice,
-    allocateStock, bootstrap, checkout, syncSale, sales, dashboard, recognizeImage,
+    allocateStock, bootstrap, checkout, syncSale, sales, refundSale, shifts, openShift, closeShift, dashboard, recognizeImage,
     previewImport, commitImport, reportSales, exportCsv,
     verifyGrant: (token) => verifyGrant(token, keys) };
 }

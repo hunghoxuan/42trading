@@ -45,6 +45,11 @@ small { display: block; font-size: 11px; color: var(--muted); }
 .pos-form { display: grid; gap: 10px; }
 .pos-form hr { width: 100%; border: 0; border-top: 1px solid var(--border); margin: 5px 0; }
 .pos-import-preview { border: 1px solid var(--border); border-radius: var(--radius-md); padding: 10px; margin-top: 10px; }
+.pos-return-form { display: grid; gap: 10px; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 12px; margin: 12px 0; }
+.pos-return-form > label { display: grid; gap: 5px; }
+.pos-return-line { display: grid; grid-template-columns: minmax(0, 1fr) 90px 85px; align-items: center; gap: 8px; }
+.pos-return-line label { display: flex; align-items: center; gap: 5px; }
+.pos-return-line input[type="checkbox"] { width: auto; min-height: 0; }
 .pos-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .pos-kpis div { padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); }
 .pos-kpis strong { display: block; font-size: 19px; }

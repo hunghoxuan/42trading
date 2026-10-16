@@ -59,7 +59,13 @@ export default function App() {
   const [products, setProducts] = useState<Product[]>([]);
   const [sales, setSales] = useState<LocalSale[]>([]);
   const [serverSales, setServerSales] = useState<Record<string, unknown>[]>([]);
-  const [dashboard, setDashboard] = useState<{ gross_minor: number; sales_count: number; low_stock: unknown[] } | null>(null);
+  const [dashboard, setDashboard] = useState<{ gross_minor: number; net_minor: number; refunds_minor: number; sales_count: number; low_stock: unknown[] } | null>(null);
+  const [shifts, setShifts] = useState<Record<string, unknown>[]>([]);
+  const [openingCash, setOpeningCash] = useState("");
+  const [countedCash, setCountedCash] = useState("");
+  const [selectedSale, setSelectedSale] = useState<Record<string, unknown> | null>(null);
+  const [returnLines, setReturnLines] = useState<Record<string, { quantity: string; restock: boolean }>>({});
+  const [returnReason, setReturnReason] = useState("");
   const [importCsv, setImportCsv] = useState("");
   const [importPreview, setImportPreview] = useState<{ count: number; errors: string[]; preview: Record<string, unknown>[] } | null>(null);
   const [reportGroup, setReportGroup] = useState("day");
@@ -79,6 +85,8 @@ export default function App() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const onlineCheckoutKey = useRef<string | null>(null);
+  const returnKey = useRef<string | null>(null);
+  const syncPromise = useRef<Promise<void> | null>(null);
   const device = useMemo(deviceId, []);
 
   const localProducts = bootstrap?.snapshot.products || [];
@@ -97,6 +105,8 @@ export default function App() {
   const total = subtotal + vat;
   const pending = sales.filter((sale) => sale.sync_state === "PENDING_SYNC");
   const attention = sales.filter((sale) => sale.sync_state === "NEEDS_ATTENTION");
+  const pendingKey = pending.map((sale) => sale.idempotency_key).join(",");
+  const openShift = shifts.find((shift) => shift.status === "OPEN");
 
   const refreshLocal = useCallback(async () => {
     const [saved, rows] = await Promise.all([readBootstrap(), listLocalSales()]);
@@ -105,13 +115,14 @@ export default function App() {
   }, []);
 
   const refreshOnline = useCallback(async () => {
-    const [user, catalog, summary, recent] = await Promise.all([
-      posApi.auth(), posApi.products(device), posApi.dashboard(), posApi.sales(),
+    const [user, catalog, summary, recent, shiftList] = await Promise.all([
+      posApi.auth(), posApi.products(device), posApi.dashboard(), posApi.sales(), posApi.shifts(),
     ]);
     setActor(user.user);
     setProducts(catalog.items);
     setDashboard(summary);
     setServerSales(recent.items as Record<string, unknown>[]);
+    setShifts(shiftList.items);
   }, [device]);
 
   useEffect(() => {
@@ -127,6 +138,10 @@ export default function App() {
   }, [online, refreshOnline]);
 
   useEffect(() => {
+    if (online && pendingKey) syncPending().catch((cause) => setError(String(cause)));
+  }, [online, pendingKey]);
+
+  useEffect(() => {
     if (online && tab === "reports") posApi.reportSales(reportGroup).then((result) => setReportRows(result.items))
       .catch((cause) => setError(String(cause)));
   }, [online, tab, reportGroup]);
@@ -138,23 +153,27 @@ export default function App() {
     finally { setBusy(false); }
   }
 
-  async function syncPending() {
-    for (const sale of await listLocalSales()) {
-      if (sale.sync_state !== "PENDING_SYNC") continue;
-      try {
-        await posApi.syncSale(sale);
-        await updateSaleState(sale.idempotency_key, "SYNCED");
-        setReceipt((current) => current?.receipt_id === sale.receipt_id
-          ? fromLocalSale({ ...sale, sync_state: "SYNCED" }) : current);
-      } catch (cause) {
-        if (!(cause instanceof ApiError) || cause.status >= 500 || cause.status === 401) break;
-        await updateSaleState(sale.idempotency_key, "NEEDS_ATTENTION",
-          cause.message);
-        break;
-      }
+  function syncPending(): Promise<void> {
+    if (!syncPromise.current) {
+      syncPromise.current = (async () => {
+        for (const sale of await listLocalSales()) {
+          if (sale.sync_state !== "PENDING_SYNC") continue;
+          try {
+            await posApi.syncSale(sale);
+            await updateSaleState(sale.idempotency_key, "SYNCED");
+            setReceipt((current) => current?.receipt_id === sale.receipt_id
+              ? fromLocalSale({ ...sale, sync_state: "SYNCED" }) : current);
+          } catch (cause) {
+            if (!(cause instanceof ApiError) || cause.status >= 500 || cause.status === 401) break;
+            await updateSaleState(sale.idempotency_key, "NEEDS_ATTENTION", cause.message);
+            break;
+          }
+        }
+        await refreshLocal();
+        if (navigator.onLine) await refreshOnline();
+      })().finally(() => { syncPromise.current = null; });
     }
-    await refreshLocal();
-    if (navigator.onLine) await refreshOnline();
+    return syncPromise.current;
   }
 
   async function provision() {
@@ -186,10 +205,6 @@ export default function App() {
       setCart([]); setCash("");
       await refreshLocal();
       setMessage("Cash sale saved locally. Receipt " + sale.receipt_id + " is pending sync.");
-      if (online) {
-        try { await syncPending(); }
-        catch { setMessage("Cash sale saved locally. Receipt " + sale.receipt_id + " is pending sync."); }
-      }
     } else if (online) {
       onlineCheckoutKey.current ||= crypto.randomUUID();
       const result = await posApi.checkout(onlineCheckoutKey.current, cart, received);
@@ -215,6 +230,26 @@ export default function App() {
     if (form.price) await posApi.setPrice(result.product.sid, Number(form.price));
     await refreshOnline();
     setSelected(null);
+  }
+
+  function selectSaleForReturn(sale: Record<string, unknown>) {
+    setSelectedSale(sale);
+    setReturnLines(Object.fromEntries(((sale.lines || []) as { product_sid: string }[])
+      .map((line) => [line.product_sid, { quantity: "0", restock: true }])));
+    setReturnReason("");
+    returnKey.current = null;
+  }
+
+  async function submitReturn() {
+    if (!selectedSale) throw new Error("Select a sale");
+    const lines = Object.entries(returnLines).filter(([, value]) => Number(value.quantity) > 0)
+      .map(([product_sid, value]) => ({ product_sid, quantity: Number(value.quantity), restock: value.restock }));
+    if (!lines.length) throw new Error("Enter a return quantity");
+    returnKey.current ||= crypto.randomUUID();
+    await posApi.refundSale(String(selectedSale.sid), returnReason, lines, returnKey.current);
+    returnKey.current = null;
+    setSelectedSale(null);
+    await refreshOnline();
   }
 
   const scanned = useCallback((code: string) => {
@@ -256,8 +291,9 @@ export default function App() {
     } catch { /* A product photo may have no machine-readable code. */ }
     if (!online) throw new Error("No known barcode found. Product-photo recognition needs an internet connection.");
     const result = await posApi.recognizeImage(image);
-    setCandidates(result.candidates);
-    if (!result.candidates.length) setMessage("No reliable product match. Try a barcode or product number.");
+    const available = result.candidates.filter((candidate) => visibleProducts.some((item) => item.sid === candidate.product_sid));
+    setCandidates(available);
+    if (!available.length) setMessage("No match in this register's approved catalog. Refresh it or try a product number.");
   }
 
   return <div className="pos-app">
@@ -286,16 +322,20 @@ export default function App() {
           <label className="pos-upload">Recognize photo<input type="file" accept="image/png,image/jpeg,image/webp" capture="environment" onChange={(event) => {
             const file = event.target.files?.[0]; if (file) run(() => recognizeFile(file), ""); event.target.value = "";
           }} /></label></div></div>
+        {bootstrap && <p className="pos-muted">Approved register prices from {new Date(bootstrap.snapshot.issued_at).toLocaleString("vi-VN")}. Refresh the register after price changes.</p>}
         <input className="pos-search" placeholder="Scan or enter product number, barcode, name" value={query}
           onChange={(event) => setQuery(event.target.value)} autoFocus />
         {candidates.length > 0 && <div className="pos-candidates"><strong>Possible matches — confirm product</strong>
           {candidates.map((candidate) => <button key={candidate.product_sid} onClick={() => {
             const product = visibleProducts.find((item) => item.sid === candidate.product_sid);
             if (product) addToCart(product); setCandidates([]);
-          }}>{candidate.name} · {money(candidate.retail_price_minor || 0)} <small>{candidate.explanation}</small></button>)}
+          }}>{candidate.name} · {money(visibleProducts.find((item) => item.sid === candidate.product_sid)?.price_minor || 0)}
+            <small>{candidate.explanation}{bootstrap ? " · approved register price" : " · current inventory price"}</small></button>)}
         </div>}
         <div className="pos-products">
-          {filtered.map((product) => <button className="pos-product" key={product.sid} onClick={() => addToCart(product)}>
+          {filtered.map((product) => <button className="pos-product" key={product.sid}
+            disabled={product.price_minor === null || (bootstrap ? product.offline_available <= 0 : product.on_hand - product.allocated <= 0)}
+            onClick={() => addToCart(product)}>
             <span><strong>{product.name}</strong><small>{product.sku || product.sid} · {product.category}</small></span>
             <span>{product.price_minor === null ? "Price needed" : money(product.price_minor)}<small>{online ? "Stock " + product.on_hand : "Offline " + product.offline_available}</small></span>
           </button>)}
@@ -378,12 +418,27 @@ export default function App() {
       <section className="pos-panel"><h1>Dashboard</h1>
         <div className="pos-kpis"><div><small>Synced sales today</small><strong>{dashboard?.sales_count ?? "—"}</strong></div>
           <div><small>Gross today</small><strong>{money(dashboard?.gross_minor || 0)}</strong></div>
+          <div><small>Refunds today</small><strong>{money(dashboard?.refunds_minor || 0)}</strong></div>
+          <div><small>Net today</small><strong>{money(dashboard?.net_minor || 0)}</strong></div>
           <div><small>Pending on this device</small><strong>{pending.length}</strong></div></div>
         <h2>Low stock</h2><p>{dashboard?.low_stock.length || 0} products need review</p>
       </section>
-      <section className="pos-panel"><div className="pos-row"><h1>Sales</h1><a href="/api/pos/exports/sales.csv">Export CSV</a></div>
-        {serverSales.slice(0, 30).map((sale) => <div className="pos-list-line" key={String(sale.sid)}><span>{String(sale.receipt_id)}<small>{String(sale.sold_at)}</small></span><strong>{money(Number(sale.total_minor) || 0)}</strong></div>)}
+      <section className="pos-panel"><div className="pos-row"><h1>Sales</h1><div className="pos-row"><a href="/api/pos/exports/sales.csv">Sales CSV</a><a href="/api/pos/exports/returns.csv">Returns CSV</a><a href="/api/pos/exports/shifts.csv">Shifts CSV</a></div></div>
+        {serverSales.slice(0, 30).map((sale) => <div className="pos-list-line" key={String(sale.sid)}><span>{String(sale.receipt_id)}<small>{String(sale.sold_at)} · {String(sale.refund_status || "PAID")}</small></span><span><strong>{money(Number(sale.total_minor) || 0)}</strong>
+          <button disabled={!online || busy || sale.refund_status === "REFUNDED" || sale.refund_status === "VOIDED"} onClick={() => selectSaleForReturn(sale)}>Return</button></span></div>)}
         {!serverSales.length && <p className="pos-muted">No synced sales yet.</p>}
+        {selectedSale && <div className="pos-return-form"><div className="pos-row"><h2>Cash return · {String(selectedSale.receipt_id)}</h2><button onClick={() => setSelectedSale(null)}>Cancel</button></div>
+          {((selectedSale.lines || []) as { product_sid: string; name: string; quantity: number }[]).map((line) => {
+            const already = Number((selectedSale.returned_quantities as Record<string, number> | undefined)?.[line.product_sid] || 0);
+            const value = returnLines[line.product_sid] || { quantity: "0", restock: true };
+            return <div className="pos-return-line" key={line.product_sid}><span>{line.name} · available to return {line.quantity - already}</span>
+              <input aria-label={"Return quantity for " + line.name} type="number" min="0" max={line.quantity - already} step="1" value={value.quantity}
+                onChange={(event) => setReturnLines({ ...returnLines, [line.product_sid]: { ...value, quantity: event.target.value } })} />
+              <label><input type="checkbox" checked={value.restock} onChange={(event) => setReturnLines({ ...returnLines, [line.product_sid]: { ...value, restock: event.target.checked } })} /> Restock</label></div>;
+          })}
+          <label>Reason<input value={returnReason} onChange={(event) => setReturnReason(event.target.value)} /></label>
+          <button className="pos-primary" disabled={busy || !online} onClick={() => run(submitReturn, "Cash return recorded")}>Record cash return</button>
+        </div>}
         <hr/><div className="pos-row"><h2>Report</h2><select value={reportGroup} onChange={(event) => setReportGroup(event.target.value)}>
           <option value="day">By day</option><option value="cashier">By cashier</option><option value="product">By product</option>
         </select></div>
@@ -398,6 +453,18 @@ export default function App() {
         <div className="pos-row"><button disabled={!online || busy} onClick={() => run(provision, "Offline catalog refreshed")}>Pair / refresh offline catalog</button>
           <button disabled={!online || busy} onClick={() => run(syncPending, "Sync complete")}>Sync pending sales</button></div>
         <p className="pos-muted">Provision online before disconnecting. Cash sales are the only offline payment type.</p>
+        <hr/><h2>Cash shift</h2>
+        {openShift ? <><p>Open since {String(openShift.opened_at)} · opening cash {money(Number(openShift.opening_cash_minor) || 0)}</p>
+          <label>Counted cash (VND)<input type="number" min="0" step="1" value={countedCash} onChange={(event) => setCountedCash(event.target.value)} /></label>
+          <button disabled={!online || busy || pending.length > 0 || attention.length > 0 || !countedCash} onClick={() => run(async () => {
+            await posApi.closeShift(String(openShift.sid), Number(countedCash), pending.length + attention.length);
+            setCountedCash(""); await refreshOnline();
+          }, "Shift closed")}>Close shift</button>
+          {(pending.length > 0 || attention.length > 0) && <p className="pos-error">Sync or reconcile local sales before closing.</p>}
+        </> : <><label>Opening cash (VND)<input type="number" min="0" step="1" value={openingCash} onChange={(event) => setOpeningCash(event.target.value)} /></label>
+          <button disabled={!online || busy || !openingCash} onClick={() => run(async () => {
+            await posApi.openShift(Number(openingCash)); setOpeningCash(""); await refreshOnline();
+          }, "Shift opened")}>Open shift</button></>}
       </section>
       <section className="pos-panel"><h1>Local receipts</h1>{sales.slice().reverse().map((sale) =>
         <div className="pos-list-line" key={sale.idempotency_key}><span><strong>{sale.receipt_id}</strong><small>{sale.sync_state} · {sale.sync_error || sale.sold_at}</small></span>

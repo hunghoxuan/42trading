@@ -93,3 +93,42 @@ test("CSV import previews errors, commits once, and exports catalog", async () =
   const collision = await service.previewImport({ csv: csv.replace("COF-1", "OTHER") });
   assert.match(collision.errors.join(" "), /barcode belongs to another product/);
 });
+
+test("cash returns refund only unsold quantities and optionally restock", async () => {
+  const { service, actor } = fixture();
+  await service.upsertProduct({ sid: "P1", name: "Coffee", sku: "COF-1", vat_rate_bps: 1000 }, actor);
+  await service.setPrice({ product_sid: "P1", price_minor: 25000 }, actor);
+  await service.adjustStock({ product_sid: "P1", delta: 3, reason: "received" }, actor);
+  const sale = (await service.checkout({ idempotency_key: "sale-return-1",
+    lines: [{ product_sid: "P1", quantity: 2 }], cash_received_minor: 60000 }, actor)).sale;
+  const request = { sale_sid: sale.sid, idempotency_key: "return-1", reason: "Customer return",
+    lines: [{ product_sid: "P1", quantity: 1, restock: true }] };
+  const returned = await service.refundSale(request, actor);
+  assert.equal(returned.return.amount_minor, 27500);
+  assert.equal((await service.refundSale(request, actor)).duplicate, true);
+  await assert.rejects(service.refundSale({ ...request, idempotency_key: "return-2",
+    lines: [{ product_sid: "P1", quantity: 2, restock: true }] }, actor), /exceeds remaining quantity/);
+  assert.equal((await service.catalog())[0].on_hand, 2);
+  const rest = await service.refundSale({ sale_sid: sale.sid, idempotency_key: "return-3",
+    reason: "Remaining return", lines: [{ product_sid: "P1", quantity: 1, restock: false }] }, actor);
+  assert.equal(rest.return.amount_minor, 27500);
+  assert.equal((await service.sales())[0].refund_status, "REFUNDED");
+  assert.equal((await service.dashboard()).net_minor, 0);
+});
+
+test("a cash shift totals sales and refunds and rejects local pending sales", async () => {
+  const { service, actor } = fixture();
+  await service.upsertProduct({ sid: "P1", name: "Coffee", sku: "COF-1" }, actor);
+  await service.setPrice({ product_sid: "P1", price_minor: 25000 }, actor);
+  await service.adjustStock({ product_sid: "P1", delta: 1, reason: "received" }, actor);
+  const shift = (await service.openShift({ opening_cash_minor: 10000 }, actor)).shift;
+  await assert.rejects(service.openShift({ opening_cash_minor: 0 }, actor), /already has an open shift/);
+  await service.checkout({ idempotency_key: "shift-sale-1", lines: [{ product_sid: "P1", quantity: 1 }],
+    cash_received_minor: 30000 }, actor);
+  await assert.rejects(service.closeShift({ shift_sid: shift.sid, counted_cash_minor: 35000, pending_count: 1 }, actor),
+    /Sync pending local sales/);
+  const closed = (await service.closeShift({ shift_sid: shift.sid,
+    counted_cash_minor: 35000, pending_count: 0 }, actor)).shift;
+  assert.equal(closed.expected_cash_minor, 35000);
+  assert.equal(closed.variance_minor, 0);
+});

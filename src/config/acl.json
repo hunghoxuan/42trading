@@ -76,11 +76,11 @@
     },
     "pos_cashier": {
       "inherits": [],
-      "permissions": ["pages.pos", "apis.auth.me", "apis.pos.read", "apis.pos.sales.write"]
+      "permissions": ["pages.pos", "apis.auth.me", "apis.pos.read", "apis.pos.sales.write", "apis.pos.shifts.write"]
     },
     "pos_manager": {
       "inherits": ["pos_cashier"],
-      "permissions": ["apis.pos.catalog.write", "apis.pos.price.write", "apis.pos.stock.write", "apis.pos.offline.allocate"]
+      "permissions": ["apis.pos.catalog.write", "apis.pos.price.write", "apis.pos.stock.write", "apis.pos.offline.allocate", "apis.pos.refunds.write"]
     },
     "pos_stock": {
       "inherits": [],
