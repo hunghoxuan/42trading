@@ -247,6 +247,12 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.pos-zero-value,
+.data-table-mobile-card__amount.is-muted,
+.data-table-mobile-card__value.is-muted {
+  color: var(--muted) !important;
+}
+
 .pos-product-image-field {
   display: grid;
   gap: 6px;

@@ -588,15 +588,21 @@ export default function App() {
       { accessorKey: "supplier", header: tr("Supplier"), cell: ({ row }: ProductCell) => row.original.supplier || "—" },
       { accessorKey: "status", header: tr("Status"), cell: ({ row }: ProductCell) => <span className={`badge badge-mini ${row.original.status === "ACTIVE" ? "ACTIVE" : "INACTIVE"}`}>{tr(row.original.status === "ACTIVE" ? "Active" : "Inactive")}</span> },
     ] : []),
-    { accessorKey: "price_minor", header: tr("Retail price (VND)"), cell: ({ row }: ProductCell) => row.original.price_minor === null ? <span className="minor-text">{tr("No Price")}</span> : money(row.original.price_minor, language) },
-    { accessorKey: "on_hand", header: tr("Stock"), cell: ({ row }: ProductCell) => <div className="ui-data-stack"><span>{usingOfflineCatalog ? row.original.offline_available : row.original.on_hand} {row.original.unit}</span><span className="ui-data-meta">{tr("Reserved")} {row.original.allocated}</span></div> },
+    { accessorKey: "price_minor", header: tr("Retail price (VND)"), cell: ({ row }: ProductCell) => row.original.price_minor === null ? <span className="minor-text">{tr("No Price")}</span> : <span className={row.original.price_minor === 0 ? "pos-zero-value" : undefined}>{money(row.original.price_minor, language)}</span> },
+    { accessorKey: "on_hand", header: tr("Stock"), cell: ({ row }: ProductCell) => {
+      const quantity = usingOfflineCatalog ? row.original.offline_available : row.original.on_hand;
+      return <div className="ui-data-stack"><span className={quantity === 0 ? "pos-zero-value" : undefined}>{quantity} {row.original.unit}</span><span className="ui-data-meta">{tr("Reserved")} {row.original.allocated}</span></div>;
+    } },
   ];
   const productCard = {
     getTitle: (product: Product) => product.name, getSubtitle: (product: Product) => product.sku || product.sid,
     getImageSrc: (product: Product) => product.image, getImageAlt: (product: Product) => product.name, getImageLabel: () => "—",
-    getAmount: (product: Product) => ({ value: product.price_minor === null ? tr("No Price") : money(product.price_minor, language) }),
+    getAmount: (product: Product) => ({ value: product.price_minor === null ? tr("No Price") : money(product.price_minor, language), tone: product.price_minor === 0 || product.price_minor === null ? "muted" : undefined }),
     getBadges: (product: Product) => [{ label: tr(product.status === "ACTIVE" ? "Active" : "Inactive"), tone: product.status === "ACTIVE" ? "active" : "inactive" }],
-    getRows: (product: Product) => [[{ value: product.category || "—" }, { value: `${tr("Stock")}: ${usingOfflineCatalog ? product.offline_available : product.on_hand} ${product.unit}` }]],
+    getRows: (product: Product) => {
+      const quantity = usingOfflineCatalog ? product.offline_available : product.on_hand;
+      return [[{ value: product.category || "—" }, { value: `${tr("Stock")}: ${quantity} ${product.unit}`, tone: quantity === 0 ? "muted" : undefined }]];
+    },
   };
 
   const attributeField = (field: "category" | "supplier" | "unit", label: string) => (
@@ -624,11 +630,11 @@ export default function App() {
             </InputComboSelect>
           </span></label>
           {attributeField("unit", "Unit")}
-          <label className="pay42-form-field"><span className="ui-field-label">{tr("Import price (VND)")}</span><input type="number" min="0" step="1" value={form.cost} onChange={(event) => setForm({ ...form, cost: event.target.value })} /></label>
-          <label className="pay42-form-field"><span className="ui-field-label">{tr("Retail price (VND)")}</span><input type="number" min="0" step="1" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} /></label>
+          <label className="pay42-form-field"><span className="ui-field-label">{tr("Import price (VND)")}</span><input className={Number(form.cost) === 0 ? "pos-zero-value" : undefined} type="number" min="0" step="1" value={form.cost} onChange={(event) => setForm({ ...form, cost: event.target.value })} /></label>
+          <label className="pay42-form-field"><span className="ui-field-label">{tr("Retail price (VND)")}</span><input className={Number(form.price) === 0 ? "pos-zero-value" : undefined} type="number" min="0" step="1" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} /></label>
           <label className="pay42-form-field"><span className="ui-field-label">{tr("VAT added on top (%)")}</span><input type="number" min="0" max="100" step="0.01" value={form.vat} onChange={(event) => setForm({ ...form, vat: event.target.value })} /></label>
           <label className="pay42-form-field"><span className="ui-field-label">{tr("Minimum quantity")}</span><input type="number" min="0" step="0.01" value={form.minStock} onChange={(event) => setForm({ ...form, minStock: event.target.value })} /></label>
-          <label className="pay42-form-field"><span className="ui-field-label">{tr("Current Qty in Stock")}</span><input type="number" value={selected ? (products.find((product) => product.sid === selected.sid)?.on_hand ?? selected.on_hand) : 0} readOnly aria-readonly="true" /></label>
+          <label className="pay42-form-field"><span className="ui-field-label">{tr("Current Qty in Stock")}</span><input className={(selected ? (products.find((product) => product.sid === selected.sid)?.on_hand ?? selected.on_hand) : 0) === 0 ? "pos-zero-value" : undefined} type="number" value={selected ? (products.find((product) => product.sid === selected.sid)?.on_hand ?? selected.on_hand) : 0} readOnly aria-readonly="true" /></label>
           {attributeField("category", "Category")}
           {attributeField("supplier", "Provider")}
           <div className="pay42-form-field--full pos-product-image-field">
