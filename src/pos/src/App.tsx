@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type SelectHTMLAttributes } from "react";
-import { BrowserMultiFormatReader } from "@zxing/browser";
+import { readBarcodePhoto } from "./barcodeReader";
 import { useRegisterSW } from "virtual:pwa-register/react";
 import { ApiError, posApi, type ImportPreview } from "./api";
 import Receipt, { fromLocalSale, fromServerSale } from "./Receipt";
@@ -449,26 +449,28 @@ export default function App() {
   const scanned = useCallback((code: string) => {
     setScanner(false);
     setQuery(code);
+    setError(""); setCandidates([]); setRecognitionHints([]);
+    const notice = tr("Scanned code") + ": " + code + ". ";
     const matches = visibleProducts.filter((item) => item.sku === code || item.sid === code || item.barcodes.includes(code));
     if (matches.length > 1) {
       setCandidates(matches.map((item) => ({ product_sid: item.sid, name: item.name,
         retail_price_minor: item.price_minor, score: 1, explanation: "Barcode is shared; select the correct product." })));
-      setMessage(language === "vi" ? "Mã vạch trùng nhiều sản phẩm. Hãy chọn đúng sản phẩm." : "This barcode matches multiple products. Choose the correct product.");
+      setMessage(notice + (language === "vi" ? "Mã vạch trùng nhiều sản phẩm. Hãy chọn đúng sản phẩm." : "This barcode matches multiple products. Choose the correct product."));
       return;
     }
     const product = matches[0];
     if (product && tab === "inventory") {
       selectProduct(product);
-      setMessage(tr("Opened") + " " + product.name);
+      setMessage(notice + tr("Opened") + " " + product.name);
     } else if (product) {
       addToCart(product);
-      setMessage(tr("Added") + " " + product.name);
+      setMessage(notice + tr("Added") + " " + product.name);
     } else if (tab === "inventory") {
       setSelected(null);
       setDetailOpen(true);
       setForm({ sid: "", name: "", sku: code, barcodes: code ? code : "", category: "", supplier: "", status: "ACTIVE", unit: "cái", price: "", cost: "", minStock: "0", vat: "0", image: "" });
-      setMessage(tr("No match. Review the scanned code and create a product."));
-    } else setMessage(tr("No match for") + " " + code + ". " + tr("Use Inventory to create a product."));
+      setMessage(notice + tr("No match. Review the scanned code and create a product."));
+    } else setMessage(notice + tr("No match for") + " " + code + ". " + tr("Use Inventory to create a product."));
   }, [visibleProducts, tab, language]);
 
   function openProductCamera() {
@@ -506,15 +508,9 @@ export default function App() {
     if (!/^image\/(png|jpeg|webp)$/.test(file.type) || file.size > 4 * 1024 * 1024) {
       throw new Error("Choose a PNG, JPEG, or WebP under 4 MB");
     }
-    const image = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(file);
-    });
     try {
-      const decoded = await new BrowserMultiFormatReader().decodeFromImageUrl(image);
-      const code = decoded.getText();
+      const code = await readBarcodePhoto(file);
+      if (!code) throw new Error("No barcode in this photo");
       const product = visibleProducts.find((item) => item.sid === code || item.sku === code || item.barcodes.includes(code));
       if (product) {
         setCandidates([{ product_sid: product.sid, name: product.name,
