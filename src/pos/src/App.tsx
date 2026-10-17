@@ -6,6 +6,7 @@ import Receipt, { fromLocalSale, fromServerSale } from "./Receipt";
 import PhotoCamera from "./PhotoCamera";
 import CashPayment from "./CashPayment";
 import Scanner from "./Scanner";
+import { cashReceivedForCheckout } from "./cashChange";
 import { searchProducts } from "./productSearch";
 import { t, type Language } from "./i18n";
 // Reuse the existing 42trade React components; their sources are JavaScript, not TypeScript.
@@ -374,8 +375,8 @@ export default function App() {
 
   async function checkout(print = false) {
     if (!cart.length) throw new Error("Cart is empty");
-    const received = Number(cash);
-    if (!Number.isSafeInteger(received) || received < total) throw new Error("Enter enough cash received");
+    const received = cashReceivedForCheckout(cash, total);
+    if (!cash.trim()) setCash(String(received));
     if (!online && bootstrap) {
       const sale = await commitLocalSale(cart, received);
       const invoice = fromLocalSale(sale);

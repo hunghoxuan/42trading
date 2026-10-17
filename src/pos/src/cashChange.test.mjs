@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { changeCombinations, changePage, VND_DENOMINATIONS } from './cashChange.ts';
+import { cashReceivedForCheckout, changeCombinations, changePage, VND_DENOMINATIONS } from './cashChange.ts';
+
+test('empty cash received defaults to the exact total at checkout', () => {
+  assert.equal(cashReceivedForCheckout('', 113000), 113000);
+  assert.equal(cashReceivedForCheckout('   ', 113000), 113000);
+  assert.equal(cashReceivedForCheckout('120000', 113000), 120000);
+  assert.throws(() => cashReceivedForCheckout('4', 113000), /Enter enough cash received/);
+  assert.throws(() => cashReceivedForCheckout('1.5', 113000), /Enter enough cash received/);
+});
 
 test('enumerates both requested 123,000 VND examples exactly once', () => {
   const results = [...changeCombinations(123000, VND_DENOMINATIONS.filter(value => value >= 1000))];

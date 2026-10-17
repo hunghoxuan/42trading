@@ -1,6 +1,13 @@
 export const VND_DENOMINATIONS = [500000, 200000, 100000, 50000, 20000, 10000, 5000, 2000, 1000, 500, 200, 100];
 export type CashNote = { denomination: number; quantity: number };
 
+export function cashReceivedForCheckout(cash: string, total: number): number {
+  const entered = cash.trim();
+  const received = entered ? Number(entered) : total;
+  if (!Number.isSafeInteger(received) || received < total) throw new Error("Enter enough cash received");
+  return received;
+}
+
 // Lazy enumeration: every unique combination is reachable without calculating
 // or retaining the potentially enormous full result set.
 export function* changeCombinations(amount: number, denominations: number[]): Generator<CashNote[]> {
