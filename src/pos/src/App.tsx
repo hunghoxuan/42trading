@@ -614,28 +614,32 @@ export default function App() {
   const inventoryDetail = (<div className="pay42-form-grid pos-form">
           <label className="pay42-form-field pay42-form-field--full"><span className="ui-field-label">{tr("Name")}</span><input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
           <label className="pay42-form-field"><span className="ui-field-label">{tr("Product number")}</span><input value={form.sku} onChange={(event) => setForm({ ...form, sku: event.target.value })} /></label>
-          <label className="pay42-form-field pay42-form-field--full"><span className="ui-field-label">{tr("Barcodes, comma separated")}</span><input value={form.barcodes} onChange={(event) => setForm({ ...form, barcodes: event.target.value })} /></label>
-          {attributeField("category", "Category")}
-          {attributeField("supplier", "Supplier")}
+          <label className="pay42-form-field"><span className="ui-field-label">{tr("Barcodes, comma separated")}</span><input value={form.barcodes} onChange={(event) => setForm({ ...form, barcodes: event.target.value })} /></label>
           <label className="pay42-form-field"><span className="ui-field-label">{tr("Status")}</span><InputComboSelect value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>
             <option value="ACTIVE">{tr("Active")}</option><option value="ARCHIVED">{tr("Inactive")}</option>
           </InputComboSelect></label>
-          <div className="pay42-form-field--full pos-product-image-picker">
-            <ProductImage src={form.image} label={tr("No Image")} preview />
-            <div className="stack-layout">
-              <button type="button" className="primary-button" disabled={busy} onClick={openProductCamera}>{tr(form.image ? "Retake product photo" : "Take product photo")}</button>
-              <button type="button" className="secondary-button" disabled={busy} onClick={() => productPhotoUpload.current?.click()}>{tr("Choose existing photo")}</button>
-              {lastImageChange?.sid === form.sid && <button type="button" className="secondary-button" disabled={busy || !online}
-                onClick={() => run(undoProductPhoto, "Previous photo restored.")}>{tr("Undo photo change")}</button>}
-            </div>
-          </div>
           {attributeField("unit", "Unit")}
-          <p className="minor-text pay42-form-field--full">{tr("New values are added to the lists when you save the product.")}</p>
+          <label className="pay42-form-field"><span className="ui-field-label">{tr("Import price (VND)")}</span><input type="number" min="0" step="1" value={form.cost} onChange={(event) => setForm({ ...form, cost: event.target.value })} /></label>
           <label className="pay42-form-field"><span className="ui-field-label">{tr("Retail price (VND)")}</span><input type="number" min="0" step="1" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} /></label>
-          <label className="pay42-form-field"><span className="ui-field-label">{tr("Cost price (VND)")}</span><input type="number" min="0" step="1" value={form.cost} onChange={(event) => setForm({ ...form, cost: event.target.value })} /></label>
-          <label className="pay42-form-field"><span className="ui-field-label">{tr("Minimum stock")}</span><input type="number" min="0" step="0.01" value={form.minStock} onChange={(event) => setForm({ ...form, minStock: event.target.value })} /></label>
           <label className="pay42-form-field"><span className="ui-field-label">{tr("VAT added on top (%)")}</span><input type="number" min="0" max="100" step="0.01" value={form.vat} onChange={(event) => setForm({ ...form, vat: event.target.value })} /></label>
-          <label className="pay42-form-field pay42-form-field--full"><span className="ui-field-label">{tr("Image URL")}</span><input value={form.image} onChange={(event) => setForm({ ...form, image: event.target.value })} /></label>
+          <label className="pay42-form-field"><span className="ui-field-label">{tr("Minimum quantity")}</span><input type="number" min="0" step="0.01" value={form.minStock} onChange={(event) => setForm({ ...form, minStock: event.target.value })} /></label>
+          <label className="pay42-form-field"><span className="ui-field-label">{tr("Current Qty in Stock")}</span><input type="number" value={selected ? (products.find((product) => product.sid === selected.sid)?.on_hand ?? selected.on_hand) : 0} readOnly aria-readonly="true" /></label>
+          {attributeField("category", "Category")}
+          {attributeField("supplier", "Provider")}
+          <div className="pay42-form-field--full pos-product-image-field">
+            <span className="ui-field-label">{tr("Image")}</span>
+            <div className="pos-product-image-picker">
+              <ProductImage src={form.image} label={tr("No Image")} preview />
+              <div className="stack-layout">
+                <button type="button" className="primary-button" disabled={busy} onClick={openProductCamera}>{tr(form.image ? "Retake product photo" : "Take product photo")}</button>
+                <button type="button" className="secondary-button" disabled={busy} onClick={() => productPhotoUpload.current?.click()}>{tr("Choose existing photo")}</button>
+                {lastImageChange?.sid === form.sid && <button type="button" className="secondary-button" disabled={busy || !online}
+                  onClick={() => run(undoProductPhoto, "Previous photo restored.")}>{tr("Undo photo change")}</button>}
+              </div>
+            </div>
+            <label className="pay42-form-field"><span className="ui-field-label">{tr("Image URL")}</span><input value={form.image} onChange={(event) => setForm({ ...form, image: event.target.value })} /></label>
+          </div>
+          <p className="minor-text pay42-form-field--full">{tr("New values are added to the lists when you save the product.")}</p>
           <button className="primary-button" disabled={!online || busy} onClick={() => run(saveProduct, "Product saved")}>{tr("Save product")}</button>
           {selected && <><hr/><h2>{tr("Stock")}</h2><p>{tr("On hand")} {selected.on_hand} {selected.unit} · {tr("Reserved")} {selected.allocated}</p>
             {selected.stock_import_warning && <p className="pos-error">{tr("Stock source not imported")}: {selected.source_on_hand}</p>}

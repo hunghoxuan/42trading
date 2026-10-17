@@ -243,6 +243,16 @@
   gap: 10px;
 }
 
+.pos-form.pay42-form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.pos-product-image-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
 /* Product attribute menus are portalled above the mobile CRUD detail modal (1100). */
 .pos-product-attribute-menu {
   z-index: 1101;
