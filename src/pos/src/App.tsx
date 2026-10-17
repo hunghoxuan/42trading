@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type SelectHTMLAttributes } from "react";
-import { BrowserMultiFormatReader, type IScannerControls } from "@zxing/browser";
+import { BrowserMultiFormatReader } from "@zxing/browser";
 import { useRegisterSW } from "virtual:pwa-register/react";
 import { ApiError, posApi, type ImportPreview } from "./api";
 import Receipt, { fromLocalSale, fromServerSale } from "./Receipt";
 import PhotoCamera from "./PhotoCamera";
+import Scanner from "./Scanner";
 import { t, type Language } from "./i18n";
 // Reuse the existing 42trade React components; their sources are JavaScript, not TypeScript.
 // @ts-expect-error shared JS component has no declaration file
@@ -84,31 +85,6 @@ function deviceId(): string {
     localStorage.setItem(key, value);
   }
   return value;
-}
-
-function Scanner({ onCode, onClose, language }: { onCode: (value: string) => void; onClose: () => void; language: Language }) {
-  const video = useRef<HTMLVideoElement>(null);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    let cancelled = false;
-    let controls: IScannerControls | undefined;
-    const reader = new BrowserMultiFormatReader();
-    if (video.current) {
-      reader.decodeFromVideoDevice(undefined, video.current, (result) => {
-        if (result && !cancelled) onCode(result.getText());
-      }).then((value) => { controls = value; if (cancelled) controls.stop(); })
-        .catch((cause) => setError(cause instanceof Error ? cause.message : "Camera unavailable"));
-    }
-    return () => { cancelled = true; controls?.stop(); };
-  }, [onCode]);
-  return <div className="pos-scanner" role="dialog" aria-label={t(language, "Scan code")}>
-    <div className="pos-scanner-card">
-      <div className="pos-row"><h2>{t(language, "Scan code")}</h2><button onClick={onClose}>{t(language, "Close")}</button></div>
-      <video ref={video} muted playsInline aria-label={t(language, "Camera preview")} />
-      <p className="pos-muted">{t(language, "Point the camera at a QR code or barcode.")}</p>
-      {error && <p className="pos-error">{error}. {t(language, "Type the product number in the search box instead.")}</p>}
-    </div>
-  </div>;
 }
 
 type Tab = "sale" | "inventory" | "reports" | "register";
