@@ -195,8 +195,23 @@ export default function App() {
   }, [refreshLocal]);
 
   useEffect(() => {
-    if (online) refreshOnline().catch((cause) => setError(String(cause)));
+    if (online) refreshOnline().then(() => setError("")).catch((cause) => {
+      if (cause instanceof ApiError && cause.status === 0) {
+        setOnline(false);
+        setError("");
+      } else {
+        setError(String(cause));
+      }
+    });
   }, [online, refreshOnline]);
+
+  useEffect(() => {
+    if (online) return;
+    const retry = window.setInterval(() => {
+      if (navigator.onLine) setOnline(true);
+    }, 15_000);
+    return () => window.clearInterval(retry);
+  }, [online]);
 
   useEffect(() => {
     if (online && pendingKey) syncPending().catch((cause) => setError(String(cause)));

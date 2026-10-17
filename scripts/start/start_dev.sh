@@ -94,6 +94,12 @@ start_mt5_python_bridge() {
     MT5_PYTHON_BRIDGE_PID=
     return
   fi
+  if /usr/bin/curl -fsS --max-time 2 "http://127.0.0.1:${MT5_PYTHON_BRIDGE_PORT}/pos/" 2>/dev/null | \
+      /usr/bin/grep '42Trade POS' >/dev/null; then
+    echo "[dev] :${MT5_PYTHON_BRIDGE_PORT} serves POS; skipping mt5-python-bridge to keep POS available"
+    MT5_PYTHON_BRIDGE_PID=
+    return
+  fi
   free_port "${MT5_PYTHON_BRIDGE_PORT}"
   echo "[dev] starting mt5-python-bridge on :${MT5_PYTHON_BRIDGE_PORT}..."
   MT5_BRIDGE_PORT="${MT5_PYTHON_BRIDGE_PORT}" \
@@ -148,7 +154,11 @@ start_admin
 echo ""
 echo "  open:     http://localhost:${ADMIN_PORT}"
 echo "  backend:  http://localhost:${API_PORT}"
-echo "  mt5-py:   http://localhost:${MT5_PYTHON_BRIDGE_PORT}"
+if [ -n "${MT5_PYTHON_BRIDGE_PID:-}" ]; then
+  echo "  mt5-py:   http://localhost:${MT5_PYTHON_BRIDGE_PORT}"
+else
+  echo "  mt5-py:   disabled (port ${MT5_PYTHON_BRIDGE_PORT} reserved for POS or bridge disabled)"
+fi
 echo ""
 
 while true; do

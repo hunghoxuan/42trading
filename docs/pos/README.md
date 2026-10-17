@@ -13,6 +13,8 @@ The POS is a React/TypeScript PWA at `/pos/` in the existing 42Trade monorepo. I
 
 With the normal API and login running, use `pnpm --dir src/pos dev` to serve the POS at `http://localhost:3002/pos/`. The development proxy targets `http://127.0.0.1:3001` by default; set `VITE_API_PROXY_TARGET` to point elsewhere. Sign in to 42Trade first. For an isolated sample store, run `pnpm --dir src/pos dev:demo`; it serves `http://127.0.0.1:3002/pos/` with sample data in `.local/pos-demo-system.sqlite`. Use `pnpm --dir src/admin build` to build admin and POS together; the POS files are copied to `src/admin/dist/pos/`. The Docker UI build and Nginx configuration also serve `/pos/` on the same origin as `/api/pos/*`.
 
+Local POS and the MT5 Python bridge both use port 3002. When POS is running, `start_dev.sh` leaves it running and skips the bridge. Stop POS before starting the bridge on that port. If a browser still shows an old demo after switching to the live dev server, open `/pos-reset` on the same host as the POS page (for example, `http://127.0.0.1:3002/pos-reset`) once to remove only the POS service worker and its cached assets; local sales in IndexedDB are preserved.
+
 For offline sales, sign in while connected, create products and retail prices, receive stock, pair the register, allocate quantities to the device, then refresh its offline catalog. Test the actual register browser's persistent-storage behavior before using it with customers. The signing key is stored at `data/system/pos-grant-key.json` unless `POS_GRANT_KEY_PATH` is set; keep that file across API restarts and backups. Demo 42Pay seeding is disabled by default; set `PAY42_SEED_DEMO=true` only in a demo environment.
 
 ## Delivered workflow

@@ -1,6 +1,6 @@
 import type { Bootstrap, LocalSale, Product, SaleLine } from "./storage";
 
-type ApiResult = { ok: boolean; error?: string };
+type ApiResult = { ok: boolean; error?: string; message?: string; permission_denied?: boolean };
 export type ImportPreview = {
   count: number;
   errors: string[];
@@ -14,15 +14,23 @@ export class ApiError extends Error {
 }
 
 async function call<T extends ApiResult>(path: string, method = "GET", body?: unknown): Promise<T> {
-  const response = await fetch(path, {
-    method,
-    credentials: "same-origin",
-    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    cache: "no-store",
-  });
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      method,
+      credentials: "same-origin",
+      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      cache: "no-store",
+    });
+  } catch {
+    throw new ApiError("POS server unavailable", 0);
+  }
   const result = await response.json() as T;
-  if (!response.ok || !result.ok) throw new ApiError(result.error || "Request failed", response.status);
+  if (!response.ok || !result.ok) throw new ApiError(
+    result.permission_denied ? result.message || "POS access denied" : result.error || "Request failed",
+    response.status,
+  );
   return result;
 }
 
