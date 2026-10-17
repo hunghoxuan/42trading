@@ -102,7 +102,7 @@ const vi: Record<string, string> = {
   "On hand": "Tồn thực tế", "Reserved": "Đã giữ", "Stock counts": "Phiếu kiểm kho", "Stock count": "Kiểm kho",
   "Close count": "Đóng phiếu", "System count": "Tồn hệ thống", "Review count": "Xem lại số lượng",
   "Posting reason": "Lý do ghi nhận", "Post stock count": "Ghi nhận kiểm kho", "Post these stock adjustments? This updates on-hand quantities.": "Ghi nhận điều chỉnh tồn kho này? Số lượng tồn sẽ được cập nhật.",
-  "Edit product": "Sửa sản phẩm", "Name": "Tên", "Product number": "Mã sản phẩm", "Barcodes, comma separated": "Mã vạch, phân tách bằng dấu phẩy",
+  "Edit product": "Sửa sản phẩm", "Name": "Tên", "Product number": "Mã sản phẩm", "Barcodes, comma separated": "Mã vạch",
   "Category": "Danh mục", "Supplier": "Nhà cung cấp", "Provider": "Nhà cung cấp", "Status": "Trạng thái", "Active": "Đang hoạt động", "Inactive": "Ngừng hoạt động",
   "Out-of-Stock": "Hết hàng", "No Price": "Chưa có giá", "No Image": "Chưa có ảnh", "All status": "Tất cả trạng thái",
   "All categories": "Tất cả danh mục", "All suppliers": "Tất cả nhà cung cấp", "Filter by status": "Lọc theo trạng thái",
