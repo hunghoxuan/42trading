@@ -74,10 +74,10 @@ export const posApi = {
     "/api/pos/offline/sales/sync", "POST", { device_id: sale.device_id, grant: sale.grant, sale }),
   checkout: (idempotency_key: string, lines: SaleLine[], cash_received_minor: number) => call<ApiResult & { sale: unknown }>(
     "/api/pos/sales/checkout", "POST", { idempotency_key, lines, cash_received_minor }),
-  recognizeImage: (image: string) => call<ApiResult & { candidates: {
+  recognizeImage: (photo: { image: string; ocr_images: string[]; line_images: string[]; colors: { color: string; weight: number }[]; visual_matches: { product_sid: string; similarity: number }[] }) => call<ApiResult & { keywords: string[]; colors: string[]; candidates: {
     product_sid: string; name: string; image: string; retail_price_minor: number | null;
-    vat_rate_bps: number; score: number; explanation: string;
-  }[] }>("/api/pos/images/recognize", "POST", { image }),
+    vat_rate_bps: number; score: number; explanation: string; matched_keywords?: string[]; confidence?: string;
+  }[] }>("/api/pos/images/recognize", "POST", photo),
   sales: () => call<ApiResult & { items: unknown[] }>("/api/pos/sales"),
   refundSale: (saleSid: string, reason: string, lines: { product_sid: string; quantity: number; restock: boolean }[],
     idempotencyKey: string) => call<ApiResult>("/api/pos/sales/" + encodeURIComponent(saleSid) + "/returns", "POST",

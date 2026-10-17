@@ -777,7 +777,9 @@ function createPosService(options = {}) {
   }
 
   async function recognizeImage(input) {
-    return { ok: true, ...(await recognizeProductImage(input.image, await catalog(), options.textExtractor)) };
+    return { ok: true, ...(await recognizeProductImage(input.image, await catalog(), options.textExtractor, {
+      ocr_images: input.ocr_images, line_images: input.line_images, colors: input.colors, visual_matches: input.visual_matches,
+    })) };
   }
 
   async function recognizeCash(input, actor) {

@@ -1,0 +1,11 @@
+# POS product photo recognition and search
+
+Product search splits spaces, `OR`, `|`, commas, and semicolons into alternatives. Matching is case insensitive and ignores Vietnamese accents. Products matching more words appear first; an exact SKU/barcode has priority.
+
+Photo recognition first attempts an exact barcode/QR match. Otherwise the browser removes the background with the bundled U²-Net model, extracts foreground colors, and prepares white-backed, enlarged full-product and label views for OCR. Transparent cutouts must be flattened before OCR. The browser may compare foreground color histograms with up to 200 locally embedded catalog photos; invalid reference images are skipped.
+
+`POST /api/pos/images/recognize` keeps its `image` field and accepts optional `ocr_images` (at most two additional views), `line_images` (at most eight overlapping label bands), `colors` (`{ color, weight }`), and `visual_matches` (`{ product_sid, similarity }`). The catalog stays scoped by the existing POS permission. The response includes `candidates`, `recognized_text`, `keywords`, and `colors`. Candidate evidence includes `matched_keywords` and `confidence` (`high` or `possible`); these are evidence categories, not calibrated probabilities.
+
+OCR uses automatic DPI estimation and sparse label text detection, plus single-line detection on label bands for stylized brand lettering. Candidate ranking normalizes accents, tolerates a small OCR spelling error in longer brand words, and requires distinctive text or an exact code. Low-confidence brand text requires strong corroboration from catalog photo colors. A generic word such as “bar”, a short code, or color similarity alone cannot identify a product. Repeated words in a catalog name do not dilute its brand evidence. Color and matching catalog photos only refine an existing text match. Unclear captures return no suggestion and ask the user for a closer brand label or barcode.
+
+Recognition suggests candidates for confirmation; it does not automatically add a guessed product to the cart. Regression tests cover the Lifebuoy/Choco Bar mismatch, noisy OCR, accents, code matching, color-only false positives, and combined label views. Physical capture quality still affects OCR; clean labeling and a visible barcode provide stronger evidence than color.

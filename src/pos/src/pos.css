@@ -88,6 +88,13 @@
   text-align: left;
 }
 
+.pos-candidates .pos-candidate {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: normal;
+}
+
 .pos-product-image,
 .pos-product-image-empty {
   display: grid;

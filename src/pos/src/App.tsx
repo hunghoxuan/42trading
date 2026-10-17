@@ -6,6 +6,7 @@ import Receipt, { fromLocalSale, fromServerSale } from "./Receipt";
 import PhotoCamera from "./PhotoCamera";
 import CashPayment from "./CashPayment";
 import Scanner from "./Scanner";
+import { searchProducts } from "./productSearch";
 import { t, type Language } from "./i18n";
 // Reuse the existing 42trade React components; their sources are JavaScript, not TypeScript.
 // @ts-expect-error shared JS component has no declaration file
@@ -152,7 +153,8 @@ export default function App() {
   const [catalogSorting, setCatalogSorting] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
   useEffect(() => { setCatalogPage(1); }, [tab, query, inventoryStatusFilter, inventoryCategoryFilter, inventorySupplierFilter, catalogPageSize, catalogSorting]);
   const [receipt, setReceipt] = useState<ReturnType<typeof fromServerSale> | null>(null);
-  const [candidates, setCandidates] = useState<{ product_sid: string; name: string; retail_price_minor: number | null; score: number; explanation: string }[]>([]);
+  const [candidates, setCandidates] = useState<{ product_sid: string; name: string; retail_price_minor: number | null; score: number; explanation: string; matched_keywords?: string[]; confidence?: string }[]>([]);
+  const [recognitionHints, setRecognitionHints] = useState<string[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -171,11 +173,7 @@ export default function App() {
   const visibleProducts = online
     ? (tab === "sale" ? products.filter((product) => product.status === "ACTIVE") : products)
     : localProducts;
-  const filtered = visibleProducts.filter((product) => {
-    const text = query.trim().toLowerCase();
-    return !text || [product.name, product.sku, product.sid, product.category, product.supplier, ...product.barcodes]
-      .some((part) => String(part || "").toLowerCase().includes(text));
-  });
+  const filtered = searchProducts(visibleProducts, query);
   const inventoryFiltered = filtered.filter((product) => {
     if (inventoryStatusFilter === "ACTIVE" && product.status !== "ACTIVE") return false;
     if (inventoryStatusFilter === "INACTIVE" && product.status === "ACTIVE") return false;
@@ -498,6 +496,7 @@ export default function App() {
   }
 
   async function recognizeFile(file: File) {
+    setCandidates([]); setRecognitionHints([]); setMessage("");
     if (!/^image\/(png|jpeg|webp)$/.test(file.type) || file.size > 4 * 1024 * 1024) {
       throw new Error("Choose a PNG, JPEG, or WebP under 4 MB");
     }
@@ -518,10 +517,14 @@ export default function App() {
       }
     } catch { /* A product photo may have no machine-readable code. */ }
     if (!online) throw new Error("No known barcode found. Product-photo recognition needs an internet connection.");
-    const result = await posApi.recognizeImage(image);
+    const { prepareRecognitionPhoto } = await import("./recognitionPhoto");
+    const photo = await prepareRecognitionPhoto(file, visibleProducts);
+    const result = await posApi.recognizeImage(photo);
+    setRecognitionHints([...(result.keywords || []), ...(result.colors || []).map((color) => tr(color))]);
+    if (result.keywords?.length) setQuery(result.keywords.join(" "));
     const available = result.candidates.filter((candidate) => visibleProducts.some((item) => item.sid === candidate.product_sid));
     setCandidates(available);
-    if (!available.length) setMessage("No match in this register's approved catalog. Refresh it or try a product number.");
+    if (!available.length) setMessage(tr("Not enough detail to identify this product. Move closer to the brand label or scan its barcode."));
   }
 
   function startNewProduct() {
@@ -710,12 +713,14 @@ export default function App() {
 
     {(tab === "sale" || tab === "inventory") && <main className="pos-page-content stack-layout">
       {tab === "sale" && usingOfflineCatalog && <p className="minor-text">{tr("Refresh the register after price changes.")}</p>}
+      {recognitionHints.length > 0 && <p className="minor-text" role="status">{tr("Detected keywords")}: {recognitionHints.join(" · ")}</p>}
       {candidates.length > 0 && <div className="pos-candidates"><strong>{tr("Possible matches — confirm product")}</strong>
-          {candidates.map((candidate) => <button key={candidate.product_sid} onClick={() => {
+          {candidates.map((candidate) => <button className="pos-candidate" key={candidate.product_sid} onClick={() => {
             const product = visibleProducts.find((item) => item.sid === candidate.product_sid);
             if (product) { if (tab === "inventory") selectProduct(product); else selectSaleProduct(product); } setCandidates([]);
-          }}>{candidate.name} · {money(visibleProducts.find((item) => item.sid === candidate.product_sid)?.price_minor || 0, language)}
-            <small>{candidate.explanation}{usingOfflineCatalog ? " · " + tr("approved register price") : " · " + tr("current inventory price")}</small></button>)}
+          }}><ProductImage src={visibleProducts.find((item) => item.sid === candidate.product_sid)?.image || ""} label={tr("No Image")} />
+            <span className="ui-data-stack"><strong>{candidate.name} · {money(visibleProducts.find((item) => item.sid === candidate.product_sid)?.price_minor || 0, language)}</strong>
+              <small>{candidate.confidence === "high" ? tr("Strong label match") : tr("Please check the product")}{candidate.matched_keywords?.length ? " · " + candidate.matched_keywords.join(" · ") : ""}</small></span></button>)}
         </div>}
       <CrudContainer className="pay42-crud-layout"
         toolbar={{ displayMode: "top", filters: <div className="trades-toolbar-row"><div className="trades-toolbar-filters">
