@@ -27,6 +27,8 @@ import ComboButtonMenu from "../../admin/shared/components/ComboButtonMenu";
 import PaginationBar from "../../admin/shared/components/PaginationBar";
 // @ts-expect-error shared JS source has no declaration file
 import useIsMobile from "../../admin/shared/hooks/useIsMobile";
+// @ts-expect-error Reuse the status indicator shared by the main 42Trade pages.
+import { StatusDisplay } from "../../admin/shared/components/StatusBadge";
 import {
   commitLocalSale, listLocalSales, readBootstrap, requestDurableStorage,
   saveBootstrap, updateSaleState, validateBootstrap,
@@ -615,9 +617,12 @@ export default function App() {
           <label className="pay42-form-field pay42-form-field--full"><span className="ui-field-label">{tr("Name")}</span><input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
           <label className="pay42-form-field"><span className="ui-field-label">{tr("Product number")}</span><input value={form.sku} onChange={(event) => setForm({ ...form, sku: event.target.value })} /></label>
           <label className="pay42-form-field"><span className="ui-field-label">{tr("Barcodes, comma separated")}</span><input value={form.barcodes} onChange={(event) => setForm({ ...form, barcodes: event.target.value })} /></label>
-          <label className="pay42-form-field"><span className="ui-field-label">{tr("Status")}</span><InputComboSelect value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>
-            <option value="ACTIVE">{tr("Active")}</option><option value="ARCHIVED">{tr("Inactive")}</option>
-          </InputComboSelect></label>
+          <label className="pay42-form-field"><span className="ui-field-label">{tr("Status")}</span><span className="pos-product-status-control">
+            <StatusDisplay status={form.status} size="md" />
+            <InputComboSelect value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>
+              <option value="ACTIVE">{tr("Active")}</option><option value="ARCHIVED">{tr("Inactive")}</option>
+            </InputComboSelect>
+          </span></label>
           {attributeField("unit", "Unit")}
           <label className="pay42-form-field"><span className="ui-field-label">{tr("Import price (VND)")}</span><input type="number" min="0" step="1" value={form.cost} onChange={(event) => setForm({ ...form, cost: event.target.value })} /></label>
           <label className="pay42-form-field"><span className="ui-field-label">{tr("Retail price (VND)")}</span><input type="number" min="0" step="1" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} /></label>

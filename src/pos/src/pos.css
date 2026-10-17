@@ -253,6 +253,55 @@
   min-width: 0;
 }
 
+.pos-product-status-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pos-product-status-control > .status-display {
+  --status-display-color: var(--muted);
+  --status-display-border: var(--border);
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.pos-product-status-control .status-display__dot {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  min-width: 8px;
+  min-height: 8px;
+  border-radius: 999px;
+  background: var(--status-display-color);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--status-display-color) 24%, transparent), 0 0 8px var(--status-display-border);
+}
+
+.pos-product-status-control .status-display__dot::after {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+  background: color-mix(in srgb, var(--status-display-color) 26%, transparent);
+  content: "";
+  filter: blur(4px);
+  pointer-events: none;
+}
+
+.pos-product-status-control .status-display--success {
+  --status-display-color: #10b981;
+  --status-display-border: rgba(16, 185, 129, 0.3);
+}
+
+.pos-product-status-control .status-display--neutral {
+  --status-display-color: var(--muted);
+  --status-display-border: var(--border);
+}
+
 /* Product attribute menus are portalled above the mobile CRUD detail modal (1100). */
 .pos-product-attribute-menu {
   z-index: 1101;
