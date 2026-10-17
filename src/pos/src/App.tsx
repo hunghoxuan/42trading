@@ -811,7 +811,7 @@ export default function App() {
           onRowClick: tab === "inventory" ? selectProduct : selectSaleProduct,
           getRowId: (product: Product) => product.sid, selectedRowId: tab === "inventory" ? selected?.sid : null, mobileCard: productCard,
         } }}
-        detail={tab === "inventory" ? { title: tr(selected ? "Edit product" : "New product"), subtitle: selected?.sku || tr("Product details"), children: inventoryDetail }
+        detail={tab === "inventory" ? { title: selected?.name || tr("New product"), children: inventoryDetail }
           : { title: tr("Cart"), subtitle: `${cartRows.length} ${tr("items")}`, className: "pos-cart", children: cartDetail }} />
       {tab === "inventory" && <>
         {(stockCount || stockCountRows.length > 0) && <ResponsivePanel title={tr("Stock counts")} showToggle={false} border="always">{inventoryOperations}</ResponsivePanel>}
