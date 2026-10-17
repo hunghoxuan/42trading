@@ -52,6 +52,11 @@ export default defineConfig({
         navigateFallbackDenylist: [/^\/api\//, /^\/auth\//, /^\/pos\//, /^\/mt5\//],
         globPatterns: ["**/*.{js,css,html}"],
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
+        runtimeCaching: [{
+          urlPattern: /\.(?:wasm|onnx)(?:\?.*)?$/,
+          handler: "CacheFirst",
+          options: { cacheName: "pos-photo-model-v1", expiration: { maxEntries: 4, maxAgeSeconds: 365 * 24 * 60 * 60 } },
+        }],
       },
       devOptions: { enabled: false },
     }),

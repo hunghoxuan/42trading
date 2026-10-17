@@ -68,7 +68,11 @@ export default defineConfig({
         navigateFallback: "/pos/index.html",
         navigateFallbackAllowlist: [/^\/pos(?:\/|$)/],
         globPatterns: ["**/*.{js,css,html,svg,png}"],
-        runtimeCaching: [],
+        runtimeCaching: [{
+          urlPattern: /\.(?:wasm|onnx)(?:\?.*)?$/,
+          handler: "CacheFirst",
+          options: { cacheName: "pos-photo-model-v1", expiration: { maxEntries: 4, maxAgeSeconds: 365 * 24 * 60 * 60 } },
+        }],
       },
       devOptions: { enabled: false },
     }),

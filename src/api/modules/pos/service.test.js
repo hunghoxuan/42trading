@@ -35,6 +35,27 @@ function fixture() {
   return { service, actor: { user_id: "cashier-1" } };
 }
 
+test("automatic photo save changes only the image and supports restoring the previous photo", async () => {
+  const { service, actor } = fixture();
+  await service.upsertProduct({ sid: "PHOTO1", name: "Coffee", sku: "PHOTO-1", barcodes: ["893001"],
+    category: "Coffee", supplier: "Supplier A", unit: "bag", vat_rate_bps: 700,
+    cost_minor: 16000, min_stock: 3, status: "ARCHIVED", image: "https://example.test/coffee.jpg" }, actor);
+  await service.setPrice({ product_sid: "PHOTO1", price_minor: 25000 }, actor);
+  const before = (await service.catalog("", true))[0];
+  const image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a/tQAAAAASUVORK5CYII=";
+  await service.setProductImage({ sid: "PHOTO1", image });
+  const after = (await service.catalog("", true))[0];
+  assert.equal(after.image, image);
+  assert.deepEqual({ ...after, image: before.image }, before);
+  await service.setProductImage({ sid: "PHOTO1", image: before.image });
+  assert.deepEqual((await service.catalog("", true))[0], before);
+  await service.setProductImage({ sid: "PHOTO1", image: "" });
+  assert.equal((await service.catalog("", true))[0].image, "");
+  await assert.rejects(service.setProductImage({ sid: "PHOTO1", image: "not-an-image" }), /PNG|JPEG|WebP/);
+  await assert.rejects(service.setProductImage({ sid: "PHOTO1" }), /Product image is required/);
+  await assert.rejects(service.setProductImage({ sid: "MISSING", image }), /Product not found/);
+});
+
 test("offline cash sale uses allocated stock and survives idempotent retry", async () => {
   const { service, actor } = fixture();
   await service.upsertProduct({ sid: "P1", name: "Coffee", sku: "COF-1", barcodes: ["1234"] }, actor);

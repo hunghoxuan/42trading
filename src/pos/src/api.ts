@@ -35,6 +35,7 @@ async function call<T extends ApiResult>(path: string, method = "GET", body?: un
 }
 
 export const posApi = {
+  setProductImage: (sid: string, image: string) => call<ApiResult>("/api/pos/products/" + encodeURIComponent(sid) + "/image", "PUT", { image }),
   auth: () => call<ApiResult & { user: { user_id: string; name?: string; roles?: string[] } }>("/auth/me?hydrate=0"),
   products: (deviceId = "", includeArchived = false) => {
     const params = new URLSearchParams();

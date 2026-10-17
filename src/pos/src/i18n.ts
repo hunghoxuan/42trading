@@ -1,6 +1,18 @@
 export type Language = "en" | "vi";
 
 const vi: Record<string, string> = {
+  "Update product photo": "Chụp ảnh sản phẩm", "Take product photo": "Chụp ảnh sản phẩm", "Retake product photo": "Chụp ảnh mới",
+  "Choose existing photo": "Chọn ảnh có sẵn", "Choose product photo": "Chọn ảnh sản phẩm", "Undo photo change": "Khôi phục ảnh cũ",
+  "Product photo saved automatically.": "Đã tự động lưu ảnh sản phẩm.", "Photo ready. Save the product to finish.": "Ảnh đã sẵn sàng. Bấm Lưu sản phẩm để hoàn tất.",
+  "Previous photo restored.": "Đã khôi phục ảnh cũ.", "Background could not be removed; your photo was kept.": "Chưa xóa được nền, ảnh chụp vẫn được giữ lại.",
+  "Place one product inside the frame. Hold still; the camera takes the photo for you.": "Đặt một sản phẩm vào khung. Giữ yên, máy sẽ tự chụp.",
+  "Hold still. Taking the photo automatically…": "Giữ yên một chút, máy sẽ tự chụp…", "Bring the product closer and use better light.": "Đưa sản phẩm gần hơn và chọn nơi đủ sáng.",
+  "Preparing and saving your product photo…": "Đang xóa nền, cắt và lưu ảnh sản phẩm…", "Finding the product…": "Đang tìm sản phẩm…",
+  "Capture now": "Chụp ngay", "Try camera again": "Mở lại camera",
+  "Allow camera access or choose an existing photo.": "Cho phép dùng camera hoặc chọn ảnh có sẵn.",
+  "No camera found. Choose an existing photo instead.": "Không tìm thấy camera. Vui lòng chọn ảnh có sẵn.",
+  "Camera unavailable. Check camera access or choose an existing photo.": "Chưa mở được camera. Kiểm tra quyền camera hoặc chọn ảnh có sẵn.",
+  "Choose a PNG, JPEG, or WebP image under 12 MB": "Vui lòng chọn ảnh PNG, JPEG hoặc WebP nhỏ hơn 12 MB",
   "Select or enter a new value": "Chọn hoặc nhập mục mới", "Search or enter a new value": "Tìm hoặc nhập mục mới",
   "Add": "Thêm", "None": "Không chọn",
   "New values are added to the lists when you save the product.": "Mục mới được tự động thêm vào danh sách khi lưu sản phẩm.",

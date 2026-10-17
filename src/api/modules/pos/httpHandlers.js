@@ -43,6 +43,8 @@ async function handlePosRequest(context) {
         url.searchParams.get("include_archived") === "1") };
     } else if (route === "/products" && method === "POST") {
       output = await service.upsertProduct(payload, actor);
+    } else if (/^\/products\/[^/]+\/image$/.test(route) && method === "PUT") {
+      output = await service.setProductImage({ sid: decodeURIComponent(route.slice(10, -6)), image: payload.image });
     } else if (/^\/products\/[^/]+$/.test(route) && method === "PATCH") {
       output = await service.upsertProduct({ ...payload, sid: decodeURIComponent(route.slice(10)) }, actor);
     } else if (/^\/products\/[^/]+\/archive$/.test(route) && method === "POST") {

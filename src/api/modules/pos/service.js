@@ -4,7 +4,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { createUniversalStoreAdapter } = require("../../shared/universal-store/adapterFactory");
-const { recognizeProductImage } = require("./vision");
+const { recognizeProductImage, imageBuffer } = require("./vision");
 const { parseCsv, parseProductRows, validateRows, toCsv } = require("./imports");
 
 const TENANT = "__42pay__";
@@ -290,6 +290,27 @@ function createPosService(options = {}) {
       })];
     });
     return { ok: true, product: (await catalog("", true)).find((row) => row.sid === sid) };
+  }
+
+  async function setProductImage(input) {
+    const sid = requiredText(input.sid, "Product SID");
+    if (typeof input.image !== "string") throw new PosError("Product image is required");
+    const image = input.image;
+    if (/^(https?:\/\/|\/(?!\/))/.test(image)) {
+      new URL(image, "http://pos.local");
+    } else if (image) imageBuffer(image);
+    await transact(function* () {
+      yield ["lockStore"];
+      const current = yield ["getEntity", TENANT, PRODUCT, sid];
+      if (!current) throw new PosError("Product not found", 404);
+      const previous = dataOf(current);
+      const product = { ...previous, image, updated_at: now() };
+      yield ["upsertEntity", entity(PRODUCT, sid, product, current, {
+        scopeModule: current.scope_module || "42pay", category: current.category || previous.metadata?.category || "",
+        visibility: current.visibility || "PUBLIC", accessLevel: current.access_level || "PUBLIC_READ",
+      })];
+    });
+    return { ok: true, image };
   }
 
   async function setPrice(input, actor) {
@@ -864,7 +885,7 @@ function createPosService(options = {}) {
     throw new PosError("Unknown export type", 404);
   }
 
-  return { init, catalog, get, upsertProduct, setPrice, adjustStock, pairDevice,
+  return { init, catalog, get, upsertProduct, setProductImage, setPrice, adjustStock, pairDevice,
     allocateStock, createStockCount, submitStockCount, postStockCount, stockCounts,
     bootstrap, checkout, syncSale, sales, refundSale, shifts, openShift, closeShift, dashboard, recognizeImage,
     previewImport, commitImport, reportSales, exportCsv,

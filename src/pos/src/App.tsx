@@ -66,18 +66,6 @@ function signInHref(): string {
   return login.href;
 }
 
-function readProductImage(file: File): Promise<string> {
-  if (!/^image\/(png|jpeg|webp)$/.test(file.type) || file.size > 3 * 1024 * 1024) {
-    return Promise.reject(new Error("Choose a PNG, JPEG, or WebP image under 3 MB"));
-  }
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error || new Error("Could not read product image"));
-    reader.readAsDataURL(file);
-  });
-}
-
 function ProductImage({ src, label, preview = false }: { src: string; label: string; preview?: boolean }) {
   const [failedSrc, setFailedSrc] = useState("");
   const imageSrc = String(src || "").trim();
@@ -175,7 +163,9 @@ export default function App() {
   const [stockCountReason, setStockCountReason] = useState("");
   const [allocation, setAllocation] = useState("");
   const [scanner, setScanner] = useState(false);
-  const [photoCamera, setPhotoCamera] = useState(false);
+  const [photoCamera, setPhotoCamera] = useState<"product" | "recognize" | null>(null);
+  const productPhotoUpload = useRef<HTMLInputElement>(null);
+  const [lastImageChange, setLastImageChange] = useState<{ sid: string; before: string; after: string } | null>(null);
   const photoUpload = useRef<HTMLInputElement>(null);
   const isMobile = useIsMobile();
   const [detailOpen, setDetailOpen] = useState(() => window.innerWidth >= 768);
@@ -500,6 +490,36 @@ export default function App() {
     } else setMessage(tr("No match for") + " " + code + ". " + tr("Use Inventory to create a product."));
   }, [visibleProducts, tab, language]);
 
+  function openProductCamera() {
+    setPhotoCamera("product");
+    void import("./productPhoto").then(({ warmProductPhoto }) => warmProductPhoto()).catch(() => {});
+  }
+
+  async function updateProductPhoto(file: File) {
+    const target = { sid: form.sid, name: form.name, sku: form.sku, previous: products.find((product) => product.sid === form.sid)?.image ?? form.image };
+    const { prepareProductPhoto } = await import("./productPhoto");
+    const prepared = await prepareProductPhoto(file);
+    if (target.sid && online) {
+      await posApi.setProductImage(target.sid, prepared.image);
+      setProducts((current) => current.map((product) => product.sid === target.sid ? { ...product, image: prepared.image } : product));
+      setSelected((current) => current?.sid === target.sid ? { ...current, image: prepared.image } : current);
+      setLastImageChange({ sid: target.sid, before: target.previous, after: prepared.image });
+    }
+    setForm((current) => current.sid === target.sid && (target.sid || (current.name === target.name && current.sku === target.sku)) ? { ...current, image: prepared.image } : current);
+    setMessage(tr(target.sid && online ? "Product photo saved automatically." : "Photo ready. Save the product to finish.")
+      + (prepared.backgroundRemoved ? "" : " " + tr("Background could not be removed; your photo was kept.")));
+  }
+
+  async function undoProductPhoto() {
+    if (!lastImageChange) return;
+    const change = lastImageChange;
+    await posApi.setProductImage(change.sid, change.before);
+    setProducts((current) => current.map((product) => product.sid === change.sid ? { ...product, image: change.before } : product));
+    setSelected((current) => current?.sid === change.sid ? { ...current, image: change.before } : current);
+    setForm((current) => current.sid === change.sid ? { ...current, image: change.before } : current);
+    setLastImageChange(null);
+  }
+
   async function recognizeFile(file: File) {
     if (!/^image\/(png|jpeg|webp)$/.test(file.type) || file.size > 4 * 1024 * 1024) {
       throw new Error("Choose a PNG, JPEG, or WebP under 4 MB");
@@ -596,16 +616,15 @@ export default function App() {
           <label className="pay42-form-field"><span className="ui-field-label">{tr("Status")}</span><InputComboSelect value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>
             <option value="ACTIVE">{tr("Active")}</option><option value="ARCHIVED">{tr("Inactive")}</option>
           </InputComboSelect></label>
-          <label className="pay42-form-field--full pos-product-image-picker" htmlFor="pos-product-image"><ProductImage src={form.image} label={tr("No Image")} preview />
-            <span className="secondary-button">{tr(form.image ? "Update image" : "Add image")}</span>
-            <input id="pos-product-image" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => {
-              const file = event.currentTarget.files?.[0]; event.currentTarget.value = "";
-              if (file) run(async () => {
-                const image = await readProductImage(file);
-                setForm((current) => ({ ...current, image }));
-              }, "Image ready");
-            }} />
-          </label>
+          <div className="pay42-form-field--full pos-product-image-picker">
+            <ProductImage src={form.image} label={tr("No Image")} preview />
+            <div className="stack-layout">
+              <button type="button" className="primary-button" disabled={busy} onClick={openProductCamera}>{tr(form.image ? "Retake product photo" : "Take product photo")}</button>
+              <button type="button" className="secondary-button" disabled={busy} onClick={() => productPhotoUpload.current?.click()}>{tr("Choose existing photo")}</button>
+              {lastImageChange?.sid === form.sid && <button type="button" className="secondary-button" disabled={busy || !online}
+                onClick={() => run(undoProductPhoto, "Previous photo restored.")}>{tr("Undo photo change")}</button>}
+            </div>
+          </div>
           {attributeField("unit", "Unit")}
           <p className="minor-text pay42-form-field--full">{tr("New values are added to the lists when you save the product.")}</p>
           <label className="pay42-form-field"><span className="ui-field-label">{tr("Retail price (VND)")}</span><input type="number" min="0" step="1" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} /></label>
@@ -742,9 +761,7 @@ export default function App() {
           </>}
         </div></div>, actions: <>
           <button className="secondary-button" onClick={() => setScanner(true)}>{tr("Scan code")}</button>
-          {tab === "sale" && <ComboButtonMenu selectId="pos-photo-source" buttonText={tr("Recognize photo")} ariaLabel={tr("Recognize photo")}
-            onChange={(source: string) => source === "camera" ? setPhotoCamera(true) : photoUpload.current?.click()}
-            items={[{ value: "camera", label: tr("Use camera") }, { value: "upload", label: tr("Upload image") }]} />}
+          {tab === "sale" && <button type="button" className="secondary-button" onClick={() => setPhotoCamera("recognize")}>{tr("Recognize photo")}</button>}
           {tab === "inventory" && <>
             <button className="secondary-button" disabled={!online || busy} onClick={() => run(startStockCount, "Stock count started")}>{tr("Start stock count")}</button>
             <button className="primary-button" onClick={startNewProduct}>{tr("New product")}</button>
@@ -854,9 +871,17 @@ export default function App() {
     <input ref={photoUpload} className="pos-photo-upload" type="file" accept="image/png,image/jpeg,image/webp" aria-label={tr("Upload image")} onChange={(event) => {
       const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) run(() => recognizeFile(file), "");
     }} />
-    {photoCamera && <PhotoCamera language={language} onClose={() => setPhotoCamera(false)}
-      onUpload={() => { setPhotoCamera(false); photoUpload.current?.click(); }}
-      onCapture={(file) => { setPhotoCamera(false); run(() => recognizeFile(file), ""); }} />}
+    <input ref={productPhotoUpload} className="pos-photo-upload" type="file" accept="image/png,image/jpeg,image/webp" aria-label={tr("Choose product photo")} onChange={(event) => {
+      const file = event.currentTarget.files?.[0]; event.currentTarget.value = "";
+      if (file) run(() => updateProductPhoto(file), "");
+    }} />
+    {photoCamera && <PhotoCamera language={language} purpose={photoCamera} onClose={() => setPhotoCamera(null)}
+      onUpload={() => { const purpose = photoCamera; setPhotoCamera(null); (purpose === "product" ? productPhotoUpload : photoUpload).current?.click(); }}
+      onCapture={async (file) => {
+        setBusy(true);
+        try { if (photoCamera === "product") await updateProductPhoto(file); else await recognizeFile(file); }
+        finally { setBusy(false); }
+      }} />}
     {scanner && <Scanner onCode={scanned} onClose={() => setScanner(false)} language={language} />}
     {receipt && <Receipt receipt={receipt} onClose={() => setReceipt(null)} language={language} />}
   </section>;
