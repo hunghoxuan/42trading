@@ -863,7 +863,8 @@ export default function App() {
         try { if (photoCamera === "product") await updateProductPhoto(file); else await recognizeFile(file); }
         finally { setBusy(false); }
       }} />}
-    {scanner && <Scanner onCode={scanned} onClose={() => setScanner(false)} language={language} />}
+    {scanner && <Scanner onCode={scanned} onClose={() => setScanner(false)} language={language}
+      onRecognize={() => { setScanner(false); setPhotoCamera("recognize"); }} />}
     {receipt && <Receipt receipt={receipt} onClose={() => setReceipt(null)} language={language} />}
   </section>;
 }

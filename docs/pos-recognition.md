@@ -2,6 +2,8 @@
 
 Product search splits spaces, `OR`, `|`, commas, and semicolons into alternatives. Matching is case insensitive and ignores Vietnamese accents. Products matching more words appear first; an exact SKU/barcode has priority.
 
+The barcode camera automatically decodes live frames and processes the first detected code once. It shows a scan guide and a 15-second countdown, then releases the camera and explains how to retry if no code was detected. Users can enter a code manually or switch directly to product photo recognition. A product's front label requires photo recognition unless it contains a readable barcode or QR code.
+
 Photo recognition first attempts an exact barcode/QR match. Otherwise the browser removes the background with the bundled U²-Net model, extracts foreground colors, and prepares white-backed, enlarged full-product and label views for OCR. Transparent cutouts must be flattened before OCR. The browser may compare foreground color histograms with up to 200 locally embedded catalog photos; invalid reference images are skipped.
 
 `POST /api/pos/images/recognize` keeps its `image` field and accepts optional `ocr_images` (at most two additional views), `line_images` (at most eight overlapping label bands), `colors` (`{ color, weight }`), and `visual_matches` (`{ product_sid, similarity }`). The catalog stays scoped by the existing POS permission. The response includes `candidates`, `recognized_text`, `keywords`, and `colors`. Candidate evidence includes `matched_keywords` and `confidence` (`high` or `possible`); these are evidence categories, not calibrated probabilities.

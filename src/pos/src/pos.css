@@ -376,6 +376,8 @@
 
 .pos-scanner-card {
   width: min(100%, 520px);
+  max-height: 90dvh;
+  overflow: auto;
   padding: 14px;
   background: var(--panel);
   border: 1px solid var(--border);
@@ -387,6 +389,18 @@
   max-height: 60vh;
   margin-top: 10px;
   background: #000;
+}
+
+.pos-barcode-preview {
+  position: relative;
+}
+
+.pos-barcode-guide {
+  position: absolute;
+  inset: 30% 10%;
+  border: 2px dashed var(--accent);
+  border-radius: 8px;
+  pointer-events: none;
 }
 
 .pos-receipt-overlay {
