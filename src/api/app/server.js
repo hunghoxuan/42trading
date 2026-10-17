@@ -6170,10 +6170,8 @@ async function repoGetPendingSignals(userId = "all") {
 
 async function repoGetUserWatchlist(userId) {
   return await StateRepo.get("USER_WATCHLIST", userId, async () => {
-    const db = await mt5InitBackend();
-    const meta = await dbQueries.getUserMetadata(db.db, userId);
-    const d = dbQueries.parseJsonField(meta);
-    return d?.watchlist || [];
+    const user = await uiReadAuthStateByUserId(userId);
+    return user?.metadata?.watchlist || [];
   });
 }
 
@@ -28409,11 +28407,11 @@ const appHandler = async (req, res) => {
     const sess = getUiSessionFromReq(req);
     try {
       const payload = await readJson(req);
-      const db = await mt5InitBackend();
       const userId = sess.user_id;
+      const user = await uiReadAuthStateByUserId(userId);
+      if (!user) return json(res, 404, { ok: false, error: "User not found" });
 
-      const currentRaw = await dbQueries.getUserMetadata(db.db, userId);
-      const currentParsed = dbQueries.parseJsonField(currentRaw);
+      const currentParsed = user.metadata;
       const current =
         currentParsed &&
         typeof currentParsed === "object" &&
@@ -28433,7 +28431,7 @@ const appHandler = async (req, res) => {
         };
       }
 
-      await dbQueries.updateUserMetadata(db.db, userId, next);
+      await uiWriteAuthState({ ...user, metadata: next, updated_at: new Date().toISOString() });
 
       setUiSessionCookie(
         req,
