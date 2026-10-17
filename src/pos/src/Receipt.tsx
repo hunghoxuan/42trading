@@ -1,18 +1,9 @@
 import type { LocalSale } from "./storage";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { t, type Language } from "./i18n";
-
-type ReceiptData = {
-  receipt_id: string;
-  sold_at: string;
-  cashier_id: string;
-  lines: { name: string; quantity: number; price_minor: number; vat_minor: number; total_minor: number }[];
-  total_minor: number;
-  vat_minor: number;
-  cash_received_minor: number;
-  pending: boolean;
-};
+import { printInvoice } from "./printInvoice";
+import type { InvoiceData as ReceiptData } from "./invoiceTemplate";
 
 export function fromLocalSale(sale: LocalSale): ReceiptData {
   return { receipt_id: sale.receipt_id, sold_at: sale.sold_at, cashier_id: sale.cashier_id || "Offline cashier",
@@ -34,6 +25,7 @@ export default function Receipt({ receipt, onClose, language, autoPrint = false 
     style: "currency", currency: "VND", maximumFractionDigits: 0,
   }).format(value);
   const printed = useRef("");
+  const [printError, setPrintError] = useState("");
   const dialog = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
@@ -44,10 +36,10 @@ export default function Receipt({ receipt, onClose, language, autoPrint = false 
     if (!autoPrint || printed.current === receipt.receipt_id) return;
     const frame = requestAnimationFrame(() => {
       printed.current = receipt.receipt_id;
-      window.print();
+      void printInvoice(receipt, language).catch(() => setPrintError(tr("Could not print invoice. Try again.")));
     });
     return () => cancelAnimationFrame(frame);
-  }, [autoPrint, receipt.receipt_id]);
+  }, [autoPrint, receipt, language]);
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
     window.addEventListener("keydown", closeOnEscape);
@@ -63,7 +55,11 @@ export default function Receipt({ receipt, onClose, language, autoPrint = false 
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     }}>
     <div className="pos-receipt">
-      <div className="pos-receipt-actions"><button onClick={onClose}>{tr("Close")}</button><button onClick={() => window.print()}>{tr("Print invoice")}</button></div>
+      <div className="pos-receipt-actions"><button onClick={onClose}>{tr("Close")}</button><button onClick={() => {
+        setPrintError("");
+        void printInvoice(receipt, language).catch(() => setPrintError(tr("Could not print invoice. Try again.")));
+      }}>{tr("Print invoice")}</button></div>
+      {printError && <p role="alert">{printError}</p>}
       <h2>{tr("42Trade Store")}</h2>
       <h3 className="pos-receipt-title">{tr("Invoice")}</h3>
       <p>{tr("Receipt")} {receipt.receipt_id}<br/>{new Date(receipt.sold_at).toLocaleString(locale)}<br/>{tr("Cashier")} {receipt.cashier_id}</p>

@@ -1,0 +1,33 @@
+/* Standalone thermal invoice template. Deliberately independent of POS/theme CSS. */
+@page { size: auto; margin: 4mm; }
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: #fff; color: #000; }
+body { font: 11px/1.45 Arial, Helvetica, sans-serif; }
+.invoice { width: 72mm; max-width: 100%; margin: 0 auto; }
+.invoice-header { text-align: center; padding-bottom: 3mm; border-bottom: 1px solid #000; }
+.store-name { font-size: 16px; font-weight: 700; }
+h1 { margin: 2mm 0 1mm; font-size: 13px; text-transform: uppercase; letter-spacing: .4px; }
+.invoice-reference { font: 9px/1.4 monospace; overflow-wrap: anywhere; }
+.invoice-meta { margin: 3mm 0; }
+.invoice-meta > div { display: flex; justify-content: space-between; gap: 3mm; }
+dt { flex-shrink: 0; }
+dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
+.pending-stamp { border: 1px dashed #000; padding: 2mm; text-align: center; font-size: 10px; font-weight: 700; }
+.invoice-items { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.item-column { width: 65%; }
+.amount-column { width: 35%; }
+th { text-align: left; font-size: 10px; border-bottom: 1px solid #000; padding: 2mm 0; }
+th:last-child { text-align: right; }
+td { vertical-align: top; padding: 2mm 0; border-bottom: 1px dashed #aaa; }
+td:first-child { padding-right: 2mm; }
+.item-name { overflow-wrap: anywhere; font-weight: 600; }
+.item-detail { font-size: 10px; margin-top: .5mm; }
+.line-amount { text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.invoice-summary { padding-top: 2mm; }
+.summary-row { display: flex; justify-content: space-between; gap: 3mm; padding: .7mm 0; }
+.summary-row strong { text-align: right; font-variant-numeric: tabular-nums; }
+.grand-total { font-size: 14px; border-top: 1px solid #000; margin-top: 2mm; padding-top: 2mm; }
+.invoice-tender { border-top: 1px dashed #777; margin-top: 2mm; padding-top: 2mm; }
+footer { text-align: center; border-top: 1px solid #000; margin-top: 3mm; padding-top: 3mm; }
+tr, .summary-row, .invoice-header, .invoice-summary, .invoice-tender, footer { break-inside: avoid; }
+thead { display: table-header-group; }

@@ -1,6 +1,7 @@
 export type Language = "en" | "vi";
 
 const vi: Record<string, string> = {
+  "Amount": "Thành tiền", "Could not print invoice. Try again.": "Không thể in hóa đơn. Vui lòng thử lại.",
   "Pay": "Thanh toán", "Pay & print": "Thanh toán & in", "Print invoice": "In hóa đơn", "Reprint invoice": "In lại hóa đơn",
   "Invoice": "Hóa đơn bán hàng", "Scan cash": "Chụp tiền", "Upload photo": "Tải ảnh",
   "Decrease quantity": "Giảm số lượng", "Increase quantity": "Tăng số lượng", "Offline · saved on this device": "Ngoại tuyến · lưu trên máy",
