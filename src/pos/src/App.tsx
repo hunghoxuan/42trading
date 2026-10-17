@@ -153,6 +153,8 @@ export default function App() {
   const [catalogSorting, setCatalogSorting] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
   useEffect(() => { setCatalogPage(1); }, [tab, query, inventoryStatusFilter, inventoryCategoryFilter, inventorySupplierFilter, catalogPageSize, catalogSorting]);
   const [receipt, setReceipt] = useState<ReturnType<typeof fromServerSale> | null>(null);
+  const [lastReceipt, setLastReceipt] = useState<ReturnType<typeof fromServerSale> | null>(null);
+  const [printReceipt, setPrintReceipt] = useState(false);
   const [candidates, setCandidates] = useState<{ product_sid: string; name: string; retail_price_minor: number | null; score: number; explanation: string; matched_keywords?: string[]; confidence?: string }[]>([]);
   const [recognitionHints, setRecognitionHints] = useState<string[]>([]);
   const [message, setMessage] = useState("");
@@ -292,6 +294,8 @@ export default function App() {
             await updateSaleState(sale.idempotency_key, "SYNCED");
             setReceipt((current) => current?.receipt_id === sale.receipt_id
               ? fromLocalSale({ ...sale, sync_state: "SYNCED" }) : current);
+            setLastReceipt((current) => current?.receipt_id === sale.receipt_id
+              ? fromLocalSale({ ...sale, sync_state: "SYNCED" }) : current);
           } catch (cause) {
             if (!(cause instanceof ApiError) || cause.status >= 500 || cause.status === 401) break;
             await updateSaleState(sale.idempotency_key, "NEEDS_ATTENTION", cause.message);
@@ -324,13 +328,14 @@ export default function App() {
     });
   }
 
-  async function checkout() {
+  async function checkout(print = false) {
     if (!cart.length) throw new Error("Cart is empty");
     const received = Number(cash);
     if (!Number.isSafeInteger(received) || received < total) throw new Error("Enter enough cash received");
     if (!online && bootstrap) {
       const sale = await commitLocalSale(cart, received);
-      setReceipt(fromLocalSale(sale));
+      const invoice = fromLocalSale(sale);
+      setPrintReceipt(print); setReceipt(invoice); setLastReceipt(invoice);
       setCart([]); setCash("");
       await refreshLocal();
       setMessage(language === "vi" ? "Đã lưu giao dịch. Hóa đơn " + sale.receipt_id + " đang chờ đồng bộ." : "Cash sale saved locally. Receipt " + sale.receipt_id + " is pending sync.");
@@ -338,7 +343,8 @@ export default function App() {
       onlineCheckoutKey.current ||= crypto.randomUUID();
       const result = await posApi.checkout(onlineCheckoutKey.current, cart, received);
       const paid = result.sale as { receipt_id: string };
-      setReceipt(fromServerSale(result.sale as Record<string, unknown>));
+      const invoice = fromServerSale(result.sale as Record<string, unknown>);
+      setPrintReceipt(print); setReceipt(invoice); setLastReceipt(invoice);
       setMessage(language === "vi" ? "Đã thanh toán. Hóa đơn " + paid.receipt_id : "Sale paid. Receipt " + paid.receipt_id);
       setCart([]); setCash(""); onlineCheckoutKey.current = null;
       await refreshOnline();
@@ -626,19 +632,27 @@ export default function App() {
             }}>{tr("Archive product")}</button></>}
         </div>);
   const cartDetail = (<>{cartRows.map((row) => <div className="pos-cart-line" key={row.product_sid}>
-          <div><strong>{row.product?.name || row.product_sid}</strong><small>{money(row.product?.price_minor || 0, language)} {tr("each")}</small></div>
-          <div className="pos-row"><button aria-label="Decrease quantity" onClick={() => setCart((items) => items.map((item) =>
+          <div className="pos-cart-product">
+            {row.product?.image && <ProductImage src={row.product.image} label="" />}
+            <div className="pos-cart-product-text"><strong>{row.product?.name || row.product_sid}</strong>
+              <small>{money(row.product?.price_minor || 0, language)} / {row.product?.unit || tr("each")}</small></div>
+          </div>
+          <div className="pos-cart-quantity"><button aria-label={tr("Decrease quantity")} onClick={() => setCart((items) => items.map((item) =>
             item.product_sid === row.product_sid ? { ...item, quantity: Math.max(0, item.quantity - 1) } : item).filter((item) => item.quantity))}>−</button>
-            <span>{row.quantity}</span><button aria-label="Increase quantity" onClick={() => addToCart(row.product!)}>+</button></div>
+            <span>{row.quantity}</span><button aria-label={tr("Increase quantity")} disabled={!row.product} onClick={() => row.product && addToCart(row.product)}>+</button></div>
         </div>)}
         {!cartRows.length && <p className="pos-muted">{tr("Scan or select a product to start a sale.")}</p>}
         <div className="pos-cart-bottom">
-          <div className="pos-row"><span>{tr("Subtotal")}</span><span>{money(subtotal, language)}</span></div>
-          <div className="pos-row"><span>{tr("VAT")}</span><span>{money(vat, language)}</span></div>
+          {vat > 0 && <div className="pos-cart-tax"><div className="pos-row"><span>{tr("Subtotal")}</span><span>{money(subtotal, language)}</span></div>
+            <div className="pos-row"><span>{tr("VAT")}</span><span>{money(vat, language)}</span></div></div>}
           <div className="pos-total"><span>{tr("Total")}</span><strong>{money(total, language)}</strong></div>
           <CashPayment cash={cash} total={total} language={language} online={online} disabled={busy} onCashChange={setCash} />
-          <button className="primary-button" disabled={busy || !cart.length} onClick={() => run(checkout, "")}>{tr("Complete cash sale")}</button>
-          <small className="pos-muted">{tr("Offline sales are saved on this device until synced.")}</small>
+          <div className="pos-checkout-actions">
+            <button className="primary-button" disabled={busy || !cart.length} onClick={() => run(() => checkout(), "")}>{tr("Pay")}</button>
+            <button className="secondary-button" disabled={busy || !cart.length} onClick={() => run(() => checkout(true), "")}>{tr("Pay & print")}</button>
+          </div>
+          {lastReceipt && <button className="secondary-button pos-reprint" onClick={() => { setPrintReceipt(true); setReceipt(lastReceipt); }}>{tr("Reprint invoice")}</button>}
+          {!online && <small className="pos-offline">{tr("Offline · saved on this device")}</small>}
         </div></>);
   const inventoryOperations = (<>{!!stockCountRows.length && <div className="pos-count-history"><h2>{tr("Stock counts")}</h2>{stockCountRows.slice(0, 10).map((count) => <button key={String(count.sid)} disabled={!online || busy || count.status === "POSTED"}
           onClick={() => resumeStockCount(count)}>{tr(String(count.status))} · {new Date(String(count.created_at)).toLocaleString(language === "vi" ? "vi-VN" : "en-US")} · {((count.lines || []) as unknown[]).length} {tr("products")}</button>)}</div>}
@@ -865,6 +879,6 @@ export default function App() {
       }} />}
     {scanner && <Scanner onCode={scanned} onClose={() => setScanner(false)} language={language}
       onRecognize={() => { setScanner(false); setPhotoCamera("recognize"); }} />}
-    {receipt && <Receipt receipt={receipt} onClose={() => setReceipt(null)} language={language} />}
+    {receipt && <Receipt receipt={receipt} autoPrint={printReceipt} onClose={() => { setReceipt(null); setPrintReceipt(false); }} language={language} />}
   </section>;
 }

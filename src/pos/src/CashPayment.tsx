@@ -31,7 +31,10 @@ function ChangeOptions({ amount, denominations, language }: { amount: number; de
     {!result.items.length ? <p className="pos-error" role="status">{tr("These denominations cannot make exact change. Select more denominations.")}</p>
       : <><ol start={page * 5 + 1} className="pos-change-list" aria-label={tr("Ways to return change")}>
         {result.items.map((notes, index) => <li key={page * 5 + index}>
-          {notes.map(note => `${note.quantity} × ${number(note.denomination)}`).join(" + ")} <span className="minor-text">VND</span>
+          {notes.map((note, noteIndex) => <span key={note.denomination} className="pos-change-note">
+            {noteIndex > 0 && <span className="pos-change-plus"> + </span>}<span className="pos-change-count">{note.quantity}×</span>
+            <span>{number(note.denomination)}</span>
+          </span>)}
         </li>)}
       </ol><div className="pos-row">
         <small className="minor-text">{tr("Page")} {page + 1}</small>
@@ -86,8 +89,8 @@ export default function CashPayment({ cash, total, language, online, disabled, o
     <label>{tr("Cash received")}<input type="number" min="0" step="1" value={cash}
       disabled={disabled} onChange={event => onCashChange(event.target.value)} /></label>
     <div className="pay42-inline-actions">
-      <button type="button" className="secondary-button" disabled={disabled || !online || recognizing} onClick={() => setCamera(true)}>{tr("Photograph cash")}</button>
-      <button type="button" className="secondary-button" disabled={disabled || !online || recognizing} onClick={() => upload.current?.click()}>{tr("Upload cash photo")}</button>
+      <button type="button" className="secondary-button" disabled={disabled || !online || recognizing} onClick={() => setCamera(true)}>{tr("Scan cash")}</button>
+      <button type="button" className="secondary-button" disabled={disabled || !online || recognizing} onClick={() => upload.current?.click()}>{tr("Upload photo")}</button>
     </div>
     {!online && <small className="minor-text">{tr("Cash photo recognition needs a connection. You can enter the amount manually.")}</small>}
     {recognizing && <p role="status">{tr("Counting visible banknotes…")}</p>}
@@ -96,7 +99,6 @@ export default function CashPayment({ cash, total, language, online, disabled, o
       <div className="pos-row"><strong>{tr("Review recognized cash")}</strong>
         <button type="button" className="secondary-button" aria-label={tr("Dismiss cash photo")} onClick={() => setReview(null)}>×</button></div>
       <img src={review.image} alt={tr("Cash photo")} className="pos-cash-photo" />
-      <small className="minor-text">{tr("Check each denomination and count before using this amount.")}</small>
       {review.uncertain && <p className="pos-cash-warning" role="status">{tr("Some notes may be unclear or hidden. Review the counts.")}
         {review.unrecognized > 0 && ` (${review.unrecognized} ${tr("unrecognized notes")})`}</p>}
       {!review.notes.length && <p>{tr("No VND banknotes identified. Try a clearer photo or enter the amount manually.")}</p>}
@@ -119,19 +121,19 @@ export default function CashPayment({ cash, total, language, online, disabled, o
     </section>}
     {cash.trim() && !valid && <small className="pos-error">{tr("Enter a non-negative whole VND amount.")}</small>}
     {valid && received < total && <small className="pos-error">{tr("Still due")}: {money(total - received)}</small>}
-    <p className="pos-cash-change">{tr("Change")}: <strong>{money(change)}</strong></p>
-    {change > 0 && <section className="pos-change-breakdown" aria-label={tr("Change breakdown")}>
-      <strong>{tr("Ways to return change")}</strong>
+    {valid && received >= total && total > 0 && <p className="pos-cash-change"><span>{tr("Change")}</span><strong>{money(change)}</strong></p>}
+    {change > 0 && <details className="pos-change-breakdown" key={change}>
+      <summary>{tr("Ways to return change")}</summary>
+      <div className="pos-change-content">
       <details><summary>{tr("Available denominations")}</summary>
         <div className="pos-cash-denominations">{VND_DENOMINATIONS.map(value => <label key={value}>
           <input type="checkbox" checked={denominations.includes(value)} onChange={event => setDenominations(current => event.target.checked
             ? [...current, value] : current.filter(item => item !== value))} />{money(value)}
         </label>)}</div>
-        <small className="minor-text">{tr("Choose denominations you have. Note quantities in the drawer are not tracked.")}</small>
       </details>
-      <small className="minor-text">{tr("All combinations, in pages. Larger denominations first.")}</small>
       <ChangeOptions key={`${change}:${denominations.join(",")}`} amount={change} denominations={denominations} language={language} />
-    </section>}
+      </div>
+    </details>}
     <input ref={upload} className="pos-photo-upload" type="file" accept="image/png,image/jpeg,image/webp" aria-label={tr("Upload cash photo")}
       onChange={event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void recognize(file); }} />
     {camera && <PhotoCamera purpose="cash" language={language} onClose={() => setCamera(false)} onCapture={recognize}

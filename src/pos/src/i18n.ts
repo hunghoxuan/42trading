@@ -1,6 +1,9 @@
 export type Language = "en" | "vi";
 
 const vi: Record<string, string> = {
+  "Pay": "Thanh toán", "Pay & print": "Thanh toán & in", "Print invoice": "In hóa đơn", "Reprint invoice": "In lại hóa đơn",
+  "Invoice": "Hóa đơn bán hàng", "Scan cash": "Chụp tiền", "Upload photo": "Tải ảnh",
+  "Decrease quantity": "Giảm số lượng", "Increase quantity": "Tăng số lượng", "Offline · saved on this device": "Ngoại tuyến · lưu trên máy",
   "Photograph cash": "Chụp tiền khách đưa", "Upload cash photo": "Tải ảnh tiền", "Cash photo": "Ảnh tiền khách đưa",
   "Cash photo recognition needs a connection. You can enter the amount manually.": "Nhận diện tiền cần kết nối mạng. Bạn vẫn có thể nhập số tiền thủ công.",
   "Counting visible banknotes…": "Đang đếm các tờ tiền trong ảnh…", "Review recognized cash": "Kiểm tra tiền nhận diện",

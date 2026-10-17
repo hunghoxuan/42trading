@@ -131,9 +131,24 @@
   padding: 9px 0;
 }
 
-.pos-cart-line .pos-row {
+.pos-cart-quantity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-wrap: nowrap;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
+
+.pos-cart-product { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.pos-cart-product .pos-product-image { width: 44px; height: 44px; }
+.pos-cart-product-text { display: grid; gap: 4px; min-width: 0; }
+.pos-cart-product-text strong { font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+.pos-cart-product-text small { color: var(--muted); font-size: 12px; }
+.pos-cart-tax { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+.pos-checkout-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.pos-checkout-actions > button { min-width: 0; white-space: normal; }
+.pos-reprint { justify-self: end; font-size: 12px; }
 
 .pos-cart-line button {
   min-width: 34px !important;
@@ -154,7 +169,7 @@
 
 .pos-cash-payment,
 .pos-cash-review,
-.pos-change-breakdown,
+.pos-change-content,
 .pos-change-options {
   display: grid;
   gap: 8px;
@@ -166,7 +181,17 @@
 .pos-cash-note-row { display: grid; grid-template-columns: minmax(0, 1fr) auto 76px; gap: 8px; align-items: center; }
 .pos-cash-note-row > * { min-width: 0; }
 .pos-cash-warning { color: var(--warning, #f4bc5d); }
-.pos-cash-change { margin: 4px 0; }
+.pos-cash-payment > label { color: var(--muted); font-size: 12px; }
+.pos-cash-payment > label > input { color: var(--text); font-size: 16px; font-variant-numeric: tabular-nums; }
+.pos-cash-payment > .pay42-inline-actions button { font-size: 11px; color: var(--muted); }
+.pos-cash-change { display: flex; justify-content: space-between; gap: 8px; margin: 4px 0; font-size: 13px; color: var(--muted); }
+.pos-cash-change strong { color: var(--success, #61d69b); font-weight: 600; font-variant-numeric: tabular-nums; }
+.pos-change-breakdown { font-size: 12px; color: var(--muted); }
+.pos-change-content { margin-top: 10px; }
+.pos-change-options button { font-size: 11px; }
+.pos-change-note { display: inline-block; color: var(--text); white-space: nowrap; }
+.pos-change-count { color: var(--accent); margin-right: 3px; }
+.pos-change-plus { color: var(--muted); margin: 0 2px; }
 .pos-cash-denominations { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 8px 0; }
 .pos-cash-denominations label { display: flex; align-items: center; gap: 6px; }
 .pos-cash-denominations input { width: auto; min-width: 0; }
@@ -180,6 +205,8 @@
   padding-top: 12px;
   font-size: 19px;
 }
+
+.pos-total strong { color: var(--accent); font-size: 24px; font-variant-numeric: tabular-nums; }
 
 .pos-muted {
   color: var(--muted);
@@ -404,7 +431,7 @@
 }
 
 .pos-receipt-overlay {
-  z-index: 60;
+  z-index: 1200;
 }
 
 .pos-receipt {
@@ -422,9 +449,16 @@
   text-align: center;
 }
 
+.pos-receipt-title { text-align: center; font-size: 14px; }
+
 .pos-receipt small {
+  display: block;
   color: #555;
 }
+
+.pos-receipt-line > span { min-width: 0; overflow-wrap: anywhere; }
+.pos-receipt-line > strong { white-space: nowrap; }
+.pos-receipt-actions button { background: #f1f5f9; border: 1px solid #cbd5e1; color: #111; }
 
 .pos-receipt-actions {
   display: flex;
@@ -441,10 +475,12 @@
 }
 
 @media print {
-  body * { visibility: hidden !important; }
-  .pos-receipt, .pos-receipt * { visibility: visible !important; }
-  .pos-receipt { position: absolute; left: 0; top: 0; width: 80mm; max-height: none; overflow: visible; padding: 0; }
+  body:has(> .pos-receipt-overlay) { margin: 0 !important; background: white !important; overflow: visible !important; }
+  body:has(> .pos-receipt-overlay) > :not(.pos-receipt-overlay) { display: none !important; }
+  .pos-receipt-overlay { display: block; position: static; padding: 0; background: white; }
+  .pos-receipt { width: 80mm; max-width: 100%; max-height: none; overflow: visible; padding: 0; border-radius: 0; }
   .pos-receipt-actions { display: none !important; }
+  .pos-receipt-line { break-inside: avoid; }
 }
 
 @media (max-width: 1024px) {
@@ -473,6 +509,10 @@
   .pos-return-line { grid-template-columns: minmax(0, 1fr) 80px; }
   .pos-return-line label { grid-column: 1 / -1; }
   .pos-product-image, .pos-product-image-empty { width: 46px; height: 46px; }
+}
+
+@media (max-width: 767px) {
+  .pos-app .pay42-crud-layout.crud-container { grid-template-columns: minmax(0, 1fr); }
 }
 
 .pos-form > hr,

@@ -1,4 +1,6 @@
 import type { LocalSale } from "./storage";
+import { useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { t, type Language } from "./i18n";
 
 type ReceiptData = {
@@ -25,16 +27,45 @@ export function fromServerSale(sale: Record<string, unknown>): ReceiptData {
     cash_received_minor: Number(sale.cash_received_minor), pending: false };
 }
 
-export default function Receipt({ receipt, onClose, language }: { receipt: ReceiptData; onClose: () => void; language: Language }) {
+export default function Receipt({ receipt, onClose, language, autoPrint = false }: { receipt: ReceiptData; onClose: () => void; language: Language; autoPrint?: boolean }) {
   const tr = (value: string) => t(language, value);
   const locale = language === "vi" ? "vi-VN" : "en-US";
   const money = (value: number) => new Intl.NumberFormat(locale, {
     style: "currency", currency: "VND", maximumFractionDigits: 0,
   }).format(value);
-  return <div className="pos-receipt-overlay" role="dialog" aria-label="Sale receipt">
+  const printed = useRef("");
+  const dialog = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    dialog.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    return () => { if (previous?.isConnected) previous.focus(); };
+  }, []);
+  useEffect(() => {
+    if (!autoPrint || printed.current === receipt.receipt_id) return;
+    const frame = requestAnimationFrame(() => {
+      printed.current = receipt.receipt_id;
+      window.print();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [autoPrint, receipt.receipt_id]);
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+  return createPortal(<div ref={dialog} className="pos-receipt-overlay" role="dialog" aria-modal="true" aria-label={tr("Invoice")}
+    onKeyDown={event => {
+      if (event.key !== "Tab") return;
+      const buttons = dialog.current?.querySelectorAll<HTMLButtonElement>("button");
+      if (!buttons?.length) return;
+      const first = buttons[0], last = buttons[buttons.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }}>
     <div className="pos-receipt">
-      <div className="pos-receipt-actions"><button onClick={onClose}>{tr("Close")}</button><button onClick={() => window.print()}>{tr("Print")}</button></div>
+      <div className="pos-receipt-actions"><button onClick={onClose}>{tr("Close")}</button><button onClick={() => window.print()}>{tr("Print invoice")}</button></div>
       <h2>{tr("42Trade Store")}</h2>
+      <h3 className="pos-receipt-title">{tr("Invoice")}</h3>
       <p>{tr("Receipt")} {receipt.receipt_id}<br/>{new Date(receipt.sold_at).toLocaleString(locale)}<br/>{tr("Cashier")} {receipt.cashier_id}</p>
       {receipt.pending && <strong className="pos-offline">{tr("OFFLINE · PENDING SYNC")}</strong>}
       {receipt.lines.map((line, index) => <div className="pos-receipt-line" key={index}>
@@ -47,5 +78,5 @@ export default function Receipt({ receipt, onClose, language }: { receipt: Recei
       <div className="pos-receipt-line"><span>{tr("Change")}</span><strong>{money(receipt.cash_received_minor - receipt.total_minor)}</strong></div>
       <p>{tr("Thank you.")}</p>
     </div>
-  </div>;
+  </div>, document.body);
 }
