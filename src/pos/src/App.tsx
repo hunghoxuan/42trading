@@ -22,6 +22,15 @@ const money = (value: number, language: Language) => new Intl.NumberFormat(langu
 }).format(value);
 const todayInVietnam = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(new Date());
 
+function signInHref(): string {
+  const login = new URL("/login", window.location.origin);
+  if (import.meta.env.DEV || (["localhost", "127.0.0.1"].includes(window.location.hostname)
+    && window.location.port === "3002")) login.port = "3000";
+  login.searchParams.set("return_url", login.origin === window.location.origin
+    ? "/pos/" : new URL("/pos/", window.location.origin).href);
+  return login.href;
+}
+
 function readProductImage(file: File): Promise<string> {
   if (!/^image\/(png|jpeg|webp)$/.test(file.type) || file.size > 3 * 1024 * 1024) {
     return Promise.reject(new Error("Choose a PNG, JPEG, or WebP image under 3 MB"));
@@ -448,7 +457,7 @@ export default function App() {
       </nav>
     } />
     {error && <div className="pos-alert pos-error" role="alert">{error}
-      {error.includes("AUTH_REQUIRED") && <> · <a href="/login?next=/pos/">{tr("Sign in to 42Trade")}</a></>}
+      {error.includes("AUTH_REQUIRED") && <> · <a href={signInHref()}>{tr("Sign in to 42Trade")}</a></>}
     </div>}
     {needRefresh && <div className="pos-alert pos-row" role="status"><span>{tr("A POS update is ready. Finish the current cart before reloading.")}</span>
       <button disabled={cart.length > 0 || busy} onClick={() => updateServiceWorker(true)}>{tr("Update POS")}</button></div>}
