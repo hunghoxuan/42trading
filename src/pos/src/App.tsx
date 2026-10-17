@@ -156,8 +156,10 @@ export default function App() {
   }, [language]);
 
   const localProducts = bootstrap?.snapshot.products || [];
-  const visibleProducts = tab === "sale" && bootstrap ? localProducts : online && products.length
-    ? products.filter((product) => product.status === "ACTIVE") : localProducts;
+  const usingOfflineCatalog = !online && !!bootstrap;
+  const visibleProducts = online
+    ? (tab === "sale" ? products.filter((product) => product.status === "ACTIVE") : products)
+    : localProducts;
   const filtered = visibleProducts.filter((product) => {
     const text = query.trim().toLowerCase();
     return !text || [product.name, product.sku, product.sid, product.category, product.supplier, ...product.barcodes]
@@ -214,15 +216,33 @@ export default function App() {
   }, [refreshLocal]);
 
   useEffect(() => {
-    if (online) refreshOnline().then(() => setError("")).catch((cause) => {
-      if (cause instanceof ApiError && cause.status === 0) {
-        setOnline(false);
-        setError("");
-      } else {
-        setError(String(cause));
-      }
-    });
+    if (!online) return;
+    let lastRefresh = 0;
+    const refresh = () => {
+      if (Date.now() - lastRefresh < 1000) return;
+      lastRefresh = Date.now();
+      refreshOnline().then(() => setError("")).catch((cause) => {
+        if (cause instanceof ApiError && cause.status === 0) {
+          setOnline(false);
+          setError("");
+        } else {
+          setError(String(cause));
+        }
+      });
+    };
+    const refreshWhenVisible = () => { if (document.visibilityState === "visible") refresh(); };
+    refresh();
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
   }, [online, refreshOnline]);
+
+  useEffect(() => {
+    if (online && tab === "inventory") refreshOnline().catch((cause) => setError(String(cause)));
+  }, [online, tab, refreshOnline]);
 
   useEffect(() => {
     if (online) return;
@@ -294,7 +314,7 @@ export default function App() {
     if (!cart.length) throw new Error("Cart is empty");
     const received = Number(cash);
     if (!Number.isSafeInteger(received) || received < total) throw new Error("Enter enough cash received");
-    if (bootstrap) {
+    if (!online && bootstrap) {
       const sale = await commitLocalSale(cart, received);
       setReceipt(fromLocalSale(sale));
       setCart([]); setCash("");
@@ -474,11 +494,11 @@ export default function App() {
     {message && <div className="pos-alert pos-success" role="status">{message}</div>}
 
     {tab === "sale" && <main className="pos-checkout pos-page-content">
-      <ResponsivePanel className="pos-panel" style={{ width: "auto" }} title={tr("Products")} subtitle={bootstrap ? tr("Approved register prices from") + " " + new Date(bootstrap.snapshot.issued_at).toLocaleString(language === "vi" ? "vi-VN" : "en-US") : tr("Main store")} showToggle={false} border="always" headerActions={<div className="pos-row"><button className="secondary-button" onClick={() => setScanner(true)}>{tr("Scan code")}</button>
+      <ResponsivePanel className="pos-panel" style={{ width: "auto" }} title={tr("Products")} subtitle={usingOfflineCatalog ? tr("Approved register prices from") + " " + new Date(bootstrap.snapshot.issued_at).toLocaleString(language === "vi" ? "vi-VN" : "en-US") : tr("Main store")} showToggle={false} border="always" headerActions={<div className="pos-row"><button className="secondary-button" onClick={() => setScanner(true)}>{tr("Scan code")}</button>
           <label className="pos-upload">{tr("Recognize photo")}<input type="file" accept="image/png,image/jpeg,image/webp" capture="environment" onChange={(event) => {
             const file = event.target.files?.[0]; if (file) run(() => recognizeFile(file), ""); event.target.value = "";
           }} /></label></div>}>
-        {bootstrap && <p className="pos-muted">{tr("Refresh the register after price changes.")}</p>}
+        {usingOfflineCatalog && <p className="pos-muted">{tr("Refresh the register after price changes.")}</p>}
         <input className="pos-search" placeholder={tr("Scan or enter product number, barcode, name")} value={query}
           onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
             if (event.key === "Enter" && query.trim()) { event.preventDefault(); scanned(query.trim()); }
@@ -488,11 +508,11 @@ export default function App() {
             const product = visibleProducts.find((item) => item.sid === candidate.product_sid);
             if (product) addToCart(product); setCandidates([]);
           }}>{candidate.name} · {money(visibleProducts.find((item) => item.sid === candidate.product_sid)?.price_minor || 0, language)}
-            <small>{candidate.explanation}{bootstrap ? " · " + tr("approved register price") : " · " + tr("current inventory price")}</small></button>)}
+            <small>{candidate.explanation}{usingOfflineCatalog ? " · " + tr("approved register price") : " · " + tr("current inventory price")}</small></button>)}
         </div>}
         <div className="pos-products">
           {filtered.map((product) => <button className="pos-product" key={product.sid}
-            disabled={product.price_minor === null || (bootstrap ? product.offline_available <= 0 : product.on_hand - product.allocated <= 0)}
+            disabled={product.price_minor === null || (usingOfflineCatalog ? product.offline_available <= 0 : product.on_hand - product.allocated <= 0)}
             onClick={() => addToCart(product)}>
             <span><strong>{product.name}</strong><small>{product.sku || product.sid} · {product.category}</small></span>
             <span>{product.price_minor === null ? tr("Price needed") : money(product.price_minor, language)}<small>{online ? tr("Stock") + " " + product.on_hand : tr("Offline") + " " + product.offline_available}</small></span>
