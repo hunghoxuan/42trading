@@ -80,6 +80,7 @@ export function pagePermissionForPath(pathname = "") {
   const exact = (acl.pages || []).find((page) => page.to === path);
   if (exact) return exact.permission;
   const prefixes = [
+    ["/admin/pos/", "pages.pos"],
     ["/admin/42pay/dashboard/", "pages.42pay.dashboard"],
     ["/admin/42pay/products/", "pages.42pay.products"],
     ["/admin/42pay/offers/", "pages.42pay.offers"],

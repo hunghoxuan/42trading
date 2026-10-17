@@ -1,4 +1,4 @@
-import { Component, useEffect, useMemo, useRef, useState, Suspense } from "react";
+import { Component, lazy, useEffect, useMemo, useRef, useState, Suspense } from "react";
 import {
   Link,
   NavLink,
@@ -41,6 +41,8 @@ import Pay42TopupPage from "../modules/42pay/pages/Pay42TopupPage";
 import Pay42PurchaseConfirmationPage from "../modules/42pay/pages/Pay42PurchaseConfirmationPage";
 import StudioPage from "../modules/studio/pages/StudioPage";
 import YtDlpPage from "../modules/media/yt-dlp/YtDlpPage";
+
+const PosPage = lazy(() => import("../modules/pos/pages/PosPage"));
 
 function LegacyMiniAppRedirect() {
   const { appId } = useParams();
@@ -158,6 +160,7 @@ class RouteLoadBoundary extends Component {
 function resolveHomePath(user) {
   if (canAccessPage(user, "pages.dashboard")) return "/trades/dashboard";
   if (canAccessPage(user, "pages.42pay.dashboard")) return "/admin/42pay/dashboard";
+  if (canAccessPage(user, "pages.pos")) return "/admin/pos";
   if (canAccessPage(user, "pages.ai.analyze")) return "/trades/analyze";
   if (canAccessPage(user, "pages.trades")) return "/trades/filled";
   if (canAccessPage(user, "pages.backtests")) return "/trades/backtests";
@@ -408,6 +411,7 @@ export default function App() {
 
   const primaryNavGroupCount = [
     pay42MenuItems.length > 0,
+    canAccessPage(navigationUser, "pages.pos"),
     !navShows42PayOnly && canAccessPage(navigationUser, "pages.trades"),
     !navShows42PayOnly && canAccessPage(navigationUser, "pages.studio"),
     !navShows42PayOnly && mediaMenuItems.length > 0,
@@ -900,6 +904,17 @@ export default function App() {
               ))}
             </NavDropdown>
           )}
+          {canAccessPage(navigationUser, "pages.pos") && (
+            <NavLink
+              to="/admin/pos"
+              className={({ isActive }) =>
+                `secondary-button nav-dropdown-trigger topbar-single-nav-link ${isActive ? "active" : ""}`
+              }
+              onClick={closeMobileNav}
+            >
+              POS
+            </NavLink>
+          )}
           {!navShows42PayOnly && canAccessPage(navigationUser, "pages.trades") && (
             <NavDropdown
               align="start"
@@ -1079,6 +1094,15 @@ export default function App() {
                 </NavLink>
               ))}
             </NavDropdown>
+          )}
+          {canAccessPage(navigationUser, "pages.pos") && (
+            <NavLink
+              to="/admin/pos"
+              className={({ isActive }) => `mobile-nav-link ${isActive ? "active" : ""}`}
+              onClick={closeMobileNav}
+            >
+              POS
+            </NavLink>
           )}
           {!navShows42PayOnly && canAccessPage(navigationUser, "pages.trades") && (
             <NavDropdown
@@ -1267,6 +1291,10 @@ export default function App() {
                 element={<AuthProbePage authUser={authUser} />}
               />
               <Route path="/" element={<Navigate to={homePath} replace />} />
+              <Route
+                path="/admin/pos"
+                element={guardPageElement("pages.pos", <PosPage />)}
+              />
               <Route
                 path="/apps"
                 element={guardPageElement(

@@ -94,6 +94,11 @@
   "pages": [
     {
       "label": "POS",
+      "to": "/admin/pos",
+      "permission": "pages.pos"
+    },
+    {
+      "label": "POS",
       "to": "/pos/",
       "permission": "pages.pos"
     },

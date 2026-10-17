@@ -154,6 +154,10 @@ export default function LoginPage({ onLogin }) {
       } catch {
         // ignore
       }
+      if (out?.user?.roles?.some((role) => String(role).startsWith("pos_"))) {
+        navigate("/admin/pos", { replace: true });
+        return;
+      }
       if (returnUrl) {
         const decoded = decodeURIComponent(returnUrl);
         if (/^https?:\/\//i.test(decoded)) {

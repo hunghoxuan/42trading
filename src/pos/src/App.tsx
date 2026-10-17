@@ -23,11 +23,14 @@ const money = (value: number, language: Language) => new Intl.NumberFormat(langu
 const todayInVietnam = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(new Date());
 
 function signInHref(): string {
-  const login = new URL("/login", window.location.origin);
-  if (import.meta.env.DEV || (["localhost", "127.0.0.1"].includes(window.location.hostname)
-    && window.location.port === "3002")) login.port = "3000";
+  const pathname = window.location.pathname;
+  const integrated = /(?:^|\/)admin\/pos(?:\/|$)/.test(pathname);
+  const login = new URL(pathname.startsWith("/ui/") ? "/ui/login" : "/login", window.location.origin);
+  if (!integrated && (import.meta.env.DEV || (["localhost", "127.0.0.1"].includes(window.location.hostname)
+    && window.location.port === "3002"))) login.port = "3000";
+  const returnPath = integrated ? pathname : "/pos/";
   login.searchParams.set("return_url", login.origin === window.location.origin
-    ? "/pos/" : new URL("/pos/", window.location.origin).href);
+    ? returnPath : new URL(returnPath, window.location.origin).href);
   return login.href;
 }
 
