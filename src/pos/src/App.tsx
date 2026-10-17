@@ -712,8 +712,7 @@ export default function App() {
           {attributeField("unit", "Unit")}
           <label className="pay42-form-field"><span className="ui-field-label">{tr("Import price (VND)")}</span><input className={Number(form.cost) === 0 ? "pos-zero-value" : undefined} type="number" min="0" step="1" value={form.cost} onChange={(event) => setForm({ ...form, cost: event.target.value })} /></label>
           <label className="pay42-form-field"><span className="ui-field-label">{tr("Retail price (VND)")}</span><input className={Number(form.price) === 0 ? "pos-zero-value" : undefined} type="number" min="0" step="1" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} /></label>
-          <label className="pay42-form-field"><span className="ui-field-label">{tr("VAT added on top (%)")}</span><input type="number" min="0" max="100" step="0.01" value={form.vat} onChange={(event) => setForm({ ...form, vat: event.target.value })} /></label>
-          <label className="pay42-form-field"><span className="ui-field-label">{tr("Minimum quantity")}</span><input type="number" min="0" step="0.01" value={form.minStock} onChange={(event) => setForm({ ...form, minStock: event.target.value })} /></label>
+          <label className="pay42-form-field"><span className="ui-field-label">{tr("Minimum stock")}</span><input type="number" min="0" step="0.01" value={form.minStock} onChange={(event) => setForm({ ...form, minStock: event.target.value })} /></label>
           <label className="pay42-form-field"><span className="ui-field-label">{tr("Current Qty in Stock")}</span><input className={(selected ? (products.find((product) => product.sid === selected.sid)?.on_hand ?? selected.on_hand) : 0) === 0 ? "pos-zero-value" : undefined} type="number" value={selected ? (products.find((product) => product.sid === selected.sid)?.on_hand ?? selected.on_hand) : 0} readOnly aria-readonly="true" /></label>
           {attributeField("category", "Category")}
           {attributeField("supplier", "Provider")}
@@ -730,6 +729,7 @@ export default function App() {
             </div>
             <label className="pay42-form-field"><span className="ui-field-label">{tr("Image URL")}</span><input value={form.image} onChange={(event) => setForm({ ...form, image: event.target.value })} /></label>
           </div>
+          <label className="pay42-form-field"><span className="ui-field-label">{tr("VAT added on top (%)")}</span><input type="number" min="0" max="100" step="0.01" value={form.vat} onChange={(event) => setForm({ ...form, vat: event.target.value })} /></label>
           <p className="minor-text pay42-form-field--full">{tr("New values are added to the lists when you save the product.")}</p>
           <button className="primary-button" disabled={!online || busy} onClick={() => run(saveProduct, "Product saved")}>{tr("Save product")}</button>
           {selected && <><hr/><h2>{tr("Stock")}</h2><p>{tr("On hand")} {selected.on_hand} {selected.unit} · {tr("Reserved")} {selected.allocated}</p>
