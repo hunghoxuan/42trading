@@ -866,6 +866,19 @@ body.ai-chat-layout-panel-open .app-shell {
     align-items: center;
     gap: 15px;
 }
+.topbar nav .mobile-nav-utils {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.topbar-language-switcher {
+    box-sizing: border-box;
+    min-width: 58px;
+    height: 34px;
+    padding: 4px 8px;
+    color: var(--text);
+    cursor: pointer;
+}
 .topbar nav a {
     text-decoration: none;
     color: var(--muted);

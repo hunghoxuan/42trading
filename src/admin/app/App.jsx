@@ -91,7 +91,7 @@ import SessionClockBar from "../modules/42trade/components/SessionClockBar";
 import NotificationWatcher from "../shared/components/NotificationWatcher";
 import TickerBar from "../modules/42trade/components/TickerBar";
 
-import ToastContainer from "../shared/components/ToastContainer";
+import ToastContainer, { showToast } from "../shared/components/ToastContainer";
 import AppShell from "../shared/components/AppShell";
 import NavDropdown from "../shared/components/NavDropdown";
 import SiteNavigation from "../shared/components/SiteNavigation";
@@ -273,8 +273,8 @@ export default function App() {
         authUser?.metadata?.settings?.language ||
           authUser?.metadata?.language ||
           localStorage.getItem("ui_locale") ||
-          "English",
-      ).trim() || "English"
+          "Vietnamese",
+      ).trim() || "Vietnamese"
     );
   }, [authUser]);
 
@@ -498,8 +498,31 @@ export default function App() {
 
   useEffect(() => {
     localStorage.setItem("ui_locale", uiLocale);
-    document.documentElement.lang = uiLocale;
+    document.documentElement.lang = /^viet/i.test(uiLocale) ? "vi" : /^de/i.test(uiLocale) ? "de" : "en";
   }, [uiLocale]);
+
+  useEffect(() => {
+    const onPosLanguageChanged = async (event) => {
+      if (event?.detail?.source !== "pos") return;
+      const nextLocale = event.detail.language === "vi" ? "Vietnamese" : "English";
+      const settings = { ...(authUser?.metadata?.settings || {}), language: nextLocale };
+      const nextUser = authUser
+        ? { ...authUser, metadata: { ...authUser.metadata, settings } }
+        : null;
+      if (nextUser) {
+        setAuthUser(nextUser);
+        storeAuthUserSnapshot(nextUser);
+      }
+      localStorage.setItem("ui_locale", nextLocale);
+      try {
+        await api.updateMetadata({ settings });
+      } catch {
+        showToast({ message: "Language preference changed on this device but could not be saved to your account.", type: "warning" });
+      }
+    };
+    window.addEventListener("42trade-language-changed", onPosLanguageChanged);
+    return () => window.removeEventListener("42trade-language-changed", onPosLanguageChanged);
+  }, [authUser]);
 
   useEffect(() => {
     // Keep "x mins ago" labels moving forward without requiring data refetches.
@@ -705,6 +728,40 @@ export default function App() {
     }
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));
   };
+  const changeLanguagePreference = async (value) => {
+    const nextLocale = value === "Vietnamese" ? "Vietnamese" : "English";
+    const nextLanguage = nextLocale === "Vietnamese" ? "vi" : "en";
+    const settings = { ...(authUser?.metadata?.settings || {}), language: nextLocale };
+    const nextUser = authUser
+      ? { ...authUser, metadata: { ...authUser.metadata, settings } }
+      : null;
+    if (nextUser) {
+      setAuthUser(nextUser);
+      storeAuthUserSnapshot(nextUser);
+    }
+    localStorage.setItem("ui_locale", nextLocale);
+    localStorage.setItem("42trade-pos-language", nextLanguage);
+    window.dispatchEvent(new CustomEvent("42trade-language-changed", {
+      detail: { language: nextLanguage, source: "shell" },
+    }));
+    try {
+      await api.updateMetadata({ settings });
+    } catch {
+      showToast({ message: "Language preference changed on this device but could not be saved to your account.", type: "warning" });
+    }
+  };
+  const renderLanguageSwitcher = (className = "topbar-language-switcher") => (
+    <select
+      aria-label="Language"
+      title="Language"
+      className={`secondary-button ${className}`}
+      value={/^viet/i.test(uiLocale) ? "Vietnamese" : "English"}
+      onChange={(event) => { void changeLanguagePreference(event.target.value); }}
+    >
+      <option value="English">EN</option>
+      <option value="Vietnamese">VN</option>
+    </select>
+  );
   const handleUserUpdate = (user) => {
     authVersionRef.current += 1;
     if (user) {
@@ -1034,6 +1091,7 @@ export default function App() {
             </NavDropdown>
           )}
           <div className="mobile-nav-utils">
+            {renderLanguageSwitcher()}
             <button
               onClick={() => {
                 toggleTheme();
@@ -1229,6 +1287,7 @@ export default function App() {
             </NavDropdown>
           )}
           <div className="mobile-nav-utils">
+            {renderLanguageSwitcher()}
             <button
               onClick={() => {
                 toggleTheme();

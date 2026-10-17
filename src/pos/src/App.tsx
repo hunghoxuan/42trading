@@ -100,7 +100,11 @@ type Tab = "sale" | "inventory" | "reports" | "register";
 
 export default function App() {
   const { needRefresh: [needRefresh], updateServiceWorker } = useRegisterSW();
-  const [language, setLanguage] = useState<Language>(() => localStorage.getItem("42trade-pos-language") === "en" ? "en" : "vi");
+  const [language, setLanguage] = useState<Language>(() => {
+    const locale = localStorage.getItem("ui_locale");
+    if (locale) return /^viet/i.test(locale) ? "vi" : "en";
+    return localStorage.getItem("42trade-pos-language") === "en" ? "en" : "vi";
+  });
   const tr = (value: string) => t(language, value);
   const localizedImportWarning = (value: string) => {
     if (language !== "vi") return value;
@@ -180,6 +184,25 @@ export default function App() {
     localStorage.setItem("42trade-pos-language", language);
     document.documentElement.lang = language;
   }, [language]);
+
+  useEffect(() => {
+    const onGlobalLanguageChanged = (event: CustomEvent<{ language?: string }>) => {
+      if (event.detail?.language === "en" || event.detail?.language === "vi") {
+        setLanguage(event.detail.language);
+      }
+    };
+    window.addEventListener("42trade-language-changed", onGlobalLanguageChanged as EventListener);
+    return () => window.removeEventListener("42trade-language-changed", onGlobalLanguageChanged as EventListener);
+  }, []);
+
+  const changeLanguage = (nextLanguage: Language) => {
+    const locale = nextLanguage === "vi" ? "Vietnamese" : "English";
+    setLanguage(nextLanguage);
+    localStorage.setItem("ui_locale", locale);
+    window.dispatchEvent(new CustomEvent("42trade-language-changed", {
+      detail: { language: nextLanguage, source: "pos" },
+    }));
+  };
 
   const localProducts = bootstrap?.snapshot.products || [];
   const usingOfflineCatalog = !online && !!bootstrap;
@@ -742,7 +765,7 @@ export default function App() {
     <PageHeader className="trades-page-header pos-page-header" title="42Trade POS" actions={
       <div className="pos-header-actions">
         <span className="pos-muted">{tr("Main store")} · VND{import.meta.env.VITE_POS_DEMO === "1" ? " · DEMO" : ""}</span>
-        <button className="secondary-button" aria-label={language === "vi" ? "Switch to English" : "Chuyển sang Tiếng Việt"} onClick={() => setLanguage(language === "vi" ? "en" : "vi")}>{language === "vi" ? "English" : "Tiếng Việt"}</button>
+        <button className="secondary-button" aria-label={language === "vi" ? "Switch to English" : "Chuyển sang Tiếng Việt"} onClick={() => changeLanguage(language === "vi" ? "en" : "vi")}>{language === "vi" ? "English" : "Tiếng Việt"}</button>
         <span className={online ? "pos-online status-dot status-active" : "pos-offline status-dot status-warning"}>{tr(online ? "Online" : "Offline")}</span>
         <span>{pending.length} {tr("pending")}</span>
         {attention.length > 0 && <span className="pos-error status-dot status-danger">{attention.length} {tr("needs attention")}</span>}
