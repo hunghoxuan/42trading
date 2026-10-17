@@ -787,9 +787,16 @@ export default function App() {
     {(tab === "sale" || tab === "inventory") && <main className="pos-page-content stack-layout">
       {tab === "sale" && usingOfflineCatalog && <p className="minor-text">{tr("Refresh the register after price changes.")}</p>}
       {recognitionHints.length > 0 && <p className="minor-text" role="status">{tr("Detected keywords")}: {recognitionHints.join(" · ")}</p>}
-      {recognizedIds !== null && <div className="card-flat stack-layout" aria-label={tr("Image recognition result")}>
+      {recognizedIds !== null && <div className="card-flat pos-recognition-result" aria-label={tr("Image recognition result")}>
+        <div className="pos-recognition-result__header">
+          <strong>{recognitionDetails?.product_name || recognitionDetails?.object_name || tr("Recognition result")}</strong>
+          <button type="button" className="secondary-button pos-recognition-result__close" aria-label={tr("Close")}
+            title={tr("Close")} onClick={() => {
+              recognitionRequest.current++; setRecognizedIds(null); setRecognitionDetails(null); setRecognitionHints([]);
+              setCandidates([]); setQuery(""); setMessage("");
+            }}>×</button>
+        </div>
         {recognitionDetails && <>
-          <strong>{recognitionDetails.product_name || recognitionDetails.object_name || tr("Unclear product")}</strong>
           {recognitionDetails.brand && <span>{tr("Brand")}: {recognitionDetails.brand}</span>}
           {recognitionDetails.texts.length > 0 && <span>{tr("Label text")}: {recognitionDetails.texts.join(" · ")}</span>}
           <span>{tr("Price on label")}: {recognitionDetails.visible_price?.text || tr("No visible price")}</span>

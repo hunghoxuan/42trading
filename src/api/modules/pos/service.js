@@ -151,6 +151,7 @@ function productView(row, priceRow, stockRow, allocationRow) {
     barcodes: Array.isArray(metadata.pos_barcodes) ? metadata.pos_barcodes : [],
     category: metadata.category || product.type || "",
     supplier: metadata.pos_supplier || "",
+    description: metadata.description || "",
     unit: metadata.pos_unit || "each",
     family_sku: metadata.pos_family_sku || "",
     group_code: metadata.pos_group_code || "",

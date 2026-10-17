@@ -83,6 +83,34 @@
   border-radius: 12px;
 }
 
+.pos-recognition-result {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.pos-recognition-result__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pos-recognition-result__header strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pos-recognition-result__close {
+  flex: 0 0 auto;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  padding: 0;
+  font-size: 20px;
+  line-height: 1;
+}
+
 .pos-candidates button {
   justify-content: flex-start;
   text-align: left;

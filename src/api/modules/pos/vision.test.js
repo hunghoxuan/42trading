@@ -97,6 +97,18 @@ test("AI matching normalizes Vietnamese accents, product type synonyms and equiv
   assert.deepEqual(matchObservedProduct(observed, lifebuoyCatalog).map(item => item.product_sid), ["LIFE350"]);
 });
 
+test("brand-only overlap does not confuse hand wash with body wash, while Vietnamese metadata can enrich an exact type match", () => {
+  const handWash = observedProduct({ product_name: "Nước rửa tay Lifebuoy", size: "350ml",
+    texts: ["Lifebuoy", "Nước rửa tay", "350ml"] });
+  assert.deepEqual(matchObservedProduct(handWash, lifebuoyCatalog), []);
+
+  const catalog = [{ ...lifebuoyCatalog[1], category: "Chăm sóc cá nhân", supplier: "Lifebuoy Vietnam",
+    description: "Sữa tắm bảo vệ da chai 350 g" }];
+  const bodyWash = observedProduct({ product_name: "Lifebuoy shower gel", size: "350g",
+    texts: ["Lifebuoy", "Shower Gel", "350g"] });
+  assert.equal(matchObservedProduct(bodyWash, catalog)[0].product_sid, "LIFE350");
+});
+
 test("AI variant and readable unknown barcode never fall back to an unrelated inventory item", () => {
   assert.deepEqual(matchObservedProduct(observedProduct({ variant: "aloe vera" }), lifebuoyCatalog), []);
   assert.deepEqual(matchObservedProduct(observedProduct({ barcode: "8931234567890", texts: ["Lifebuoy Sữa tắm", "8931234567890"] }), lifebuoyCatalog), []);
@@ -111,6 +123,8 @@ test("AI visible price is separate from the register price and missing prices st
   assert.equal(request.messages[0].content[1].type, "image");
   assert.equal(result.observed.visible_price.amount, 70000);
   assert.equal(result.candidates[0].retail_price_minor, 55000);
+  assert.ok(result.keywords.includes("350g"));
+  assert.ok(result.keywords.includes("sua"));
   assert.notEqual(result.colors, result.observed.colors, "response serializer must not treat a shared array as circular");
   assert.equal(parseProductObservation(JSON.stringify(observedProduct())).visible_price, null);
 });

@@ -59,7 +59,7 @@ const vi: Record<string, string> = {
   "Main store": "Cửa hàng chính", "Sign in to 42Trade": "Đăng nhập 42Trade", "A POS update is ready. Finish the current cart before reloading.": "Bản cập nhật POS đã sẵn sàng. Hoàn tất giỏ hàng trước khi tải lại.",
   "items": "sản phẩm", "receipts": "hóa đơn", "Product details": "Thông tin sản phẩm", "Sales and cash returns": "Giao dịch và hoàn tiền mặt",
   "Update POS": "Cập nhật POS", "Products": "Sản phẩm", "Scan code": "Quét mã", "Recognize photo": "Nhận diện ảnh",
-  "Point the camera at a QR code or barcode.": "Đưa camera vào mã QR hoặc mã vạch.", "Close": "Đóng", "Possible matches — confirm product": "Sản phẩm phù hợp — vui lòng xác nhận",
+  "Point the camera at a QR code or barcode.": "Đưa camera vào mã QR hoặc mã vạch.", "Close": "Đóng", "Recognition result": "Kết quả nhận diện", "Possible matches — confirm product": "Sản phẩm phù hợp — vui lòng xác nhận",
   "Point the printed barcode or QR code toward the camera. It scans automatically.": "Đưa mã vạch hoặc mã QR in trên sản phẩm vào camera. Máy sẽ tự quét.",
   "Scanning automatically": "Đang tự quét mã",
   "No barcode detected. Scanning paused. Move the barcode closer, improve the lighting, then try again. For the product's front label, use Recognize photo.": "Chưa thấy mã vạch. Đã tạm dừng quét. Đưa mã lại gần, tăng ánh sáng rồi bấm Thử camera lại. Nếu đang chụp mặt trước sản phẩm, chọn Nhận diện ảnh.",

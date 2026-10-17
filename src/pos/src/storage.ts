@@ -5,6 +5,7 @@ export type Product = {
   barcodes: string[];
   category: string;
   supplier: string;
+  description?: string;
   unit: string;
   family_sku: string;
   group_code: string;

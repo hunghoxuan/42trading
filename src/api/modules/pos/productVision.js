@@ -34,8 +34,9 @@ function parseProductObservation(raw) {
     ["colors", item.colors], ["visible_price", price]]);
 }
 
-const STOP = new Set("the and for with from of new all san pham product chinh hang".split(" "));
+const STOP = new Set("the and for with from of new all san pham product chinh hang tiet kiem giam gia".split(" "));
 const GENERIC = new Set("sua tam dau goi xa phong nuoc rua tay kem danh rang body wash shower gel shampoo soap toothpaste ml kg gr red white blue green do trang xanh".split(" "));
+const COLOR_WORDS = new Set("red white blue green do trang xanh den black yellow vang hong pink orange cam tim purple nau brown xam gray".split(" "));
 function canonical(value) {
   return normalizeText(value).replace(/\bhand wash\b/g, "nuoc rua tay").replace(/\b(body wash|shower gel)\b/g, "sua tam").replace(/\bshampoo\b/g, "dau goi")
     .replace(/\btoothpaste\b/g, "kem danh rang").replace(/\bsoap\b/g, "xa phong");
@@ -51,12 +52,28 @@ function sizes(value) {
   });
 }
 
+const PRODUCT_TYPES = [
+  { id: "hand-wash", aliases: ["nuoc rua tay", "hand wash", "hand soap"] },
+  { id: "body-wash", aliases: ["sua tam", "body wash", "shower gel"] },
+  { id: "shampoo", aliases: ["dau goi", "shampoo"] },
+  { id: "toothpaste", aliases: ["kem danh rang", "toothpaste"] },
+  { id: "soap", aliases: ["xa phong", "soap"] },
+];
+function productType(value) {
+  const text = ` ${canonical(value)} `;
+  return PRODUCT_TYPES.find((type) => type.aliases.some((alias) => text.includes(` ${alias} `)))?.id || "";
+}
+function productKeywords(product) {
+  return words([product.name, product.category, product.supplier, product.description].filter(Boolean).join(" "));
+}
+
 function matchObservedProduct(observed, products) {
   if (!observed.identity_clear || observed.product_count !== 1 || !observed.product_name) return [];
   const labelWords = words(observed.texts.join(" "));
   const label = new Set(labelWords);
   const brand = words(observed.brand);
   const query = words(observed.product_name);
+  const observedType = productType(`${observed.product_name} ${observed.texts.join(" ")}`);
   // Identity must be grounded in transcribed label text. Color/object guesses
   // and weak one-word matches cannot create an inventory suggestion.
   if (brand.some((word) => !label.has(word))) return [];
@@ -72,15 +89,22 @@ function matchObservedProduct(observed, products) {
   const variant = words(observed.variant);
   return (codeIsRead ? exact : catalog).flatMap((product) => {
     const name = words(product.name), nameSet = new Set(name);
-    if (!codeIsRead && (brand.some((word) => !nameSet.has(word)) || anchors.some((word) => !nameSet.has(word)))) return [];
-    const matched = query.filter((word) => nameSet.has(word));
+    const searchable = new Set(productKeywords(product));
+    const type = productType(`${product.name} ${product.category} ${product.description || ""}`);
+    if (!codeIsRead && observedType && type && observedType !== type) return [];
+    if (!codeIsRead && (brand.some((word) => !searchable.has(word)) || anchors.some((word) => !searchable.has(word)))) return [];
+    const matched = query.filter((word) => searchable.has(word));
     const coverage = matched.length / Math.max(1, query.length);
-    if (!codeIsRead && (coverage < 0.85 || variant.some((word) => !nameSet.has(word)))) return [];
-    const productSizes = sizes(product.name);
+    if (!codeIsRead && (!type && !observedType && coverage < 0.85 || variant.some((word) => !searchable.has(word)))) return [];
+    if (!codeIsRead && observedType && type !== observedType) return [];
+    const productSizes = sizes(`${product.name} ${product.description || ""}`);
     if (!codeIsRead && observedSizes.length && productSizes.length && !observedSizes.some((value) => productSizes.includes(value))) return [];
+    if (!codeIsRead && observedSizes.length && !productSizes.length) return [];
     const extra = name.filter((word) => !query.includes(word) && !GENERIC.has(word));
-    const score = codeIsRead ? 1 : Math.min(0.97, 0.8 * coverage + (brand.length ? 0.08 : 0)
+    const score = codeIsRead ? 1 : Math.min(0.97, 0.72 * coverage + (brand.length ? 0.08 : 0)
+      + (observedType && type === observedType ? 0.12 : 0)
       + (observedSizes.length && productSizes.length ? 0.09 : 0) - Math.min(0.15, extra.length * 0.025));
+    if (!codeIsRead && coverage < 0.5) return [];
     return [{ product_sid: product.sid, name: product.name, image: product.image, retail_price_minor: product.price_minor,
       vat_rate_bps: product.vat_rate_bps, score, confidence: score >= 0.9 ? "high" : "possible",
       matched_keywords: matched, explanation: codeIsRead ? "Barcode matches inventory" : "Product name and label match inventory" }];
@@ -99,8 +123,11 @@ async function recognizeProductWithAI(image, products, actor, generate) {
       { type: "image", source: { type: "base64", media_type: header.slice(5, -7), data } }] }],
     maxTokens: 2000, timeoutMs: 45000 });
   const observed = parseProductObservation(result?.rawText ?? result);
+  const terms = words(`${observed.brand} ${observed.product_name} ${observed.variant} ${observed.texts.join(" ")}`)
+    .filter((word) => !STOP.has(word) && !COLOR_WORDS.has(word) && !/^\d/.test(word));
+  const sizeTerms = String(observed.size).toLowerCase().match(/\d+(?:[.,]\d+)?\s*(?:kg|ml|g|l)\b/g) || [];
   return { observed, candidates: matchObservedProduct(observed, products),
-    keywords: words(`${observed.brand} ${observed.product_name}`).slice(0, 12), colors: [...observed.colors],
+    keywords: [...new Set([...terms, ...sizeTerms.map((size) => size.replace(/\s+/g, ""))])].slice(0, 12), colors: [...observed.colors],
     recognized_text: observed.texts.join("\n"), source: "ai" };
 }
 
