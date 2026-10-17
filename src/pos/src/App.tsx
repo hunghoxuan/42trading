@@ -30,8 +30,24 @@ import {
   type Bootstrap, type LocalSale, type Product, type SaleLine,
 } from "./storage";
 
-const InputComboSelect = SharedInputComboSelect as ComponentType<SelectHTMLAttributes<HTMLSelectElement> & { searchable?: boolean; placeholder?: string }>;
+const InputComboSelect = SharedInputComboSelect as ComponentType<SelectHTMLAttributes<HTMLSelectElement> & {
+  searchable?: boolean; placeholder?: string; searchPlaceholder?: string; allowCreate?: boolean; createLabel?: string; menuClassName?: string;
+}>;
 type ProductCell = { row: { original: Product } };
+
+function attributeOptions(products: Product[], field: "category" | "supplier" | "unit"): string[] {
+  const values = new Map<string, string>();
+  for (const product of products) {
+    const value = product[field].trim().normalize("NFC");
+    if (value && !values.has(value.toLowerCase())) values.set(value.toLowerCase(), value);
+  }
+  return [...values.values()].sort((left, right) => left.localeCompare(right, "vi"));
+}
+
+function attributeValue(value: string, options: string[]): string {
+  const trimmed = value.trim().normalize("NFC");
+  return options.find((option) => option.toLowerCase() === trimmed.toLowerCase()) ?? trimmed;
+}
 
 const money = (value: number, language: Language) => new Intl.NumberFormat(language === "en" ? "en-US" : "vi-VN", {
   style: "currency", currency: "VND", maximumFractionDigits: 0,
@@ -205,6 +221,11 @@ export default function App() {
   });
   const inventoryCategories = [...new Set(products.map((product) => product.category.trim()).filter(Boolean))].sort();
   const inventorySuppliers = [...new Set(products.map((product) => product.supplier.trim()).filter(Boolean))].sort();
+  const productAttributeOptions = {
+    category: attributeOptions(products, "category"),
+    supplier: attributeOptions(products, "supplier"),
+    unit: attributeOptions(products, "unit"),
+  };
   const cartRows = cart.map((line) => ({ ...line, product: visibleProducts.find((p) => p.sid === line.product_sid) }));
   const subtotal = cartRows.reduce((sum, row) => sum + (row.product?.price_minor || 0) * row.quantity, 0);
   const vat = cartRows.reduce((sum, row) => {
@@ -370,13 +391,18 @@ export default function App() {
   }
 
   async function saveProduct() {
-    const result = await posApi.saveProduct({ ...form, cost_minor: form.cost === "" ? null : Number(form.cost),
+    const attributes = {
+      category: attributeValue(form.category, productAttributeOptions.category),
+      supplier: attributeValue(form.supplier, productAttributeOptions.supplier),
+      unit: attributeValue(form.unit, productAttributeOptions.unit),
+    };
+    const result = await posApi.saveProduct({ ...form, ...attributes, cost_minor: form.cost === "" ? null : Number(form.cost),
       min_stock: Number(form.minStock), vat_rate_bps: Math.round(Number(form.vat) * 100),
       barcodes: form.barcodes.split(",").map((v) => v.trim()).filter(Boolean) });
     if (form.price) await posApi.setPrice(result.product.sid, Number(form.price));
     await refreshOnline();
     setSelected(result.product);
-    setForm((current) => ({ ...current, sid: result.product.sid }));
+    setForm((current) => ({ ...current, ...attributes, sid: result.product.sid }));
   }
 
   async function exportProductsXlsx() {
@@ -547,12 +573,26 @@ export default function App() {
     getRows: (product: Product) => [[{ value: product.category || "—" }, { value: `${tr("Stock")}: ${usingOfflineCatalog ? product.offline_available : product.on_hand} ${product.unit}` }]],
   };
 
+  const attributeField = (field: "category" | "supplier" | "unit", label: string) => (
+    <label className="pay42-form-field"><span className="ui-field-label">{tr(label)}</span>
+      <InputComboSelect aria-label={tr(label)} value={form[field]} searchable allowCreate
+        menuClassName="pos-product-attribute-menu"
+        placeholder={tr("Select or enter a new value")} searchPlaceholder={tr("Search or enter a new value")}
+        createLabel={tr("Add")} onChange={(event) => setForm((current) => ({ ...current, [field]: event.target.value }))}>
+        {field !== "unit" && <option value="">{tr("None")}</option>}
+        {form[field] && !productAttributeOptions[field].includes(form[field])
+          && <option value={form[field]}>{form[field]}</option>}
+        {productAttributeOptions[field].map((value) => <option key={value} value={value}>{value}</option>)}
+      </InputComboSelect>
+    </label>
+  );
+
   const inventoryDetail = (<div className="pay42-form-grid pos-form">
           <label className="pay42-form-field pay42-form-field--full"><span className="ui-field-label">{tr("Name")}</span><input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
           <label className="pay42-form-field"><span className="ui-field-label">{tr("Product number")}</span><input value={form.sku} onChange={(event) => setForm({ ...form, sku: event.target.value })} /></label>
           <label className="pay42-form-field pay42-form-field--full"><span className="ui-field-label">{tr("Barcodes, comma separated")}</span><input value={form.barcodes} onChange={(event) => setForm({ ...form, barcodes: event.target.value })} /></label>
-          <label className="pay42-form-field"><span className="ui-field-label">{tr("Category")}</span><input value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })} /></label>
-          <label className="pay42-form-field"><span className="ui-field-label">{tr("Supplier")}</span><input value={form.supplier} onChange={(event) => setForm({ ...form, supplier: event.target.value })} /></label>
+          {attributeField("category", "Category")}
+          {attributeField("supplier", "Supplier")}
           <label className="pay42-form-field"><span className="ui-field-label">{tr("Status")}</span><InputComboSelect value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>
             <option value="ACTIVE">{tr("Active")}</option><option value="ARCHIVED">{tr("Inactive")}</option>
           </InputComboSelect></label>
@@ -566,7 +606,8 @@ export default function App() {
               }, "Image ready");
             }} />
           </label>
-          <label className="pay42-form-field"><span className="ui-field-label">{tr("Unit")}</span><input value={form.unit} onChange={(event) => setForm({ ...form, unit: event.target.value })} /></label>
+          {attributeField("unit", "Unit")}
+          <p className="minor-text pay42-form-field--full">{tr("New values are added to the lists when you save the product.")}</p>
           <label className="pay42-form-field"><span className="ui-field-label">{tr("Retail price (VND)")}</span><input type="number" min="0" step="1" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} /></label>
           <label className="pay42-form-field"><span className="ui-field-label">{tr("Cost price (VND)")}</span><input type="number" min="0" step="1" value={form.cost} onChange={(event) => setForm({ ...form, cost: event.target.value })} /></label>
           <label className="pay42-form-field"><span className="ui-field-label">{tr("Minimum stock")}</span><input type="number" min="0" step="0.01" value={form.minStock} onChange={(event) => setForm({ ...form, minStock: event.target.value })} /></label>

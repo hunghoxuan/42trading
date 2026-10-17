@@ -1,6 +1,9 @@
 export type Language = "en" | "vi";
 
 const vi: Record<string, string> = {
+  "Select or enter a new value": "Chọn hoặc nhập mục mới", "Search or enter a new value": "Tìm hoặc nhập mục mới",
+  "Add": "Thêm", "None": "Không chọn",
+  "New values are added to the lists when you save the product.": "Mục mới được tự động thêm vào danh sách khi lưu sản phẩm.",
   "Date": "Ngày", "Actions": "Thao tác", "No sales in this period.": "Chưa có giao dịch trong thời gian này.",
   "Mode": "Chế độ", "Table": "Bảng", "Grid": "Lưới", "Cards": "Thẻ", "Carousel": "Trình chiếu",
   "Select products view mode": "Chọn chế độ hiển thị sản phẩm", "Refresh products": "Làm mới sản phẩm", "Close detail panel": "Đóng chi tiết",

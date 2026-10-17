@@ -138,6 +138,7 @@ export default function InputComboSelect({
   name,
   placeholder = "",
   className = "",
+  menuClassName = "",
   style,
   "aria-label": ariaLabel,
   title,
@@ -147,6 +148,8 @@ export default function InputComboSelect({
   matchTriggerWidth = true,
   searchable = false,
   searchPlaceholder = "Filter...",
+  allowCreate = false,
+  createLabel = "Add",
   dataComponent,
 }) {
   const effectiveMode =
@@ -257,6 +260,40 @@ export default function InputComboSelect({
       type: nextType,
     });
   }
+
+  const createValue = String(effectiveMode === "both" && !searchable ? normalizedText : search).trim();
+  const canCreate = allowCreate && !multiple && Boolean(createValue)
+    && !options.some((option) => matchesOption(createValue, option));
+
+  function selectSingleValue(nextValue) {
+    if (disabled || readOnly) return;
+    if (effectiveMode === "both") {
+      emitHybridChange(nextValue, inferType(nextValue, options, type));
+      onSelected?.(nextValue, options.find((option) => option.value === nextValue) || null);
+    } else {
+      emitComboChange(nextValue);
+    }
+    setSearch("");
+    setOpen(false);
+  }
+
+  function handleSearchKeyDown(event) {
+    event.stopPropagation();
+    if (!allowCreate || multiple || event.key !== "Enter" || event.nativeEvent.isComposing) return;
+    const match = options.find((option) => !option.disabled && matchesOption(search, option));
+    if (match || canCreate) {
+      event.preventDefault();
+      selectSingleValue(match?.value ?? createValue);
+    }
+  }
+
+  const createItem = canCreate ? (
+    <DropdownMenu.Item asChild disabled={disabled || readOnly}>
+      <button type="button" onClick={() => selectSingleValue(createValue)}>
+        {createLabel} “{createValue}”
+      </button>
+    </DropdownMenu.Item>
+  ) : null;
 
   if (effectiveMode === "text") {
     return (
@@ -370,6 +407,7 @@ export default function InputComboSelect({
             className={[
               "combo-button-menu",
               "value-param-input__menu",
+              menuClassName,
               matchTriggerWidth ? "value-param-input__menu--match-trigger" : "",
             ].join(" ")}
             style={
@@ -386,6 +424,7 @@ export default function InputComboSelect({
             sideOffset={6}
             collisionPadding={8}
             sticky="partial"
+            onEscapeKeyDown={(event) => event.stopPropagation()}
             onCloseAutoFocus={(event) => {
               event.preventDefault();
               inputRef.current?.focus?.();
@@ -400,7 +439,7 @@ export default function InputComboSelect({
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder={searchPlaceholder}
-                  onKeyDown={(event) => event.stopPropagation()}
+                  onKeyDown={handleSearchKeyDown}
                 />
               </div>
             ) : null}
@@ -419,7 +458,8 @@ export default function InputComboSelect({
                 </button>
               </DropdownMenu.Item>
             ))}
-            {!filteredOptions.length ? (
+            {createItem}
+            {!filteredOptions.length && !canCreate ? (
               <div className="minor-text" style={{ padding: 10, fontSize: 11 }}>
                 No matches
               </div>
@@ -465,7 +505,7 @@ export default function InputComboSelect({
           title={title}
           data-component={dataComponent || "InputComboSelect"}
         >
-          <span className="combo-button-menu-trigger__label">{comboLabel}</span>
+          <span className="combo-button-menu-trigger__label">{!normalizedComboValue && placeholder ? placeholder : comboLabel}</span>
           <span
             aria-hidden="true"
             className="combo-button-menu-trigger__caret"
@@ -478,6 +518,7 @@ export default function InputComboSelect({
         <DropdownMenu.Content
           className={[
             "combo-button-menu",
+            menuClassName,
             multiple ? "combo-button-menu--multiple" : "",
           ]
             .filter(Boolean)
@@ -487,6 +528,7 @@ export default function InputComboSelect({
           sideOffset={6}
           collisionPadding={8}
           sticky="partial"
+          onEscapeKeyDown={(event) => event.stopPropagation()}
           data-component={multiple ? "FormMultiComboSelect" : dataComponent || "InputComboSelect.Menu"}
         >
           {searchable || multiple ? (
@@ -499,7 +541,7 @@ export default function InputComboSelect({
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}
                     placeholder={searchPlaceholder}
-                    onKeyDown={(event) => event.stopPropagation()}
+                    onKeyDown={handleSearchKeyDown}
                   />
                 </div>
               ) : null}
@@ -579,7 +621,8 @@ export default function InputComboSelect({
               </DropdownMenu.Item>
             );
           })}
-          {!filteredOptions.length ? (
+          {createItem}
+          {!filteredOptions.length && !canCreate ? (
             <div className="minor-text" style={{ padding: 10, fontSize: 11 }}>
               No matches
             </div>

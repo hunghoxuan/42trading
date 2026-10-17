@@ -188,6 +188,11 @@
   gap: 10px;
 }
 
+/* Product attribute menus are portalled above the mobile CRUD detail modal (1100). */
+.pos-product-attribute-menu {
+  z-index: 1101;
+}
+
 .pos-product-image-picker {
   display: flex !important;
   align-items: center;
