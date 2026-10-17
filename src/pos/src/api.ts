@@ -9,6 +9,14 @@ export type ImportPreview = {
   preview: Record<string, unknown>[];
 };
 
+export type CashRecognition = {
+  currency: "VND";
+  notes: { denomination: number; quantity: number }[];
+  total_minor: number;
+  uncertain: boolean;
+  unrecognized_count: number;
+};
+
 export class ApiError extends Error {
   constructor(message: string, public status: number) { super(message); }
 }
@@ -35,6 +43,7 @@ async function call<T extends ApiResult>(path: string, method = "GET", body?: un
 }
 
 export const posApi = {
+  recognizeCash: (image: string) => call<ApiResult & CashRecognition>("/api/pos/cash/recognize", "POST", { image }),
   setProductImage: (sid: string, image: string) => call<ApiResult>("/api/pos/products/" + encodeURIComponent(sid) + "/image", "PUT", { image }),
   auth: () => call<ApiResult & { user: { user_id: string; name?: string; roles?: string[] } }>("/auth/me?hydrate=0"),
   products: (deviceId = "", includeArchived = false) => {

@@ -109,6 +109,8 @@ async function handlePosRequest(context) {
       output = { ok: true, items };
     } else if (route === "/images/recognize" && method === "POST") {
       output = await service.recognizeImage(payload);
+    } else if (route === "/cash/recognize" && method === "POST") {
+      output = await service.recognizeCash(payload, actor);
     } else {
       json(res, 404, { ok: false, error: "NOT_FOUND" });
       return true;

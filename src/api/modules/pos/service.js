@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { createUniversalStoreAdapter } = require("../../shared/universal-store/adapterFactory");
 const { recognizeProductImage, imageBuffer } = require("./vision");
+const { recognizeCashImage } = require("./cashVision");
 const { parseCsv, parseProductRows, validateRows, toCsv } = require("./imports");
 
 const TENANT = "__42pay__";
@@ -779,6 +780,10 @@ function createPosService(options = {}) {
     return { ok: true, ...(await recognizeProductImage(input.image, await catalog(), options.textExtractor)) };
   }
 
+  async function recognizeCash(input, actor) {
+    return { ok: true, ...(await recognizeCashImage(input.image, actor, options.cashVision)) };
+  }
+
   async function previewImport(input) {
     const rows = input.rows ? parseProductRows(input.rows) : parseCsv(input.csv);
     const validated = validateRows(rows, await catalog());
@@ -887,7 +892,7 @@ function createPosService(options = {}) {
 
   return { init, catalog, get, upsertProduct, setProductImage, setPrice, adjustStock, pairDevice,
     allocateStock, createStockCount, submitStockCount, postStockCount, stockCounts,
-    bootstrap, checkout, syncSale, sales, refundSale, shifts, openShift, closeShift, dashboard, recognizeImage,
+    bootstrap, checkout, syncSale, sales, refundSale, shifts, openShift, closeShift, dashboard, recognizeImage, recognizeCash,
     previewImport, commitImport, reportSales, exportCsv,
     verifyGrant: (token) => verifyGrant(token, keys) };
 }

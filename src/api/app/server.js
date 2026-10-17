@@ -8112,6 +8112,14 @@ function posService() {
     provider: String(CFG.mt5StorageBackend || "sqlite").trim().toLowerCase(),
     sqlitePath: resolveConfiguredSqlitePath(),
     postgresUrl: CFG.mt5PostgresUrl,
+    cashVision: async (request) => {
+      const configuredProvider = String(process.env.POS_CASH_AI_PROVIDER || "").trim();
+      const provider = configuredProvider || buildAiChatProviderCandidates("", await loadAiConfig(request.userId))
+        .find((candidate) => candidate !== "deepseek") || "ollama";
+      const model = String(process.env.POS_CASH_AI_MODEL || "").trim()
+        || (provider === "ollama" ? getFallbackOllamaModel() : resolveAiChatModelForProvider(provider));
+      return callAiProvider({ ...request, provider, model });
+    },
   });
   return POS_SERVICE;
 }

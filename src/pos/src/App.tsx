@@ -4,6 +4,7 @@ import { useRegisterSW } from "virtual:pwa-register/react";
 import { ApiError, posApi, type ImportPreview } from "./api";
 import Receipt, { fromLocalSale, fromServerSale } from "./Receipt";
 import PhotoCamera from "./PhotoCamera";
+import CashPayment from "./CashPayment";
 import Scanner from "./Scanner";
 import { t, type Language } from "./i18n";
 // Reuse the existing 42trade React components; their sources are JavaScript, not TypeScript.
@@ -632,8 +633,7 @@ export default function App() {
           <div className="pos-row"><span>{tr("Subtotal")}</span><span>{money(subtotal, language)}</span></div>
           <div className="pos-row"><span>{tr("VAT")}</span><span>{money(vat, language)}</span></div>
           <div className="pos-total"><span>{tr("Total")}</span><strong>{money(total, language)}</strong></div>
-          <label>{tr("Cash received")}<input type="number" min="0" step="1" value={cash} onChange={(event) => setCash(event.target.value)} /></label>
-          <p>{tr("Change")}: {money(Math.max(0, Number(cash || 0) - total), language)}</p>
+          <CashPayment cash={cash} total={total} language={language} online={online} disabled={busy} onCashChange={setCash} />
           <button className="primary-button" disabled={busy || !cart.length} onClick={() => run(checkout, "")}>{tr("Complete cash sale")}</button>
           <small className="pos-muted">{tr("Offline sales are saved on this device until synced.")}</small>
         </div></>);

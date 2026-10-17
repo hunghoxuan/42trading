@@ -6,7 +6,7 @@ import { t, type Language } from "./i18n";
 
 export default function PhotoCamera({ language, purpose = "recognize", onClose, onCapture, onUpload }: {
   language: Language;
-  purpose?: "product" | "recognize";
+  purpose?: "product" | "recognize" | "cash";
   onClose: () => void;
   onCapture: (file: File) => Promise<void>;
   onUpload: () => void;
@@ -97,8 +97,9 @@ export default function PhotoCamera({ language, purpose = "recognize", onClose, 
     return () => { cancelled = true; stop(); };
   }, [facingMode, attempt]);
 
-  return <MobileFullscreenModal open title={tr(purpose === "product" ? "Update product photo" : "Recognize photo")}
-    subtitle={tr("Place one product inside the frame. Hold still; the camera takes the photo for you.")} onClose={onClose}>
+  return <MobileFullscreenModal open title={tr(purpose === "cash" ? "Photograph cash" : purpose === "product" ? "Update product photo" : "Recognize photo")}
+    subtitle={tr(purpose === "cash" ? "Lay the notes flat, separated, entirely inside the frame. Hold still to capture."
+      : "Place one product inside the frame. Hold still; the camera takes the photo for you.")} onClose={onClose}>
     <div className="stack-layout pos-photo-camera">
       {preview ? <img src={preview} alt={tr("Captured photo")} /> : <div className="pos-camera-frame">
         <video ref={video} autoPlay muted playsInline aria-label={tr("Camera preview")} />
@@ -106,9 +107,10 @@ export default function PhotoCamera({ language, purpose = "recognize", onClose, 
         {ready && !error && !busy && <span className="pos-camera-countdown" aria-hidden="true">{countdown || 1}</span>}
       </div>}
       <p className="pos-camera-instruction" role="status" aria-live="polite">{tr(busy
-        ? purpose === "product" ? "Preparing and saving your product photo…" : "Finding the product…"
+        ? purpose === "cash" ? "Counting visible banknotes…" : purpose === "product" ? "Preparing and saving your product photo…" : "Finding the product…"
         : !ready && !error ? "Allow camera access to see the preview."
-          : !clear ? "Bring the product closer and use better light." : "Hold still. Taking the photo automatically…")}</p>
+          : !clear ? purpose === "cash" ? "Use better light and keep every note visible." : "Bring the product closer and use better light."
+            : "Hold still. Taking the photo automatically…")}</p>
       {error && <p className="error" role="alert">{tr(error)}</p>}
       <div className="pay42-inline-actions">
         {error ? <button type="button" className="primary-button" onClick={() => setAttempt((value) => value + 1)}>{tr("Try camera again")}</button>
