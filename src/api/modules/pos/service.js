@@ -4,8 +4,9 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { createUniversalStoreAdapter } = require("../../shared/universal-store/adapterFactory");
-const { recognizeProductImage, imageBuffer } = require("./vision");
+const { imageBuffer } = require("./vision");
 const { recognizeCashImage } = require("./cashVision");
+const { recognizeProductWithAI } = require("./productVision");
 const { parseCsv, parseProductRows, validateRows, toCsv } = require("./imports");
 
 const TENANT = "__42pay__";
@@ -776,10 +777,8 @@ function createPosService(options = {}) {
         stock.on_hand - stock.allocated <= (minimumBySid.get(stock.product_sid) ?? 5)) };
   }
 
-  async function recognizeImage(input) {
-    return { ok: true, ...(await recognizeProductImage(input.image, await catalog(), options.textExtractor, {
-      ocr_images: input.ocr_images, line_images: input.line_images, colors: input.colors, visual_matches: input.visual_matches,
-    })) };
+  async function recognizeImage(input, actor) {
+    return { ok: true, ...(await recognizeProductWithAI(input.image, await catalog(), actor, options.productVision)) };
   }
 
   async function recognizeCash(input, actor) {

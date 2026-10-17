@@ -1,6 +1,11 @@
 import type { Bootstrap, LocalSale, Product, SaleLine } from "./storage";
 
 type ApiResult = { ok: boolean; error?: string; message?: string; permission_denied?: boolean };
+export type ProductObservation = {
+  object_name: string; product_name: string; brand: string; variant: string; size: string; barcode: string;
+  product_count: number; identity_clear: boolean; texts: string[]; colors: string[];
+  visible_price: { text: string; amount: number | null; currency: string | null } | null;
+};
 export type ImportPreview = {
   count: number;
   errors: string[];
@@ -74,7 +79,7 @@ export const posApi = {
     "/api/pos/offline/sales/sync", "POST", { device_id: sale.device_id, grant: sale.grant, sale }),
   checkout: (idempotency_key: string, lines: SaleLine[], cash_received_minor: number) => call<ApiResult & { sale: unknown }>(
     "/api/pos/sales/checkout", "POST", { idempotency_key, lines, cash_received_minor }),
-  recognizeImage: (photo: { image: string; ocr_images: string[]; line_images: string[]; colors: { color: string; weight: number }[]; visual_matches: { product_sid: string; similarity: number }[] }) => call<ApiResult & { keywords: string[]; colors: string[]; candidates: {
+  recognizeImage: (photo: { image: string }) => call<ApiResult & { observed: ProductObservation; keywords: string[]; colors: string[]; candidates: {
     product_sid: string; name: string; image: string; retail_price_minor: number | null;
     vat_rate_bps: number; score: number; explanation: string; matched_keywords?: string[]; confidence?: string;
   }[] }>("/api/pos/images/recognize", "POST", photo),

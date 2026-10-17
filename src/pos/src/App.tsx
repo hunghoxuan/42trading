@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type SelectHTMLAttributes } from "react";
 import { readBarcodePhoto } from "./barcodeReader";
 import { useRegisterSW } from "virtual:pwa-register/react";
-import { ApiError, posApi, type ImportPreview } from "./api";
+import { ApiError, posApi, type ImportPreview, type ProductObservation } from "./api";
 import Receipt, { fromLocalSale, fromServerSale } from "./Receipt";
 import PhotoCamera from "./PhotoCamera";
 import CashPayment from "./CashPayment";
@@ -144,7 +144,6 @@ export default function App() {
   const [photoCamera, setPhotoCamera] = useState<"product" | "recognize" | null>(null);
   const productPhotoUpload = useRef<HTMLInputElement>(null);
   const [lastImageChange, setLastImageChange] = useState<{ sid: string; before: string; after: string } | null>(null);
-  const photoUpload = useRef<HTMLInputElement>(null);
   const isMobile = useIsMobile();
   const [detailOpen, setDetailOpen] = useState(() => window.innerWidth >= 768);
   const [catalogMode, setCatalogMode] = useState("table");
@@ -157,6 +156,9 @@ export default function App() {
   const [printReceipt, setPrintReceipt] = useState(false);
   const [candidates, setCandidates] = useState<{ product_sid: string; name: string; retail_price_minor: number | null; score: number; explanation: string; matched_keywords?: string[]; confidence?: string }[]>([]);
   const [recognitionHints, setRecognitionHints] = useState<string[]>([]);
+  const [recognitionDetails, setRecognitionDetails] = useState<ProductObservation | null>(null);
+  const [recognizedIds, setRecognizedIds] = useState<string[] | null>(null);
+  const recognitionRequest = useRef(0);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -175,7 +177,8 @@ export default function App() {
   const visibleProducts = online
     ? (tab === "sale" ? products.filter((product) => product.status === "ACTIVE") : products)
     : localProducts;
-  const filtered = searchProducts(visibleProducts, query);
+  const filtered = recognizedIds === null ? searchProducts(visibleProducts, query)
+    : visibleProducts.filter((product) => recognizedIds.includes(product.sid));
   const inventoryFiltered = filtered.filter((product) => {
     if (inventoryStatusFilter === "ACTIVE" && product.status !== "ACTIVE") return false;
     if (inventoryStatusFilter === "INACTIVE" && product.status === "ACTIVE") return false;
@@ -447,6 +450,7 @@ export default function App() {
   }
 
   const scanned = useCallback((code: string) => {
+    recognitionRequest.current++; setRecognizedIds(null); setRecognitionDetails(null);
     setScanner(false);
     setQuery(code);
     setError(""); setCandidates([]); setRecognitionHints([]);
@@ -504,29 +508,38 @@ export default function App() {
   }
 
   async function recognizeFile(file: File) {
-    setCandidates([]); setRecognitionHints([]); setMessage("");
+    const request = ++recognitionRequest.current;
+    setCandidates([]); setRecognitionHints([]); setMessage(""); setError(""); setRecognitionDetails(null); setRecognizedIds([]);
     if (!/^image\/(png|jpeg|webp)$/.test(file.type) || file.size > 4 * 1024 * 1024) {
       throw new Error("Choose a PNG, JPEG, or WebP under 4 MB");
     }
     try {
       const code = await readBarcodePhoto(file);
+      if (request !== recognitionRequest.current) return;
       if (!code) throw new Error("No barcode in this photo");
       const product = visibleProducts.find((item) => item.sid === code || item.sku === code || item.barcodes.includes(code));
       if (product) {
+        setRecognizedIds([product.sid]); setQuery(code);
         setCandidates([{ product_sid: product.sid, name: product.name,
           retail_price_minor: product.price_minor, score: 1, explanation: "Barcode or QR code in image" }]);
         return;
       }
     } catch { /* A product photo may have no machine-readable code. */ }
     if (!online) throw new Error("No known barcode found. Product-photo recognition needs an internet connection.");
-    const { prepareRecognitionPhoto } = await import("./recognitionPhoto");
-    const photo = await prepareRecognitionPhoto(file, visibleProducts);
-    const result = await posApi.recognizeImage(photo);
-    setRecognitionHints([...(result.keywords || []), ...(result.colors || []).map((color) => tr(color))]);
+    const image = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader(); reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error); reader.readAsDataURL(file);
+    });
+    if (request !== recognitionRequest.current) return;
+    const result = await posApi.recognizeImage({ image });
+    if (request !== recognitionRequest.current) return;
+    setRecognitionDetails(result.observed);
+    setRecognitionHints([...(Array.isArray(result.keywords) ? result.keywords : []), ...(Array.isArray(result.colors) ? result.colors : []).map((color) => tr(color))]);
     if (result.keywords?.length) setQuery(result.keywords.join(" "));
     const available = result.candidates.filter((candidate) => visibleProducts.some((item) => item.sid === candidate.product_sid));
     setCandidates(available);
-    if (!available.length) setMessage(tr("Not enough detail to identify this product. Move closer to the brand label or scan its barcode."));
+    setRecognizedIds(available.map((item) => item.product_sid));
+    if (!available.length) setMessage(tr("No sufficiently matching product in inventory. Try a clearer label or scan the barcode."));
   }
 
   function startNewProduct() {
@@ -724,6 +737,18 @@ export default function App() {
     {(tab === "sale" || tab === "inventory") && <main className="pos-page-content stack-layout">
       {tab === "sale" && usingOfflineCatalog && <p className="minor-text">{tr("Refresh the register after price changes.")}</p>}
       {recognitionHints.length > 0 && <p className="minor-text" role="status">{tr("Detected keywords")}: {recognitionHints.join(" · ")}</p>}
+      {recognizedIds !== null && <div className="card-flat stack-layout" aria-label={tr("Image recognition result")}>
+        {recognitionDetails && <>
+          <strong>{recognitionDetails.product_name || recognitionDetails.object_name || tr("Unclear product")}</strong>
+          {recognitionDetails.brand && <span>{tr("Brand")}: {recognitionDetails.brand}</span>}
+          {recognitionDetails.texts.length > 0 && <span>{tr("Label text")}: {recognitionDetails.texts.join(" · ")}</span>}
+          <span>{tr("Price on label")}: {recognitionDetails.visible_price?.text || tr("No visible price")}</span>
+          <small className="minor-text">{tr("Register prices come from inventory.")}</small>
+        </>}
+        <button type="button" className="secondary-button" onClick={() => {
+          recognitionRequest.current++; setRecognizedIds(null); setRecognitionDetails(null); setRecognitionHints([]); setCandidates([]); setQuery(""); setMessage("");
+        }}>{tr("Clear recognition")}</button>
+      </div>}
       {candidates.length > 0 && <div className="pos-candidates"><strong>{tr("Possible matches — confirm product")}</strong>
           {candidates.map((candidate) => <button className="pos-candidate" key={candidate.product_sid} onClick={() => {
             const product = visibleProducts.find((item) => item.sid === candidate.product_sid);
@@ -735,7 +760,7 @@ export default function App() {
       <CrudContainer className="pay42-crud-layout"
         toolbar={{ displayMode: "top", filters: <div className="trades-toolbar-row"><div className="trades-toolbar-filters">
           <input aria-label={tr("Search products or scan a product number")} placeholder={tr("Search products or scan a product number")} value={query}
-            onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
+            onChange={(event) => { recognitionRequest.current++; setRecognizedIds(null); setRecognitionDetails(null); setCandidates([]); setRecognitionHints([]); setQuery(event.target.value); }} onKeyDown={(event) => {
               if (event.key === "Enter" && query.trim()) { event.preventDefault(); scanned(query.trim()); }
             }} />
           {tab === "inventory" && <>
@@ -859,15 +884,11 @@ export default function App() {
           ]} />
       </ResponsivePanel>
     </main>}
-    <input ref={photoUpload} className="pos-photo-upload" type="file" accept="image/png,image/jpeg,image/webp" aria-label={tr("Upload image")} onChange={(event) => {
-      const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) run(() => recognizeFile(file), "");
-    }} />
     <input ref={productPhotoUpload} className="pos-photo-upload" type="file" accept="image/png,image/jpeg,image/webp" aria-label={tr("Choose product photo")} onChange={(event) => {
       const file = event.currentTarget.files?.[0]; event.currentTarget.value = "";
       if (file) run(() => updateProductPhoto(file), "");
     }} />
-    {photoCamera && <PhotoCamera language={language} purpose={photoCamera} onClose={() => setPhotoCamera(null)}
-      onUpload={() => { const purpose = photoCamera; setPhotoCamera(null); (purpose === "product" ? productPhotoUpload : photoUpload).current?.click(); }}
+    {photoCamera && <PhotoCamera language={language} purpose={photoCamera} onClose={() => { recognitionRequest.current++; setPhotoCamera(null); }}
       onCapture={async (file) => {
         setBusy(true);
         try { if (photoCamera === "product") await updateProductPhoto(file); else await recognizeFile(file); }

@@ -108,7 +108,7 @@ async function handlePosRequest(context) {
         product.sku === code || product.sid === code || product.barcodes.includes(code));
       output = { ok: true, items };
     } else if (route === "/images/recognize" && method === "POST") {
-      output = await service.recognizeImage(payload);
+      output = await service.recognizeImage(payload, actor);
     } else if (route === "/cash/recognize" && method === "POST") {
       output = await service.recognizeCash(payload, actor);
     } else {

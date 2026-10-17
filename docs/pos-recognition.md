@@ -1,13 +1,31 @@
-# POS product photo recognition and search
+# POS camera recognition and search
 
-Product search splits spaces, `OR`, `|`, commas, and semicolons into alternatives. Matching is case insensitive and ignores Vietnamese accents. Products matching more words appear first; an exact SKU/barcode has priority.
+## Shared camera
 
-The barcode camera automatically decodes live frames and processes the first detected code once. It enables continuous autofocus when supported and allows selecting an actual camera device; a light control appears on cameras that support a torch. It uses the browser's native detector when available and ZXing with `TRY_HARDER`, rotating through close-up, 90-degree, tilted, and contrast-enhanced views. Decodes are serialized to bound CPU work. After eight seconds it shows guidance while continuing to scan; it no longer shuts the camera off after 15 seconds. Closing, switching cameras, using a code, or switching to photo recognition releases the stream. A successful decode closes the scanner and shows the decoded value together with the product lookup result. Users can also choose a barcode photo (decoded locally with the same preprocessing), enter a code manually, or switch directly to product photo recognition. A product's front label requires photo recognition unless it contains a readable barcode or QR code.
+Barcode scanning and product recognition both use `PhotoCamera` and the existing `MobileFullscreenModal`. The camera is a centered modal on desktop and fills the viewport on mobile (up to 767 px). Both modes automatically capture a steady image and provide **Scan now**, camera selection, optional camera light, and existing-photo upload. Barcode captures preserve the full frame; product photos use the displayed square crop.
 
-Photo recognition first attempts an exact barcode/QR match. Otherwise the browser removes the background with the bundled U²-Net model, extracts foreground colors, and prepares white-backed, enlarged full-product and label views for OCR. Transparent cutouts must be flattened before OCR. The browser may compare foreground color histograms with up to 200 locally embedded catalog photos; invalid reference images are skipped.
+A successful barcode decode closes the modal and shows the actual code and inventory lookup result. A failed capture retains the photo with a clear retry message. Closing or switching the camera releases the stream. Barcode decoding uses the native browser detector when available and ZXing with `TRY_HARDER`, close-ups, rotation and contrast views. Scanner screenshots and uploaded images use the same decoder.
 
-`POST /api/pos/images/recognize` keeps its `image` field and accepts optional `ocr_images` (at most two additional views), `line_images` (at most eight overlapping label bands), `colors` (`{ color, weight }`), and `visual_matches` (`{ product_sid, similarity }`). The catalog stays scoped by the existing POS permission. The response includes `candidates`, `recognized_text`, `keywords`, and `colors`. Candidate evidence includes `matched_keywords` and `confidence` (`high` or `possible`); these are evidence categories, not calibrated probabilities.
+## Product recognition
 
-OCR uses automatic DPI estimation and sparse label text detection, plus single-line detection on label bands for stylized brand lettering. Candidate ranking normalizes accents, tolerates a small OCR spelling error in longer brand words, and requires distinctive text or an exact code. Low-confidence brand text requires strong corroboration from catalog photo colors. A generic word such as “bar”, a short code, or color similarity alone cannot identify a product. Repeated words in a catalog name do not dilute its brand evidence. Color and matching catalog photos only refine an existing text match. Unclear captures return no suggestion and ask the user for a closer brand label or barcode.
+An exact locally decoded barcode is tried first. Otherwise the original photo goes to the existing server AI gateway, using the signed-in user's **Gemini** provider key from Settings > Providers (or the existing server `GEMINI_API_KEY` environment variable). `POS_PRODUCT_AI_MODEL` can override the existing Gemini model default. Keys are never sent to the browser. Product photos are sent to Google for this request; they are not saved as POS entities. This does not change the cash-recognition provider configuration.
 
-Recognition suggests candidates for confirmation; it does not automatically add a guessed product to the cart. Regression tests cover the Lifebuoy/Choco Bar mismatch, noisy OCR, accents, code matching, color-only false positives, and combined label views. Physical capture quality still affects OCR; clean labeling and a visible barcode provide stronger evidence than color.
+`POST /api/pos/images/recognize` accepts `{ image: dataURL }` and receives the authenticated actor. It returns:
+
+- `observed`: object description, readable product name, brand, variant, size, barcode, transcribed `texts`, colors, and `visible_price`.
+- `candidates`: products from inventory that pass deterministic identity matching.
+- `keywords`, `colors`, and `recognized_text` for review.
+
+The model must return structured JSON, ground identity in readable label text, and mark unclear/non-product/multiple-product photos accordingly. Missing or malformed provider responses fail explicitly; the production endpoint does not fall back to the old OCR/color matcher. See [Google image understanding](https://ai.google.dev/gemini-api/docs/image-understanding) and [structured outputs](https://ai.google.dev/gemini-api/docs/structured-output).
+
+Matching normalizes Vietnamese accents and common product-type terms. It requires a supported brand or multiple distinctive name words, substantial product-name coverage, and no conflicting readable variant/size. Equivalent mass/volume units are normalized. A readable barcode absent from inventory does not trigger substitute suggestions. Color, generic object names, weak OCR words, and arbitrary OR results cannot create suggestions.
+
+The UI displays only the matched IDs after recognition, including an empty list when no item qualifies. Manual keyword search still splits spaces, `OR`, `|`, commas, and semicolons into alternatives, ignores accents, and ranks stronger matches first. **Clear recognition** restores the catalog.
+
+## Prices
+
+`visible_price` is null unless an actual selling price is transcribed from the image. Savings claims, unreadable amounts, and remembered/estimated prices are excluded. The UI labels image prices separately. Register prices always come from inventory; recognition never changes a price or automatically adds an AI guess to the cart.
+
+## Verification
+
+The existing POS tests cover strict Lifebuoy/Choco Bar separation, unclear/non-product/unknown identities, variants, size conflicts and equivalent units, authenticated AI calls, malformed/provider failures, inventory-price separation and savings-label rejection. Legacy OCR tests remain for that isolated helper, which is no longer used by the product-recognition endpoint.

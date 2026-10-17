@@ -8112,6 +8112,11 @@ function posService() {
     provider: String(CFG.mt5StorageBackend || "sqlite").trim().toLowerCase(),
     sqlitePath: resolveConfiguredSqlitePath(),
     postgresUrl: CFG.mt5PostgresUrl,
+    productVision: async (request) => {
+      // Product identity uses Google's vision model; no OCR/color-only fallback.
+      const model = String(process.env.POS_PRODUCT_AI_MODEL || "").trim() || resolveAiChatModelForProvider("gemini");
+      return callAiProvider({ ...request, provider: "gemini", model });
+    },
     cashVision: async (request) => {
       const configuredProvider = String(process.env.POS_CASH_AI_PROVIDER || "").trim();
       const provider = configuredProvider || buildAiChatProviderCandidates("", await loadAiConfig(request.userId))

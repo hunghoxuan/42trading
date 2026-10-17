@@ -31,14 +31,17 @@ export function cameraCrop(width: number, height: number) {
   return { x: (width - side) / 2, y: (height - side) / 2, side };
 }
 
-export async function captureCameraPhoto(video: HTMLVideoElement): Promise<File> {
+export async function captureCameraPhoto(video: HTMLVideoElement, fullFrame = false): Promise<File> {
   if (!video.videoWidth || !video.videoHeight) throw new Error("Camera is not ready yet");
-  const crop = cameraCrop(video.videoWidth, video.videoHeight);
+  const square = cameraCrop(video.videoWidth, video.videoHeight);
+  const crop = fullFrame ? { x: 0, y: 0, width: video.videoWidth, height: video.videoHeight }
+    : { x: square.x, y: square.y, width: square.side, height: square.side };
   const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = Math.round(Math.min(1280, crop.side));
+  const scale = Math.min(1, (fullFrame ? 1920 : 1280) / Math.max(crop.width, crop.height));
+  canvas.width = Math.round(crop.width * scale); canvas.height = Math.round(crop.height * scale);
   const context = canvas.getContext("2d");
   if (!context) throw new Error("Could not capture photo. Try again.");
-  context.drawImage(video, crop.x, crop.y, crop.side, crop.side, 0, 0, canvas.width, canvas.height);
+  context.drawImage(video, crop.x, crop.y, crop.width, crop.height, 0, 0, canvas.width, canvas.height);
   const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) =>
     value ? resolve(value) : reject(new Error("Could not capture photo. Try again.")), "image/jpeg", 0.92));
   return new File([blob], "pos-camera.jpg", { type: "image/jpeg" });

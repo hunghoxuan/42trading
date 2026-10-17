@@ -22,11 +22,12 @@ test("a product without a retail price cannot be sold for zero", () => {
   ])), /Retail price is required/);
 });
 
-function fixture() {
+function fixture(options = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "42trade-pos-"));
   const pair = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
   const service = createPosService({
     provider: "sqlite", sqlitePath: path.join(dir, "system.db"),
+    ...options,
     keys: {
       privateKey: pair.privateKey.export({ type: "pkcs8", format: "pem" }),
       publicKey: pair.publicKey.export({ type: "spki", format: "pem" }),
@@ -34,6 +35,20 @@ function fixture() {
   });
   return { service, actor: { user_id: "cashier-1" } };
 }
+
+test("product image recognition forwards the authenticated user to AI and returns only matching inventory", async () => {
+  let userId;
+  const { service, actor } = fixture({ productVision: async (request) => {
+    userId = request.userId;
+    return JSON.stringify({ product_count: 1, identity_clear: true, object_name: "bottle", product_name: "Sữa tắm Lifebuoy",
+      brand: "Lifebuoy", variant: "", size: "350g", barcode: "", texts: ["Lifebuoy Sữa tắm 350g"], colors: ["white"], visible_price: null });
+  } });
+  await service.upsertProduct({ sid: "LIFE", name: "Sữa tắm Lifebuoy 350g", sku: "LIFE350" }, actor);
+  await service.upsertProduct({ sid: "CHOC", name: "choco bar", sku: "CHOC1" }, actor);
+  const result = await service.recognizeImage({ image: "data:image/png;base64," + Buffer.from("image").toString("base64") }, actor);
+  assert.equal(userId, actor.user_id);
+  assert.deepEqual(result.candidates.map(item => item.product_sid), ["LIFE"]);
+});
 
 test("automatic photo save changes only the image and supports restoring the previous photo", async () => {
   const { service, actor } = fixture();

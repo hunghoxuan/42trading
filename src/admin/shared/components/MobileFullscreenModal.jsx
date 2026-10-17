@@ -7,6 +7,8 @@ export default function MobileFullscreenModal({
   subtitle = "",
   onClose,
   children,
+  className = "",
+  closeLabel = "Close",
 }) {
   useEffect(() => {
     if (!open || typeof document === "undefined") return undefined;
@@ -29,7 +31,7 @@ export default function MobileFullscreenModal({
   if (!open) return null;
 
   return (
-    <div className="mobile-fullscreen-modal" role="dialog" aria-modal="true">
+    <div className={`mobile-fullscreen-modal ${className}`} role="dialog" aria-modal="true" aria-label={title}>
       <button
         type="button"
         className="mobile-fullscreen-modal__backdrop"
@@ -43,7 +45,7 @@ export default function MobileFullscreenModal({
             {subtitle ? <div className="minor-text">{subtitle}</div> : null}
           </div>
           <button type="button" className="secondary-button" onClick={onClose}>
-            Close
+            {closeLabel}
           </button>
         </header>
         <div className="mobile-fullscreen-modal__body">{children}</div>

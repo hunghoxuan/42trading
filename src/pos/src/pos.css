@@ -275,6 +275,21 @@
   background: #000;
 }
 
+.pos-camera-modal { display: grid; place-items: center; }
+.pos-camera-modal .mobile-fullscreen-modal__panel {
+  width: min(760px, calc(100% - 32px)); height: auto; max-height: 94dvh;
+  border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+}
+.pos-camera-frame--barcode { width: min(100%, 680px); aspect-ratio: 4 / 3; }
+.pos-photo-camera .pos-camera-frame.pos-camera-frame--barcode video { aspect-ratio: auto; object-fit: contain; }
+.pos-camera-frame > img { width: 100%; height: 100%; object-fit: contain; }
+.pos-camera-frame video[hidden] { display: none; }
+@media (max-width: 767px) {
+  .pos-camera-modal .mobile-fullscreen-modal__panel {
+    width: 100%; height: 100%; max-height: none; border: 0; border-radius: 0;
+  }
+}
+
 .pos-photo-camera .pos-camera-frame video {
   width: 100%;
   height: 100%;
