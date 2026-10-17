@@ -275,14 +275,21 @@
   min-width: 0;
 }
 
-.pos-product-status-control {
-  display: flex;
+.pos-product-detail-title,
+.pos-product-card-title {
+  display: inline-flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
 }
 
-.pos-product-status-control > .status-display {
+.pos-product-card-title > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pos-product-status-icon {
   --status-display-color: var(--muted);
   --status-display-border: var(--border);
   display: inline-flex;
@@ -290,7 +297,7 @@
   align-items: center;
 }
 
-.pos-product-status-control .status-display__dot {
+.pos-product-status-icon .status-display__dot {
   position: relative;
   width: 8px;
   height: 8px;
@@ -301,7 +308,7 @@
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--status-display-color) 24%, transparent), 0 0 8px var(--status-display-border);
 }
 
-.pos-product-status-control .status-display__dot::after {
+.pos-product-status-icon .status-display__dot::after {
   position: absolute;
   inset: 50% auto auto 50%;
   width: 14px;
@@ -314,12 +321,12 @@
   pointer-events: none;
 }
 
-.pos-product-status-control .status-display--success {
+.pos-product-status-icon.status-display--success {
   --status-display-color: #10b981;
   --status-display-border: rgba(16, 185, 129, 0.3);
 }
 
-.pos-product-status-control .status-display--neutral {
+.pos-product-status-icon.status-display--neutral {
   --status-display-color: var(--muted);
   --status-display-border: var(--border);
 }

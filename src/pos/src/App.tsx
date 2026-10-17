@@ -601,10 +601,10 @@ export default function App() {
     } },
   ];
   const productCard = {
-    getTitle: (product: Product) => product.name, getSubtitle: (product: Product) => product.sku || product.sid,
+    getTitle: (product: Product) => <span className="pos-product-card-title"><StatusDisplay status={product.status === "ACTIVE" ? "ACTIVE" : "INACTIVE"} title={tr(product.status === "ACTIVE" ? "Active" : "Inactive")} size="md" className="pos-product-status-icon" /><span>{product.name}</span></span>,
+    getSubtitle: (product: Product) => product.sku || product.sid,
     getImageSrc: (product: Product) => product.image, getImageAlt: (product: Product) => product.name, getImageLabel: () => "—",
     getAmount: (product: Product) => ({ value: product.price_minor === null ? tr("No Price") : money(product.price_minor, language), tone: product.price_minor === 0 || product.price_minor === null ? "muted" : undefined }),
-    getBadges: (product: Product) => [{ label: tr(product.status === "ACTIVE" ? "Active" : "Inactive"), tone: product.status === "ACTIVE" ? "active" : "inactive" }],
     getRows: (product: Product) => {
       const quantity = usingOfflineCatalog ? product.offline_available : product.on_hand;
       return [[{ value: product.category || "—" }, { value: `${tr("Stock")}: ${quantity} ${product.unit}`, tone: quantity === 0 ? "muted" : undefined }]];
@@ -629,12 +629,9 @@ export default function App() {
           <label className="pay42-form-field pay42-form-field--full"><span className="ui-field-label">{tr("Name")}</span><input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
           <label className="pay42-form-field"><span className="ui-field-label">{tr("Product number")}</span><input value={form.sku} onChange={(event) => setForm({ ...form, sku: event.target.value })} /></label>
           <label className="pay42-form-field"><span className="ui-field-label">{tr("Barcodes, comma separated")}</span><input value={form.barcodes} onChange={(event) => setForm({ ...form, barcodes: event.target.value })} /></label>
-          <label className="pay42-form-field"><span className="ui-field-label">{tr("Status")}</span><span className="pos-product-status-control">
-            <StatusDisplay status={form.status} size="md" />
-            <InputComboSelect value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>
-              <option value="ACTIVE">{tr("Active")}</option><option value="ARCHIVED">{tr("Inactive")}</option>
-            </InputComboSelect>
-          </span></label>
+          <label className="pay42-form-field"><span className="ui-field-label">{tr("Status")}</span><InputComboSelect value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>
+            <option value="ACTIVE">{tr("Active")}</option><option value="ARCHIVED">{tr("Inactive")}</option>
+          </InputComboSelect></label>
           {attributeField("unit", "Unit")}
           <label className="pay42-form-field"><span className="ui-field-label">{tr("Import price (VND)")}</span><input className={Number(form.cost) === 0 ? "pos-zero-value" : undefined} type="number" min="0" step="1" value={form.cost} onChange={(event) => setForm({ ...form, cost: event.target.value })} /></label>
           <label className="pay42-form-field"><span className="ui-field-label">{tr("Retail price (VND)")}</span><input className={Number(form.price) === 0 ? "pos-zero-value" : undefined} type="number" min="0" step="1" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} /></label>
@@ -832,7 +829,9 @@ export default function App() {
           onRowClick: tab === "inventory" ? selectProduct : selectSaleProduct,
           getRowId: (product: Product) => product.sid, selectedRowId: tab === "inventory" ? selected?.sid : null, mobileCard: productCard,
         } }}
-        detail={tab === "inventory" ? { title: selected?.name || tr("New product"), children: inventoryDetail }
+        detail={tab === "inventory" ? { title: selected
+          ? <span className="pos-product-detail-title"><StatusDisplay status={selected.status === "ACTIVE" ? "ACTIVE" : "INACTIVE"} title={tr(selected.status === "ACTIVE" ? "Active" : "Inactive")} size="md" className="pos-product-status-icon" /><span>{selected.name}</span></span>
+          : tr("New product"), children: inventoryDetail }
           : { title: tr("Cart"), subtitle: `${cartRows.length} ${tr("items")}`, className: "pos-cart", children: cartDetail }} />
       {tab === "inventory" && <>
         {(stockCount || stockCountRows.length > 0) && <ResponsivePanel title={tr("Stock counts")} showToggle={false} border="always">{inventoryOperations}</ResponsivePanel>}
