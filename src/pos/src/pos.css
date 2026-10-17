@@ -275,6 +275,12 @@
   background: #000;
 }
 
+.pos-scanner-modes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
 .pos-camera-modal { display: grid; place-items: center; }
 .pos-camera-modal .mobile-fullscreen-modal__panel {
   width: min(760px, calc(100% - 32px)); height: auto; max-height: 94dvh;

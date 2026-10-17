@@ -5,10 +5,10 @@ import { StablePhotoTrigger, cameraCrop, captureCameraPhoto } from "./cameraCapt
 import { ProductBarcodeReader } from "./barcodeReader";
 import { t, type Language } from "./i18n";
 
-export default function PhotoCamera({ language, purpose = "recognize", onClose, onCapture, onUpload, extraActions, children }: {
+export default function PhotoCamera({ language, purpose = "recognize", onClose, onCapture, onUpload, extraActions, modeActions, children }: {
   language: Language; purpose?: "product" | "recognize" | "cash" | "barcode";
   onClose: () => void; onCapture: (file: File, detectedCode?: string) => Promise<void>;
-  onUpload?: () => void; extraActions?: ReactNode; children?: ReactNode;
+  onUpload?: () => void; extraActions?: ReactNode; modeActions?: ReactNode; children?: ReactNode;
 }) {
   const video = useRef<HTMLVideoElement>(null), upload = useRef<HTMLInputElement>(null);
   const [facingMode, setFacingMode] = useState<"environment" | "user">("environment");
@@ -118,6 +118,7 @@ export default function PhotoCamera({ language, purpose = "recognize", onClose, 
       : purpose === "cash" ? "Lay the notes flat, separated, entirely inside the frame. Hold still to capture."
         : "Place one product inside the frame. Hold still; the camera takes the photo for you.")} onClose={onClose}>
     <div className="stack-layout pos-photo-camera">
+      {modeActions}
       <div className={"pos-camera-frame" + (barcode ? " pos-camera-frame--barcode" : "")}>
         <video ref={video} hidden={!!preview} autoPlay muted playsInline aria-label={tr("Camera preview")} />
         {preview && <img src={preview} alt={tr("Captured photo")} />}
@@ -133,7 +134,7 @@ export default function PhotoCamera({ language, purpose = "recognize", onClose, 
       </select></label>}
       <div className="pay42-inline-actions">
         {error ? <button type="button" className="primary-button" onClick={() => setAttempt((value) => value + 1)}>{tr("Try camera again")}</button>
-          : <button type="button" className="primary-button" disabled={!ready || busy} onClick={() => void capture()}>{tr(purpose === "product" || purpose === "cash" ? "Capture now" : "Scan now")}</button>}
+          : <button type="button" className="primary-button" disabled={!ready || busy} onClick={() => void capture()}>{tr(barcode ? "Scan" : "Capture now")}</button>}
         <button type="button" className="secondary-button" disabled={busy} onClick={() => {
           if (devices.length > 1) setDeviceId(devices[(devices.findIndex((item) => item.deviceId === activeDevice) + 1) % devices.length].deviceId);
           else { setDeviceId(""); setFacingMode((mode) => mode === "environment" ? "user" : "environment"); }

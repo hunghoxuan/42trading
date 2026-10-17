@@ -141,6 +141,7 @@ export default function App() {
   const [stockCountReason, setStockCountReason] = useState("");
   const [allocation, setAllocation] = useState("");
   const [scanner, setScanner] = useState(false);
+  const [scannerMode, setScannerMode] = useState<"barcode" | "recognize">("barcode");
   const [photoCamera, setPhotoCamera] = useState<"product" | "recognize" | null>(null);
   const productPhotoUpload = useRef<HTMLInputElement>(null);
   const [lastImageChange, setLastImageChange] = useState<{ sid: string; before: string; after: string } | null>(null);
@@ -517,7 +518,15 @@ export default function App() {
       const code = await readBarcodePhoto(file);
       if (request !== recognitionRequest.current) return;
       if (!code) throw new Error("No barcode in this photo");
-      const product = visibleProducts.find((item) => item.sid === code || item.sku === code || item.barcodes.includes(code));
+      const matches = visibleProducts.filter((item) => item.sid === code || item.sku === code || item.barcodes.includes(code));
+      if (matches.length > 1) {
+        setRecognizedIds(matches.map((item) => item.sid));
+        setCandidates(matches.map((item) => ({ product_sid: item.sid, name: item.name,
+          retail_price_minor: item.price_minor, score: 1, explanation: "Barcode is shared; select the correct product." })));
+        setMessage(language === "vi" ? "Mã vạch trùng nhiều sản phẩm. Hãy chọn đúng sản phẩm." : "This barcode matches multiple products. Choose the correct product.");
+        return;
+      }
+      const product = matches[0];
       if (product) {
         setRecognizedIds([product.sid]); setQuery(code);
         setCandidates([{ product_sid: product.sid, name: product.name,
@@ -776,8 +785,8 @@ export default function App() {
             </InputComboSelect>
           </>}
         </div></div>, actions: <>
-          <button className="secondary-button" onClick={() => setScanner(true)}>{tr("Scan code")}</button>
-          {tab === "sale" && <button type="button" className="secondary-button" onClick={() => setPhotoCamera("recognize")}>{tr("Recognize photo")}</button>}
+          <button className="secondary-button" onClick={() => { setScannerMode("barcode"); setScanner(true); }}>{tr("Scan code")}</button>
+          {tab === "sale" && <button type="button" className="secondary-button" onClick={() => { setScannerMode("recognize"); setScanner(true); }}>{tr("Recognize photo")}</button>}
           {tab === "inventory" && <>
             <button className="secondary-button" disabled={!online || busy} onClick={() => run(startStockCount, "Stock count started")}>{tr("Start stock count")}</button>
             <button className="primary-button" onClick={startNewProduct}>{tr("New product")}</button>
@@ -894,8 +903,12 @@ export default function App() {
         try { if (photoCamera === "product") await updateProductPhoto(file); else await recognizeFile(file); }
         finally { setBusy(false); }
       }} />}
-    {scanner && <Scanner onCode={scanned} onClose={() => setScanner(false)} language={language}
-      onRecognize={() => { setScanner(false); setPhotoCamera("recognize"); }} />}
+    {scanner && <Scanner onCode={scanned} onClose={() => setScanner(false)} language={language} initialMode={scannerMode}
+      onRecognize={async (file) => {
+        setBusy(true);
+        try { await recognizeFile(file); }
+        finally { setBusy(false); }
+      }} />}
     {receipt && <Receipt receipt={receipt} autoPrint={printReceipt} onClose={() => { setReceipt(null); setPrintReceipt(false); }} language={language} />}
   </section>;
 }
