@@ -101,7 +101,7 @@ const vi: Record<string, string> = {
   "All categories": "Tất cả danh mục", "All suppliers": "Tất cả nhà cung cấp", "Filter by status": "Lọc theo trạng thái",
   "Filter by category": "Lọc theo danh mục", "Filter by supplier": "Lọc theo nhà cung cấp", "Uncategorized": "Chưa phân loại",
   "No products match these filters.": "Không có sản phẩm phù hợp bộ lọc.", "Add image": "Thêm ảnh", "Update image": "Cập nhật ảnh",
-  "Image ready": "Đã đọc ảnh", "Product image preview": "Xem trước ảnh sản phẩm",
+  "Image ready": "Đã đọc ảnh", "Product image preview": "Xem trước ảnh sản phẩm", "View product image": "Xem ảnh sản phẩm",
   "Retail price (VND)": "Giá bán lẻ (VND)", "VAT added on top (%)": "VAT cộng thêm (%)",
   "Image URL": "Đường dẫn ảnh", "Save product": "Lưu sản phẩm", "Adjustment (+ receive, − remove)": "Điều chỉnh (+ nhập, − xuất)",
   "Reason": "Lý do", "Post stock adjustment": "Ghi nhận điều chỉnh tồn", "Offline allocation": "Phân bổ bán ngoại tuyến",

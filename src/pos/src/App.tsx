@@ -29,6 +29,8 @@ import PaginationBar from "../../admin/shared/components/PaginationBar";
 import useIsMobile from "../../admin/shared/hooks/useIsMobile";
 // @ts-expect-error Reuse the status indicator shared by the main 42Trade pages.
 import { StatusDisplay } from "../../admin/shared/components/StatusBadge";
+// @ts-expect-error shared JS component has no declaration file
+import MobileFullscreenModal from "../../admin/shared/components/MobileFullscreenModal";
 import {
   commitLocalSale, listLocalSales, readBootstrap, requestDurableStorage,
   saveBootstrap, updateSaleState, validateBootstrap,
@@ -71,14 +73,17 @@ function signInHref(): string {
   return login.href;
 }
 
-function ProductImage({ src, label, preview = false }: { src: string; label: string; preview?: boolean }) {
+function ProductImage({ src, label, preview = false, previewLabel = label, onPreview }: { src: string; label: string; preview?: boolean; previewLabel?: string; onPreview?: () => void }) {
   const [failedSrc, setFailedSrc] = useState("");
   const imageSrc = String(src || "").trim();
   if (!imageSrc || failedSrc === imageSrc) {
     return <span className={preview ? "pos-product-image-empty" : "pos-product-image pos-product-image-empty"}>{label}</span>;
   }
-  return <img className={preview ? undefined : "pos-product-image"} src={imageSrc} alt="" loading="lazy"
+  const image = <img className={preview ? undefined : "pos-product-image"} src={imageSrc} alt="" loading="lazy"
     onError={() => setFailedSrc(imageSrc)} />;
+  if (!onPreview) return image;
+  return <button type="button" className={`pos-product-image-trigger${preview ? " pos-product-image-trigger--preview" : ""}`}
+    aria-label={previewLabel} title={previewLabel} onClick={(event) => { event.stopPropagation(); onPreview(); }}>{image}</button>;
 }
 
 function deviceId(): string {
@@ -147,6 +152,7 @@ export default function App() {
   const [photoCamera, setPhotoCamera] = useState<"product" | "recognize" | null>(null);
   const productPhotoUpload = useRef<HTMLInputElement>(null);
   const [lastImageChange, setLastImageChange] = useState<{ sid: string; before: string; after: string } | null>(null);
+  const [imagePreview, setImagePreview] = useState<{ src: string; title: string } | null>(null);
   const isMobile = useIsMobile();
   const [detailOpen, setDetailOpen] = useState(() => window.innerWidth >= 768);
   const [catalogMode, setCatalogMode] = useState("table");
@@ -581,7 +587,7 @@ export default function App() {
   ];
   const productColumns = [
     { accessorKey: "name", header: tr("Products"), cell: ({ row: { original: product } }: ProductCell) =>
-      <div className="pay42-cell-media"><ProductImage src={product.image} label={tr("No Image")} />
+      <div className="pay42-cell-media"><ProductImage src={product.image} label={tr("No Image")} previewLabel={`${tr("View product image")}: ${product.name}`} onPreview={() => setImagePreview({ src: product.image, title: product.name })} />
         <div className="cell-wrap ui-data-stack"><strong className="ui-data-title">{product.name}</strong><span className="ui-data-meta">{product.sku || product.sid}</span></div></div> },
     { accessorKey: "category", header: tr("Category"), cell: ({ row }: ProductCell) => row.original.category || "—" },
     ...(tab === "inventory" ? [
@@ -640,7 +646,7 @@ export default function App() {
           <div className="pay42-form-field--full pos-product-image-field">
             <span className="ui-field-label">{tr("Image")}</span>
             <div className="pos-product-image-picker">
-              <ProductImage src={form.image} label={tr("No Image")} preview />
+              <ProductImage src={form.image} label={tr("No Image")} preview previewLabel={`${tr("View product image")}: ${form.name}`} onPreview={() => setImagePreview({ src: form.image, title: form.name })} />
               <div className="stack-layout">
                 <button type="button" className="primary-button" disabled={busy} onClick={openProductCamera}>{tr(form.image ? "Retake product photo" : "Take product photo")}</button>
                 <button type="button" className="secondary-button" disabled={busy} onClick={() => productPhotoUpload.current?.click()}>{tr("Choose existing photo")}</button>
@@ -666,7 +672,7 @@ export default function App() {
         </div>);
   const cartDetail = (<>{cartRows.map((row) => <div className="pos-cart-line" key={row.product_sid}>
           <div className="pos-cart-product">
-            {row.product?.image && <ProductImage src={row.product.image} label="" />}
+            {row.product?.image && <ProductImage src={row.product.image} label={tr("No Image")} previewLabel={`${tr("View product image")}: ${row.product.name}`} onPreview={() => setImagePreview({ src: row.product!.image, title: row.product!.name })} />}
             <div className="pos-cart-product-text"><strong>{row.product?.name || row.product_sid}</strong>
               <small>{money(row.product?.price_minor || 0, language)} / {row.product?.unit || tr("each")}</small></div>
           </div>
@@ -774,12 +780,16 @@ export default function App() {
         }}>{tr("Clear recognition")}</button>
       </div>}
       {candidates.length > 0 && <div className="pos-candidates"><strong>{tr("Possible matches — confirm product")}</strong>
-          {candidates.map((candidate) => <button className="pos-candidate" key={candidate.product_sid} onClick={() => {
+          {candidates.map((candidate) => <div className="pos-candidate" role="button" tabIndex={0} key={candidate.product_sid} onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") { event.preventDefault(); const product = visibleProducts.find((item) => item.sid === candidate.product_sid); if (product) { if (tab === "inventory") selectProduct(product); else selectSaleProduct(product); } setCandidates([]); }
+          }} onClick={() => {
             const product = visibleProducts.find((item) => item.sid === candidate.product_sid);
             if (product) { if (tab === "inventory") selectProduct(product); else selectSaleProduct(product); } setCandidates([]);
-          }}><ProductImage src={visibleProducts.find((item) => item.sid === candidate.product_sid)?.image || ""} label={tr("No Image")} />
+          }}><ProductImage src={visibleProducts.find((item) => item.sid === candidate.product_sid)?.image || ""} label={tr("No Image")} previewLabel={`${tr("View product image")}: ${candidate.name}`} onPreview={() => setImagePreview({
+            src: visibleProducts.find((item) => item.sid === candidate.product_sid)?.image || "", title: candidate.name,
+          })} />
             <span className="ui-data-stack"><strong>{candidate.name} · {money(visibleProducts.find((item) => item.sid === candidate.product_sid)?.price_minor || 0, language)}</strong>
-              <small>{candidate.confidence === "high" ? tr("Strong label match") : tr("Please check the product")}{candidate.matched_keywords?.length ? " · " + candidate.matched_keywords.join(" · ") : ""}</small></span></button>)}
+              <small>{candidate.confidence === "high" ? tr("Strong label match") : tr("Please check the product")}{candidate.matched_keywords?.length ? " · " + candidate.matched_keywords.join(" · ") : ""}</small></span></div>)}
         </div>}
       <CrudContainer className="pay42-crud-layout"
         toolbar={{ displayMode: "top", filters: <div className="trades-toolbar-row"><div className="trades-toolbar-filters">
@@ -925,5 +935,9 @@ export default function App() {
         finally { setBusy(false); }
       }} />}
     {receipt && <Receipt receipt={receipt} autoPrint={printReceipt} onClose={() => { setReceipt(null); setPrintReceipt(false); }} language={language} />}
+    {imagePreview && <MobileFullscreenModal open title={imagePreview.title || tr("Product image preview")} closeLabel={tr("Close")}
+      className="pos-image-preview-modal" onClose={() => setImagePreview(null)}>
+      <img className="pos-image-preview-modal__image" src={imagePreview.src} alt={imagePreview.title} />
+    </MobileFullscreenModal>}
   </section>;
 }
