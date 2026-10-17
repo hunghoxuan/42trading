@@ -36,6 +36,9 @@ test("seedDemoUsers seeds the configured demo accounts", async () => {
     UI_DEMO_TRADER_USERNAME: "trader",
     UI_DEMO_TRADER_PASSWORD: "trader-pass",
     UI_DEMO_TRADER_EMAIL: "trader@example.test",
+    UI_DEMO_POS_USERNAME: "pos",
+    UI_DEMO_POS_PASSWORD: "pos-pass",
+    UI_DEMO_POS_EMAIL: "pos@example.test",
   };
   const result = await seedDemoUsers(repo, {
     makeSalt: () => `salt-${++saltCounter}`,
@@ -45,10 +48,10 @@ test("seedDemoUsers seeds the configured demo accounts", async () => {
   });
 
   assert.equal(result.ok, true);
-  assert.equal(result.written, 3);
+  assert.equal(result.written, 4);
 
   const users = await repo.listUsers();
-  assert.equal(users.length, 3);
+  assert.equal(users.length, 4);
   assert.deepEqual(
     users.map((user) => ({
       user_id: user.user_id,
@@ -82,6 +85,14 @@ test("seedDemoUsers seeds the configured demo accounts", async () => {
         roles: ["trader"],
         password_salt: "salt-3",
         password_hash: "hash(trader-pass|salt-3)",
+      },
+      {
+        user_id: "pos",
+        name: "pos",
+        email: "pos@example.test",
+        roles: ["pos_manager"],
+        password_salt: "salt-4",
+        password_hash: "hash(pos-pass|salt-4)",
       },
     ],
   );
@@ -119,7 +130,7 @@ test("seedDemoUsers refreshes existing demo accounts to the canonical role and p
   });
 
   assert.equal(result.ok, true);
-  assert.equal(result.written, 3);
+  assert.equal(result.written, 4);
 
   const seller = await repo.getUserById("seller");
   assert.equal(seller.password_salt, "unused");

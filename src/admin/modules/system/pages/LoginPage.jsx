@@ -39,6 +39,12 @@ function buildQuickUsers() {
       login: text(env.VITE_UI_LOGIN_TRADER_USERNAME, "trader"),
       password: text(env.VITE_UI_LOGIN_TRADER_PASSWORD, "123456"),
     },
+    {
+      user_id: text(env.VITE_UI_LOGIN_POS_USERNAME, "pos"),
+      name: "POS",
+      login: text(env.VITE_UI_LOGIN_POS_USERNAME, "pos"),
+      password: text(env.VITE_UI_LOGIN_POS_PASSWORD, "123456"),
+    },
   ].filter((user, index, all) => {
     const userId = String(user?.user_id || "").trim();
     if (!userId) return false;

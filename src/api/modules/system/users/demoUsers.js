@@ -16,6 +16,7 @@ function getDemoUsers(env = process.env) {
   const userUsername = text(env.UI_DEMO_USER_USERNAME, "user");
   const sellerUsername = text(env.UI_DEMO_SELLER_USERNAME, "seller");
   const traderUsername = text(env.UI_DEMO_TRADER_USERNAME, "trader");
+  const posUsername = text(env.UI_DEMO_POS_USERNAME, "pos");
   return [
     {
       user_id: userUsername,
@@ -45,6 +46,16 @@ function getDemoUsers(env = process.env) {
       password: text(env.UI_DEMO_TRADER_PASSWORD, DEFAULT_DEMO_PASSWORD),
       metadata: {
         full_name: "42Trade Trader",
+      },
+    },
+    {
+      user_id: posUsername,
+      name: posUsername,
+      email: text(env.UI_DEMO_POS_EMAIL, `${posUsername}@example.test`),
+      roles: ["pos_manager"],
+      password: text(env.UI_DEMO_POS_PASSWORD, DEFAULT_DEMO_PASSWORD),
+      metadata: {
+        full_name: "42Trade POS",
       },
     },
   ];

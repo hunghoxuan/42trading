@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 
 const apiTarget = process.env.VITE_API_PROXY_TARGET || "http://127.0.0.1:3001";
+const adminTarget = process.env.VITE_ADMIN_PROXY_TARGET || "http://127.0.0.1:3000";
 
 // A previously installed production/demo worker can keep serving cached POS
 // assets even after Vite starts. Replace it in development and return control
@@ -74,10 +75,10 @@ export default defineConfig({
   ],
   server: {
     strictPort: true,
-    proxy: { "/api": { target: apiTarget, changeOrigin: true }, "/auth": { target: apiTarget, changeOrigin: true } },
+    proxy: { "/api": { target: apiTarget, changeOrigin: true }, "/auth": { target: apiTarget, changeOrigin: true }, "/pay42": { target: adminTarget, changeOrigin: true } },
   },
   preview: {
     strictPort: true,
-    proxy: { "/api": { target: apiTarget, changeOrigin: true }, "/auth": { target: apiTarget, changeOrigin: true } },
+    proxy: { "/api": { target: apiTarget, changeOrigin: true }, "/auth": { target: apiTarget, changeOrigin: true }, "/pay42": { target: adminTarget, changeOrigin: true } },
   },
 });

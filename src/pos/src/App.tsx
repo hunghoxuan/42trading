@@ -43,6 +43,16 @@ function readProductImage(file: File): Promise<string> {
   });
 }
 
+function ProductImage({ src, label, preview = false }: { src: string; label: string; preview?: boolean }) {
+  const [failedSrc, setFailedSrc] = useState("");
+  const imageSrc = String(src || "").trim();
+  if (!imageSrc || failedSrc === imageSrc) {
+    return <span className={preview ? "pos-product-image-empty" : "pos-product-image pos-product-image-empty"}>{label}</span>;
+  }
+  return <img className={preview ? undefined : "pos-product-image"} src={imageSrc} alt="" loading="lazy"
+    onError={() => setFailedSrc(imageSrc)} />;
+}
+
 function deviceId(): string {
   const key = "42trade-pos-device-id";
   let value = localStorage.getItem(key);
@@ -527,7 +537,7 @@ export default function App() {
           </select>
         </div>
         <div className="pos-products">{inventoryFiltered.map((product) => <button key={product.sid} className="pos-product" onClick={() => selectProduct(product)}>
-          {product.image ? <img className="pos-product-image" src={product.image} alt="" loading="lazy" /> : <span className="pos-product-image pos-product-image-empty">{tr("No Image")}</span>}
+          <ProductImage src={product.image} label={tr("No Image")} />
           <span className="pos-product-copy"><strong>{product.name}</strong><small>{product.sku || product.sid} · {product.category || tr("Uncategorized")}</small>
             <small>{product.supplier ? tr("Supplier") + ": " + product.supplier + " · " : ""}{product.status === "ACTIVE" ? tr("Active") : tr("Inactive")}</small></span>
           <span>{product.price_minor === null ? tr("No Price") : money(product.price_minor, language)}<small>{tr("On hand")} {product.on_hand} {product.unit} · {tr("Reserved")} {product.allocated}</small></span>
@@ -559,7 +569,7 @@ export default function App() {
           <label>{tr("Status")}<select value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>
             <option value="ACTIVE">{tr("Active")}</option><option value="ARCHIVED">{tr("Inactive")}</option>
           </select></label>
-          <label className="pos-product-image-picker" htmlFor="pos-product-image">{form.image ? <img src={form.image} alt={tr("Product image preview")} /> : <span className="pos-product-image-empty">{tr("No Image")}</span>}
+          <label className="pos-product-image-picker" htmlFor="pos-product-image"><ProductImage src={form.image} label={tr("No Image")} preview />
             <span className="secondary-button">{tr(form.image ? "Update image" : "Add image")}</span>
             <input id="pos-product-image" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => {
               const file = event.currentTarget.files?.[0]; event.currentTarget.value = "";
