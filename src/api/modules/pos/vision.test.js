@@ -79,9 +79,11 @@ const observedProduct = (overrides = {}) => ({ product_count: 1, identity_clear:
   object_name: "body wash bottle", product_name: "Sữa tắm Lifebuoy", brand: "Lifebuoy", variant: "", size: "350g", barcode: "",
   texts: ["Lifebuoy", "Sữa tắm", "350 g"], colors: ["white", "red"], visible_price: null, ...overrides });
 
-test("AI name and readable label match Lifebuoy without suggesting Choco Bar or a conflicting size", () => {
+test("AI name ranks the matching Lifebuoy size first and keeps same-brand options selectable", () => {
   const result = matchObservedProduct(observedProduct(), lifebuoyCatalog);
-  assert.deepEqual(result.map(item => item.product_sid), ["LIFE350"]);
+  assert.deepEqual(result.map(item => item.product_sid), ["LIFE350", "LIFE1000"]);
+  assert.equal(result[0].confidence, "high");
+  assert.equal(result[1].confidence, "possible");
 });
 
 test("generic objects, uncertain identity, unsupported brands, and multiple products produce no suggestions", () => {
@@ -94,23 +96,34 @@ test("generic objects, uncertain identity, unsupported brands, and multiple prod
 
 test("AI matching normalizes Vietnamese accents, product type synonyms and equivalent size units", () => {
   const observed = observedProduct({ product_name: "Lifebuoy body wash", size: "0.35 kg", texts: ["LIFEBUOY BODY WASH", "0.35 kg"] });
-  assert.deepEqual(matchObservedProduct(observed, lifebuoyCatalog).map(item => item.product_sid), ["LIFE350"]);
+  assert.deepEqual(matchObservedProduct(observed, lifebuoyCatalog).map(item => item.product_sid), ["LIFE350", "LIFE1000"]);
 });
 
-test("brand-only overlap does not confuse hand wash with body wash, while Vietnamese metadata can enrich an exact type match", () => {
-  const handWash = observedProduct({ product_name: "Nước rửa tay Lifebuoy", size: "350ml",
-    texts: ["Lifebuoy", "Nước rửa tay", "350ml"] });
-  assert.deepEqual(matchObservedProduct(handWash, lifebuoyCatalog), []);
+test("English Handwash finds Vietnamese nước rửa tay and OR matching keeps same-brand choices available", () => {
+  const handWash = observedProduct({ product_name: "Lifebuoy Handwash", size: "350ml",
+    texts: ["Lifebuoy", "Handwash", "350ml"] });
+  const catalog = [
+    { sid: "LIFEHAND", name: "Lifebuoy nước rửa tay dịu nhẹ 350ml", sku: "LH-350", price_minor: 42000 },
+    { ...lifebuoyCatalog[1], description: "Sữa tắm Lifebuoy 350 g" },
+    lifebuoyCatalog[2], lifebuoyCatalog[0],
+  ];
+  const matches = matchObservedProduct(handWash, catalog);
+  assert.equal(matches[0].product_sid, "LIFEHAND");
+  assert.equal(matches[0].confidence, "high");
+  assert.ok(matches.some(item => item.product_sid === "LIFE350" && item.confidence === "possible"));
+  assert.ok(matches.every(item => item.product_sid !== "CHOC"));
 
-  const catalog = [{ ...lifebuoyCatalog[1], category: "Chăm sóc cá nhân", supplier: "Lifebuoy Vietnam",
+  const enrichedCatalog = [{ ...lifebuoyCatalog[1], category: "Chăm sóc cá nhân", supplier: "Lifebuoy Vietnam",
     description: "Sữa tắm bảo vệ da chai 350 g" }];
   const bodyWash = observedProduct({ product_name: "Lifebuoy shower gel", size: "350g",
     texts: ["Lifebuoy", "Shower Gel", "350g"] });
-  assert.equal(matchObservedProduct(bodyWash, catalog)[0].product_sid, "LIFE350");
+  assert.equal(matchObservedProduct(bodyWash, enrichedCatalog)[0].product_sid, "LIFE350");
 });
 
-test("AI variant and readable unknown barcode never fall back to an unrelated inventory item", () => {
-  assert.deepEqual(matchObservedProduct(observedProduct({ variant: "aloe vera" }), lifebuoyCatalog), []);
+test("AI variant differences rank same-brand options lower, while unknown barcode never falls back", () => {
+  const variant = matchObservedProduct(observedProduct({ variant: "aloe vera" }), lifebuoyCatalog);
+  assert.equal(variant[0].product_sid, "LIFE350");
+  assert.ok(variant.every(item => item.confidence === "possible"));
   assert.deepEqual(matchObservedProduct(observedProduct({ barcode: "8931234567890", texts: ["Lifebuoy Sữa tắm", "8931234567890"] }), lifebuoyCatalog), []);
 });
 

@@ -172,7 +172,11 @@ export default function App() {
   const [recognitionDetails, setRecognitionDetails] = useState<ProductObservation | null>(null);
   const [recognizedIds, setRecognizedIds] = useState<string[] | null>(null);
   const recognitionRequest = useRef(0);
-  const [message, setMessage] = useState("");
+  const [message, setMessageText] = useState("");
+  const [messageTone, setMessageTone] = useState<"success" | "warning">("success");
+  function setMessage(text: string, tone: "success" | "warning" = "success") {
+    setMessageText(text); setMessageTone(tone);
+  }
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const onlineCheckoutKey = useRef<string | null>(null);
@@ -505,8 +509,8 @@ export default function App() {
       setSelected(null);
       setDetailOpen(true);
       setForm({ sid: "", name: "", sku: code, barcodes: code ? code : "", category: "", supplier: "", status: "ACTIVE", unit: "cái", price: "", cost: "", minStock: "0", vat: "0", image: "" });
-      setMessage(notice + tr("No match. Review the scanned code and create a product."));
-    } else setMessage(notice + tr("No match for") + " " + code + ". " + tr("Use Inventory to create a product."));
+      setMessage(notice + tr("No match. Review the scanned code and create a product."), "warning");
+    } else setMessage(notice + tr("No match for") + " " + code + ". " + tr("Use Inventory to create a product."), "warning");
   }, [visibleProducts, tab, language]);
 
   function openProductCamera() {
@@ -579,7 +583,7 @@ export default function App() {
     const available = result.candidates.filter((candidate) => visibleProducts.some((item) => item.sid === candidate.product_sid));
     setCandidates(available);
     setRecognizedIds(available.map((item) => item.product_sid));
-    if (!available.length) setMessage(tr("No sufficiently matching product in inventory. Try a clearer label or scan the barcode."));
+    if (!available.length) setMessage(tr("No sufficiently matching product in inventory. Try a clearer label or scan the barcode."), "warning");
   }
 
   function startNewProduct() {
@@ -782,7 +786,7 @@ export default function App() {
     </div>}
     {needRefresh && <div className="pos-alert pos-row" role="status"><span>{tr("A POS update is ready. Finish the current cart before reloading.")}</span>
       <button disabled={cart.length > 0 || busy} onClick={() => updateServiceWorker(true)}>{tr("Update POS")}</button></div>}
-    {message && <div className="pos-alert pos-success" role="status">{message}</div>}
+    {message && <div className={`pos-alert ${messageTone === "warning" ? "pos-warning" : "pos-success"}`} role="status">{message}</div>}
 
     {(tab === "sale" || tab === "inventory") && <main className="pos-page-content stack-layout">
       {tab === "sale" && usingOfflineCatalog && <p className="minor-text">{tr("Refresh the register after price changes.")}</p>}

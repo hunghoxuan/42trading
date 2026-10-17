@@ -269,6 +269,12 @@
   color: #f4bc5d;
 }
 
+.pos-warning {
+  color: #f4bc5d;
+  border-color: rgb(244 188 93 / 45%);
+  background: rgb(244 188 93 / 8%);
+}
+
 .pos-alert {
   margin: 0;
   padding: 9px 12px;

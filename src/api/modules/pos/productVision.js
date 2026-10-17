@@ -38,7 +38,7 @@ const STOP = new Set("the and for with from of new all san pham product chinh ha
 const GENERIC = new Set("sua tam dau goi xa phong nuoc rua tay kem danh rang body wash shower gel shampoo soap toothpaste ml kg gr red white blue green do trang xanh".split(" "));
 const COLOR_WORDS = new Set("red white blue green do trang xanh den black yellow vang hong pink orange cam tim purple nau brown xam gray".split(" "));
 function canonical(value) {
-  return normalizeText(value).replace(/\bhand wash\b/g, "nuoc rua tay").replace(/\b(body wash|shower gel)\b/g, "sua tam").replace(/\bshampoo\b/g, "dau goi")
+  return normalizeText(value).replace(/\b(hand\s?wash|hand\s?soap)\b/g, "nuoc rua tay").replace(/\b(body\s?wash|shower\s?gel)\b/g, "sua tam").replace(/\bshampoo\b/g, "dau goi")
     .replace(/\btoothpaste\b/g, "kem danh rang").replace(/\bsoap\b/g, "xa phong");
 }
 function words(value) {
@@ -88,27 +88,33 @@ function matchObservedProduct(observed, products) {
   const observedSizes = sizes(`${observed.size} ${observed.product_name}`);
   const variant = words(observed.variant);
   return (codeIsRead ? exact : catalog).flatMap((product) => {
-    const name = words(product.name), nameSet = new Set(name);
+    const name = words(product.name);
     const searchable = new Set(productKeywords(product));
     const type = productType(`${product.name} ${product.category} ${product.description || ""}`);
-    if (!codeIsRead && observedType && type && observedType !== type) return [];
-    if (!codeIsRead && (brand.some((word) => !searchable.has(word)) || anchors.some((word) => !searchable.has(word)))) return [];
+    const brandMatch = brand.some((word) => searchable.has(word));
     const matched = query.filter((word) => searchable.has(word));
     const coverage = matched.length / Math.max(1, query.length);
-    if (!codeIsRead && (!type && !observedType && coverage < 0.85 || variant.some((word) => !searchable.has(word)))) return [];
-    if (!codeIsRead && observedType && type !== observedType) return [];
+    const meaningfulMatches = matched.filter((word) => !GENERIC.has(word) && !COLOR_WORDS.has(word));
+    // OR matching: a grounded brand hit is enough to show same-brand options;
+    // without a brand, require at least two meaningful product-name keywords.
+    if (!codeIsRead && !brandMatch && meaningfulMatches.length < 2) return [];
     const productSizes = sizes(`${product.name} ${product.description || ""}`);
-    if (!codeIsRead && observedSizes.length && productSizes.length && !observedSizes.some((value) => productSizes.includes(value))) return [];
-    if (!codeIsRead && observedSizes.length && !productSizes.length) return [];
+    const sizeMatch = observedSizes.length && productSizes.length && observedSizes.some((value) => productSizes.includes(value));
+    const sizeConflict = observedSizes.length && productSizes.length && !sizeMatch;
+    const typeMatch = Boolean(observedType && type && observedType === type);
+    const typeConflict = Boolean(observedType && type && observedType !== type);
+    const variantMatch = variant.length > 0 && variant.every((word) => searchable.has(word));
     const extra = name.filter((word) => !query.includes(word) && !GENERIC.has(word));
-    const score = codeIsRead ? 1 : Math.min(0.97, 0.72 * coverage + (brand.length ? 0.08 : 0)
-      + (observedType && type === observedType ? 0.12 : 0)
-      + (observedSizes.length && productSizes.length ? 0.09 : 0) - Math.min(0.15, extra.length * 0.025));
-    if (!codeIsRead && coverage < 0.5) return [];
+    const score = codeIsRead ? 1 : Math.max(0.25, Math.min(0.97,
+      (brandMatch ? 0.46 : 0) + Math.min(0.2, meaningfulMatches.length * 0.1) + (typeMatch ? 0.2 : 0)
+      + (sizeMatch ? 0.12 : 0) + (variantMatch ? 0.08 : 0)
+      - (typeConflict ? 0.12 : 0) - (sizeConflict ? 0.1 : 0)
+      - (variant.length && !variantMatch ? 0.08 : 0) - Math.min(0.08, extra.length * 0.015)));
     return [{ product_sid: product.sid, name: product.name, image: product.image, retail_price_minor: product.price_minor,
-      vat_rate_bps: product.vat_rate_bps, score, confidence: score >= 0.9 ? "high" : "possible",
-      matched_keywords: matched, explanation: codeIsRead ? "Barcode matches inventory" : "Product name and label match inventory" }];
-  }).sort((a, b) => b.score - a.score).slice(0, 5);
+      vat_rate_bps: product.vat_rate_bps, score,
+      confidence: codeIsRead || (brandMatch && typeMatch && (!observedSizes.length || sizeMatch) && (!variant.length || variantMatch)) ? "high" : "possible",
+      matched_keywords: matched, explanation: codeIsRead ? "Barcode matches inventory" : brandMatch ? "Brand and matching keywords; confirm product details" : "Product keywords match inventory" }];
+  }).sort((a, b) => b.score - a.score).slice(0, 10);
 }
 
 async function recognizeProductWithAI(image, products, actor, generate) {
