@@ -6,6 +6,8 @@ export type Product = {
   category: string;
   supplier: string;
   description?: string;
+  search_keywords?: string[];
+  label_texts?: string[];
   unit: string;
   family_sku: string;
   group_code: string;

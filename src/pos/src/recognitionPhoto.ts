@@ -90,5 +90,7 @@ export async function prepareRecognitionPhoto(file: File, products: { sid: strin
       if (similarity >= 0.6) visual_matches.push({ product_sid: product.sid, similarity });
     } catch { /* A missing/invalid reference image contributes no color evidence. */ }
   }));
-  return { image: full, ocr_images: [label, enhanced], line_images, colors, visual_matches: visual_matches.sort((a, b) => b.similarity - a.similarity).slice(0, 30) };
+  return { image: full, capture_image: prepared.image, background_removed: prepared.backgroundRemoved,
+    ocr_images: [label, enhanced], line_images, colors,
+    visual_matches: visual_matches.sort((a, b) => b.similarity - a.similarity).slice(0, 30) };
 }

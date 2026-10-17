@@ -152,6 +152,8 @@ function productView(row, priceRow, stockRow, allocationRow) {
     category: metadata.category || product.type || "",
     supplier: metadata.pos_supplier || "",
     description: metadata.description || "",
+    search_keywords: Array.isArray(metadata.pos_search_keywords) ? metadata.pos_search_keywords : [],
+    label_texts: Array.isArray(metadata.pos_label_texts) ? metadata.pos_label_texts : [],
     unit: metadata.pos_unit || "each",
     family_sku: metadata.pos_family_sku || "",
     group_code: metadata.pos_group_code || "",
@@ -285,6 +287,12 @@ function createPosService(options = {}) {
           category: String(input.category || ""),
           pos_supplier: String(input.supplier ?? previous.metadata?.pos_supplier ?? ""),
           description: String(input.description || ""),
+          pos_search_keywords: Array.isArray(input.search_keywords)
+            ? [...new Set(input.search_keywords.map((value) => String(value).trim().slice(0, 250)).filter(Boolean))].slice(0, 100)
+            : previous.metadata?.pos_search_keywords || [],
+          pos_label_texts: Array.isArray(input.label_texts)
+            ? [...new Set(input.label_texts.map((value) => String(value).trim().slice(0, 500)).filter(Boolean))].slice(0, 100)
+            : previous.metadata?.pos_label_texts || [],
         },
       };
       yield ["upsertEntity", entity(PRODUCT, sid, product, current, {
@@ -561,9 +569,9 @@ function createPosService(options = {}) {
       const stock = dataOf(stockRow);
       if (!stock) throw new PosError("Stock not configured: " + line.product_sid, 409);
       if (mode === "online") {
-        if (stock.on_hand - stock.allocated < line.quantity) throw new PosError("Out of stock: " + line.product_sid, 409);
+        if (stock.allocated > 0 && stock.on_hand <= stock.allocated) throw new PosError("Out of stock: " + line.product_sid, 409);
         yield ["upsertEntity", entity("pos_stock", line.product_sid,
-          { ...stock, on_hand: stock.on_hand - line.quantity, updated_at: now() }, stockRow)];
+          { ...stock, on_hand: Math.max(stock.allocated, stock.on_hand - line.quantity, 0), updated_at: now() }, stockRow)];
       } else {
         const key = claims.device_id + ":" + line.product_sid;
         const allocationRow = yield ["getEntity", TENANT, "pos_stock_allocation", key];

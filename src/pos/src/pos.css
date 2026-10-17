@@ -111,6 +111,41 @@
   line-height: 1;
 }
 
+.pos-recognition-capture {
+  display: grid;
+  grid-template-columns: minmax(96px, 140px) minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+}
+
+.pos-recognition-capture__image {
+  display: grid;
+  width: 140px;
+  height: 140px;
+  padding: 8px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.pos-recognition-capture__image img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.pos-recognition-capture__details {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+
+.pos-recognition-actions {
+  justify-content: flex-start;
+}
+
 .pos-candidates button {
   justify-content: flex-start;
   text-align: left;
@@ -121,6 +156,18 @@
   align-items: center;
   gap: 10px;
   white-space: normal;
+  width: 100%;
+  padding: 8px;
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  text-align: left;
+}
+
+.pos-candidates .pos-candidate.is-selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .pos-product-image,
@@ -662,6 +709,9 @@
 }
 
 @media (max-width: 600px) {
+  .pos-recognition-capture { grid-template-columns: minmax(76px, 96px) minmax(0, 1fr); gap: 10px; }
+  .pos-recognition-capture__image { width: 96px; height: 96px; }
+  .pos-recognition-actions { align-items: stretch; flex-direction: column; }
   .pos-header-actions { justify-content: flex-start; }
   .pos-return-line { grid-template-columns: minmax(0, 1fr) 80px; }
   .pos-return-line label { grid-column: 1 / -1; }

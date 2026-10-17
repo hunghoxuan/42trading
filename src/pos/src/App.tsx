@@ -170,6 +170,11 @@ export default function App() {
   const [candidates, setCandidates] = useState<{ product_sid: string; name: string; retail_price_minor: number | null; score: number; explanation: string; matched_keywords?: string[]; confidence?: string }[]>([]);
   const [recognitionHints, setRecognitionHints] = useState<string[]>([]);
   const [recognitionDetails, setRecognitionDetails] = useState<ProductObservation | null>(null);
+  const [recognitionImage, setRecognitionImage] = useState("");
+  const [recognitionImageBackgroundRemoved, setRecognitionImageBackgroundRemoved] = useState(false);
+  const [recognitionColors, setRecognitionColors] = useState<string[]>([]);
+  const [recognitionKeywords, setRecognitionKeywords] = useState<string[]>([]);
+  const [selectedRecognitionSid, setSelectedRecognitionSid] = useState("");
   const [recognizedIds, setRecognizedIds] = useState<string[] | null>(null);
   const recognitionRequest = useRef(0);
   const [message, setMessageText] = useState("");
@@ -487,6 +492,8 @@ export default function App() {
 
   const scanned = useCallback((code: string) => {
     recognitionRequest.current++; setRecognizedIds(null); setRecognitionDetails(null);
+    setRecognitionImage(""); setRecognitionImageBackgroundRemoved(false); setRecognitionColors([]);
+    setRecognitionKeywords([]); setSelectedRecognitionSid("");
     setScanner(false);
     setQuery(code);
     setError(""); setCandidates([]); setRecognitionHints([]);
@@ -546,6 +553,8 @@ export default function App() {
   async function recognizeFile(file: File) {
     const request = ++recognitionRequest.current;
     setCandidates([]); setRecognitionHints([]); setMessage(""); setError(""); setRecognitionDetails(null); setRecognizedIds([]);
+    setRecognitionImage(""); setRecognitionImageBackgroundRemoved(false); setRecognitionColors([]);
+    setRecognitionKeywords([]); setSelectedRecognitionSid("");
     if (!/^image\/(png|jpeg|webp)$/.test(file.type) || file.size > 4 * 1024 * 1024) {
       throw new Error("Choose a PNG, JPEG, or WebP under 4 MB");
     }
@@ -570,20 +579,62 @@ export default function App() {
       }
     } catch { /* A product photo may have no machine-readable code. */ }
     if (!online) throw new Error("No known barcode found. Product-photo recognition needs an internet connection.");
-    const image = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader(); reader.onload = () => resolve(String(reader.result));
-      reader.onerror = () => reject(reader.error); reader.readAsDataURL(file);
-    });
+    const { prepareRecognitionPhoto } = await import("./recognitionPhoto");
+    const prepared = await prepareRecognitionPhoto(file, visibleProducts);
     if (request !== recognitionRequest.current) return;
-    const result = await posApi.recognizeImage({ image });
+    setRecognitionImage(prepared.capture_image);
+    setRecognitionImageBackgroundRemoved(prepared.background_removed);
+    setRecognitionColors(prepared.colors.map((item) => item.color));
+    const result = await posApi.recognizeImage({ image: prepared.image });
     if (request !== recognitionRequest.current) return;
     setRecognitionDetails(result.observed);
-    setRecognitionHints([...(Array.isArray(result.keywords) ? result.keywords : []), ...(Array.isArray(result.colors) ? result.colors : []).map((color) => tr(color))]);
+    const keywords = Array.isArray(result.keywords) ? result.keywords : [];
+    setRecognitionKeywords(keywords);
+    setRecognitionHints([...keywords, ...prepared.colors.map((item) => tr(item.color))]);
     if (result.keywords?.length) setQuery(result.keywords.join(" "));
     const available = result.candidates.filter((candidate) => visibleProducts.some((item) => item.sid === candidate.product_sid));
     setCandidates(available);
+    setSelectedRecognitionSid(available[0]?.product_sid || "");
     setRecognizedIds(available.map((item) => item.product_sid));
     if (!available.length) setMessage(tr("No sufficiently matching product in inventory. Try a clearer label or scan the barcode."), "warning");
+  }
+
+  function clearRecognition() {
+    recognitionRequest.current++;
+    setRecognizedIds(null); setRecognitionDetails(null); setRecognitionImage("");
+    setRecognitionImageBackgroundRemoved(false); setRecognitionColors([]); setRecognitionKeywords([]);
+    setRecognitionHints([]); setSelectedRecognitionSid(""); setCandidates([]); setQuery(""); setMessage("");
+  }
+
+  async function matchCaptureToProduct() {
+    const product = visibleProducts.find((item) => item.sid === selectedRecognitionSid);
+    if (!product || !recognitionDetails || !recognitionImage) throw new Error("Select a product match and capture an image first");
+    const searchKeywords = [...new Set([...(product.search_keywords || []), recognitionDetails.product_name,
+      recognitionDetails.brand, ...recognitionKeywords, ...recognitionColors].map((value) => value.trim()).filter(Boolean))];
+    const labelTexts = [...new Set([...(product.label_texts || []), ...recognitionDetails.texts].map((value) => value.trim()).filter(Boolean))];
+    await posApi.saveProduct({ sid: product.sid, name: product.name, sku: product.sku, barcodes: product.barcodes,
+      category: product.category, supplier: product.supplier, description: product.description || "", unit: product.unit,
+      status: product.status, image: recognitionImage, cost_minor: product.cost_minor, min_stock: product.min_stock,
+      vat_rate_bps: product.vat_rate_bps, search_keywords: searchKeywords, label_texts: labelTexts });
+    setLastImageChange({ sid: product.sid, before: product.image, after: recognitionImage });
+    await refreshOnline();
+    setMessage(tr("Capture matched to inventory item"));
+  }
+
+  async function addCaptureAsProduct() {
+    if (!recognitionDetails || !recognitionImage) throw new Error("Capture a product image first");
+    if (!online) throw new Error("Connect to the internet to add a product");
+    const name = recognitionDetails.product_name || recognitionDetails.object_name;
+    if (!name) throw new Error("The capture does not have a readable product name");
+    const product = await posApi.saveProduct({ name, sku: "POSIMG" + Date.now(),
+      barcodes: recognitionDetails.barcode ? [recognitionDetails.barcode] : [], supplier: recognitionDetails.brand,
+      unit: "cái", status: "ACTIVE", image: recognitionImage, cost_minor: null, min_stock: 0, vat_rate_bps: 0,
+      description: recognitionDetails.texts.join(" · "), search_keywords: [...new Set([name, recognitionDetails.brand,
+        ...recognitionKeywords, ...recognitionColors].filter(Boolean))], label_texts: recognitionDetails.texts });
+    await refreshOnline();
+    setTab("inventory");
+    selectProduct(product.product);
+    setMessage(tr("Product created from capture. Add a price and stock to sell it."));
   }
 
   function startNewProduct() {
@@ -593,8 +644,7 @@ export default function App() {
   }
 
   function selectSaleProduct(product: Product) {
-    const available = usingOfflineCatalog ? product.offline_available : product.on_hand - product.allocated;
-    if (product.price_minor === null || available <= 0) { setMessage(tr(product.price_minor === null ? "Price needed" : "Out-of-Stock")); return; }
+    if (product.price_minor === null) { setMessage(tr("Price needed")); return; }
     addToCart(product);
   }
 
@@ -795,37 +845,58 @@ export default function App() {
         <div className="pos-recognition-result__header">
           <strong>{recognitionDetails?.product_name || recognitionDetails?.object_name || tr("Recognition result")}</strong>
           <button type="button" className="secondary-button pos-recognition-result__close" aria-label={tr("Close")}
-            title={tr("Close")} onClick={() => {
-              recognitionRequest.current++; setRecognizedIds(null); setRecognitionDetails(null); setRecognitionHints([]);
-              setCandidates([]); setQuery(""); setMessage("");
-            }}>×</button>
+            title={tr("Close")} onClick={clearRecognition}>×</button>
         </div>
         {recognitionDetails && <>
+          <div className="pos-recognition-capture">
+            {recognitionImage && <button type="button" className="pos-recognition-capture__image"
+              aria-label={tr("View captured product image")} onClick={() => setImagePreview({ src: recognitionImage, title: recognitionDetails.product_name || recognitionDetails.object_name })}>
+              <img src={recognitionImage} alt={recognitionDetails.product_name || recognitionDetails.object_name} />
+            </button>}
+            <div className="pos-recognition-capture__details">
+              <span><strong>{tr("Capture name")}:</strong> {recognitionDetails.product_name || recognitionDetails.object_name || tr("Unclear product")}</span>
+              <span><strong>{tr("Keywords")}:</strong> {recognitionKeywords.join(" · ") || tr("No keywords detected")}</span>
+              <span><strong>{tr("Label text")}:</strong> {recognitionDetails.texts.join(" · ") || tr("No label text detected")}</span>
+              <span><strong>{tr("Price on label")}:</strong> {recognitionDetails.visible_price?.text || tr("No visible price")}</span>
+              <span><strong>{tr("Capture color")}:</strong> {recognitionColors.map((color) => tr(color)).join(" · ") || tr("Unclear product")}</span>
+              <small className="minor-text">{recognitionImageBackgroundRemoved ? tr("Background removed from capture") : tr("Capture kept with its original background")}</small>
+            </div>
+          </div>
           {recognitionDetails.brand && <span>{tr("Brand")}: {recognitionDetails.brand}</span>}
-          {recognitionDetails.texts.length > 0 && <span>{tr("Label text")}: {recognitionDetails.texts.join(" · ")}</span>}
-          <span>{tr("Price on label")}: {recognitionDetails.visible_price?.text || tr("No visible price")}</span>
           <small className="minor-text">{tr("Register prices come from inventory.")}</small>
         </>}
-        <button type="button" className="secondary-button" onClick={() => {
-          recognitionRequest.current++; setRecognizedIds(null); setRecognitionDetails(null); setRecognitionHints([]); setCandidates([]); setQuery(""); setMessage("");
-        }}>{tr("Clear recognition")}</button>
+        <div className="pos-row pos-recognition-actions">
+          <button type="button" className="secondary-button" disabled={!selectedRecognitionSid}
+            onClick={() => {
+              const product = visibleProducts.find((item) => item.sid === selectedRecognitionSid);
+              if (product) selectSaleProduct(product);
+            }}>{tr("Add selected item to cart")}</button>
+          <button type="button" className="primary-button" disabled={!online || busy || !selectedRecognitionSid || !recognitionImage}
+            onClick={() => run(matchCaptureToProduct, "Capture matched to inventory item")}>{tr("Match and save image")}</button>
+          <button type="button" className="secondary-button" disabled={!online || busy || !recognitionDetails?.product_name && !recognitionDetails?.object_name}
+            onClick={() => run(addCaptureAsProduct, "Product created from capture. Add a price and stock to sell it.")}>{tr("Add as product")}</button>
+          <button type="button" className="secondary-button" onClick={clearRecognition}>{tr("Clear / Close")}</button>
+        </div>
       </div>}
-      {candidates.length > 0 && <div className="pos-candidates"><strong>{tr("Possible matches — confirm product")}</strong>
-          {candidates.map((candidate) => <div className="pos-candidate" role="button" tabIndex={0} key={candidate.product_sid} onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") { event.preventDefault(); const product = visibleProducts.find((item) => item.sid === candidate.product_sid); if (product) { if (tab === "inventory") selectProduct(product); else selectSaleProduct(product); } setCandidates([]); }
-          }} onClick={() => {
-            const product = visibleProducts.find((item) => item.sid === candidate.product_sid);
-            if (product) { if (tab === "inventory") selectProduct(product); else selectSaleProduct(product); } setCandidates([]);
-          }}><ProductImage src={visibleProducts.find((item) => item.sid === candidate.product_sid)?.image || ""} label={tr("No Image")} previewLabel={`${tr("View product image")}: ${candidate.name}`} onPreview={() => setImagePreview({
-            src: visibleProducts.find((item) => item.sid === candidate.product_sid)?.image || "", title: candidate.name,
-          })} />
-            <span className="ui-data-stack"><strong>{candidate.name} · {money(visibleProducts.find((item) => item.sid === candidate.product_sid)?.price_minor || 0, language)}</strong>
-              <small>{candidate.confidence === "high" ? tr("Strong label match") : tr("Please check the product")}{candidate.matched_keywords?.length ? " · " + candidate.matched_keywords.join(" · ") : ""}</small></span></div>)}
+      {candidates.length > 0 && <div className="pos-candidates" role="listbox" aria-label={tr("Potential inventory matches")}>
+        <strong>{tr("Potential inventory matches")}</strong>
+        {candidates.map((candidate) => {
+          const product = visibleProducts.find((item) => item.sid === candidate.product_sid);
+          return <button type="button" className={`pos-candidate${selectedRecognitionSid === candidate.product_sid ? " is-selected" : ""}`}
+            aria-selected={selectedRecognitionSid === candidate.product_sid} key={candidate.product_sid}
+            onClick={() => setSelectedRecognitionSid(candidate.product_sid)}>
+            {product?.image ? <img className="pos-product-image" src={product.image} alt="" /> : <span className="pos-product-image pos-product-image-empty">{tr("No Image")}</span>}
+            <span className="ui-data-stack"><strong>{candidate.name} · {product?.price_minor === null ? tr("No Price") : money(product?.price_minor || 0, language)}</strong>
+              <small>{candidate.confidence === "high" ? tr("Strong label match") : tr("Please check the product")}{candidate.matched_keywords?.length ? " · " + candidate.matched_keywords.join(" · ") : ""}</small></span>
+          </button>;
+        })}
         </div>}
       <CrudContainer className="pay42-crud-layout"
         toolbar={{ displayMode: "top", filters: <div className="trades-toolbar-row"><div className="trades-toolbar-filters">
           <input aria-label={tr("Search products or scan a product number")} placeholder={tr("Search products or scan a product number")} value={query}
-            onChange={(event) => { recognitionRequest.current++; setRecognizedIds(null); setRecognitionDetails(null); setCandidates([]); setRecognitionHints([]); setQuery(event.target.value); }} onKeyDown={(event) => {
+            onChange={(event) => { recognitionRequest.current++; setRecognizedIds(null); setRecognitionDetails(null); setRecognitionImage("");
+              setRecognitionImageBackgroundRemoved(false); setRecognitionColors([]); setRecognitionKeywords([]); setSelectedRecognitionSid("");
+              setCandidates([]); setRecognitionHints([]); setQuery(event.target.value); }} onKeyDown={(event) => {
               if (event.key === "Enter" && query.trim()) { event.preventDefault(); scanned(query.trim()); }
             }} />
           {tab === "inventory" && <>

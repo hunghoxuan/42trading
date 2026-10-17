@@ -64,7 +64,8 @@ function productType(value) {
   return PRODUCT_TYPES.find((type) => type.aliases.some((alias) => text.includes(` ${alias} `)))?.id || "";
 }
 function productKeywords(product) {
-  return words([product.name, product.category, product.supplier, product.description].filter(Boolean).join(" "));
+  return words([product.name, product.category, product.supplier, product.description,
+    ...(product.search_keywords || []), ...(product.label_texts || [])].filter(Boolean).join(" "));
 }
 
 function matchObservedProduct(observed, products) {

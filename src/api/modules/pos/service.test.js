@@ -112,6 +112,22 @@ test("online sale cannot use stock reserved for an offline device", async () => 
   assert.equal((await service.sales()).length, 0);
 });
 
+test("online sale from zero stock is allowed and never reduces inventory below zero", async () => {
+  const { service, actor } = fixture();
+  await service.upsertProduct({ sid: "PZERO", name: "Zero stock item", sku: "ZERO-1" }, actor);
+  await service.setPrice({ product_sid: "PZERO", price_minor: 12000 }, actor);
+  await service.adjustStock({ product_sid: "PZERO", delta: 1, reason: "test receipt" }, actor);
+  await service.adjustStock({ product_sid: "PZERO", delta: -1, reason: "test sold out" }, actor);
+  const sale = await service.checkout({ idempotency_key: "zero-stock-sale-1",
+    lines: [{ product_sid: "PZERO", quantity: 2 }], cash_received_minor: 24000 }, actor);
+  assert.equal(sale.sale.lines[0].quantity, 2);
+  assert.equal((await service.catalog()).find((product) => product.sid === "PZERO").on_hand, 0);
+  const next = await service.checkout({ idempotency_key: "zero-stock-sale-2",
+    lines: [{ product_sid: "PZERO", quantity: 1 }], cash_received_minor: 12000 }, actor);
+  assert.equal(next.sale.lines[0].quantity, 1);
+  assert.equal((await service.catalog()).find((product) => product.sid === "PZERO").on_hand, 0);
+});
+
 test("CSV import previews errors, commits once, and exports catalog", async () => {
   const { service, actor } = fixture();
   const csv = "sku,name,barcodes,category,supplier,price_minor,vat_rate_bps,opening_stock\n" +
@@ -144,6 +160,10 @@ test("inventory can list inactive products and update supplier and image details
   const restored = await service.upsertProduct({ sid: "P1", name: "Coffee", sku: "COF-1", status: "ACTIVE" }, actor);
   assert.equal(restored.product.status, "ACTIVE");
   assert.equal(restored.product.supplier, "Bean Co");
+  const tagged = await service.upsertProduct({ sid: "P1", name: "Coffee", sku: "COF-1",
+    search_keywords: ["coffee beans", "arabica"], label_texts: ["100% arabica"] }, actor);
+  assert.deepEqual(tagged.product.search_keywords, ["coffee beans", "arabica"]);
+  assert.deepEqual(tagged.product.label_texts, ["100% arabica"]);
 });
 
 test("product row import preserves units and source stock while allowing ambiguous barcodes", async () => {
