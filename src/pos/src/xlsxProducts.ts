@@ -1,4 +1,5 @@
 import type { Product } from "./storage";
+import { sendToAndroid } from "./androidBridge";
 
 export type ProductImportRow = {
   row_number: number;
@@ -103,5 +104,9 @@ export async function downloadProductsXlsx(products: Product[]): Promise<void> {
   const sheet = XLSX.utils.json_to_sheet(rows);
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, sheet, "Products");
-  XLSX.writeFileXLSX(workbook, `42trade-pos-products-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  const filename = `42trade-pos-products-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  if (sendToAndroid(() => ({ type: "saveFile", filename,
+    mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    base64: XLSX.write(workbook, { type: "base64", bookType: "xlsx" }) as string }))) return;
+  XLSX.writeFileXLSX(workbook, filename);
 }

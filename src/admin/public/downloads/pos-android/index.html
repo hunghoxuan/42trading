@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Tải 42Trade POS cho Android</title>
+  <style>
+    :root{color-scheme:dark}body{margin:0;background:#101820;color:#edf3f6;font:16px/1.6 system-ui,sans-serif}main{max-width:560px;margin:48px auto;padding:24px}h1{font-size:28px;margin:0 0 12px}.download{display:block;text-align:center;background:#22c6de;color:#101820;border-radius:8px;padding:14px;font-weight:700;text-decoration:none;margin:24px 0}li{margin:10px 0}small,p{color:#bbc9d3}code{overflow-wrap:anywhere}a{color:#71dced}
+  </style>
+</head>
+<body><main>
+  <h1>42Trade POS · Android</h1>
+  <p>Cài trực tiếp từ Mac mini. Không cần Google Play. Android 8.0 trở lên.</p>
+  <a class="download" href="42trade-pos.apk" download>Tải APK Android</a>
+  <p id="release" role="status"></p>
+  <ol>
+    <li>Bật Tailscale trên điện thoại và kết nối cùng mạng Tailscale với Mac mini.</li>
+    <li>Tải APK, mở tệp và cho phép trình duyệt cài ứng dụng từ nguồn này nếu Android yêu cầu.</li>
+    <li>Mở <strong>42Trade POS</strong>, đăng nhập bằng tài khoản hiện có. Cho phép camera khi quét mã.</li>
+  </ol>
+  <p>Mac mini và dịch vụ POS cần đang chạy. Bản này sử dụng giao diện POS trên máy chủ. Chỉ các dữ liệu đã lưu ngoại tuyến mới có thể dùng khi mất kết nối; lần mở đầu tiên cần mạng.</p>
+  <p><a href="../../admin/pos">Mở POS trên trình duyệt</a> · <a href="SHA256SUMS">Kiểm tra SHA-256</a></p>
+  <small id="checksum"></small>
+  <script>
+    fetch('release.json',{cache:'no-store'}).then(r=>{if(!r.ok)throw Error();return r.json()}).then(r=>{
+      document.getElementById('release').textContent='Phiên bản '+r.version+' · '+(r.bytes/1048576).toFixed(1)+' MB · '+r.variant;
+      document.getElementById('checksum').textContent='SHA-256: '+r.sha256;
+    }).catch(()=>{document.getElementById('release').textContent='APK chưa được xuất bản trên máy chủ này.';document.querySelector('.download').removeAttribute('href')});
+  </script>
+</main></body></html>

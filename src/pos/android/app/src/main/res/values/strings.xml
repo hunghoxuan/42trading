@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">42Trade POS</string>
+    <string name="retry">Thử kết nối lại</string>
+    <string name="connection_error">Chưa kết nối được POS. Bật Tailscale trên điện thoại, kiểm tra Mac mini và kết nối mạng, rồi thử lại. Dữ liệu đã lưu trên thiết bị vẫn được giữ.</string>
+    <string name="camera_denied">Vui lòng cho phép camera trong Cài đặt ứng dụng để quét mã.</string>
+    <string name="file_unavailable">Không mở được trình chọn tệp.</string>
+    <string name="saved">Đã lưu tệp.</string>
+    <string name="save_error">Không lưu được tệp. Vui lòng thử lại.</string>
+    <string name="print_error">Không mở được chức năng in. Vui lòng thử lại.</string>
+    <string name="webview_update">Vui lòng cập nhật Android System WebView để dùng ứng dụng.</string>
+</resources>

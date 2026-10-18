@@ -1,8 +1,10 @@
 import css from "./invoicePrint.css?raw";
 import { buildInvoiceDocument, type InvoiceData } from "./invoiceTemplate";
 import type { Language } from "./i18n";
+import { sendToAndroid } from "./androidBridge";
 
 export function printInvoice(invoice: InvoiceData, language: Language): Promise<void> {
+  if (sendToAndroid(() => ({ type: "print", html: buildInvoiceDocument(invoice, language, css) }))) return Promise.resolve();
   return new Promise((resolve, reject) => {
     const previousFocus = document.activeElement as HTMLElement | null;
     const frame = document.createElement("iframe");
