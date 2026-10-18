@@ -3,6 +3,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 import uiPackage from "./package.json";
+import posAndroidDownloads from "./posAndroidDownloads.js";
 const T = process.env.VITE_API_PROXY_TARGET || "http://127.0.0.1:3001";
 const TAILSCALE_HOST = "hunghx.tail02c7f8.ts.net";
 const CLOUDFLARE_HOSTS = ".trycloudflare.com";
@@ -29,6 +30,7 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    posAndroidDownloads(),
     VitePWA({
       registerType: "autoUpdate",
       manifest: {
