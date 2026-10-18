@@ -13,6 +13,8 @@ import { t, type Language } from "./i18n";
 // @ts-expect-error shared JS component has no declaration file
 import AdminPageToolbar from "../../admin/shared/components/AdminPageToolbar";
 // @ts-expect-error shared JS component has no declaration file
+import ResponsiveSectionNav from "../../admin/shared/components/ResponsiveSectionNav";
+// @ts-expect-error shared JS component has no declaration file
 import PageHeader from "../../admin/shared/components/PageHeader";
 // @ts-expect-error shared JS component has no declaration file
 import ResponsivePanel from "../../admin/shared/components/ResponsivePanel";
@@ -116,6 +118,10 @@ export default function App() {
     return value;
   };
   const [tab, setTab] = useState<Tab>("sale");
+  const [mobileNavigation, setMobileNavigation] = useState<"menu" | "bottom">(() => {
+    try { return localStorage.getItem("42trade-pos-mobile-navigation") === "bottom" ? "bottom" : "menu"; }
+    catch { return "menu"; }
+  });
   const [online, setOnline] = useState(navigator.onLine);
   const [actor, setActor] = useState<{ user_id: string; name?: string } | null>(null);
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
@@ -816,7 +822,7 @@ export default function App() {
           }, "")}>{tr("Commit import")}</button>
         </div>}</div>);
 
-  return <section className="pos-app logs-page-container trades-page-container pay42-page-container stack-layout fadeIn" lang={language}>
+  return <section className={`pos-app pos-app--nav-${mobileNavigation} logs-page-container trades-page-container pay42-page-container stack-layout fadeIn`} lang={language}>
     <PageHeader className="trades-page-header pos-page-header" title="42Trade POS" actions={
       <div className="pos-header-actions">
         <span className="pos-muted">{tr("Main store")} · VND{import.meta.env.VITE_POS_DEMO === "1" ? " · DEMO" : ""}</span>
@@ -827,10 +833,16 @@ export default function App() {
       </div>
     } />
     <AdminPageToolbar className="trades-toolbar-panel pos-tabs-toolbar" actions={
-      <nav className="pos-tabs" aria-label="POS sections">
-        {(["sale", "inventory", "reports", "register"] as Tab[]).map((item) =>
-          <button key={item} type="button" className={tab === item ? "secondary-button active" : "secondary-button"} onClick={() => setTab(item)}>{tr(item[0].toUpperCase() + item.slice(1))}</button>)}
-      </nav>
+      <ResponsiveSectionNav value={tab} onChange={setTab}
+        items={(["sale", "inventory", "reports", "register"] as Tab[]).map((item) => ({
+          value: item, label: tr(item[0].toUpperCase() + item.slice(1)),
+        }))}
+        label={tr("POS sections")} menuLabel={tr("Menu")} closeLabel={tr("Close")}
+        mobilePlacement={mobileNavigation} onMobilePlacementChange={(placement: "menu" | "bottom") => {
+          setMobileNavigation(placement);
+          try { localStorage.setItem("42trade-pos-mobile-navigation", placement); } catch { /* Keep the current session preference. */ }
+        }} placementLabel={tr("Mobile navigation")} menuOptionLabel={tr("Full screen menu")}
+        bottomOptionLabel={tr("Bottom navigation")} />
     } />
     {error && <div className="pos-alert pos-error" role="alert">{error}
       {error.includes("AUTH_REQUIRED") && <> · <a href={signInHref()}>{tr("Sign in to 42Trade")}</a></>}

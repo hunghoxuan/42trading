@@ -42,18 +42,6 @@
   width: 100%;
 }
 
-.pos-tabs {
-  display: flex;
-  gap: 6px;
-  overflow-x: auto;
-  width: 100%;
-}
-
-.pos-tabs button {
-  flex: 0 0 auto;
-  text-transform: capitalize;
-}
-
 .pos-page-content {
   width: 100%;
   min-width: 0;
@@ -720,6 +708,15 @@
 
 @media (max-width: 767px) {
   .pos-app .pay42-crud-layout.crud-container { grid-template-columns: minmax(0, 1fr); }
+  .pos-app--nav-bottom { padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px)); }
+  /* The form scrolls inside the mobile panel, keeping content clear of its edges. */
+  .pos-app .crud-container__panel--modal.responsive-panel { padding: 0; }
+  .pos-app .crud-container__panel--modal .responsive-panel__header {
+    box-sizing: border-box; margin: 0; padding: 14px; border-bottom: 1px solid var(--border);
+  }
+  .pos-app .crud-container__panel--modal.responsive-panel.is-open .responsive-panel__body {
+    box-sizing: border-box; padding: 14px 14px calc(18px + env(safe-area-inset-bottom, 0px));
+  }
 }
 
 .pos-form > hr,

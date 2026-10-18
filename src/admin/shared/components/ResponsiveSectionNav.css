@@ -1,0 +1,47 @@
+.responsive-section-nav { width: 100%; min-width: 0; }
+.responsive-section-nav__desktop { display: flex; flex-wrap: wrap; gap: 6px; }
+.responsive-section-nav__trigger {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px;
+}
+.responsive-section-nav__trigger > :first-child { margin-right: auto; }
+.responsive-section-nav__desktop .active,
+.responsive-section-nav__tiles .active,
+.responsive-section-nav__bottom-items .active {
+  color: var(--accent); border-color: var(--accent); background: var(--accent-soft);
+}
+.responsive-section-nav__modal.mobile-fullscreen-modal {
+  padding: 0; overflow: hidden;
+}
+.responsive-section-nav__modal .mobile-fullscreen-modal__panel { border: 0; border-radius: 0; }
+.responsive-section-nav__modal .mobile-fullscreen-modal__header {
+  align-items: center;
+  padding: max(12px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) 12px max(16px, env(safe-area-inset-left, 0px));
+}
+.responsive-section-nav__modal .mobile-fullscreen-modal__body {
+  display: flex; overflow: hidden;
+  padding: 16px max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+}
+.responsive-section-nav__content {
+  display: flex; flex-direction: column; gap: 16px; width: 100%; min-height: 0;
+}
+.responsive-section-nav__tiles {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: 1fr; flex: 1; min-height: 0; gap: 12px;
+}
+.responsive-section-nav__tiles button {
+  /* The app's mobile input rule fixes all button heights at 46px. */
+  height: 100% !important; min-height: 0 !important;
+  min-width: 0; white-space: normal; font-size: 17px; font-weight: 600;
+}
+.responsive-section-nav__placement { display: grid; gap: 6px; font-size: 12px; }
+.responsive-section-nav__placement select { width: 100%; min-height: 44px; }
+.responsive-section-nav__bottom {
+  position: fixed; z-index: 1000; bottom: 0; left: 0; right: 0;
+  box-sizing: border-box; border-top: 1px solid var(--border); background: var(--surface);
+  padding: 6px max(8px, env(safe-area-inset-right, 0px)) max(6px, env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-left, 0px));
+}
+.responsive-section-nav__bottom-items { display: flex; gap: 4px; }
+.responsive-section-nav__bottom-items button {
+  flex: 1 1 0; min-width: 0; min-height: 48px; padding: 6px 4px;
+  font-size: 12px; line-height: 1.25; white-space: normal;
+}

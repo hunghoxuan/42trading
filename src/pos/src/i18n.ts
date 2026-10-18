@@ -55,6 +55,8 @@ const vi: Record<string, string> = {
   "Camera unavailable. Check camera access or upload an image.": "Không thể mở camera. Kiểm tra quyền truy cập hoặc tải ảnh lên.",
   "Could not capture photo. Try again.": "Không thể chụp ảnh. Vui lòng thử lại.",
   "Sale": "Bán hàng", "Inventory": "Tồn kho", "Reports": "Báo cáo", "Register": "Quầy thu ngân",
+  "POS sections": "Menu POS", "Menu": "Menu", "Mobile navigation": "Menu trên điện thoại",
+  "Full screen menu": "Menu toàn màn hình", "Bottom navigation": "Thanh menu dưới cùng",
   "Online": "Trực tuyến", "Offline": "Ngoại tuyến", "pending": "chờ đồng bộ", "needs attention": "cần xử lý",
   "Main store": "Cửa hàng chính", "Sign in to 42Trade": "Đăng nhập 42Trade", "A POS update is ready. Finish the current cart before reloading.": "Bản cập nhật POS đã sẵn sàng. Hoàn tất giỏ hàng trước khi tải lại.",
   "items": "sản phẩm", "receipts": "hóa đơn", "Product details": "Thông tin sản phẩm", "Sales and cash returns": "Giao dịch và hoàn tiền mặt",
