@@ -94,6 +94,7 @@ import TickerBar from "../modules/42trade/components/TickerBar";
 import ToastContainer, { showToast } from "../shared/components/ToastContainer";
 import AppShell from "../shared/components/AppShell";
 import NavDropdown from "../shared/components/NavDropdown";
+import AppDownloadsMenu from "../shared/components/AppDownloadsMenu";
 import SiteNavigation from "../shared/components/SiteNavigation";
 import AiChatDock from "../modules/42trade/components/AiChatDock";
 import {
@@ -1028,6 +1029,7 @@ export default function App() {
 
           <div style={{ flex: 1 }} />
 
+          <AppDownloadsMenu language={uiLocale} />
           {adminSwitchMenus}
           {showSystemMenu && (
             <NavDropdown
@@ -1216,6 +1218,7 @@ export default function App() {
 
           <div style={{ flex: 1 }} />
 
+          <AppDownloadsMenu language={uiLocale} />
           {adminSwitchMenus}
           {showSystemMenu && (
             <NavDropdown
