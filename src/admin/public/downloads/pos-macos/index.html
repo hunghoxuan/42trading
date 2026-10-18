@@ -1,0 +1,10 @@
+<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tải 42Trade POS cho Mac</title>
+<style>:root{color-scheme:dark}body{margin:0;background:#101820;color:#edf3f6;font:16px/1.6 system-ui,sans-serif}main{max-width:600px;margin:40px auto;padding:24px}h1{font-size:28px}a{color:#71dced}.download{display:block;padding:14px;background:#22c6de;color:#101820;text-align:center;font-weight:700;border-radius:8px;text-decoration:none;margin:20px 0}p,li,small{color:#bbc9d3}li{margin:10px 0}small{overflow-wrap:anywhere}.notice{border:1px solid #ba923f;padding:14px;border-radius:8px}</style></head><body><main>
+<h1>42Trade POS · macOS</h1><p>macOS 12 trở lên · Apple Silicon và Intel · Dùng POS Mac mini qua Tailscale.</p>
+<a class="download" href="42trade-pos-macos.zip" download>Tải app cho Mac (.zip)</a><p id="release" role="status"></p>
+<ol><li>Bật Tailscale, kết nối cùng mạng với Mac mini.</li><li>Giải nén ZIP và kéo <strong>42Trade POS.app</strong> vào Applications.</li><li>Mở app và đăng nhập bằng tài khoản hiện có. Cho phép camera khi quét mã.</li></ol>
+<p class="notice">Bản này được ký cục bộ, chưa notarize bởi Apple. macOS có thể yêu cầu chủ máy xác nhận mở trong System Settings → Privacy &amp; Security. Chỉ mở nếu bạn tin cậy nguồn tải.</p>
+<p>Mac mini và POS cần đang chạy. Phiên đăng nhập và dữ liệu ngoại tuyến của app được lưu riêng với trình duyệt.</p>
+<p><a href="https://github.com/hunghoxuan/42trading/tree/codex/pos-macos">Mã nguồn GitHub</a> · <a href="../pos-android/">Bản Android</a> · <a href="SHA256SUMS">SHA-256</a></p><small id="checksum"></small>
+<script>fetch('release.json',{cache:'no-store'}).then(r=>{if(!r.ok)throw Error();return r.json()}).then(r=>{document.getElementById('release').textContent='Phiên bản '+r.version+' · '+(r.bytes/1048576).toFixed(1)+' MB';document.getElementById('checksum').textContent='SHA-256: '+r.sha256}).catch(()=>{document.getElementById('release').textContent='Chưa xuất bản bản cài trên máy chủ này.';document.querySelector('.download').removeAttribute('href')})</script>
+</main></body></html>

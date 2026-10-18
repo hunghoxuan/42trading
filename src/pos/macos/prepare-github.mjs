@@ -1,0 +1,16 @@
+import { readFile, writeFile, mkdir, copyFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
+const project = dirname(fileURLToPath(import.meta.url));
+const metadata = JSON.parse(await readFile(join(project, 'build/release.json'), 'utf8'));
+const source = join(project, 'build', metadata.filename);
+const bytes = await readFile(source);
+if (createHash('sha256').update(bytes).digest('hex') !== metadata.sha256) throw new Error('Build checksum mismatch');
+if (bytes.length > 10 * 1024 * 1024) throw new Error('Use GitHub Release assets for builds larger than 10 MB');
+const releases = join(project, 'releases');
+await mkdir(releases, { recursive: true });
+await copyFile(source, join(releases, metadata.filename));
+await writeFile(join(releases, 'release.json'), JSON.stringify(metadata, null, 2) + '\n');
+await writeFile(join(releases, 'SHA256SUMS'), `${metadata.sha256}  ${metadata.filename}\n`);
+console.log('Prepared versioned universal ZIP and SHA-256 for GitHub: ' + metadata.filename);

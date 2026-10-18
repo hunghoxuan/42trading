@@ -1,0 +1,13 @@
+{
+  "version": "0.1.0",
+  "filename": "42trade-pos-macos-v0.1.0-universal.zip",
+  "bytes": 1356997,
+  "sha256": "8acec599d59f1b9f0036927a4e745d51056f6066f61fec0322666a25196543c8",
+  "architectures": [
+    "arm64",
+    "x86_64"
+  ],
+  "minimumMacOS": "12.0",
+  "signing": "ad-hoc",
+  "builtAt": "2026-10-18T12:52:14.821Z"
+}

@@ -1,0 +1,18 @@
+import { readFile, writeFile, mkdir, copyFile, rename } from 'node:fs/promises';
+import { dirname, resolve, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
+const project = dirname(fileURLToPath(import.meta.url));
+const metadata = JSON.parse(await readFile(join(project, 'build/release.json'), 'utf8'));
+const bytes = await readFile(join(project, 'build', metadata.filename));
+if (createHash('sha256').update(bytes).digest('hex') !== metadata.sha256) throw new Error('Build checksum mismatch');
+const destination = resolve(process.argv[2] || join(project, '../../admin/public/downloads/pos-macos'));
+await mkdir(destination, { recursive: true });
+const page = resolve(project, '../../admin/public/downloads/pos-macos/index.html');
+if (page !== join(destination, 'index.html')) await copyFile(page, join(destination, 'index.html'));
+await writeFile(join(destination, '.gitignore'), '*.zip\nrelease.json\nSHA256SUMS\n');
+await writeFile(join(destination, '42trade-pos-macos.zip.tmp'), bytes);
+await rename(join(destination, '42trade-pos-macos.zip.tmp'), join(destination, '42trade-pos-macos.zip'));
+await writeFile(join(destination, 'release.json'), JSON.stringify(metadata, null, 2) + '\n');
+await writeFile(join(destination, 'SHA256SUMS'), `${metadata.sha256}  42trade-pos-macos.zip\n`);
+console.log(JSON.stringify({ destination, version: metadata.version, sha256: metadata.sha256 }, null, 2));

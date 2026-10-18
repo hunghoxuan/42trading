@@ -1,0 +1,12 @@
+{
+  "name": "42trade-pos-macos",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Native universal macOS app for the Mac mini Tailscale POS",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "node check.mjs",
+    "publish:download": "node publish.mjs"
+  }
+}
