@@ -51,7 +51,7 @@ export default defineConfig({
       includeAssets: ["logo/payhub-p-pwa-192.png", "logo/payhub-p-pwa-512.png", "logo/payhub-p-exact.svg"],
       workbox: {
         navigateFallback: "/index.html",
-        navigateFallbackDenylist: [/^\/api\//, /^\/auth\//, /^\/pos\//, /^\/mt5\//],
+        navigateFallbackDenylist: [/^\/api\//, /^\/auth\//, /^\/pos\//, /^\/mt5\//, /^\/downloads(?:\/|$)/],
         globPatterns: ["**/*.{js,css,html}"],
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         runtimeCaching: [{

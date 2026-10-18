@@ -13,6 +13,8 @@ export default function AppDownloadsMenu({ language = "Vietnamese" }) {
         title={vi ? "Android 8 trở lên" : "Android 8 or later"}>Android · APK</a>
       <a href="/downloads/pos-macos/42trade-pos-macos.zip" download="42trade-pos-macos.zip"
         title={vi ? "macOS 12 trở lên · Apple Silicon và Intel" : "macOS 12 or later · Apple Silicon and Intel"}>macOS · App</a>
+      <a href="/downloads/pos-ios/" target="_blank" rel="noopener noreferrer"
+        title={vi ? "Cài lên màn hình chính bằng Safari" : "Add to Home Screen using Safari"}>iPhone / iPad · Web app</a>
       <a href="/downloads/pos-android/" target="_blank" rel="noopener noreferrer">
         {vi ? "Hướng dẫn cài Android" : "Android installation guide"}
       </a>

@@ -1,0 +1,16 @@
+{
+  "id": "/42trade-pos-ios",
+  "name": "42Trade POS",
+  "short_name": "42Trade POS",
+  "description": "Bán hàng và quản lý tồn kho trên iPhone và iPad",
+  "lang": "vi",
+  "start_url": "/admin/pos",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b0f14",
+  "theme_color": "#0b0f14",
+  "icons": [
+    { "src": "/logo/payhub-p-pwa-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/logo/payhub-p-pwa-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

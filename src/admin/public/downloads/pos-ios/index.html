@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0b0f14">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="42Trade POS">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png">
+  <link rel="icon" type="image/png" href="./icon-180.png">
+  <title>Cài 42Trade POS cho iPhone / iPad</title>
+  <style>
+    :root{color-scheme:dark;font:16px/1.6 system-ui,sans-serif;background:#0b0f14;color:#edf3f6}
+    *{box-sizing:border-box}body{margin:0;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
+    main{max-width:600px;margin:24px auto;padding:24px}header{display:flex;align-items:center;gap:16px}header img{width:64px;height:64px;border-radius:14px}h1{font-size:25px;line-height:1.3;margin:0}h2{font-size:19px;margin-top:28px}p,small{color:#bbc9d3}a{color:#71dced}li{margin:14px 0}ol{padding-left:24px}.open{display:block;text-align:center;background:#22c6de;color:#101820;border-radius:10px;padding:14px;font-weight:700;text-decoration:none;margin:24px 0}.note{padding:14px;border:1px solid #304351;border-radius:10px;background:#101820}strong{color:#edf3f6}code{overflow-wrap:anywhere}footer{margin-top:24px;font-size:14px}
+  </style>
+  <script>
+    // Older iOS versions may save this page instead of the manifest start URL.
+    // Once launched from the Home Screen, always open the POS, not this guide.
+    if (navigator.standalone || window.matchMedia('(display-mode: standalone)').matches) {
+      window.location.replace('/admin/pos');
+    }
+  </script>
+</head>
+<body><main>
+  <header><img src="./icon-180.png" alt="" width="64" height="64"><h1>42Trade POS<br>iPhone / iPad</h1></header>
+  <p>Cài web app lên màn hình chính bằng Safari. Dùng tài khoản 42Trade hiện có, không cần App Store.</p>
+  <h2>Cài lên màn hình chính</h2>
+  <ol>
+    <li>Bật <strong>Tailscale</strong> trên iPhone hoặc iPad và kết nối cùng mạng Tailscale với Mac mini.</li>
+    <li>Mở <strong>trang hướng dẫn này trong Safari</strong> trên thiết bị.</li>
+    <li>Chạm <strong>Chia sẻ (Share)</strong>, chọn <strong>Thêm vào Màn hình chính (Add to Home Screen)</strong>. Nếu chưa thấy, kéo xuống danh sách tác vụ.</li>
+    <li>Bật <strong>Mở dưới dạng ứng dụng web (Open as Web App)</strong> nếu có, rồi chạm <strong>Thêm (Add)</strong>.</li>
+    <li>Mở biểu tượng <strong>42Trade POS</strong> trên màn hình chính, đăng nhập và cho phép camera khi cần quét mã.</li>
+  </ol>
+  <p class="note">Mac mini và dịch vụ POS cần đang chạy. Giữ Tailscale kết nối khi sử dụng. Tính năng mới được cập nhật từ máy chủ; bạn có thể cần mở lại app sau khi cập nhật.</p>
+  <a class="open" href="/admin/pos">Mở POS</a>
+  <footer><a href="/">Về 42Trade</a> · <a href="https://support.apple.com/guide/iphone/iphea86e5236/ios" target="_blank" rel="noopener noreferrer">Hướng dẫn Safari của Apple</a></footer>
+</main></body>
+</html>

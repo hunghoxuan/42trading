@@ -14,7 +14,12 @@ const macTypes = {
   "release.json": "application/json; charset=utf-8",
   "SHA256SUMS": "text/plain; charset=utf-8",
 };
-const routes = { "pos-android": androidTypes, "pos-macos": macTypes };
+const iosTypes = {
+  "index.html": "text/html; charset=utf-8",
+  "manifest.webmanifest": "application/manifest+json; charset=utf-8",
+  "icon-180.png": "image/png",
+};
+const routes = { "pos-android": androidTypes, "pos-macos": macTypes, "pos-ios": iosTypes };
 
 // Vite's SPA fallback otherwise turns the directory URL into the main app shell,
 // and its static MIME table does not identify APK files for Android browsers.
