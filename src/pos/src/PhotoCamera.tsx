@@ -5,10 +5,11 @@ import { StablePhotoTrigger, cameraCrop, captureCameraPhoto } from "./cameraCapt
 import { ProductBarcodeReader } from "./barcodeReader";
 import { t, type Language } from "./i18n";
 
-export default function PhotoCamera({ language, purpose = "recognize", onClose, onCapture, onUpload, extraActions, modeActions, children }: {
+export default function PhotoCamera({ language, purpose = "recognize", onClose, onCapture, onUpload, extraActions, errorAction, modeActions, children }: {
   language: Language; purpose?: "product" | "recognize" | "cash" | "barcode";
   onClose: () => void; onCapture: (file: File, detectedCode?: string) => Promise<void>;
   onUpload?: () => void; extraActions?: ReactNode; modeActions?: ReactNode; children?: ReactNode;
+  errorAction?: ReactNode;
 }) {
   const video = useRef<HTMLVideoElement>(null), upload = useRef<HTMLInputElement>(null);
   const [facingMode, setFacingMode] = useState<"environment" | "user">("environment");
@@ -128,7 +129,9 @@ export default function PhotoCamera({ language, purpose = "recognize", onClose, 
       <p className="pos-camera-instruction" role="status">{error ? tr(preview ? "Review the captured photo, then try again." : "Try camera again or choose an existing photo.") : tr(busy
         ? barcode ? "Reading barcode photo…" : purpose === "cash" ? "Counting visible banknotes…" : purpose === "product" ? "Preparing and saving your product photo…" : "Finding the product…"
         : !ready ? "Allow camera access to see the preview." : !clear ? "Bring the product closer and use better light." : "Hold still. Taking the photo automatically…")}</p>
-      {error && <p className="pos-error" role="alert">{tr(error)}</p>}
+      {error && <div className="pos-alert pos-warning stack-layout" role="alert">
+        <span>{tr(error)}</span>{!busy && errorAction}
+      </div>}
       {devices.length > 1 && <label>{tr("Camera")}<select value={activeDevice} disabled={busy} onChange={(event) => setDeviceId(event.target.value)}>
         {devices.map((device, index) => <option key={device.deviceId} value={device.deviceId}>{device.label || (tr("Camera") + " " + (index + 1))}</option>)}
       </select></label>}

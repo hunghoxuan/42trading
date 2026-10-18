@@ -102,6 +102,7 @@ const vi: Record<string, string> = {
   "Change": "Tiền thối lại", "Complete cash sale": "Hoàn tất thanh toán tiền mặt",
   "Offline sales are saved on this device until synced.": "Giao dịch ngoại tuyến được lưu trên thiết bị này cho đến khi đồng bộ.",
   "Start stock count": "Bắt đầu kiểm kho", "New product": "Sản phẩm mới", "Search products or scan a product number": "Tìm sản phẩm hoặc quét mã sản phẩm",
+  "Add product": "Thêm sản phẩm", "Add this product to inventory to sell it.": "Thêm sản phẩm vào kho để bán.",
   "On hand": "Tồn thực tế", "Reserved": "Đã giữ", "Stock counts": "Phiếu kiểm kho", "Stock count": "Kiểm kho",
   "Close count": "Đóng phiếu", "System count": "Tồn hệ thống", "Review count": "Xem lại số lượng",
   "Posting reason": "Lý do ghi nhận", "Post stock count": "Ghi nhận kiểm kho", "Post these stock adjustments? This updates on-hand quantities.": "Ghi nhận điều chỉnh tồn kho này? Số lượng tồn sẽ được cập nhật.",

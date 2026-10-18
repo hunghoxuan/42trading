@@ -100,6 +100,7 @@ function deviceId(): string {
 }
 
 type Tab = "sale" | "inventory" | "reports" | "register";
+type CaptureProductDraft = Partial<{ name: string; sku: string; barcodes: string; supplier: string; image: string }>;
 
 export default function App() {
   const { needRefresh: [needRefresh], updateServiceWorker } = useRegisterSW();
@@ -184,10 +185,13 @@ export default function App() {
   const [selectedRecognitionSid, setSelectedRecognitionSid] = useState("");
   const [recognizedIds, setRecognizedIds] = useState<string[] | null>(null);
   const recognitionRequest = useRef(0);
+  const captureProductDraft = useRef<CaptureProductDraft>({});
   const [message, setMessageText] = useState("");
   const [messageTone, setMessageTone] = useState<"success" | "warning">("success");
-  function setMessage(text: string, tone: "success" | "warning" = "success") {
+  const [messageAddProduct, setMessageAddProduct] = useState(false);
+  function setMessage(text: string, tone: "success" | "warning" = "success", addProduct = false) {
     setMessageText(text); setMessageTone(tone);
+    setMessageAddProduct(addProduct);
   }
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -498,6 +502,7 @@ export default function App() {
   }
 
   const scanned = useCallback((code: string) => {
+    captureProductDraft.current = { sku: code, barcodes: code };
     recognitionRequest.current++; setRecognizedIds(null); setRecognitionDetails(null);
     setRecognitionImage(""); setRecognitionImageBackgroundRemoved(false); setRecognitionColors([]);
     setRecognitionKeywords([]); setSelectedRecognitionSid("");
@@ -520,12 +525,15 @@ export default function App() {
       addToCart(product);
       setMessage(notice + tr("Added") + " " + product.name);
     } else if (tab === "inventory") {
-      setSelected(null);
-      setDetailOpen(true);
-      setForm({ sid: "", name: "", sku: code, barcodes: code ? code : "", category: "", supplier: "", status: "ACTIVE", unit: "cái", price: "", cost: "", minStock: "0", vat: "0", image: "" });
+      startNewProduct({ sku: code, barcodes: code });
       setMessage(notice + tr("No match. Review the scanned code and create a product."), "warning");
-    } else setMessage(notice + tr("No match for") + " " + code + ". " + tr("Use Inventory to create a product."), "warning");
-  }, [visibleProducts, tab, language]);
+    } else setMessage(notice + tr("No match for") + " " + code + ". " + tr("Add this product to inventory to sell it."), "warning", true);
+  }, [visibleProducts, tab, language, inventoryCategoryFilter, inventorySupplierFilter]);
+
+  function openScanner(mode: "barcode" | "recognize") {
+    captureProductDraft.current = {};
+    setMessage(""); setScannerMode(mode); setScanner(true);
+  }
 
   function openProductCamera() {
     setPhotoCamera("product");
@@ -559,6 +567,8 @@ export default function App() {
 
   async function recognizeFile(file: File) {
     const request = ++recognitionRequest.current;
+    // Recognition keywords are names, not product numbers. Only use a decoded barcode as a code.
+    captureProductDraft.current = { sku: "", barcodes: "" };
     setCandidates([]); setRecognitionHints([]); setMessage(""); setError(""); setRecognitionDetails(null); setRecognizedIds([]);
     setRecognitionImage(""); setRecognitionImageBackgroundRemoved(false); setRecognitionColors([]);
     setRecognitionKeywords([]); setSelectedRecognitionSid("");
@@ -569,6 +579,7 @@ export default function App() {
       const code = await readBarcodePhoto(file);
       if (request !== recognitionRequest.current) return;
       if (!code) throw new Error("No barcode in this photo");
+      captureProductDraft.current = { sku: code, barcodes: code };
       const matches = visibleProducts.filter((item) => item.sid === code || item.sku === code || item.barcodes.includes(code));
       if (matches.length > 1) {
         setRecognizedIds(matches.map((item) => item.sid));
@@ -590,11 +601,19 @@ export default function App() {
     const prepared = await prepareRecognitionPhoto(file, visibleProducts);
     if (request !== recognitionRequest.current) return;
     setRecognitionImage(prepared.capture_image);
+    captureProductDraft.current.image = prepared.capture_image;
     setRecognitionImageBackgroundRemoved(prepared.background_removed);
     setRecognitionColors(prepared.colors.map((item) => item.color));
     const result = await posApi.recognizeImage({ image: prepared.image });
     if (request !== recognitionRequest.current) return;
     setRecognitionDetails(result.observed);
+    const observed = result.observed;
+    if (observed.product_name || observed.object_name) captureProductDraft.current.name = observed.product_name || observed.object_name;
+    if (observed.brand) captureProductDraft.current.supplier = observed.brand;
+    if (observed.barcode) {
+      captureProductDraft.current.barcodes = observed.barcode;
+      captureProductDraft.current.sku ||= observed.barcode;
+    }
     const keywords = Array.isArray(result.keywords) ? result.keywords : [];
     setRecognitionKeywords(keywords);
     setRecognitionHints([...keywords, ...prepared.colors.map((item) => tr(item.color))]);
@@ -603,7 +622,7 @@ export default function App() {
     setCandidates(available);
     setSelectedRecognitionSid(available[0]?.product_sid || "");
     setRecognizedIds(available.map((item) => item.product_sid));
-    if (!available.length) setMessage(tr("No sufficiently matching product in inventory. Try a clearer label or scan the barcode."), "warning");
+    if (!available.length) setMessage(tr("No sufficiently matching product in inventory. Try a clearer label or scan the barcode."), "warning", true);
   }
 
   function clearRecognition() {
@@ -644,10 +663,18 @@ export default function App() {
     setMessage(tr("Product created from capture. Add a price and stock to sell it."));
   }
 
-  function startNewProduct() {
+  function startNewProduct(draft: CaptureProductDraft = {}) {
     setSelected(null);
-    setForm({ sid: "", name: "", sku: "", barcodes: "", category: "", supplier: "", status: "ACTIVE", unit: "cái", price: "", cost: "", minStock: "0", vat: "0", image: "" });
+    const code = query.trim();
+    setForm({ sid: "", name: "", sku: code, barcodes: code, category: inventoryCategoryFilter, supplier: inventorySupplierFilter,
+      status: "ACTIVE", unit: "cái", price: "", cost: "", minStock: "0", vat: "0", image: "", ...draft });
     setStockDelta(""); setStockReason(""); setAllocation(""); setDetailOpen(true);
+  }
+
+  function openProductFromCapture() {
+    const draft = { ...captureProductDraft.current };
+    setScanner(false); setPhotoCamera(null); setTab("inventory"); setError("");
+    clearRecognition(); startNewProduct(draft);
   }
 
   function selectSaleProduct(product: Product) {
@@ -822,6 +849,9 @@ export default function App() {
           }, "")}>{tr("Commit import")}</button>
         </div>}</div>);
 
+  const captureErrorAction = tab === "sale" ? <button type="button" className="secondary-button" disabled={busy}
+    onClick={openProductFromCapture}>{tr("Add product")}</button> : undefined;
+
   return <section className={`pos-app pos-app--nav-${mobileNavigation} logs-page-container trades-page-container pay42-page-container stack-layout fadeIn`} lang={language}>
     <PageHeader className="trades-page-header pos-page-header" title="42Trade POS" actions={
       <div className="pos-header-actions">
@@ -849,7 +879,10 @@ export default function App() {
     </div>}
     {needRefresh && <div className="pos-alert pos-row" role="status"><span>{tr("A POS update is ready. Finish the current cart before reloading.")}</span>
       <button disabled={cart.length > 0 || busy} onClick={() => updateServiceWorker(true)}>{tr("Update POS")}</button></div>}
-    {message && <div className={`pos-alert ${messageTone === "warning" ? "pos-warning" : "pos-success"}`} role="status">{message}</div>}
+    {message && <div className={`pos-alert pos-row ${messageTone === "warning" ? "pos-warning" : "pos-success"}`} role="status">
+      <span>{message}</span>
+      {tab === "sale" && messageAddProduct && captureErrorAction}
+    </div>}
 
     {(tab === "sale" || tab === "inventory") && <main className="pos-page-content stack-layout">
       {tab === "sale" && usingOfflineCatalog && <p className="minor-text">{tr("Refresh the register after price changes.")}</p>}
@@ -908,6 +941,7 @@ export default function App() {
         toolbar={{ displayMode: "top", filters: <div className="trades-toolbar-row"><div className="trades-toolbar-filters">
           <input aria-label={tr("Search products or scan a product number")} placeholder={tr("Search products or scan a product number")} value={query}
             onChange={(event) => { recognitionRequest.current++; setRecognizedIds(null); setRecognitionDetails(null); setRecognitionImage("");
+              setMessage(""); captureProductDraft.current = {};
               setRecognitionImageBackgroundRemoved(false); setRecognitionColors([]); setRecognitionKeywords([]); setSelectedRecognitionSid("");
               setCandidates([]); setRecognitionHints([]); setQuery(event.target.value); }} onKeyDown={(event) => {
               if (event.key === "Enter" && query.trim()) { event.preventDefault(); scanned(query.trim()); }
@@ -925,11 +959,11 @@ export default function App() {
             </InputComboSelect>
           </>}
         </div></div>, actions: <>
-          <button className="secondary-button" onClick={() => { setScannerMode("barcode"); setScanner(true); }}>{tr("Scan code")}</button>
-          {tab === "sale" && <button type="button" className="secondary-button" onClick={() => { setScannerMode("recognize"); setScanner(true); }}>{tr("Recognize photo")}</button>}
+          <button className="secondary-button" onClick={() => openScanner("barcode")}>{tr("Scan code")}</button>
+          {tab === "sale" && <button type="button" className="secondary-button" onClick={() => openScanner("recognize")}>{tr("Recognize photo")}</button>}
           {tab === "inventory" && <>
             <button className="secondary-button" disabled={!online || busy} onClick={() => run(startStockCount, "Stock count started")}>{tr("Start stock count")}</button>
-            <button className="primary-button" onClick={startNewProduct}>{tr("New product")}</button>
+            <button className="primary-button" onClick={() => startNewProduct()}>{tr("New product")}</button>
           </>}
           <button className="secondary-button" aria-label={tr("Refresh products")} title={tr("Refresh products")} disabled={!online || busy} onClick={() => run(refreshOnline, "")}>↻</button>
         </> }}
@@ -1040,12 +1074,14 @@ export default function App() {
       if (file) run(() => updateProductPhoto(file), "");
     }} />
     {photoCamera && <PhotoCamera language={language} purpose={photoCamera} onClose={() => { recognitionRequest.current++; setPhotoCamera(null); }}
+      errorAction={photoCamera === "recognize" ? captureErrorAction : undefined}
       onCapture={async (file) => {
         setBusy(true);
         try { if (photoCamera === "product") await updateProductPhoto(file); else await recognizeFile(file); }
         finally { setBusy(false); }
       }} />}
     {scanner && <Scanner onCode={scanned} onClose={() => setScanner(false)} language={language} initialMode={scannerMode}
+      errorAction={captureErrorAction}
       onRecognize={async (file) => {
         setBusy(true);
         try { await recognizeFile(file); }

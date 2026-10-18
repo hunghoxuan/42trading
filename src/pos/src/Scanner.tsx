@@ -1,16 +1,17 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import PhotoCamera from "./PhotoCamera";
 import { readBarcodePhoto } from "./barcodeReader";
 import { t, type Language } from "./i18n";
 
-export default function Scanner({ onCode, onClose, onRecognize, language, initialMode = "barcode" }: {
+export default function Scanner({ onCode, onClose, onRecognize, language, initialMode = "barcode", errorAction }: {
   onCode: (value: string) => void; onClose: () => void; onRecognize: (file: File) => Promise<void>;
   language: Language; initialMode?: "barcode" | "recognize";
+  errorAction?: ReactNode;
 }) {
   const [manualCode, setManualCode] = useState("");
   const [mode, setMode] = useState<"barcode" | "recognize">(initialMode);
   const tr = (text: string) => t(language, text);
-  return <PhotoCamera purpose={mode} language={language} onClose={onClose}
+  return <PhotoCamera purpose={mode} language={language} onClose={onClose} errorAction={errorAction}
     onCapture={async (file, detectedCode) => {
       if (mode === "recognize") { await onRecognize(file); return; }
       const code = detectedCode || await readBarcodePhoto(file);
