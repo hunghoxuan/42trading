@@ -672,8 +672,9 @@ export default function App() {
             String(
               user.metadata?.settings?.language ||
                 user.metadata?.language ||
-                "English",
-            ).trim() || "English";
+                localStorage.getItem("ui_locale") ||
+                "Vietnamese",
+            ).trim() || "Vietnamese";
           localStorage.setItem("ui_display_timezone", tz);
           localStorage.setItem("ui_locale", nextLocale);
         } else if (isExplicitAuthFailure(meRes.reason)) {
@@ -776,8 +777,9 @@ export default function App() {
         String(
           user.metadata?.settings?.language ||
             user.metadata?.language ||
-            "English",
-        ).trim() || "English";
+            localStorage.getItem("ui_locale") ||
+            "Vietnamese",
+        ).trim() || "Vietnamese";
       localStorage.setItem("ui_display_timezone", tz);
       localStorage.setItem("ui_locale", nextLocale);
       return;

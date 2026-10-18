@@ -19,7 +19,7 @@ function buildInitialForm(user) {
 function buildInitialMetadata(user) {
   const meta = user?.metadata?.settings || {};
   return {
-    language: meta.language || "English",
+    language: meta.language || user?.metadata?.language || localStorage.getItem("ui_locale") || "Vietnamese",
     display_timezone: normalizeDisplayTimezone(meta.display_timezone || "Local"),
     market_data_cron: meta.market_data_cron !== false,
     ai_analysis_cron: meta.ai_analysis_cron !== false,
