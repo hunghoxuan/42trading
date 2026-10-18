@@ -4,11 +4,12 @@ import useIsMobile from "../hooks/useIsMobile";
 import MobileFullscreenModal from "./MobileFullscreenModal";
 import "./ResponsiveSectionNav.css";
 
-// Controlled navigation; mobile placement can be configured by each page.
+// Mobile: up to four sections share one row; larger sets use a full-screen menu.
+// Callers can override mobile placement and persist it in their own settings.
 export default function ResponsiveSectionNav({
   items = [], value, onChange, label = "Sections", menuLabel = "Menu",
   closeLabel = "Close", mobilePlacement = "menu", onMobilePlacementChange,
-  placementLabel = "Mobile navigation", menuOptionLabel = "Full screen menu",
+  placementLabel = "Mobile navigation", menuOptionLabel = "Automatic menu",
   bottomOptionLabel = "Bottom navigation",
 }) {
   const isMobile = useIsMobile();
@@ -18,6 +19,7 @@ export default function ResponsiveSectionNav({
   const menuId = useId();
   const close = useCallback(() => setOpen(false), []);
   const bottom = isMobile && mobilePlacement === "bottom";
+  const inline = isMobile && !bottom && items.length <= 4;
   const active = items.find((item) => item.value === value);
 
   useEffect(() => { if (!isMobile) setOpen(false); }, [isMobile]);
@@ -56,7 +58,16 @@ export default function ResponsiveSectionNav({
 
   return <div className="responsive-section-nav" data-mobile-placement={mobilePlacement}>
     {!isMobile && sections("responsive-section-nav__desktop")}
-    {isMobile && <button ref={trigger} type="button" className="secondary-button responsive-section-nav__trigger"
+    {inline && <div className="responsive-section-nav__inline">
+      {sections("responsive-section-nav__inline-items")}
+      {onMobilePlacementChange && <button ref={trigger} type="button"
+        className="secondary-button responsive-section-nav__settings" aria-label={placementLabel}
+        title={placementLabel} aria-haspopup="dialog" aria-expanded={open}
+        aria-controls={open ? menuId : undefined} onClick={() => setOpen(true)}>
+        <span aria-hidden="true">⚙</span>
+      </button>}
+    </div>}
+    {isMobile && !inline && <button ref={trigger} type="button" className="secondary-button responsive-section-nav__trigger"
       aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? menuId : undefined}
       onClick={() => setOpen(true)}>
       <span>{active?.label || label}</span><span aria-hidden="true">☰</span><span>{menuLabel}</span>

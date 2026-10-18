@@ -1,10 +1,20 @@
 .responsive-section-nav { width: 100%; min-width: 0; }
 .responsive-section-nav__desktop { display: flex; flex-wrap: wrap; gap: 6px; }
+.responsive-section-nav__inline { display: flex; gap: 4px; width: 100%; min-width: 0; }
+.responsive-section-nav__inline-items { display: flex; gap: 4px; flex: 1; min-width: 0; }
+.responsive-section-nav__inline-items button {
+  flex: 1 1 0; min-width: 0 !important; padding: 6px 4px;
+  font-size: 12px; line-height: 1.25; white-space: normal;
+}
+.responsive-section-nav__settings {
+  flex: 0 0 36px; width: 36px; min-width: 36px !important; padding: 4px; font-size: 18px;
+}
 .responsive-section-nav__trigger {
   display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px;
 }
 .responsive-section-nav__trigger > :first-child { margin-right: auto; }
 .responsive-section-nav__desktop .active,
+.responsive-section-nav__inline-items .active,
 .responsive-section-nav__tiles .active,
 .responsive-section-nav__bottom-items .active {
   color: var(--accent); border-color: var(--accent); background: var(--accent-soft);

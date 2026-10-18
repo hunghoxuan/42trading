@@ -841,7 +841,7 @@ export default function App() {
         mobilePlacement={mobileNavigation} onMobilePlacementChange={(placement: "menu" | "bottom") => {
           setMobileNavigation(placement);
           try { localStorage.setItem("42trade-pos-mobile-navigation", placement); } catch { /* Keep the current session preference. */ }
-        }} placementLabel={tr("Mobile navigation")} menuOptionLabel={tr("Full screen menu")}
+        }} placementLabel={tr("Mobile navigation")} menuOptionLabel={tr("Automatic menu")}
         bottomOptionLabel={tr("Bottom navigation")} />
     } />
     {error && <div className="pos-alert pos-error" role="alert">{error}
