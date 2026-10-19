@@ -304,9 +304,8 @@ public final class MainActivity extends ComponentActivity {
     private void handleBack() {
         if (errorPanel.getVisibility() == View.VISIBLE) errorPanel.setVisibility(View.GONE);
         else if (web.canGoBack()) web.goBack();
-        else new AlertDialog.Builder(this).setMessage("Đóng POS? Hãy hoàn tất hoặc lưu giao dịch đang mở trước khi thoát.")
-                .setPositiveButton("Đóng", (dialog, which) -> finish())
-                .setNegativeButton("Ở lại", null).show();
+        // Keep the live WebView when leaving the root screen, just like the Home button.
+        else moveTaskToBack(true);
     }
     @Override protected void onDestroy() {
         if (cameraRequest != null) cameraRequest.deny();

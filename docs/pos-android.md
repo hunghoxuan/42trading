@@ -96,6 +96,29 @@ An unsigned release build must be signed before distribution.
 
 ## Behavior and limits
 
+### Reopening POS (Android 0.1.1)
+
+- Launcher taps reuse the existing Android task. Back at the root sends POS to the
+  background instead of finishing its Activity; resume does not reload the page.
+- If Android kills the process or the web page reloads, POS restores the current
+  cart, cash received, section, search/filters, catalog view/page/sort, report dates,
+  product form (including its image) and the open product panel from device storage.
+  Drafts are scoped to the authenticated cashier and register. Server prices and
+  stock are fetched again. Camera dialogs, import file selections, refund dialogs
+  and recognition results are transient and must be reopened.
+- Edits are saved synchronously when state changes, without depending on a closing
+  event. Large product images are stored separately from frequently changed fields.
+  A visible warning appears if device storage is unavailable or full.
+- The checkout retry key is saved before submitting and cleared with the cart only
+  after a successful result. After an interrupted request, a manual retry uses the
+  same key. Offline retries also return the existing receipt without deducting stock
+  a second time. Reopening POS never submits or prints a sale automatically.
+- The web draft recovery also works in the original APK after it loads the updated
+  web UI. Install APK 0.1.1 over the existing app for the native task/Back behavior;
+  do not uninstall or clear app data during the upgrade.
+
+### Connectivity and platform features
+
 - Login and cookies stay on the configured HTTPS origin in WebView.
 - Camera prompts request only Android camera permission; microphone permission is
   neither requested nor granted. Denied permissions leave manual entry available.

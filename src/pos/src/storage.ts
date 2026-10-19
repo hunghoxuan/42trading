@@ -149,7 +149,7 @@ export async function requestDurableStorage(): Promise<boolean> {
   return navigator.storage.persist();
 }
 
-export async function commitLocalSale(lines: SaleLine[], cashReceived: number): Promise<LocalSale> {
+export async function commitLocalSale(lines: SaleLine[], cashReceived: number, idempotencyKey: string = crypto.randomUUID()): Promise<LocalSale> {
   const bootstrap = await readBootstrap();
   if (!bootstrap) throw new Error("Connect and provision this register before offline sales");
   await validateBootstrap(bootstrap);
@@ -157,6 +157,12 @@ export async function commitLocalSale(lines: SaleLine[], cashReceived: number): 
   const db = await openPosDb();
   const tx = db.transaction(["meta", "sales"], "readwrite");
   try {
+    const previous = await request(tx.objectStore("sales").get(idempotencyKey)) as LocalSale | undefined;
+    if (previous) {
+      await completed(tx);
+      db.close();
+      return previous;
+    }
     const meta = tx.objectStore("meta");
     const current = await request(meta.get("bootstrap")) as Bootstrap;
     const sequence = Number(await request(meta.get("sequence")) || 0) + 1;
@@ -188,7 +194,7 @@ export async function commitLocalSale(lines: SaleLine[], cashReceived: number): 
     }
     if (!Number.isSafeInteger(total) || cashReceived < total || !Number.isSafeInteger(cashReceived)) throw new Error("Invalid cash received or total");
     const sale: LocalSale = {
-      idempotency_key: crypto.randomUUID(),
+      idempotency_key: idempotencyKey,
       cashier_id: JSON.parse(new TextDecoder().decode(base64UrlBytes(current.grant.split(".")[0]))).cashier_id,
       receipt_id: ["STORE_1", "REG_1", current.snapshot.device_id, sequence].join("-"),
       device_id: current.snapshot.device_id,

@@ -9,6 +9,7 @@ import Scanner from "./Scanner";
 import { cashReceivedForCheckout } from "./cashChange";
 import { searchProducts } from "./productSearch";
 import { t, type Language } from "./i18n";
+import { usePosWorkspace } from "./usePosWorkspace";
 // Reuse the existing 42trade React components; their sources are JavaScript, not TypeScript.
 // @ts-expect-error shared JS component has no declaration file
 import AdminPageToolbar from "../../admin/shared/components/AdminPageToolbar";
@@ -62,7 +63,6 @@ function attributeValue(value: string, options: string[]): string {
 const money = (value: number, language: Language) => new Intl.NumberFormat(language === "en" ? "en-US" : "vi-VN", {
   style: "currency", currency: "VND", maximumFractionDigits: 0,
 }).format(value);
-const todayInVietnam = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(new Date());
 
 function signInHref(): string {
   const pathname = window.location.pathname;
@@ -118,21 +118,23 @@ export default function App() {
     if (stock) return "Dòng " + stock[1] + ": không nhập tồn vì POS yêu cầu số lượng nguyên không âm.";
     return value;
   };
-  const [tab, setTab] = useState<Tab>("sale");
   const [mobileNavigation, setMobileNavigation] = useState<"menu" | "bottom">(() => {
     try { return localStorage.getItem("42trade-pos-mobile-navigation") === "bottom" ? "bottom" : "menu"; }
     catch { return "menu"; }
   });
   const [online, setOnline] = useState(navigator.onLine);
   const [actor, setActor] = useState<{ user_id: string; name?: string } | null>(null);
+  const device = useMemo(deviceId, []);
+  const workspace = usePosWorkspace(actor?.user_id || null, device);
+  const [tab, setTab] = workspace.field("tab");
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [sales, setSales] = useState<LocalSale[]>([]);
   const [serverSales, setServerSales] = useState<Record<string, unknown>[]>([]);
   const [dashboard, setDashboard] = useState<{ gross_minor: number; net_minor: number; refunds_minor: number; sales_count: number; low_stock: unknown[] } | null>(null);
   const [shifts, setShifts] = useState<Record<string, unknown>[]>([]);
-  const [openingCash, setOpeningCash] = useState("");
-  const [countedCash, setCountedCash] = useState("");
+  const [openingCash, setOpeningCash] = workspace.field("openingCash");
+  const [countedCash, setCountedCash] = workspace.field("countedCash");
   const [selectedSale, setSelectedSale] = useState<Record<string, unknown> | null>(null);
   const [returnLines, setReturnLines] = useState<Record<string, { quantity: string; restock: boolean }>>({});
   const [returnReason, setReturnReason] = useState("");
@@ -140,25 +142,25 @@ export default function App() {
   const [importRows, setImportRows] = useState<Record<string, unknown>[] | null>(null);
   const [importFilename, setImportFilename] = useState("");
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
-  const [reportGroup, setReportGroup] = useState("day");
-  const [reportFrom, setReportFrom] = useState(todayInVietnam());
-  const [reportTo, setReportTo] = useState(todayInVietnam());
+  const [reportGroup, setReportGroup] = workspace.field("reportGroup");
+  const [reportFrom, setReportFrom] = workspace.field("reportFrom");
+  const [reportTo, setReportTo] = workspace.field("reportTo");
   const [reportRows, setReportRows] = useState<{ key: string; sales_count: number; quantity: number; base_minor: number; vat_minor: number; gross_minor: number }[]>([]);
-  const [query, setQuery] = useState("");
-  const [inventoryStatusFilter, setInventoryStatusFilter] = useState("ALL");
-  const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState("");
-  const [inventorySupplierFilter, setInventorySupplierFilter] = useState("");
-  const [cart, setCart] = useState<SaleLine[]>([]);
-  const [cash, setCash] = useState("");
-  const [selected, setSelected] = useState<Product | null>(null);
-  const [form, setForm] = useState({ sid: "", name: "", sku: "", barcodes: "", category: "", supplier: "", status: "ACTIVE", unit: "cái", price: "", cost: "", minStock: "0", vat: "0", image: "" });
-  const [stockDelta, setStockDelta] = useState("");
-  const [stockReason, setStockReason] = useState("");
+  const [query, setQuery] = workspace.field("query");
+  const [inventoryStatusFilter, setInventoryStatusFilter] = workspace.field("inventoryStatusFilter");
+  const [inventoryCategoryFilter, setInventoryCategoryFilter] = workspace.field("inventoryCategoryFilter");
+  const [inventorySupplierFilter, setInventorySupplierFilter] = workspace.field("inventorySupplierFilter");
+  const [cart, setCart] = workspace.field("cart");
+  const [cash, setCash] = workspace.field("cash");
+  const [selectedSid, setSelectedSid] = workspace.field("selectedSid");
+  const [form, setForm] = workspace.field("form");
+  const [stockDelta, setStockDelta] = workspace.field("stockDelta");
+  const [stockReason, setStockReason] = workspace.field("stockReason");
   const [stockCount, setStockCount] = useState<Record<string, unknown> | null>(null);
   const [stockCountRows, setStockCountRows] = useState<Record<string, unknown>[]>([]);
   const [stockCountValues, setStockCountValues] = useState<Record<string, string>>({});
   const [stockCountReason, setStockCountReason] = useState("");
-  const [allocation, setAllocation] = useState("");
+  const [allocation, setAllocation] = workspace.field("allocation");
   const [scanner, setScanner] = useState(false);
   const [scannerMode, setScannerMode] = useState<"barcode" | "recognize">("barcode");
   const [photoCamera, setPhotoCamera] = useState<"product" | "recognize" | null>(null);
@@ -166,12 +168,18 @@ export default function App() {
   const [lastImageChange, setLastImageChange] = useState<{ sid: string; before: string; after: string } | null>(null);
   const [imagePreview, setImagePreview] = useState<{ src: string; title: string } | null>(null);
   const isMobile = useIsMobile();
-  const [detailOpen, setDetailOpen] = useState(() => window.innerWidth >= 768);
-  const [catalogMode, setCatalogMode] = useState("table");
-  const [catalogPage, setCatalogPage] = useState(1);
-  const [catalogPageSize, setCatalogPageSize] = useState(25);
-  const [catalogSorting, setCatalogSorting] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
-  useEffect(() => { setCatalogPage(1); }, [tab, query, inventoryStatusFilter, inventoryCategoryFilter, inventorySupplierFilter, catalogPageSize, catalogSorting]);
+  const [detailOpen, setDetailOpen] = workspace.field("detailOpen");
+  const [catalogMode, setCatalogMode] = workspace.field("catalogMode");
+  const [catalogPage, setCatalogPage] = workspace.field("catalogPage");
+  const [catalogPageSize, setCatalogPageSize] = workspace.field("catalogPageSize");
+  const [catalogSorting, setCatalogSorting] = workspace.field("catalogSorting");
+  const catalogFilterKey = JSON.stringify([tab, query, inventoryStatusFilter, inventoryCategoryFilter, inventorySupplierFilter, catalogPageSize, catalogSorting]);
+  const previousCatalogFilter = useRef({ owner: actor?.user_id, key: catalogFilterKey });
+  useEffect(() => {
+    const previous = previousCatalogFilter.current;
+    if (previous.owner === actor?.user_id && previous.key !== catalogFilterKey) setCatalogPage(1);
+    previousCatalogFilter.current = { owner: actor?.user_id, key: catalogFilterKey };
+  }, [actor?.user_id, catalogFilterKey]);
   const [receipt, setReceipt] = useState<ReturnType<typeof fromServerSale> | null>(null);
   const [lastReceipt, setLastReceipt] = useState<ReturnType<typeof fromServerSale> | null>(null);
   const [printReceipt, setPrintReceipt] = useState(false);
@@ -195,10 +203,8 @@ export default function App() {
   }
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const onlineCheckoutKey = useRef<string | null>(null);
   const returnKey = useRef<string | null>(null);
   const syncPromise = useRef<Promise<void> | null>(null);
-  const device = useMemo(deviceId, []);
 
   useEffect(() => {
     localStorage.setItem("42trade-pos-language", language);
@@ -225,6 +231,11 @@ export default function App() {
   };
 
   const localProducts = bootstrap?.snapshot.products || [];
+  const selected = products.find((product) => product.sid === selectedSid)
+    || localProducts.find((product) => product.sid === selectedSid) || null;
+  function setSelected(next: Product | null | ((previous: Product | null) => Product | null)) {
+    setSelectedSid((typeof next === "function" ? next(selected) : next)?.sid || "");
+  }
   const usingOfflineCatalog = !online && !!bootstrap;
   const visibleProducts = online
     ? (tab === "sale" ? products.filter((product) => product.status === "ACTIVE") : products)
@@ -267,10 +278,9 @@ export default function App() {
   }, []);
 
   const refreshOnline = useCallback(async () => {
-    const [user, catalog, summary, recent, shiftList, countList] = await Promise.all([
-      posApi.auth(), posApi.products(device, true), posApi.dashboard(), posApi.sales(), posApi.shifts(), posApi.stockCounts(),
+    const [, catalog, summary, recent, shiftList, countList] = await Promise.all([
+      posApi.auth().then((result) => { setActor(result.user); return result; }), posApi.products(device, true), posApi.dashboard(), posApi.sales(), posApi.shifts(), posApi.stockCounts(),
     ]);
-    setActor(user.user);
     setProducts(catalog.items);
     setDashboard(summary);
     setServerSales(recent.items as Record<string, unknown>[]);
@@ -285,6 +295,17 @@ export default function App() {
     refreshLocal().catch((cause) => setError(String(cause)));
     return () => { window.removeEventListener("online", update); window.removeEventListener("offline", update); };
   }, [refreshLocal]);
+
+  useEffect(() => {
+    if (online || actor || !bootstrap) return;
+    let cancelled = false;
+    void validateBootstrap(bootstrap).then(() => {
+      const body = bootstrap.grant.split(".")[0].replace(/-/g, "+").replace(/_/g, "/");
+      const claims = JSON.parse(atob(body));
+      if (!cancelled && typeof claims.cashier_id === "string") setActor({ user_id: claims.cashier_id });
+    }).catch((cause) => { if (!cancelled) setError(String(cause)); });
+    return () => { cancelled = true; };
+  }, [online, actor, bootstrap]);
 
   useEffect(() => {
     if (!online) return;
@@ -387,21 +408,25 @@ export default function App() {
     if (!cart.length) throw new Error("Cart is empty");
     const received = cashReceivedForCheckout(cash, total);
     if (!cash.trim()) setCash(String(received));
+    const key = workspace.state.checkoutKey || crypto.randomUUID();
+    // Persist before sending: a retry after a reload must reuse the same checkout key.
+    if (!workspace.update((state) => ({ ...state, checkoutKey: key }))) {
+      throw new Error(tr("Could not save checkout recovery. Free device storage and try again."));
+    }
     if (!online && bootstrap) {
-      const sale = await commitLocalSale(cart, received);
+      const sale = await commitLocalSale(cart, received, key);
       const invoice = fromLocalSale(sale);
       setPrintReceipt(print); setReceipt(invoice); setLastReceipt(invoice);
-      setCart([]); setCash("");
+      workspace.update((state) => ({ ...state, cart: [], cash: "", checkoutKey: null }));
       await refreshLocal();
       setMessage(language === "vi" ? "Đã lưu giao dịch. Hóa đơn " + sale.receipt_id + " đang chờ đồng bộ." : "Cash sale saved locally. Receipt " + sale.receipt_id + " is pending sync.");
     } else if (online) {
-      onlineCheckoutKey.current ||= crypto.randomUUID();
-      const result = await posApi.checkout(onlineCheckoutKey.current, cart, received);
+      const result = await posApi.checkout(key, cart, received);
       const paid = result.sale as { receipt_id: string };
       const invoice = fromServerSale(result.sale as Record<string, unknown>);
       setPrintReceipt(print); setReceipt(invoice); setLastReceipt(invoice);
       setMessage(language === "vi" ? "Đã thanh toán. Hóa đơn " + paid.receipt_id : "Sale paid. Receipt " + paid.receipt_id);
-      setCart([]); setCash(""); onlineCheckoutKey.current = null;
+      workspace.update((state) => ({ ...state, cart: [], cash: "", checkoutKey: null }));
       await refreshOnline();
     } else throw new Error("Provision this register online before offline sales");
   }
@@ -528,7 +553,7 @@ export default function App() {
       startNewProduct({ sku: code, barcodes: code });
       setMessage(notice + tr("No match. Review the scanned code and create a product."), "warning");
     } else setMessage(notice + tr("No match for") + " " + code + ". " + tr("Add this product to inventory to sell it."), "warning", true);
-  }, [visibleProducts, tab, language, inventoryCategoryFilter, inventorySupplierFilter]);
+  }, [visibleProducts, tab, language, inventoryCategoryFilter, inventorySupplierFilter, actor?.user_id]);
 
   function openScanner(mode: "barcode" | "recognize") {
     captureProductDraft.current = {};
@@ -852,6 +877,16 @@ export default function App() {
   const captureErrorAction = tab === "sale" ? <button type="button" className="secondary-button" disabled={busy}
     onClick={openProductFromCapture}>{tr("Add product")}</button> : undefined;
 
+  if (!actor) return <section className="pos-app stack-layout" lang={language}>
+    <PageHeader title="42Trade POS" />
+    <div className="pos-alert stack-layout" role={error ? "alert" : "status"}>
+      <span>{error || tr("Connecting to restore your POS workspace…")}</span>
+      {(error || !online) && <><a href={signInHref()}>{tr("Sign in to 42Trade")}</a>
+        <button type="button" className="secondary-button" disabled={busy}
+          onClick={() => run(refreshOnline, "")}>{tr("Retry")}</button></>}
+    </div>
+  </section>;
+
   return <section className={`pos-app pos-app--nav-${mobileNavigation} logs-page-container trades-page-container pay42-page-container stack-layout fadeIn`} lang={language}>
     <PageHeader className="trades-page-header pos-page-header" title="42Trade POS" actions={
       <div className="pos-header-actions">
@@ -862,6 +897,9 @@ export default function App() {
         {attention.length > 0 && <span className="pos-error status-dot status-danger">{attention.length} {tr("needs attention")}</span>}
       </div>
     } />
+    {workspace.saveFailed && <div className="pos-alert pos-warning" role="alert">
+      {tr("Could not save this POS draft on this device. Keep POS open until you finish, and free device storage.")}
+    </div>}
     <AdminPageToolbar className="trades-toolbar-panel pos-tabs-toolbar" actions={
       <ResponsiveSectionNav value={tab} onChange={setTab}
         items={(["sale", "inventory", "reports", "register"] as Tab[]).map((item) => ({
