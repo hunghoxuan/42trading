@@ -29,10 +29,6 @@ function RecognitionEditor({ product, observation, image, language, options, def
     try { await onSave(form, product); setSaved(form); }
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   }}>
-    <div className="pay42-form-grid pos-form">
-      <ProductEditFields form={form} onChange={setForm} options={options} language={language} stock={product?.on_hand || 0} compact />
-    </div>
-    {error && <div className="pos-alert pos-error" role="alert">{tr(error)}</div>}
     <div className="pos-recognition-editor__actions">
       <button type="submit" className="primary-button" disabled={!online || busy || !form.name.trim()}>
         <span aria-hidden="true">{product ? "↻" : "＋"}</span>{tr(product ? "Update" : "Add new")}
@@ -48,6 +44,10 @@ function RecognitionEditor({ product, observation, image, language, options, def
       <button type="button" className="secondary-button" disabled={busy} onClick={onRecapture}>
         <span aria-hidden="true">▣</span>{tr("Photo")}
       </button>
+    </div>
+    {error && <div className="pos-alert pos-error" role="alert">{tr(error)}</div>}
+    <div className="pay42-form-grid pos-form">
+      <ProductEditFields form={form} onChange={setForm} options={options} language={language} stock={product?.on_hand || 0} compact />
     </div>
   </form>;
 }
@@ -65,7 +65,8 @@ export default function RecognitionResult({ language, candidates, products, sele
   const primary = ranked.find(item => item.product_sid === selectedSid);
   const others = ranked.filter(item => item.product_sid !== primary?.product_sid);
   const product = products.find(item => item.sid === selectedSid) || null;
-  const captureName = observation?.product_name || observation?.object_name || tr("Recognition result");
+  const captureName = keywords.join(" · ") || observation?.product_name || observation?.object_name || tr("Recognition result");
+  const searching = busy && !observation && !ranked.length;
   const money = (value: number) => new Intl.NumberFormat(language === "vi" ? "vi-VN" : "en-US", {
     style: "currency", currency: "VND", maximumFractionDigits: 0,
   }).format(value);
@@ -76,7 +77,9 @@ export default function RecognitionResult({ language, candidates, products, sele
         <img src={image} alt={tr("Captured photo")} />
       </button>}
       <div className="pos-recognition-heading"><strong>{product?.name || captureName}</strong>
-        <small className="minor-text">{primary ? tr("Potential inventory matches") : tr(busy ? "Finding the product…" : "New product")}</small>
+        <small className="minor-text" role={searching ? "status" : undefined} aria-busy={searching}>
+          {searching && <span className="spinner pos-inline-spinner" aria-hidden="true" />}
+          {primary ? tr("Potential inventory matches") : tr(searching ? "Finding the product…" : "New product")}</small>
       </div>
       <button type="button" className="secondary-button pos-recognition-result__close" aria-label={tr("Close")} disabled={busy} onClick={onClose}>×</button>
     </header>

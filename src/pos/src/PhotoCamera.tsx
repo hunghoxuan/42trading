@@ -128,7 +128,7 @@ export default function PhotoCamera({ language, purpose = "recognize", onClose, 
         {!preview && <div className={barcode ? "pos-barcode-guide" : "pos-camera-guide"} aria-hidden="true" />}
         {ready && !error && !busy && <span className="pos-camera-countdown" aria-hidden="true">{countdown || 1}</span>}
       </div>
-      <p className="pos-camera-instruction" role="status">{error ? tr(preview ? "Review the captured photo, then try again." : "Try camera again or choose an existing photo.") : tr(busy
+      <p className="pos-camera-instruction" role="status" aria-busy={busy}>{busy && !error && <span className="spinner pos-inline-spinner" aria-hidden="true" />}{error ? tr(preview ? "Review the captured photo, then try again." : "Try camera again or choose an existing photo.") : tr(busy
         ? barcode ? "Reading barcode photo…" : purpose === "cash" ? "Counting visible banknotes…" : purpose === "product" ? "Preparing and saving your product photo…" : "Finding the product…"
         : !ready ? "Allow camera access to see the preview." : !clear ? "Bring the product closer and use better light." : "Hold still. Taking the photo automatically…")}</p>
       {error && <div className="pos-alert pos-warning stack-layout" role="alert">

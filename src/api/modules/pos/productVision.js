@@ -35,10 +35,11 @@ function parseProductObservation(raw) {
 }
 
 const STOP = new Set("the and for with from of new all san pham product chinh hang tiet kiem giam gia".split(" "));
-const GENERIC = new Set("sua tam dau goi xa phong nuoc rua tay kem danh rang body wash shower gel shampoo soap toothpaste ml kg gr red white blue green do trang xanh".split(" "));
+const GENERIC = new Set("sua tam dau goi xa phong nuoc rua tay sat khuan hand sanitizer sanitiser kem danh rang body wash shower gel shampoo soap toothpaste ml kg gr red white blue green do trang xanh".split(" "));
 const COLOR_WORDS = new Set("red white blue green do trang xanh den black yellow vang hong pink orange cam tim purple nau brown xam gray".split(" "));
 function canonical(value) {
-  return normalizeText(value).replace(/\b(hand\s?wash|hand\s?soap)\b/g, "nuoc rua tay").replace(/\b(body\s?wash|shower\s?gel)\b/g, "sua tam").replace(/\bshampoo\b/g, "dau goi")
+  return normalizeText(value).replace(/\bhand\s?saniti[sz]er\b|\b(?:nuoc|gel|dung dich)\s+(?:rua tay kho|sat khuan(?: tay)?)\b/g, "sat khuan tay")
+    .replace(/\b(hand\s?wash|hand\s?soap)\b/g, "nuoc rua tay").replace(/\b(body\s?wash|shower\s?gel)\b/g, "sua tam").replace(/\bshampoo\b/g, "dau goi")
     .replace(/\btoothpaste\b/g, "kem danh rang").replace(/\bsoap\b/g, "xa phong");
 }
 function words(value) {
@@ -53,6 +54,7 @@ function sizes(value) {
 }
 
 const PRODUCT_TYPES = [
+  { id: "hand-sanitizer", aliases: ["sat khuan tay"] },
   { id: "hand-wash", aliases: ["nuoc rua tay", "hand wash", "hand soap"] },
   { id: "body-wash", aliases: ["sua tam", "body wash", "shower gel"] },
   { id: "shampoo", aliases: ["dau goi", "shampoo"] },

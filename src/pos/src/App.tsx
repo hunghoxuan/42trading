@@ -11,7 +11,7 @@ import ProductEditFields from "./ProductEditFields";
 import { productToForm, recognitionMetadata } from "./productEdit";
 import type { ProductForm } from "./workspace";
 import { cashReceivedForCheckout } from "./cashChange";
-import { searchProducts } from "./productSearch";
+import { recognitionSearchTerms, searchProducts } from "./productSearch";
 import { t, type Language } from "./i18n";
 import { usePosWorkspace } from "./usePosWorkspace";
 // Reuse the existing 42trade React components; their sources are JavaScript, not TypeScript.
@@ -643,10 +643,10 @@ export default function App() {
       captureProductDraft.current.barcodes = observed.barcode;
       captureProductDraft.current.sku ||= observed.barcode;
     }
-    const keywords = Array.isArray(result.keywords) ? result.keywords : [];
+    const keywords = recognitionSearchTerms(observed);
     setRecognitionKeywords(keywords);
     setRecognitionHints([...keywords, ...prepared.colors.map((item) => tr(item.color))]);
-    if (result.keywords?.length) setQuery(result.keywords.join(" "));
+    setQuery(keywords.join(" "));
     const available = result.candidates.filter((candidate) => visibleProducts.some((item) => item.sid === candidate.product_sid))
       .sort((a, b) => b.score - a.score);
     setCandidates(available);
@@ -844,10 +844,11 @@ export default function App() {
           }, "")}>{tr("Commit import")}</button>
         </div>}</div>);
 
-  const captureErrorAction = tab === "sale" ? <button type="button" className="secondary-button" disabled={busy}
+  const captureErrorAction = tab === "sale" ? <button type="button" className="primary-button" disabled={busy}
     onClick={openProductFromCapture}>{tr("Add product")}</button> : undefined;
 
   const recognitionActive = recognizedIds !== null || candidates.length > 0;
+  const noSearchResults = !recognitionActive && !!query.trim() && catalog.length === 0;
   const recognitionResult = recognitionActive && <RecognitionResult key={recognitionRequest.current}
           language={language} candidates={candidates} products={online ? products : localProducts} selectedSid={selectedRecognitionSid}
           observation={recognitionDetails} image={recognitionImage} backgroundRemoved={recognitionImageBackgroundRemoved}
@@ -944,7 +945,12 @@ export default function App() {
         detailMode={tab === "inventory" && isMobile ? "modal" : "section"}
         detailOpen={tab === "sale" || detailOpen} onDetailOpenChange={setDetailOpen} detailCloseButton={tab === "inventory"} detailCloseButtonLabel={tr("Close detail panel")}
         list={{ title: recognitionActive ? tr("Search result") : `${catalog.length} ${tr("products")}`,
-          children: recognitionResult,
+          children: recognitionResult || (noSearchResults ? <div className="stack-layout">
+            <p className="minor-text">{tr("No matching products.")}</p>
+            <button type="button" className="primary-button" onClick={() => { setTab("inventory"); startNewProduct(); }}>
+              <span aria-hidden="true">＋</span> {tr("Add new")}
+            </button>
+          </div> : undefined),
           subtitle: usingOfflineCatalog && bootstrap ? `${tr("Approved register prices from")} ${new Date(bootstrap.snapshot.issued_at).toLocaleString(language === "vi" ? "vi-VN" : "en-US")}` : "",
           headerActions: recognitionActive ? null : <>
           <PaginationBar page={currentCatalogPage} pages={catalogPages} total={catalog.length} pageSize={catalogPageSize} pageSizeOptions={[10, 25, 50, 100]} onPageChange={setCatalogPage} onPageSizeChange={setCatalogPageSize} />
