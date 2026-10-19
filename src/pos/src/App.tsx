@@ -7,6 +7,9 @@ import PhotoCamera from "./PhotoCamera";
 import CashPayment from "./CashPayment";
 import Scanner from "./Scanner";
 import RecognitionResult from "./RecognitionResult";
+import ProductEditFields from "./ProductEditFields";
+import { productToForm, recognitionMetadata } from "./productEdit";
+import type { ProductForm } from "./workspace";
 import { cashReceivedForCheckout } from "./cashChange";
 import { searchProducts } from "./productSearch";
 import { t, type Language } from "./i18n";
@@ -435,10 +438,7 @@ export default function App() {
   function selectProduct(product: Product) {
     setDetailOpen(true);
     setSelected(product);
-    setForm({ sid: product.sid, name: product.name, sku: product.sku,
-      barcodes: product.barcodes.join(", "), category: product.category, supplier: product.supplier, status: product.status,
-      unit: product.unit, price: String(product.price_minor ?? ""), cost: String(product.cost_minor ?? ""),
-      minStock: String(product.min_stock), vat: String(product.vat_rate_bps / 100), image: product.image });
+    setForm(productToForm(product));
     setAllocation(String(product.offline_available));
   }
 
@@ -450,6 +450,7 @@ export default function App() {
     };
     const result = await posApi.saveProduct({ ...form, ...attributes, cost_minor: form.cost === "" ? null : Number(form.cost),
       min_stock: Number(form.minStock), vat_rate_bps: Math.round(Number(form.vat) * 100),
+      description: selected?.description || "", search_keywords: selected?.search_keywords || [], label_texts: selected?.label_texts || [],
       barcodes: form.barcodes.split(",").map((v) => v.trim()).filter(Boolean) });
     if (form.price) await posApi.setPrice(result.product.sid, Number(form.price));
     await refreshOnline();
@@ -651,7 +652,7 @@ export default function App() {
     setCandidates(available);
     setSelectedRecognitionSid(available[0]?.product_sid || "");
     setRecognizedIds(available.map((item) => item.product_sid));
-    if (!available.length) setMessage(tr("No sufficiently matching product in inventory. Try a clearer label or scan the barcode."), "warning", true);
+    if (!available.length) setMessage(tr("No matching product. Review the new product below."), "warning");
   }
 
   function clearRecognition() {
@@ -661,35 +662,27 @@ export default function App() {
     setRecognitionHints([]); setSelectedRecognitionSid(""); setCandidates([]); setQuery(""); setMessage("");
   }
 
-  async function matchCaptureToProduct() {
-    const product = visibleProducts.find((item) => item.sid === selectedRecognitionSid);
-    if (!product || !recognitionDetails || !recognitionImage) throw new Error("Select a product match and capture an image first");
-    const searchKeywords = [...new Set([...(product.search_keywords || []), recognitionDetails.product_name,
-      recognitionDetails.brand, ...recognitionKeywords, ...recognitionColors].map((value) => value.trim()).filter(Boolean))];
-    const labelTexts = [...new Set([...(product.label_texts || []), ...recognitionDetails.texts].map((value) => value.trim()).filter(Boolean))];
-    await posApi.saveProduct({ sid: product.sid, name: product.name, sku: product.sku, barcodes: product.barcodes,
-      category: product.category, supplier: product.supplier, description: product.description || "", unit: product.unit,
-      status: product.status, image: recognitionImage, cost_minor: product.cost_minor, min_stock: product.min_stock,
-      vat_rate_bps: product.vat_rate_bps, search_keywords: searchKeywords, label_texts: labelTexts });
-    setLastImageChange({ sid: product.sid, before: product.image, after: recognitionImage });
+  async function saveRecognizedProduct(draft: ProductForm, product: Product | null) {
+    const attributes = {
+      category: attributeValue(draft.category, productAttributeOptions.category),
+      supplier: attributeValue(draft.supplier, productAttributeOptions.supplier),
+      unit: attributeValue(draft.unit, productAttributeOptions.unit),
+    };
+    const result = await posApi.saveProduct({ ...draft, sid: product?.sid, ...attributes,
+      cost_minor: draft.cost === "" ? null : Number(draft.cost), min_stock: Number(draft.minStock),
+      vat_rate_bps: Math.round(Number(draft.vat) * 100),
+      barcodes: draft.barcodes.split(",").map(value => value.trim()).filter(Boolean),
+      ...recognitionMetadata(product, recognitionDetails, recognitionKeywords, recognitionColors) });
+    if (draft.price !== "" && Number(draft.price) !== product?.price_minor) {
+      await posApi.setPrice(result.product.sid, Number(draft.price));
+    }
+    if (product && product.image !== draft.image) setLastImageChange({ sid: product.sid, before: product.image, after: draft.image });
     await refreshOnline();
-    setMessage(tr("Capture matched to inventory item"));
-  }
-
-  async function addCaptureAsProduct() {
-    if (!recognitionDetails || !recognitionImage) throw new Error("Capture a product image first");
-    if (!online) throw new Error("Connect to the internet to add a product");
-    const name = recognitionDetails.product_name || recognitionDetails.object_name;
-    if (!name) throw new Error("The capture does not have a readable product name");
-    const product = await posApi.saveProduct({ name, sku: "POSIMG" + Date.now(),
-      barcodes: recognitionDetails.barcode ? [recognitionDetails.barcode] : [], supplier: recognitionDetails.brand,
-      unit: "cái", status: "ACTIVE", image: recognitionImage, cost_minor: null, min_stock: 0, vat_rate_bps: 0,
-      description: recognitionDetails.texts.join(" · "), search_keywords: [...new Set([name, recognitionDetails.brand,
-        ...recognitionKeywords, ...recognitionColors].filter(Boolean))], label_texts: recognitionDetails.texts });
-    await refreshOnline();
-    setTab("inventory");
-    selectProduct(product.product);
-    setMessage(tr("Product created from capture. Add a price and stock to sell it."));
+    setSelectedRecognitionSid(result.product.sid);
+    setCandidates(current => current.some(item => item.product_sid === result.product.sid) ? current.map(item => item.product_sid === result.product.sid
+      ? { ...item, name: draft.name, retail_price_minor: draft.price === "" ? null : Number(draft.price) } : item)
+      : [{ product_sid: result.product.sid, name: draft.name, retail_price_minor: draft.price === "" ? null : Number(draft.price), score: 1, explanation: "Saved product" }, ...current]);
+    setMessage(tr(product ? "Product updated" : "Product added"));
   }
 
   function startNewProduct(draft: CaptureProductDraft = {}) {
@@ -751,35 +744,9 @@ export default function App() {
     },
   };
 
-  const attributeField = (field: "category" | "supplier" | "unit", label: string) => (
-    <label className="pay42-form-field"><span className="ui-field-label">{tr(label)}</span>
-      <InputComboSelect aria-label={tr(label)} value={form[field]} searchable allowCreate
-        menuClassName="pos-product-attribute-menu"
-        placeholder={tr("Select or enter a new value")} searchPlaceholder={tr("Search or enter a new value")}
-        createLabel={tr("Add")} onChange={(event) => setForm((current) => ({ ...current, [field]: event.target.value }))}>
-        {field !== "unit" && <option value="">{tr("None")}</option>}
-        {form[field] && !productAttributeOptions[field].includes(form[field])
-          && <option value={form[field]}>{form[field]}</option>}
-        {productAttributeOptions[field].map((value) => <option key={value} value={value}>{value}</option>)}
-      </InputComboSelect>
-    </label>
-  );
-
   const inventoryDetail = (<div className="pay42-form-grid pos-form">
-          <label className="pay42-form-field pay42-form-field--full"><span className="ui-field-label">{tr("Name")}</span><input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
-          <label className="pay42-form-field"><span className="ui-field-label">{tr("Product number")}</span><input value={form.sku} onChange={(event) => setForm({ ...form, sku: event.target.value })} /></label>
-          <label className="pay42-form-field"><span className="ui-field-label">{tr("Barcodes, comma separated")}</span><input value={form.barcodes} onChange={(event) => setForm({ ...form, barcodes: event.target.value })} /></label>
-          <label className="pay42-form-field"><span className="ui-field-label">{tr("Status")}</span><InputComboSelect value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}>
-            <option value="ACTIVE">{tr("Active")}</option><option value="ARCHIVED">{tr("Inactive")}</option>
-          </InputComboSelect></label>
-          {attributeField("unit", "Unit")}
-          <label className="pay42-form-field"><span className="ui-field-label">{tr("Import price (VND)")}</span><input className={Number(form.cost) === 0 ? "pos-zero-value" : undefined} type="number" min="0" step="1" value={form.cost} onChange={(event) => setForm({ ...form, cost: event.target.value })} /></label>
-          <label className="pay42-form-field"><span className="ui-field-label">{tr("Retail price (VND)")}</span><input className={Number(form.price) === 0 ? "pos-zero-value" : undefined} type="number" min="0" step="1" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} /></label>
-          <label className="pay42-form-field"><span className="ui-field-label">{tr("Minimum stock")}</span><input type="number" min="0" step="0.01" value={form.minStock} onChange={(event) => setForm({ ...form, minStock: event.target.value })} /></label>
-          <label className="pay42-form-field"><span className="ui-field-label">{tr("Current Qty in Stock")}</span><input className={(selected ? (products.find((product) => product.sid === selected.sid)?.on_hand ?? selected.on_hand) : 0) === 0 ? "pos-zero-value" : undefined} type="number" value={selected ? (products.find((product) => product.sid === selected.sid)?.on_hand ?? selected.on_hand) : 0} readOnly aria-readonly="true" /></label>
-          {attributeField("category", "Category")}
-          {attributeField("supplier", "Provider")}
-          <div className="pay42-form-field--full pos-product-image-field">
+    <ProductEditFields form={form} onChange={setForm} options={productAttributeOptions} language={language}
+      stock={selected ? (products.find(product => product.sid === selected.sid)?.on_hand ?? selected.on_hand) : 0} imageContent={<div className="pay42-form-field--full pos-product-image-field">
             <span className="ui-field-label">{tr("Image")}</span>
             <div className="pos-product-image-picker">
               <ProductImage src={form.image} label={tr("No Image")} preview previewLabel={`${tr("View product image")}: ${form.name}`} onPreview={() => setImagePreview({ src: form.image, title: form.name })} />
@@ -791,8 +758,7 @@ export default function App() {
               </div>
             </div>
             <label className="pay42-form-field"><span className="ui-field-label">{tr("Image URL")}</span><input value={form.image} onChange={(event) => setForm({ ...form, image: event.target.value })} /></label>
-          </div>
-          <label className="pay42-form-field"><span className="ui-field-label">{tr("VAT added on top (%)")}</span><input type="number" min="0" max="100" step="0.01" value={form.vat} onChange={(event) => setForm({ ...form, vat: event.target.value })} /></label>
+          </div>} />
           <p className="minor-text pay42-form-field--full">{tr("New values are added to the lists when you save the product.")}</p>
           <button className="primary-button" disabled={!online || busy} onClick={() => run(saveProduct, "Product saved")}>{tr("Save product")}</button>
           {selected && <><hr/><h2>{tr("Stock")}</h2><p>{tr("On hand")} {selected.on_hand} {selected.unit} · {tr("Reserved")} {selected.allocated}</p>
@@ -883,17 +849,20 @@ export default function App() {
 
   const recognitionActive = recognizedIds !== null || candidates.length > 0;
   const recognitionResult = recognitionActive && <RecognitionResult key={recognitionRequest.current}
-          language={language} candidates={candidates} products={visibleProducts} selectedSid={selectedRecognitionSid}
+          language={language} candidates={candidates} products={online ? products : localProducts} selectedSid={selectedRecognitionSid}
           observation={recognitionDetails} image={recognitionImage} backgroundRemoved={recognitionImageBackgroundRemoved}
           keywords={recognitionKeywords.length ? recognitionKeywords : recognitionHints} colors={recognitionColors} online={online} busy={busy}
-          onSelect={setSelectedRecognitionSid} onClose={clearRecognition}
+          options={productAttributeOptions} defaults={{ category: inventoryCategoryFilter, supplier: inventorySupplierFilter }}
+          onSelect={setSelectedRecognitionSid} onClose={clearRecognition} onRecapture={() => openScanner("recognize")}
           onPreview={() => setImagePreview({ src: recognitionImage, title: recognitionDetails?.product_name || recognitionDetails?.object_name || tr("Product image preview") })}
           onAddToCart={() => {
             const product = visibleProducts.find((item) => item.sid === selectedRecognitionSid);
             if (product) selectSaleProduct(product);
           }}
-          onMatch={() => run(matchCaptureToProduct, "Capture matched to inventory item")}
-          onCreate={() => run(addCaptureAsProduct, "Product created from capture. Add a price and stock to sell it.")} />;
+          onSave={async (draft, product) => {
+            setBusy(true); setError("");
+            try { await saveRecognizedProduct(draft, product); } finally { setBusy(false); }
+          }} />;
 
   if (!actor) return <section className="pos-app stack-layout" lang={language}>
     <PageHeader title="42Trade POS" />

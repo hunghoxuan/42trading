@@ -124,6 +124,15 @@
 .pos-recognition-alternatives { display: grid; gap: 6px; }
 .pos-recognition-alternatives button { justify-content: space-between; width: 100%; white-space: normal; text-align: left; }
 .pos-recognition-capture__details { font-size: 12px; }
+.pos-recognition-editor { display: grid; min-width: 0; gap: 8px; }
+.pos-recognition-editor__actions { display: flex; flex-wrap: nowrap; gap: 4px; width: 100%; min-width: 0; }
+.pos-recognition-editor__actions button {
+  flex: 1 1 0; min-width: 0 !important; padding: 5px 6px; gap: 3px;
+  white-space: nowrap; font-size: 12px; line-height: 1.2;
+}
+.pos-recognition-editor__actions button span { font-size: 14px; }
+.pos-recognition-editor .pos-form { gap: 8px; }
+.pos-recognition-editor .ui-field-label { font-size: 10px; }
 
 @media (max-width: 767px) {
   .pos-recognition-primary { grid-template-columns: minmax(0, 1fr) 128px; gap: 8px; }
