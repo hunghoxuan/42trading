@@ -196,6 +196,7 @@ export default function App() {
   const [recognitionKeywords, setRecognitionKeywords] = useState<string[]>([]);
   const [selectedRecognitionSid, setSelectedRecognitionSid] = useState("");
   const [recognizedIds, setRecognizedIds] = useState<string[] | null>(null);
+  const [searchResultsOpen, setSearchResultsOpen] = useState(true);
   const recognitionRequest = useRef(0);
   const captureProductDraft = useRef<CaptureProductDraft>({});
   const [message, setMessageText] = useState("");
@@ -563,6 +564,21 @@ export default function App() {
     setMessage(""); setScannerMode(mode); setScanner(true);
   }
 
+  function changeSearchQuery(value: string) {
+    setQuery(value); setMessage(""); setSearchResultsOpen(true);
+    if (recognizedIds !== null || candidates.length > 0) {
+      // Manual correction changes the lookup, not the photo/label evidence.
+      const matches = value.trim() ? searchProducts(visibleProducts, value) : [];
+      setRecognizedIds(matches.map(product => product.sid));
+      setCandidates(matches.map((product, index) => ({ product_sid: product.sid, name: product.name,
+        retail_price_minor: product.price_minor, score: 1 - index / (matches.length + 1), explanation: "Manual keyword search" })));
+      setSelectedRecognitionSid(matches[0]?.sid || "");
+      return;
+    }
+    recognitionRequest.current++;
+    captureProductDraft.current = {};
+  }
+
   function openProductCamera() {
     setPhotoCamera("product");
     void import("./productPhoto").then(({ warmProductPhoto }) => warmProductPhoto()).catch(() => {});
@@ -597,7 +613,7 @@ export default function App() {
     const request = ++recognitionRequest.current;
     // Recognition keywords are names, not product numbers. Only use a decoded barcode as a code.
     captureProductDraft.current = { sku: "", barcodes: "" };
-    setCandidates([]); setRecognitionHints([]); setMessage(""); setError(""); setRecognitionDetails(null); setRecognizedIds([]);
+    setCandidates([]); setRecognitionHints([]); setMessage(""); setError(""); setRecognitionDetails(null); setRecognizedIds([]); setSearchResultsOpen(true);
     setRecognitionImage(""); setRecognitionImageBackgroundRemoved(false); setRecognitionColors([]);
     setRecognitionKeywords([]); setSelectedRecognitionSid("");
     if (!/^image\/(png|jpeg|webp)$/.test(file.type) || file.size > 4 * 1024 * 1024) {
@@ -915,11 +931,8 @@ export default function App() {
       <CrudContainer className="pay42-crud-layout"
         toolbar={{ displayMode: "top", filters: <div className="trades-toolbar-row"><div className="trades-toolbar-filters">
           <input aria-label={tr("Search products or scan a product number")} placeholder={tr("Search products or scan a product number")} value={query}
-            onChange={(event) => { recognitionRequest.current++; setRecognizedIds(null); setRecognitionDetails(null); setRecognitionImage("");
-              setMessage(""); captureProductDraft.current = {};
-              setRecognitionImageBackgroundRemoved(false); setRecognitionColors([]); setRecognitionKeywords([]); setSelectedRecognitionSid("");
-              setCandidates([]); setRecognitionHints([]); setQuery(event.target.value); }} onKeyDown={(event) => {
-              if (event.key === "Enter" && query.trim()) { event.preventDefault(); scanned(query.trim()); }
+            disabled={busy} onChange={(event) => changeSearchQuery(event.target.value)} onKeyDown={(event) => {
+              if (event.key === "Enter" && query.trim()) { event.preventDefault(); if (!recognitionActive) scanned(query.trim()); }
             }} />
           {tab === "inventory" && <>
             <InputComboSelect aria-label={tr("Filter by status")} value={inventoryStatusFilter} onChange={(event) => setInventoryStatusFilter(event.target.value)}>
@@ -944,7 +957,8 @@ export default function App() {
         </> }}
         detailMode={tab === "inventory" && isMobile ? "modal" : "section"}
         detailOpen={tab === "sale" || detailOpen} onDetailOpenChange={setDetailOpen} detailCloseButton={tab === "inventory"} detailCloseButtonLabel={tr("Close detail panel")}
-        list={{ title: recognitionActive ? tr("Search result") : `${catalog.length} ${tr("products")}`,
+        list={{ title: recognitionActive || query.trim() ? tr("Search result") : `${catalog.length} ${tr("products")}`,
+          panelProps: { showToggle: true, open: searchResultsOpen, onOpenChange: setSearchResultsOpen },
           children: recognitionResult || (noSearchResults ? <div className="stack-layout">
             <p className="minor-text">{tr("No matching products.")}</p>
             <button type="button" className="primary-button" onClick={() => { setTab("inventory"); startNewProduct(); }}>
