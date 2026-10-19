@@ -18,7 +18,7 @@ export default function PhotoCamera({ language, purpose = "recognize", onClose, 
   const [torchAvailable, setTorchAvailable] = useState(false), [torch, setTorch] = useState(false);
   const [attempt, setAttempt] = useState(0), [preview, setPreview] = useState("");
   const [ready, setReady] = useState(false), [busy, setBusy] = useState(false);
-  const [countdown, setCountdown] = useState(2), [clear, setClear] = useState(true), [error, setError] = useState("");
+  const [countdown, setCountdown] = useState(1), [clear, setClear] = useState(true), [error, setError] = useState("");
   const captureLock = useRef(false), stopCamera = useRef(() => {}), mounted = useRef(false);
   const callbacks = useRef({ onClose, onCapture }); callbacks.current = { onClose, onCapture };
   const tr = (value: string) => t(language, value);
@@ -57,7 +57,7 @@ export default function PhotoCamera({ language, purpose = "recognize", onClose, 
       if (stream && frame?.srcObject === stream) frame.srcObject = null;
     };
     stopCamera.current = stop; captureLock.current = false;
-    setError(""); setReady(false); setBusy(false); setPreview(""); setCountdown(2); setClear(true); setTorch(false); setTorchAvailable(false);
+    setError(""); setReady(false); setBusy(false); setPreview(""); setCountdown(1); setClear(true); setTorch(false); setTorchAvailable(false);
     const start = async () => {
       try {
         if (!navigator.mediaDevices?.getUserMedia) throw new Error("Camera requires HTTPS or localhost.");
@@ -80,7 +80,9 @@ export default function PhotoCamera({ language, purpose = "recognize", onClose, 
         setReady(true);
         const sample = document.createElement("canvas"); sample.width = sample.height = 48;
         const context = sample.getContext("2d", { willReadFrequently: true });
-        const trigger = new StablePhotoTrigger(performance.now());
+        // Product/code photos capture quickly; cash retains the longer settling period.
+        const trigger = purpose === "cash" ? new StablePhotoTrigger(performance.now(), 1400, 1100)
+          : new StablePhotoTrigger(performance.now());
         const reader = barcode ? new ProductBarcodeReader() : null; let pass = 0;
         const step = async () => {
           if (cancelled || captureLock.current) return;

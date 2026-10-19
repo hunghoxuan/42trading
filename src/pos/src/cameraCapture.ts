@@ -1,7 +1,12 @@
 export class StablePhotoTrigger {
   private previous: Uint8ClampedArray | null = null;
   private steadySince: number | null = null;
-  constructor(private openedAt: number, private holdMs = 1400) {}
+  private openedAt: number;
+  private holdMs: number;
+  private warmupMs: number;
+  constructor(openedAt: number, holdMs = 600, warmupMs = 400) {
+    this.openedAt = openedAt; this.holdMs = holdMs; this.warmupMs = warmupMs;
+  }
 
   reset(now: number) {
     this.previous = null; this.steadySince = null; this.openedAt = now;
@@ -17,7 +22,7 @@ export class StablePhotoTrigger {
     }
     brightness /= count;
     const clear = brightness > 20 && brightness < 240 && Math.sqrt(Math.max(0, contrast / count - brightness * brightness)) > 9;
-    const stable = clear && this.previous !== null && movement / count < 4.5 && now - this.openedAt >= 1100;
+    const stable = clear && this.previous !== null && movement / count < 4.5 && now - this.openedAt >= this.warmupMs;
     this.previous = new Uint8ClampedArray(pixels);
     if (!stable) this.steadySince = null;
     else this.steadySince ??= now;
