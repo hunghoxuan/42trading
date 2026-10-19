@@ -958,10 +958,10 @@ export default function App() {
           </>}
         </div></div>, actions: <>
           <button className="secondary-button" onClick={() => openScanner("barcode")}>{tr("Scan code")}</button>
-          <button type="button" className="secondary-button" onClick={() => openScanner("recognize")}>{tr("Recognize photo")}</button>
+          <button type="button" className="secondary-button" onClick={() => openScanner("recognize")}>{tr("Scan photo")}</button>
           {tab === "inventory" && <>
-            <button className="secondary-button" disabled={!online || busy} onClick={() => run(startStockCount, "Stock count started")}>{tr("Start stock count")}</button>
-            <button className="primary-button" onClick={() => startNewProduct()}>{tr("New product")}</button>
+            <button className="secondary-button" disabled={!online || busy} onClick={() => run(startStockCount, "Stock count started")}>{tr("Stock count")}</button>
+            <button className="primary-button" title={tr("New product")} onClick={() => startNewProduct()}>{tr("+ Product")}</button>
           </>}
           <button className="secondary-button" aria-label={tr("Refresh products")} title={tr("Refresh products")} disabled={!online || busy} onClick={() => run(refreshOnline, "")}>↻</button>
         </> }}

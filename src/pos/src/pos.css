@@ -5,6 +5,25 @@
   padding: 0;
 }
 
+/* Keep the common POS actions compact, including the five inventory buttons. */
+.pos-app .crud-toolbar__actions { gap: 4px; }
+.pos-app .crud-toolbar__actions > button {
+  min-width: 0; padding: 7px 8px; white-space: nowrap; font-size: 12px;
+}
+.pos-app .pay42-inline-actions { gap: 4px; }
+.pos-app .pay42-inline-actions > button { min-width: 0; padding: 7px 8px; white-space: nowrap; font-size: 12px; }
+
+@media (max-width: 767px) {
+  .pos-app .crud-toolbar--top { padding: 10px 8px; }
+  .pos-app .crud-toolbar__actions { flex-wrap: nowrap; width: 100%; }
+  .pos-app .crud-toolbar__actions > button { flex: 1 1 auto; padding: 7px 5px; }
+  .pos-app .crud-toolbar__actions > button:last-child { flex: 0 0 30px; padding-inline: 0; }
+}
+
+@media (max-width: 360px) {
+  .pos-app[lang="en"] .crud-toolbar__actions > button { font-size: 11px !important; padding-inline: 3px; }
+}
+
 .pos-page-header {
   width: 100%;
   min-height: 42px;
