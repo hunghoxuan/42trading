@@ -10,6 +10,18 @@ test('recognition searches the brand alone, excluding label noise and generic pr
   assert.deepEqual(searchProducts([product('LIFE', 'Nước rửa tay Lifebuoy'), product('OTHER', 'Other Hand Sanitizer')], terms.join(' ')).map(item => item.sid), ['LIFE']);
 });
 
+test('a long or misspelled AI brand is reduced to Lifebuoy before searching', () => {
+  const products = [product('OTHER', 'Other Hand Sanitizer'), product('LIFE', 'Nước rửa tay Lifebuoy')];
+  for (const brand of ['Lifebuoy Hand Sanitizer', 'Lifebuoy Hand Santizier', 'Lifebuoy Hand Sanitiser']) {
+    const terms = recognitionSearchTerms({brand, product_name:brand});
+    assert.deepEqual(terms, ['Lifebuoy']);
+    assert.deepEqual(searchProducts(products, brand).map(item => item.sid), ['LIFE']);
+    assert.deepEqual(searchProducts(products, terms.join(' ')).map(item => item.sid), ['LIFE']);
+  }
+  assert.deepEqual(recognitionSearchTerms({brand:'', product_name:'Lifebuoy Hand Santizier'}), ['lifebuoy']);
+  assert.equal(searchProducts(products, 'nuoc rua tay')[0].sid, 'LIFE');
+});
+
 test('without a brand, only a few distinctive name words remain, never generic OCR noise', () => {
   assert.deepEqual(recognitionSearchTerms({brand:'', product_name:'Hand Sanitizer 350ml NEW 99.9% red bottle'}), []);
   assert.deepEqual(recognitionSearchTerms({brand:'unknown', product_name:'Nước rửa tay Lifebuoy bảo vệ chai mới 350ml'}), ['lifebuoy']);

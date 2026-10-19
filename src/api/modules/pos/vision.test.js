@@ -136,8 +136,7 @@ test("AI visible price is separate from the register price and missing prices st
   assert.equal(request.messages[0].content[1].type, "image");
   assert.equal(result.observed.visible_price.amount, 70000);
   assert.equal(result.candidates[0].retail_price_minor, 55000);
-  assert.ok(result.keywords.includes("350g"));
-  assert.ok(result.keywords.includes("sua"));
+  assert.deepEqual(result.keywords, ["lifebuoy"]);
   assert.notEqual(result.colors, result.observed.colors, "response serializer must not treat a shared array as circular");
   assert.equal(parseProductObservation(JSON.stringify(observedProduct())).visible_price, null);
 });

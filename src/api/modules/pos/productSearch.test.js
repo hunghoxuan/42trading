@@ -1,7 +1,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { matchObservedProduct } = require("./productVision");
+const { matchObservedProduct, recognizeProductWithAI } = require("./productVision");
 
 const observation = (name) => ({product_count:1, identity_clear:true, product_name:name,
   brand:"Lifebuoy", variant:"", size:"", barcode:"", texts:[name], colors:[], visible_price:null});
@@ -18,4 +18,24 @@ test("bilingual matching still requires label evidence and honors an unmatched b
   assert.deepEqual(matchObservedProduct({...observation("Hand Sanitizer"), brand:""}, catalog("Nước sát khuẩn tay")), []);
   assert.deepEqual(matchObservedProduct({...observation("Lifebuoy Hand Sanitizer"), texts:["Other Hand Sanitizer"]}, catalog("Lifebuoy")), []);
   assert.deepEqual(matchObservedProduct({...observation("Lifebuoy Hand Sanitizer"), barcode:"8931234567890", texts:["Lifebuoy Hand Sanitizer", "8931234567890"]}, catalog("Lifebuoy")), []);
+});
+
+test("generic English names and a missing brand field cannot veto readable Lifebuoy", () => {
+  const products = catalog("Nước rửa tay Lifebuoy");
+  for (const brand of ["Lifebuoy", "Lifebuoy Hand Santizier", ""]) {
+    const found = matchObservedProduct({...observation("Lifebuoy Hand Santizier"), brand, texts:["Lifebuoy", "Hand Sanitizer"]}, products);
+    assert.ok(found.some(item => item.product_sid === "LIFE"));
+    assert.ok(found.every(item => item.product_sid !== "OTHER"));
+  }
+  assert.ok(matchObservedProduct({...observation("Lifebuoy antibacterial moisturising hand care"), texts:["Lifebuoy"]}, products).length);
+});
+
+test("recognition returns minimal search keywords even when AI puts product type in brand", async () => {
+  for (const brand of ["Lifebuoy Hand Santizier", "Lifebuoy"]) {
+    const observed = {...observation("Lifebuoy Hand Santizier"), brand, object_name:"bottle", texts:["Lifebuoy", "Hand Sanitizer"]};
+    const result = await recognizeProductWithAI("data:image/png;base64,"+Buffer.from("fixture").toString("base64"),
+      catalog("Nước rửa tay Lifebuoy"), {user_id:"fixture"}, async()=>({rawText:JSON.stringify(observed)}));
+    assert.deepEqual(result.keywords, ["lifebuoy"]);
+    assert.ok(result.candidates.some(item => item.product_sid === "LIFE"));
+  }
 });

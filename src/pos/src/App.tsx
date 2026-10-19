@@ -11,7 +11,7 @@ import ProductEditFields from "./ProductEditFields";
 import { productToForm, recognitionMetadata } from "./productEdit";
 import type { ProductForm } from "./workspace";
 import { cashReceivedForCheckout } from "./cashChange";
-import { recognitionSearchTerms, searchProducts } from "./productSearch";
+import { normalizeSearch, recognitionSearchTerms, searchProducts } from "./productSearch";
 import { t, type Language } from "./i18n";
 import { usePosWorkspace } from "./usePosWorkspace";
 // Reuse the existing 42trade React components; their sources are JavaScript, not TypeScript.
@@ -665,6 +665,16 @@ export default function App() {
     setQuery(keywords.join(" "));
     const available = result.candidates.filter((candidate) => visibleProducts.some((item) => item.sid === candidate.product_sid))
       .sort((a, b) => b.score - a.score);
+    // Candidate verification can be empty (for example, a newly read barcode).
+    // Still offer keyword matches for review instead of locking the UI to no IDs.
+    const readableLabel = normalizeSearch(observed.texts.join(" "));
+    const readableIdentity = keywords.some(keyword => readableLabel.includes(normalizeSearch(keyword)));
+    if (!available.length && readableIdentity && observed.identity_clear && observed.product_count === 1) {
+      const keywordMatches = searchProducts(visibleProducts, keywords.join(" "));
+      available.push(...keywordMatches.map((product, index) => ({ product_sid: product.sid, name: product.name,
+        image: product.image, retail_price_minor: product.price_minor, vat_rate_bps: product.vat_rate_bps,
+        score: 0.45 / (index + 1), confidence: "possible", explanation: "Keyword match; confirm product details" })));
+    }
     setCandidates(available);
     setSelectedRecognitionSid(available[0]?.product_sid || "");
     setRecognizedIds(available.map((item) => item.product_sid));

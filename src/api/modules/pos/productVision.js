@@ -38,7 +38,7 @@ const STOP = new Set("the and for with from of new all san pham product chinh ha
 const GENERIC = new Set("sua tam dau goi xa phong nuoc rua tay sat khuan hand sanitizer sanitiser kem danh rang body wash shower gel shampoo soap toothpaste ml kg gr red white blue green do trang xanh".split(" "));
 const COLOR_WORDS = new Set("red white blue green do trang xanh den black yellow vang hong pink orange cam tim purple nau brown xam gray".split(" "));
 function canonical(value) {
-  return normalizeText(value).replace(/\bhand\s?saniti[sz]er\b|\b(?:nuoc|gel|dung dich)\s+(?:rua tay kho|sat khuan(?: tay)?)\b/g, "sat khuan tay")
+  return normalizeText(value).replace(/\bhand\s*(?:saniti[sz]er|santizi?er|sanitzer)\b|\b(?:nuoc|gel|dung dich)\s+(?:rua tay kho|sat khuan(?: tay)?)\b/g, "sat khuan tay")
     .replace(/\b(hand\s?wash|hand\s?soap)\b/g, "nuoc rua tay").replace(/\b(body\s?wash|shower\s?gel)\b/g, "sua tam").replace(/\bshampoo\b/g, "dau goi")
     .replace(/\btoothpaste\b/g, "kem danh rang").replace(/\bsoap\b/g, "xa phong");
 }
@@ -74,15 +74,16 @@ function matchObservedProduct(observed, products) {
   if (!observed.identity_clear || observed.product_count !== 1 || !observed.product_name) return [];
   const labelWords = words(observed.texts.join(" "));
   const label = new Set(labelWords);
-  const brand = words(observed.brand);
+  const brand = words(observed.brand).filter(word => !GENERIC.has(word) && !COLOR_WORDS.has(word));
   const query = words(observed.product_name);
   const observedType = productType(`${observed.product_name} ${observed.texts.join(" ")}`);
   // Identity must be grounded in transcribed label text. Color/object guesses
   // and weak one-word matches cannot create an inventory suggestion.
   if (brand.some((word) => !label.has(word))) return [];
   const anchors = query.filter((word) => !GENERIC.has(word) && !brand.includes(word) && word.length >= 4 && !/^\d/.test(word));
-  if (!brand.length && (anchors.length < 2 || anchors.some((word) => !label.has(word)))) return [];
-  if (query.filter((word) => label.has(word)).length / Math.max(1, query.length) < 0.7) return [];
+  if (!brand.length && (!anchors.length || anchors.some((word) => !label.has(word)))) return [];
+  // Readable brand identity is enough for suggestions. Generic English text,
+  // OCR typos and translated product types must not veto that brand match.
   const catalog = products.filter((product) => product.status !== "ARCHIVED");
   const code = observed.barcode.replace(/\s/g, "");
   const codeIsRead = code.length >= 6 && observed.texts.some((text) => text.replace(/\s/g, "").includes(code));
@@ -97,10 +98,10 @@ function matchObservedProduct(observed, products) {
     const brandMatch = brand.some((word) => searchable.has(word));
     const matched = query.filter((word) => searchable.has(word));
     const coverage = matched.length / Math.max(1, query.length);
-    const meaningfulMatches = matched.filter((word) => !GENERIC.has(word) && !COLOR_WORDS.has(word));
+    const meaningfulMatches = matched.filter((word) => !GENERIC.has(word) && !COLOR_WORDS.has(word) && label.has(word));
     // OR matching: a grounded brand hit is enough to show same-brand options;
-    // without a brand, require at least two meaningful product-name keywords.
-    if (!codeIsRead && !brandMatch && meaningfulMatches.length < 2) return [];
+    // Without a separate brand field, allow a distinctive readable name anchor.
+    if (!codeIsRead && !brandMatch && !meaningfulMatches.some(word => word.length >= 4)) return [];
     const productSizes = sizes(`${product.name} ${product.description || ""}`);
     const sizeMatch = observedSizes.length && productSizes.length && observedSizes.some((value) => productSizes.includes(value));
     const sizeConflict = observedSizes.length && productSizes.length && !sizeMatch;
@@ -132,11 +133,11 @@ async function recognizeProductWithAI(image, products, actor, generate) {
       { type: "image", source: { type: "base64", media_type: header.slice(5, -7), data } }] }],
     maxTokens: 2000, timeoutMs: 45000 });
   const observed = parseProductObservation(result?.rawText ?? result);
-  const terms = words(`${observed.brand} ${observed.product_name} ${observed.variant} ${observed.texts.join(" ")}`)
-    .filter((word) => !STOP.has(word) && !COLOR_WORDS.has(word) && !/^\d/.test(word));
-  const sizeTerms = String(observed.size).toLowerCase().match(/\d+(?:[.,]\d+)?\s*(?:kg|ml|g|l)\b/g) || [];
+  const identityWords = value => words(value).filter(word => !GENERIC.has(word) && !COLOR_WORDS.has(word) && !/^\d/.test(word));
+  const brandTerms = identityWords(observed.brand);
+  const terms = brandTerms.length ? brandTerms : identityWords(observed.product_name).slice(0, 3);
   return { observed, candidates: matchObservedProduct(observed, products),
-    keywords: [...new Set([...terms, ...sizeTerms.map((size) => size.replace(/\s+/g, ""))])].slice(0, 12), colors: [...observed.colors],
+    keywords: [...terms], colors: [...observed.colors],
     recognized_text: observed.texts.join("\n"), source: "ai" };
 }
 
