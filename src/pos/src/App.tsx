@@ -934,7 +934,7 @@ export default function App() {
           </>}
         </div></div>, actions: <>
           <button className="secondary-button" onClick={() => openScanner("barcode")}>{tr("Scan code")}</button>
-          {tab === "sale" && <button type="button" className="secondary-button" onClick={() => openScanner("recognize")}>{tr("Recognize photo")}</button>}
+          <button type="button" className="secondary-button" onClick={() => openScanner("recognize")}>{tr("Recognize photo")}</button>
           {tab === "inventory" && <>
             <button className="secondary-button" disabled={!online || busy} onClick={() => run(startStockCount, "Stock count started")}>{tr("Start stock count")}</button>
             <button className="primary-button" onClick={() => startNewProduct()}>{tr("New product")}</button>
