@@ -1,0 +1,39 @@
+.spa-module { display: flex; flex-direction: column; gap: 12px; min-width: 0; width: 100%; padding: 12px; box-sizing: border-box; }
+.spa-module h1 { font-size: 19px; margin: 0; }
+.spa-module h2 { font-size: 15px; margin: 0 0 8px; }
+.spa-module p { margin: 4px 0 8px; }
+.spa-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.spa-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.spa-tabs .active { color: var(--accent, #60a5fa); border-color: currentColor; }
+.spa-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
+.spa-stats > div { display: flex; flex-direction: column; gap: 6px; }
+.spa-stats strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+.spa-quick-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.spa-toolbar { display: flex; align-items: end; flex-wrap: wrap; gap: 8px; }
+.spa-toolbar label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.spa-module input:not([type=checkbox]), .spa-module select, .spa-module textarea { width: 100%; min-height: 34px; box-sizing: border-box; }
+.spa-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.spa-form .form-item { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.spa-form input[type=checkbox] { align-self: flex-start; }
+.spa-field-wide { grid-column: 1 / -1; }
+.spa-form-actions { display: flex; gap: 8px; }
+.spa-table-scroll { overflow-x: auto; max-width: 100%; }
+.spa-module table { width: 100%; }
+.spa-module th { white-space: nowrap; text-align: left; }
+.spa-module td { max-width: 300px; overflow-wrap: anywhere; }
+.spa-number { text-align: right !important; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.spa-sid { font-family: monospace; white-space: nowrap; }
+.spa-pager { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding-top: 8px; }
+.spa-pager span { margin-right: auto; }
+.spa-empty { text-align: center; padding: 24px !important; }
+@media (max-width: 900px) { .spa-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) {
+  .spa-module { padding: 8px; }
+  .spa-form { grid-template-columns: 1fr; }
+  .spa-toolbar { align-items: stretch; }
+  .spa-toolbar > label, .spa-toolbar > button { width: 100%; }
+  .spa-tabs { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 6px; }
+  .spa-tabs button { white-space: nowrap; flex-shrink: 0; }
+  .spa-form-actions button { flex: 1; }
+  .spa-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

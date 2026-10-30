@@ -1061,6 +1061,11 @@ async function downloadCsv(path, params = {}) {
 }
 
 export const api = {
+  spaBootstrap: () => get("/api/spa/bootstrap"),
+  spaSave: (entity, body, id = null) => id
+    ? put(`/api/spa/${encodeURIComponent(entity)}/${encodeURIComponent(id)}`, body)
+    : post(`/api/spa/${encodeURIComponent(entity)}`, body),
+  spaReport: (from, to) => get(`/api/spa/reports?${new URLSearchParams({ from, to })}`),
   ytDlpStatus: () => get("/api/media/yt-dlp/status"),
   ytDlpJobs: (limit = 100) =>
     get(`/api/media/yt-dlp/jobs?limit=${encodeURIComponent(limit)}`),

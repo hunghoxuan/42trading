@@ -43,6 +43,7 @@ import StudioPage from "../modules/studio/pages/StudioPage";
 import YtDlpPage from "../modules/media/yt-dlp/YtDlpPage";
 
 const PosPage = lazy(() => import("../modules/pos/pages/PosPage"));
+const SpaPage = lazy(() => import("../modules/spa/SpaPage"));
 
 function LegacyMiniAppRedirect() {
   const { appId } = useParams();
@@ -162,6 +163,7 @@ function resolveHomePath(user) {
   if (canAccessPage(user, "pages.dashboard")) return "/trades/dashboard";
   if (canAccessPage(user, "pages.42pay.dashboard")) return "/admin/42pay/dashboard";
   if (canAccessPage(user, "pages.pos")) return "/admin/pos";
+  if (canAccessPage(user, "pages.spa")) return "/admin/spa";
   if (canAccessPage(user, "pages.ai.analyze")) return "/trades/analyze";
   if (canAccessPage(user, "pages.trades")) return "/trades/filled";
   if (canAccessPage(user, "pages.backtests")) return "/trades/backtests";
@@ -413,6 +415,7 @@ export default function App() {
   const primaryNavGroupCount = [
     pay42MenuItems.length > 0,
     canAccessPage(navigationUser, "pages.pos"),
+    canAccessPage(navigationUser, "pages.spa"),
     !navShows42PayOnly && canAccessPage(navigationUser, "pages.trades"),
     !navShows42PayOnly && canAccessPage(navigationUser, "pages.studio"),
     !navShows42PayOnly && mediaMenuItems.length > 0,
@@ -975,6 +978,9 @@ export default function App() {
               POS
             </NavLink>
           )}
+          {canAccessPage(navigationUser, "pages.spa") && (
+            <NavLink to="/admin/spa" className={({ isActive }) => `secondary-button nav-dropdown-trigger topbar-single-nav-link ${isActive ? "active" : ""}`} onClick={closeMobileNav}>Spa</NavLink>
+          )}
           {!navShows42PayOnly && canAccessPage(navigationUser, "pages.trades") && (
             <NavDropdown
               align="start"
@@ -1166,6 +1172,9 @@ export default function App() {
               POS
             </NavLink>
           )}
+          {canAccessPage(navigationUser, "pages.spa") && (
+            <NavLink to="/admin/spa" className={({ isActive }) => `mobile-nav-link ${isActive ? "active" : ""}`} onClick={closeMobileNav}>Spa</NavLink>
+          )}
           {!navShows42PayOnly && canAccessPage(navigationUser, "pages.trades") && (
             <NavDropdown
               align="start"
@@ -1355,6 +1364,7 @@ export default function App() {
                 element={<AuthProbePage authUser={authUser} />}
               />
               <Route path="/" element={<Navigate to={homePath} replace />} />
+              <Route path="/admin/spa" element={guardPageElement("pages.spa", <SpaPage authUser={authUser} />)} />
               <Route
                 path="/admin/pos"
                 element={guardPageElement("pages.pos", <PosPage />)}

@@ -34,6 +34,8 @@ const usersDomain = require("../modules/system/users");
 const { create42PayService } = require("../modules/42pay/service");
 const { createPosService } = require("../modules/pos/service");
 const { handlePosRequest } = require("../modules/pos/httpHandlers");
+const { createSpaService } = require("../modules/spa/service");
+const { handleSpaRequest } = require("../modules/spa/httpHandlers");
 const { createTradesService } = require("../modules/trades/service");
 const { createYtDlpService } = require("../modules/media/ytDlp/service");
 const { createYtDlpHttpHandler } = require("../modules/media/ytDlp/httpHandlers");
@@ -8078,6 +8080,21 @@ function uiDefaultAuthState(emailOverride = "") {
 let UI_USER_REPO = null;
 let PAY42_SERVICE = null;
 let POS_SERVICE = null;
+let SPA_SERVICE = null;
+
+async function spaService() {
+  if (!SPA_SERVICE) SPA_SERVICE = (async () => {
+    const provider = String(CFG.mt5StorageBackend || "sqlite").trim().toLowerCase();
+    const backend = provider === "postgres" ? await mt5InitBackend() : null;
+    return createSpaService({
+      provider,
+      pool: backend?.pool,
+      postgresUrl: CFG.mt5PostgresUrl,
+      sqlitePath: process.env.SPA_SQLITE_PATH || path.resolve(__dirname, "../../../data/modules/spa/data.db"),
+    });
+  })().catch(error => { SPA_SERVICE = null; throw error; });
+  return SPA_SERVICE;
+}
 let TRADES_SERVICE = null;
 let UNIVERSAL_STORE_SERVICE = null;
 let PAY42_SEED_PROMISE = null;
@@ -27327,6 +27344,8 @@ const appHandler = async (req, res) => {
       apiPath.startsWith("/42pay/") ||
       apiPath === "/pos" ||
       apiPath.startsWith("/pos/") ||
+      apiPath === "/spa" ||
+      apiPath.startsWith("/spa/") ||
       apiPath === "/sse" ||
       apiPath.startsWith("/sse/")
     ) {
@@ -27374,6 +27393,11 @@ const appHandler = async (req, res) => {
   }
 
   if (await handleYtDlpRequest(req, res, url)) return;
+
+  if (await handleSpaRequest({
+    req, res, url, getService: spaService, json,
+    requirePermission: requireUiPermission, getActor: getUiSessionFromReq,
+  })) return;
 
   if (await handlePosRequest({
     req, res, url, service: posService(), readJson, json,

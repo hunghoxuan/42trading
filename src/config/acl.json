@@ -89,6 +89,18 @@
     "pos_auditor": {
       "inherits": [],
       "permissions": ["pages.pos", "apis.auth.me", "apis.pos.read"]
+    },
+    "spa_manager": {
+      "inherits": [],
+      "permissions": [
+        "pages.spa",
+        "pages.settings.profile",
+        "apis.auth.me",
+        "apis.auth.profile.read",
+        "apis.auth.profile.write",
+        "apis.spa.read",
+        "apis.spa.write"
+      ]
     }
   },
   "pages": [
@@ -256,6 +268,11 @@
       "label": "Hosted Apps",
       "to": "/system/db",
       "permission": "pages.system.db_manager"
+    },
+    {
+      "label": "Spa",
+      "to": "/admin/spa",
+      "permission": "pages.spa"
     }
   ],
   "apis": [
@@ -403,6 +420,16 @@
       "label": "Calendar Read",
       "to": "/v2/calendar/today",
       "permission": "apis.v2.calendar.read"
+    },
+    {
+      "label": "Spa Read",
+      "to": "/api/spa/bootstrap",
+      "permission": "apis.spa.read"
+    },
+    {
+      "label": "Spa Write",
+      "to": "/api/spa/:entity",
+      "permission": "apis.spa.write"
     }
   ]
 }
