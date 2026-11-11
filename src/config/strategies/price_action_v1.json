@@ -1,0 +1,48 @@
+{
+  "id": "price_action_v1",
+  "key": "price_action_v1",
+  "name": "Price Action V1",
+  "engine_version": "42trade.strategy.v3",
+  "kind": "builtin",
+  "status": "active",
+  "required_data": {
+    "parameters": {
+      "DrawSweepDetections": "LTF",
+      "DrawRejectionDetections": "LTF",
+      "DrawBreakoutDetections": "LTF",
+      "DrawChochDetections": "LTF",
+      "DrawBosDetections": "LTF",
+      "ConfluenceOrderBlock": "LTF",
+      "ConfluenceFairValueGap": "LTF",
+      "ConfluenceKeyLevels": "LTF",
+      "ConfluenceSwing": "LTF",
+      "ConfluenceEqualHighLow": "LTF",
+      "ConfluenceTrendline": "LTF",
+      "ConfluenceSupply": "LTF",
+      "ConfluenceDemand": "LTF",
+      "DrawLiquidityLevels": "LTF",
+      "DrawOrderBlocks": "LTF",
+      "DrawFvgZones": "LTF",
+      "DrawKeyLevels": "LTF",
+      "DrawSupplyDemand": "LTF",
+      "DrawTrendlines": true,
+      "SwingVisuals": "LTF_9",
+      "ZoneLookback": "Bars1000",
+      "RejectionWickDominance": "_1",
+      "DrawPinBarPatterns": "LTF",
+      "DrawEngulfingPatterns": "LTF",
+      "DrawBigCandlePatterns": "LTF",
+      "DrawThreeWhiteSoldiersPatterns": "LTF",
+      "DrawHaramiPatterns": "LTF"
+    }
+  },
+  "params": {},
+  "indicators": [],
+  "rules": [],
+  "metadata": {
+    "implementation": "ctrader_native",
+    "preset_scope": "ctrader"
+  },
+  "risk": {},
+  "auto_exit": null
+}

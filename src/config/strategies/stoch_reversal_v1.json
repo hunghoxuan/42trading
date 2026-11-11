@@ -1,0 +1,22 @@
+{
+  "id": "stoch_reversal_v1",
+  "key": "stoch_reversal_v1",
+  "name": "Stoch Reversal V1",
+  "engine_version": "42trade.strategy.v3",
+  "kind": "builtin",
+  "status": "active",
+  "required_data": {
+    "parameters": {
+      "DrawStochasticMode": "Auto"
+    }
+  },
+  "params": {},
+  "indicators": [],
+  "rules": [],
+  "metadata": {
+    "implementation": "ctrader_native",
+    "preset_scope": "ctrader"
+  },
+  "risk": {},
+  "auto_exit": null
+}

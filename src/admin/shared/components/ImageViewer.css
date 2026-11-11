@@ -1,0 +1,43 @@
+.image-viewer-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.85);
+  cursor: pointer;
+}
+
+.image-viewer-modal__content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.image-viewer-modal__image {
+  display: block;
+  max-width: 100%;
+  max-height: min(80vh, 100%);
+  max-height: min(80dvh, 100%);
+  object-fit: contain;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+@media (max-width: 767px) {
+  .image-viewer-modal {
+    padding: max(8px, env(safe-area-inset-top, 0px)) max(8px, env(safe-area-inset-right, 0px))
+      max(8px, env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-left, 0px));
+  }
+
+  .image-viewer-modal__image {
+    max-height: calc(100vh - 16px);
+    max-height: calc(100dvh - 16px);
+  }
+}

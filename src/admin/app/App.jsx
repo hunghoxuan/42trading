@@ -113,6 +113,7 @@ import {
   canAccessPage,
   hasPermission,
   normalizeUserAccess,
+  resolveDefaultModulePath,
 } from "../shared/utils/permissions";
 import { ConfirmDialogProvider } from "../shared/components/ConfirmDialog";
 
@@ -157,19 +158,6 @@ class RouteLoadBoundary extends Component {
     }
     return this.props.children;
   }
-}
-
-function resolveHomePath(user) {
-  if (canAccessPage(user, "pages.dashboard")) return "/trades/dashboard";
-  if (canAccessPage(user, "pages.42pay.dashboard")) return "/admin/42pay/dashboard";
-  if (canAccessPage(user, "pages.pos")) return "/admin/pos";
-  if (canAccessPage(user, "pages.spa")) return "/admin/spa";
-  if (canAccessPage(user, "pages.ai.analyze")) return "/trades/analyze";
-  if (canAccessPage(user, "pages.trades")) return "/trades/filled";
-  if (canAccessPage(user, "pages.backtests")) return "/trades/backtests";
-  if (canAccessPage(user, "pages.settings.profile")) return "/settings/profile";
-  if (canAccessPage(user, "pages.system.db_manager")) return "/system/db";
-  return "/login";
 }
 
 export default function App() {
@@ -281,7 +269,7 @@ export default function App() {
     );
   }, [authUser]);
 
-  const homePath = resolveHomePath(authUser);
+  const homePath = resolveDefaultModulePath(authUser);
   const runtimeActiveUserId = getRuntimeActiveUserId();
   const isRootAdminSwitcher = useMemo(() => {
     const userName = String(authUser?.name || "").trim().toLowerCase();

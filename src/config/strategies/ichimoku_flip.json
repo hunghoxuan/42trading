@@ -1,0 +1,56 @@
+{
+  "id": "ichimoku_flip",
+  "key": "ichimoku_flip",
+  "name": "Ichimoku Flip",
+  "description": "Normal 9/26/52 Ichimoku detection with opposite trade direction, mirrored Auto SL and opposite Chikou auto-exit; cTrader owns Entry, TP and n.Trades.",
+  "engine_version": "42trade.strategy.v3",
+  "kind": "custom",
+  "status": "active",
+  "auto_exit": {
+    "id": "chikou_historical_price_cross_flip",
+    "description": "Exit a flipped long when Chikou crosses above the historical candle 26 bars back; exit a flipped short when Chikou crosses below it.",
+    "evaluate_on": "closed_bar",
+    "timeframe": "strategy",
+    "long_when": {
+      "fn": "chikou_crosses_above_historical_price",
+      "args": [
+        26
+      ]
+    },
+    "short_when": {
+      "fn": "chikou_crosses_below_historical_price",
+      "args": [
+        26
+      ]
+    }
+  },
+  "market": {
+    "symbol": "",
+    "tf": ""
+  },
+  "settings": {
+    "trade_config": {
+      "sl": "mirrored_ichimoku_cloud_edge_atr_buffer"
+    }
+  },
+  "params": {},
+  "indicators": [],
+  "rules": [],
+  "risk": {},
+  "conditions": {
+    "symbols": [],
+    "timeframes": [],
+    "sessions": [],
+    "regime_tags": []
+  },
+  "metadata": {
+    "author": "42trade",
+    "preset_scope": "ctrader",
+    "entry_engine": "builtin"
+  },
+  "required_data": {
+    "parameters": {
+      "DrawIchimokuOverlay": "Auto"
+    }
+  }
+}

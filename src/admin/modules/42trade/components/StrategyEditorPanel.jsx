@@ -199,8 +199,10 @@ const TRADE_CHAIN_OPTIONS = optionList([
   "No",
   "Now",
   ...buildTradeChainOptions("Now", ["", "L0", "L01", "L02", "L03", "L04", "L05", "L06", "L07", "L08", "S01"]),
-  "Wait_confirm",
+  "Wait",
   ...buildTradeChainOptions("Wait", ["", "L0", "L01", "L02", "L03", "L04", "L05", "L06", "L07", "L08"]),
+  "WaitConfirm",
+  ...buildTradeChainOptions("WaitConfirm", ["", "L0", "L01", "L02", "L03", "L04", "L05", "L06", "L07", "L08"]),
 ]);
 const STRATEGY_PRESET_FIELDS = {
   trade_config: [
@@ -400,6 +402,10 @@ function normalizeEditorStrategy(value) {
             confluences: { ...(nextValue.settings.confluences || {}) },
           }
         : { trade_config: {}, confluences: {} };
+    for (const key of ["first_trade", "second_trade", "third_trade"]) {
+      if (nextValue.settings.trade_config[key] === "Wait_confirm")
+        nextValue.settings.trade_config[key] = "Wait";
+    }
     nextValue.metadata =
       nextValue.metadata && typeof nextValue.metadata === "object" && !Array.isArray(nextValue.metadata)
         ? {

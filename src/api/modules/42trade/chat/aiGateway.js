@@ -227,6 +227,28 @@ function streamOpenAiText(response, { model = "unknown", text = "", id = "" }) {
   response.end();
 }
 
+async function runVisionFallbackChain(request, adapters = [], validate = () => true) {
+  const failures = [];
+  for (const adapter of adapters) {
+    if (typeof adapter?.run !== "function") continue;
+    try {
+      const result = await adapter.run(request);
+      if (!String(result?.rawText || "").trim()) throw new Error("empty response");
+      validate(result);
+      return { ...result, provider: adapter.name };
+    } catch (error) {
+      const reason = String(error?.message || error || "request failed").trim().slice(0, 220);
+      failures.push(`${adapter.name}: ${reason || "request failed"}`);
+    }
+  }
+  const error = new Error(failures.length
+    ? `Product recognition failed through all AI fallbacks. ${failures.join(" | ")}`
+    : "No product-recognition AI fallback is configured.");
+  error.status = 503;
+  error.attempts = failures;
+  throw error;
+}
+
 module.exports = {
   appendUiTextDelta,
   beginUiMessage,
@@ -237,6 +259,7 @@ module.exports = {
   initSseResponse,
   makeId,
   normalizeIncomingChatMessages,
+  runVisionFallbackChain,
   sendUiError,
   streamOpenAiText,
   writeSseEvent,

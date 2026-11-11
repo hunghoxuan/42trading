@@ -1,8 +1,8 @@
 {
   "id": "candle_pattern_trend",
   "key": "candle_pattern_trend",
-  "name": "Candle Pattern Trend",
-  "description": "Shared candle-pattern strategy. The strategy owns SL and auto-exit; cTrader Trade Config owns Entry, TP and n.Trades.",
+  "name": "Candle Pattern (legacy Trend)",
+  "description": "Shared directional candle-pattern strategy; no trend-bias filter is required. The strategy owns SL and auto-exit; cTrader Trade Config owns Entry, TP and n.Trades.",
   "engine_version": "42trade.strategy.v3",
   "kind": "custom",
   "status": "active",
@@ -24,7 +24,7 @@
     },
     "confluences": {
       "days": "All",
-      "time_range": "_60_KZs",
+      "time_range": "_60m_Before_Any_KZ",
       "overnight_block": "No",
       "weekend_block": "No",
       "minimum_count": "_2",
@@ -106,5 +106,34 @@
   "metadata": {
     "author": "42trade",
     "preset_scope": "ctrader_and_42trade"
+  },
+  "required_data": {
+    "parameters": {
+      "DrawSweepDetections": "LTF",
+      "DrawRejectionDetections": "LTF",
+      "DrawBreakoutDetections": "LTF",
+      "DrawChochDetections": "LTF",
+      "DrawBosDetections": "LTF",
+      "ConfluenceOrderBlock": "LTF",
+      "ConfluenceFairValueGap": "LTF",
+      "ConfluenceKeyLevels": "LTF",
+      "ConfluenceSwing": "LTF",
+      "ConfluenceEqualHighLow": "LTF",
+      "ConfluenceTrendline": "LTF",
+      "ConfluenceSupply": "LTF",
+      "ConfluenceDemand": "LTF",
+      "DrawLiquidityLevels": "LTF",
+      "DrawOrderBlocks": "LTF",
+      "DrawFvgZones": "LTF",
+      "DrawKeyLevels": "LTF",
+      "DrawSupplyDemand": "LTF",
+      "DrawTrendlines": true,
+      "SwingVisuals": "LTF_9",
+      "ZoneLookback": "Bars1000",
+      "RejectionWickDominance": "_1",
+      "DrawPinBarPatterns": "LTF",
+      "DrawEngulfingPatterns": "LTF",
+      "DrawBigCandlePatterns": "LTF"
+    }
   }
 }

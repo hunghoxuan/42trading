@@ -20,6 +20,7 @@
       "type": "string",
       "pattern": "^[a-zA-Z0-9._-]{3,64}$"
     },
+    "key": {"type": "string", "pattern": "^[a-zA-Z0-9._-]{3,64}$"},
     "name": {
       "type": "string",
       "minLength": 3,
@@ -35,7 +36,7 @@
     },
     "kind": {
       "type": "string",
-      "enum": ["custom"]
+      "enum": ["custom", "builtin"]
     },
     "status": {
       "type": "string",
@@ -51,12 +52,31 @@
     },
     "settings": {
       "type": "object",
-      "description": "Strategy-owned SL metadata. Entry, TP and n.Trades always come from cTrader Trade Config.",
+      "description": "Explicit strategy settings override the corresponding shared cTrader setting. Omitted settings fall back to shared settings. Account-wide risk caps remain authoritative.",
       "properties": {
+        "parameters": {
+          "type": "object",
+          "description": "Overrides by cTrader parameter property name. Only supported analysis, order and session settings are accepted.",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          }
+        },
         "trade_config": {
           "type": "object",
           "properties": {
-            "sl": { "type": "string" }
+            "sl": { "type": "string" },
+            "entry": {"type": "string"},
+            "tp": {"type": "string"},
+            "sl_buffer": {"type": "string"},
+            "n_trades": {"type": ["string", "integer"]},
+            "exit_mode": {"type": "string"},
+            "first_trade": {"type": "string"},
+            "second_trade": {"type": "string"},
+            "third_trade": {"type": "string"}
           },
           "additionalProperties": false
         },
@@ -78,9 +98,28 @@
             "rsi": { "type": "string" },
             "stochastic": { "type": "string" },
             "macd": { "type": "string" },
-            "ichimoku": { "type": "string" }
+            "ichimoku": { "type": "string" },
+            "ichimoku_strict": { "type": "string" },
+            "opposing_level_clearance": { "type": "string" }
           },
           "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "required_data": {
+      "type": "object",
+      "description": "Inputs required by a predefined strategy, prepared independently of shared display and CustomTrade toggles. Equivalent calculation inputs reuse cached data.",
+      "properties": {
+        "parameters": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          }
         }
       },
       "additionalProperties": false
@@ -138,18 +177,18 @@
           },
           "type": {
             "type": "string",
-            "enum": ["ema", "sma", "rsi", "roc", "macd", "bollinger", "stochastic", "highest_high", "lowest_low"]
+            "enum": ["ema", "sma", "rsi", "roc", "macd", "bollinger", "stochastic", "highest_high", "lowest_low", "atr", "vwap"]
           },
           "source": {
             "type": "string",
             "enum": ["open", "high", "low", "close", "volume"]
           },
-          "length": { "type": "number" },
-          "fast_length": { "type": "number" },
-          "slow_length": { "type": "number" },
-          "signal_length": { "type": "number" },
-          "stddev": { "type": "number" },
-          "smooth_period": { "type": "number" },
+          "length": { "type": ["number", "object"] },
+          "fast_length": { "type": ["number", "object"] },
+          "slow_length": { "type": ["number", "object"] },
+          "signal_length": { "type": ["number", "object"] },
+          "stddev": { "type": ["number", "object"] },
+          "smooth_period": { "type": ["number", "object"] },
           "field": {
             "type": "string",
             "enum": ["macd", "signal", "histogram", "upper", "mid", "lower", "k", "d"]

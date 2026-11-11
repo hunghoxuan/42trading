@@ -6,6 +6,7 @@ import {
   getRuntimeDirectDevApiBase,
 } from "../../../app/api";
 import InputComboSelect from "../../../shared/components/InputComboSelect";
+import { resolveLoginDestination } from "../../../shared/utils/permissions";
 
 function text(value, fallback = "") {
   const next = String(value ?? "").trim();
@@ -143,28 +144,28 @@ export default function LoginPage({ onLogin }) {
     try {
       const out = await api.login(login, password);
       onLogin?.(out?.user || null);
-      // Use client-side navigation to avoid full page reload
-      // (full reload would re-init React and re-check authMe, which can fail
-      //  when cookie isn't yet established on cross-origin dev setups).
-      // React Router will automatically redirect /login → /trades/dashboard via
-      // the authenticated route's <Navigate to="/trades/dashboard" replace />.
-      const returnUrl = effectiveReturnUrl;
+      const selectedPosUser = selectableUsers.some(
+        (user) =>
+          String(user?.user_id || "") === String(selectedUser || "") &&
+          String(user?.name || "").trim().toLowerCase() === "pos",
+      );
+      const destination = resolveLoginDestination(out?.user, {
+        returnUrl: effectiveReturnUrl,
+        selectedPosUser,
+        baseUrl: window.location.origin,
+      });
       try {
         sessionStorage.removeItem("tvbridge_pending_return_url");
       } catch {
         // ignore
       }
-      if (out?.user?.roles?.some((role) => String(role).startsWith("pos_"))) {
-        navigate("/admin/pos", { replace: true });
-        return;
-      }
-      if (returnUrl) {
-        const decoded = decodeURIComponent(returnUrl);
-        if (/^https?:\/\//i.test(decoded)) {
-          window.location.assign(decoded);
-          return;
-        }
-        navigate(decoded, { replace: true });
+      // Preserve the requested page unless it was the standalone POS shell.
+      // A standalone /pos/ launch must not override the logged-in user's
+      // normal module when an admin or multi-module user signs in there.
+      if (/^https?:\/\//i.test(destination)) {
+        window.location.assign(destination);
+      } else {
+        navigate(destination, { replace: true });
       }
     } catch (err) {
       setError(err?.message || "Login failed");

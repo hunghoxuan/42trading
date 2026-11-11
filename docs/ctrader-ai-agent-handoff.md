@@ -78,6 +78,35 @@ Do not describe a change as finished or synced until source copy, checksum, and 
 
 ## 3. Architecture map
 
+### CustomTrade decision ownership (v129)
+
+`TryEvaluateCustomTradeAtBar(DecisionBar, out signal, out qualifiedTriggers)` is the shared completed-bar decision root. Live and backtest use the same scheduler → `TryBuildCustomTradeSignal` adapter → this root. Historical trade-event qualification (`ShouldDisplayResolvedStrategySignalBar`) and chart protection planning (`TryResolveChartSignalProtection`) call this root directly. Wait-confirm looks up its originating trigger through the same root rather than implementing another trigger-option bundle.
+
+CustomTrade combines **OR within active attribute groups, AND between groups**:
+
+- Event Reactions: sweep OR rejection OR cross OR breakout OR early rejection OR CHOCH OR BOS.
+- Event Artifacts: any selected location/indicator alternative, with its selected timeframe scope. Reaction and location evidence must refer to the same event.
+- Candle Pattern family (v132): any enabled same-direction family member ending at the decision candle. A bare reaction cannot replace a required candle shape, and a candle cannot replace a required location/reaction. The family selectors are Pin/Wick rejection (PIN/HAM/SST/IHM/HGM), Eng/Opposite body (ENG/PRC/DCC/MOR/EVE), Big/Expansion (BIG), Seq/3-bar push (TWS/TBC) and Har/Inside body (HAR). Big remains a separate expansion selector, rather than silently joining Eng. Both members of Seq share one selector; their actual detected direction still matters.
+- Optional Confluences: OR between enabled attribute conditions; Trend/Bias components also use OR for this CustomTrade gate. Individual scope semantics remain unchanged.
+
+An all-off attribute group is unrestricted. Time/session permissions, minimum counts, protection validity and account/risk constraints remain independent mandatory gates, not OR alternatives. The old `SelectedStrategyCustomEventsMode` property is compatibility-only and cannot override this composition.
+
+The decision root does not branch on backtest versus live versus renderer and does not apply the live Symbols/Timeframes allowlist (v146). Chart prediction passes the current chart symbol/timeframe; live execution applies the allowlist in `TryBuildCustomTradeSignal` and again at submission. Backtests retain their simulation chart as their execution market, independent of live routing parameters. The same explicit `DecisionBar` still drives signal rules and entry/SL/TP. Event LTF/HTF scope is anchored to the decision's trading timeframe, not an unrelated visible chart; nested helpers and cache keys retain that scope. EMA transitions use the real EMA detector and EMA scope, not generic canonical rejection records.
+
+Actual fills can still be rejected by order permission, current account/risk/margin/spread conditions or the broker; those are submission checks, not historical prediction inputs. Raw analytical events are not trade predictions.
+
+Regression coverage: `.local/causal-replay-check/Check.csproj --groups` exercises the group truth table, disabled/scope/opposite/future evidence, a nonempty genuine decision, chart/live/backtest adapter parity, rejection parity and future-suffix invariance. `--chart` exercises nonempty boxed plans during resumable backfill. Compilation is not evidence that a running instance has loaded this version.
+
+### Ordered marker replay (v147)
+
+Trend/bias context computes HTF → LTF at one causal decision cutoff; events, predicted trades and execution targets scan LTF → HTF. This changes computation order, not dashboard columns, directional precedence, strategy conditions or account safety gates. Unified chart replay advances one source timeframe per pass and prioritizes the chart's newest completed candle before historical backfill. Analytical confluence, direction and opposing-risk work is cached per decision bar instead of repeated across the entire accumulated history each pass.
+
+Both FULL and LITE retain existing predictions during unchanged-configuration backfill. Stable timeframe/bar/direction/strategy object identities prevent partial batches overwriting unrelated earlier signals. Chart or parameter changes clear the generation immediately. Per-frame qualification/protection dictionaries retain the active lookback and prune stale keys, avoiding global FIFO eviction that can restart replay. Invalid protection is cached to avoid repeatedly monopolizing a batch; it never creates a tradable box without a valid plan. Older invalid plans wait until their frame's initial replay completes before retrying; the latest decision retains priority. FULL/LITE schedule expired protection retries even without a new candle or parameter change. Every work pass can advance at least one uncached historical qualification/plan after the current decision. The accepted-broker-order fallback is removed from predicted-event rendering: broker fill/history markers remain a separate layer, and prediction always uses current-rule market-data reconstruction.
+
+Regression selectors `--ordering` and `--chart-multi` cover actual bias feed-read order, ascending execution-target order, one-TF detection batches, nonempty LTF boxes with two entry legs/SL/TP, LITE retention, parameter invalidation and complete analytical/trade replay. Native visual verification requires the user to load v147; rebuilding does not update already-running instances. Do not restart live trading or an active backtest automatically.
+
+Family settings (v132) expose exactly five No/Yes/LTF/HTF parameters under `Candle Pattern family`. Representative property names are retained for native parameter bindings; the other nine properties are read-only aliases to their family owner, never hidden per-pattern overrides. Startup, combo selection and runtime refresh use `RefreshCandlePatternFamilyToggleState`. Legacy individual Candles combo choices select the whole corresponding family, while enum ordinals remain unchanged. Family members and enabled families are OR alternatives in the existing candle attribute group; required other attribute groups remain AND. Markers and comments retain the actual detected pattern code. Existing instances/parameter sets must be reviewed and resaved because removed individual member selections cannot be preserved as independent conditions; do not restart trading instances automatically. `--families` covers all members/scopes, detector definitions, runtime changes, family OR union and legacy combo selection.
+
 The cTrader bot is intentionally a single-file engine. Important responsibility areas in `TVBridge_CTrader.cs` include:
 
 | Area | Responsibility |
@@ -119,7 +148,7 @@ These rules are non-negotiable unless the user explicitly changes them.
 ### 4.1 Closed-bar and deterministic processing
 
 - Use closed candles for confirmed signals and chained events.
-- Calculate timeframes from HTF to LTF.
+- Calculate trend/bias from HTF to LTF; detect events and predicted trades from LTF to HTF.
 - Avoid look-ahead in backtests and historical replay.
 - A historical replay and a live closed-bar evaluation should produce the same event sequence.
 - Stateful chains must remember intermediate events across bars, but must not replay an already-consumed completion as a new trade.
@@ -444,6 +473,8 @@ Auto-exit:
 
 The cTrader native Ichimoku indicator must use `Shift = 0` for correct visual alignment in this integration: Conversion and Base stay on the current price bars, while the native Lagging Span is displayed 26 bars to the left. Do not add a second custom Lagging Span drawing unless the native indicator becomes impossible to use and the user explicitly approves it.
 
+Native display status (2026-10-10, v127): EMA/Ichimoku use display-only typed native calculations bound to the visible chart's original feed, read finite outputs before `AddToChart()`, and explicitly enable managed line outputs. These full-feed display instances must never enter causal strategy analysis. Startup applies visual combo settings without synchronous attachment; two deferred native initialization passes precede historical rendering. Failed outputs remain retryable and must not become a permanent execution gate. Source and active `tvbridge.cs` are fully synced; Release build succeeds. The expanded chart harness passes 1,192 checks and causal replay passes 6,132 checks. Live curves are **not yet verified**: manually adding EMA14 also produced no curve, and the running cBot host was saturating CPU with watchdog terminations. Temporary EMA14 comparisons were removed and the stopped second instance restored to M15. Do not call this visually fixed until the loaded build and native curves are observed; user must control stopping/restarting the trading instance.
+
 ### 8.5 File-backed strategy intent
 
 | Strategy | Trigger intent | SL | Auto-exit |
@@ -546,6 +577,32 @@ Do not reduce a computed selection to an ambiguous `SL=Wick` when a multiplier o
 
 The former `ar:...` adaptive-risk token was removed from visible new trade comments. Legacy comments may still contain it and may still be parsed for compatibility; existing history is not rewritten.
 
+As of v131, new comments use `B/S[.F.]|m15.event|mode.leg-delay|tr:yyMMddHHmm|TP:.../SL:...`. `B`/`S` records the original qualified signal direction; `.F.` means the order is executed opposite to that original direction. This is audit metadata only and does not change detection or execution rules. Adaptive Bias captures `OriginalTradeType` before mutating the execution side, and all split legs retain it. Exit-mode reversals preserve a recorded original side and recompute the flip flag; legacy comments without that field can only use the preceding position's side as their reversal origin.
+
+As of v135, an Adaptive Bias reduced-risk leg uses `B.r.` or `S.r.` in the same first token. Only legs whose risk is actually below normal receive `.r.`; later normal-risk split legs remain `B` or `S`. Exit-mode reversal creates a new position and recalculates its direction token without carrying the prior position's risk-reduction marker. Comment readers recognize the new token and keep the event/timeframe in the next field.
+
+New comments omit the duplicate `tf:`/`abtf:` field; their source timeframe comes from the event-name prefix. `GetStrategyCommentEventLabel` skips the leading direction token and is shared by trigger/label-hash restoration, pending-order invalidation, legacy cleanup and Adaptive Bias readers. Those readers also retain compatibility with v130's `tf:m15`, older `abtf:Minute15` and event-first comments, normalizing to the same native timeframe key so persisted SL-bias state remains compatible. Comments are submission snapshots, not a live reflection of manual protection changes. `.local/causal-replay-check/Check.csproj --comments` verifies formatting, original/executed direction, split legs, reversal flags, source timeframe keys and legacy audit readers.
+
+Adaptive Bias is keyed independently by symbol and source timeframe. A qualifying SL is a stopped strategy position with net loss strictly greater than `Adaptive Bias min SL loss %` of balance (default 0.2%); the reference direction is the executed position direction. `Flip_AfterFirstSL_Day` replaces the former `Day` name at the same enum ordinal: the first qualifying SL in each UTC day supplies the reference, even if earlier trades took profit, and only later signals matching that stopped direction flip. `Flip_AfterSL_Unlimited` replaces `LatestSL` at the same ordinal: each qualifying SL replaces the reference across days. `Flip_AfterSL_1` and `Flip_AfterSL_2` use the latest qualifying SL for one or two subsequently accepted strategy entries on that symbol and timeframe, then discard the reference until a new qualifying SL. A later signal in the opposite direction stays unchanged but still uses one of those entry slots. Rejected entries do not use slots. Each mode has separate persisted state; the worker accepts the former `Day` and `LatestSL` names in queued jobs.
+
+`Flip_AfterSL_1_Day` and `_2_Day` use the same one/two accepted-entry quotas and latest qualifying SL, but discard the reference at UTC day rollover. The `Reduce_AfterSL_1`, `_2`, `_Unlimited` modes and their `_Day` counterparts use the same scope and slot rules; matching-direction entries keep their direction and use `Adaptive Bias risk after SL %` (default 50%) of their normal risk slice. Opposite-direction accepted entries still consume bounded slots at normal risk. For `n.Trades > 1`, each broker-accepted leg is a slot: a bounded flip can reverse the first one/two legs, and later legs use the original direction with a separately validated entry and SL/TP. Failed order submissions leave the quota available. An accepted pending entry consumes a slot at placement, not at fill.
+
+As of v136, every eligible strategy position with positive net profit clears the Adaptive Bias reference for its own symbol and source timeframe when its close event is processed. This applies to flip and reduce modes, including unlimited and day modes, and to a profitable trailing-stop close. Subsequent entries use normal direction and, when `Risk After Win = No`, normal risk until another qualifying SL closes; `Flip_AfterFirstSL_Day` can arm again after a win within the same UTC day. Flat and losing closes do not reset a cycle. When several positions overlap, the order of close events processed by the bot determines whether a win clears the current reference or a later SL creates a new one. The reset is persisted for live instances. Pending orders marked `.F.` or `.r.` for the reset market are cancelled so they cannot fill under the previous cycle; ordinary pending orders and other markets are left alone.
+
+As of v137, `Risk After Win` is a separate parameter with `No`, `Increase_AfterWin_1`, `_2`, `_Unlimited`, and corresponding `_Day` options. Any eligible close with positive net profit clears that symbol+source-TF SL flip/reduce reference and arms or refreshes the selected win-risk cycle. All later strategy entries for that market can receive increased risk, regardless of direction. `Risk after win %` scales each normal risk slice (default 125%), without compounding from the previous trade, and `Win risk cap % of max` limits it relative to the current normal per-trade maximum (default 150%). Adaptive-risk pool, daily-loss, drawdown, total-open-risk, and broker gates remain enforced. A non-winning close ends the win-risk cycle; a qualifying SL can then arm the configured Adaptive Bias mode. Each accepted leg, including a pending order at placement, consumes one bounded win-risk slot. Only legs actually above normal risk carry the `B.i.` or `S.i.` audit token; boosted pending orders are cancelled on a non-winning close for the same market. Day variants expire at UTC day rollover. The two parameters can be combined without creating combined enum values.
+
+As of v138, `SL reduction scope` controls only `Reduce_AfterSL_*` modes. `MatchingSLDirection` preserves the previous behavior: reduce signals in the stopped trade's executed direction and let opposite accepted entries consume bounded slots at normal risk. `AllDirections` reduces every later accepted strategy entry for that symbol and source timeframe while the SL cycle is active, regardless of direction. Flip modes remain direction-matching. On a qualifying SL, earlier strategy pending orders in the affected directions are cancelled so they cannot fill at the old risk; for `AllDirections`, both sides are affected. This risk multiplier is distinct from `Adaptive Risk = PerChain`, which allocates and reserves a shared risk-pool budget per strategy idea/chain independently of the last win or SL. The final PerChain and BalanceRecovery submission gates receive the win-risk flag, allowing a configured increase within the selected higher win cap and remaining pool, while preserving their final budget checks.
+
+As of v139, new strategy trade comments replace `|tr:yyMMddHHmm` with `|wd:N|h:N|ss:...`, derived from the original signal bar's UTC time. Weekday codes are Monday=2 through Sunday=8, or 9 if unknown; hours are 0–23, or 24 if unknown. `ss` lists all active major sessions (`AS`, `LD`, `NY`) joined with `+`, `OFF` outside them, or `UNK` when time is unknown. The session windows use the shared DST-aware market clock definitions. Older `tr:` comments remain readable. For new comments, chart marker recovery uses the compact label hash and available source bars; an exact trigger timestamp is no longer carried in the broker comment.
+
+As of v140, the time token uses readable names without field labels: `|Fri.14h.London+NewYork`, `|Mon.0h.Asia`, or `|Sun.23h.Off`. Unknown time is `|Unknown.24h.Unknown`. Times remain UTC and session overlaps list every active session. Marker recovery reads this form and the v139 numeric form, while older `tr:` comments remain readable.
+
+As of v143, forward-obstacle zone entry (`enter`) is unconfirmed and is excluded from forward-reversal risk candidates. It no longer produces a `×`, a cause label, or forward-risk audit evidence. Qualified `touch` markers still show `×`; qualified `near` markers show `?`. On redraw, the marker path removes its previous marker and cause objects before deciding whether to draw them.
+
+As of v144, the former `enter` filter, scoring, state, qualification, and display branches are retained as disabled comments beside the active code for possible future restoration. The active suppression behavior is unchanged.
+
+As of v145, a completed unified-event redraw reconciles preserved marker names with the names actually drawn in that pass. Old `TRG_`/`RAW_EVT_`/`TRG_ART_` objects whose numeric indices or eligibility changed are removed after successful replay; incomplete or temporarily empty replay still keeps the previous layer until a valid redraw finishes. This covers objects tracked by the current bot process. Objects orphaned by an earlier terminated process are not exposed by cTrader's non-interactive object collection and still require a chart-instance reset.
+
 ### 9.6 n.Trades and risk split
 
 The intended rule is:
@@ -634,10 +691,12 @@ Definitions:
 anchorBalance       = persisted starting balance for this adaptive pool
 currentBalance      = current account balance
 initialBudget       = anchorBalance × totalRiskBudgetPercent
-remainingBudget     = clamp(initialBudget + currentBalance - anchorBalance,
+effectiveBudget     = min(persisted initialBudget, current selected allowance at anchorBalance)
+usableBudget        = effectiveBudget × 0.90
+remainingBudget     = clamp(usableBudget + currentBalance - anchorBalance,
                             0,
-                            initialBudget)
-recoveryFactor      = remainingBudget / initialBudget
+                            usableBudget)
+recoveryFactor      = remainingBudget / usableBudget
 nextRiskPercent     = originalRiskPercent × recoveryFactor
 ```
 
@@ -647,13 +706,16 @@ Example with a 100,000 account, a 10,000 risk budget, and original risk of 1%:
 
 | Balance P/L | Remaining budget | Next risk |
 |---:|---:|---:|
-| 0 | 10,000 | 1.0% |
-| -2,000 | 8,000 | 0.8% |
-| -3,000 | 7,000 | 0.7% |
-| recovery to -1,000 | 9,000 | 0.9% |
-| profit above anchor | capped at 10,000 | capped at 1.0% |
+| 0 | 9,000 | 1.0% |
+| -2,000 | 7,000 | 0.7778% |
+| -3,000 | 6,000 | 0.6667% |
+| recovery to -1,000 | 8,000 | 0.8889% |
+| -9,000 | 0 | 0% (new exposure blocked) |
+| profit above anchor | capped at 9,000 | capped at 1.0% |
 
-If the current base Max Risk is 0.5%, the same `-2%` balance example produces `0.4%`, not `0.8%`.
+If the current base Max Risk is 0.5%, the same `-2%` balance example produces approximately `0.3889%` before other caps.
+
+As of v128, Balance Recovery reserves 10% of the selected total allowance: a 10% selection permits 9%, a 5% selection permits 4.5%. This applies to saved AR1 pools without resetting the balance/loss anchor or applying the reserve repeatedly. A lower current selection tightens the saved allowance; raising the selection cannot refill the original persisted epoch. The separate hard-coded 1% anchor-balance per-idea cap is unchanged. This is a planned SL-exposure bound, not a guarantee against slippage, gaps, fees, or unrelated account actions. Existing exposure is not automatically closed by this change.
 
 Additional safety:
 
@@ -805,7 +867,7 @@ Use signal identity, symbol, timeframe, strategy, and exact failed gate where he
 
 - Off uses base risk.
 - Per Chain preserves legacy chain behavior.
-- Balance Recovery reproduces 0.8, 0.7, 0.9, and capped 1.0 factors in the canonical example.
+- Balance Recovery uses 90% of the selected total allowance, stops new exposure at that drawdown boundary, and scales risk against the usable budget; verify persisted-state migration without resetting the loss anchor.
 - Multiple simultaneous submissions cannot exceed the remaining pool.
 - Gap/spread rejection does not create an unprotected position.
 - Restart preserves intended adaptive state.

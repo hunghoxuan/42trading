@@ -5,6 +5,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
+const { collectTradeEvidence } = require("./tradeEvidenceLog");
 
 const ALIASES = new Map(
   Object.entries({
@@ -12,6 +13,7 @@ const ALIASES = new Map(
     mdayloss: "MaxDailyLossPreset",
     mdaywin: "MaxDailyWinPreset",
     mdd: "MaxEquityDrawdownPreset",
+    mloss: "MaxLossPreset",
     mriskcbottrade: "MaxRiskPreset",
     symbols: "StrategySymbols",
     timeframes: "StrategyTimeframes",
@@ -72,6 +74,7 @@ const config = {
   rootDir: path.resolve(
     process.env.CTRADER_WORKER_DATA_DIR || path.join(os.homedir(), ".local/share/42trade/ctrader"),
   ),
+  supportsDataDir: process.env.CTRADER_CLI_SUPPORTS_DATA_DIR !== "false",
 };
 
 for (const filePath of [config.cliPath, config.passwordFile, config.algoPath]) {
@@ -182,10 +185,10 @@ async function runJob(job) {
     `--spread=${Number(launch.spread_pips || 0)}`,
     `--report=${htmlReportPath}`,
     `--report-json=${jsonReportPath}`,
-    `--data-dir=${dataDir}`,
     "--full-access",
     "--exit-on-stop",
   ];
+  if (config.supportsDataDir) args.push(`--data-dir=${dataDir}`);
   if (launch.apply_commission_automatically) args.push("--commission-auto");
   else args.push(`--commission=${Number(launch.commission_usd_per_million || 0)}`);
 
@@ -224,20 +227,26 @@ async function runJob(job) {
   const exitCode = await new Promise((resolve, reject) => {
     child.once("error", reject);
     child.once("exit", (code, signal) => resolve({ code, signal }));
-  }).finally(() => {
+  }).finally(async () => {
     clearInterval(heartbeat);
     active.delete(job.job_id);
-    log.end();
+    await new Promise((resolve) => log.end(resolve));
   });
   if (exitCode.code !== 0) {
     throw new Error(`cTrader CLI exited with code ${exitCode.code ?? "none"}${exitCode.signal ? ` (${exitCode.signal})` : ""}; see ${logPath}`);
   }
   if (!fs.existsSync(jsonReportPath)) throw new Error("cTrader CLI produced no JSON report");
+  const nativeLogPath = findFile(dataDir, "log.txt");
+  const tradeEvidence = await collectTradeEvidence(
+    [nativeLogPath, logPath],
+    path.join(runDir, "trade-evidence.jsonl"),
+  );
   await post(`/api/backtests/ctrader/worker/jobs/${encodeURIComponent(job.job_id)}/complete`, {
     worker_id: config.workerId,
     ctrader_report: fs.readFileSync(jsonReportPath, "utf8"),
     html_report: fs.existsSync(htmlReportPath) ? fs.readFileSync(htmlReportPath, "utf8") : "",
     resolved_parameters: resolvedParameters(dataDir, parameters),
+    trade_evidence: tradeEvidence,
   });
   console.log(`Completed ${job.job_id}: ${launch.symbol} ${launch.timeframe}`);
 }

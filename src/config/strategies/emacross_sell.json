@@ -1,0 +1,25 @@
+{
+  "id": "emacross_sell",
+  "key": "emacross_sell",
+  "name": "emacross_sell",
+  "engine_version": "42trade.strategy.v3",
+  "kind": "builtin",
+  "status": "active",
+  "required_data": {
+    "parameters": {
+      "DrawEmaOverlay": "trend_9_21"
+    }
+  },
+  "params": {},
+  "indicators": [],
+  "rules": [],
+  "metadata": {
+    "implementation": "ctrader_native",
+    "preset_scope": "ctrader",
+    "direction": "SELL",
+    "base_strategy": "ema_cross_v1"
+  },
+  "risk": {},
+  "auto_exit": null,
+  "description": "SELL-only variant of ema_cross_v1; opposite detected and executed directions are rejected. Uses the same native indicator implementation."
+}

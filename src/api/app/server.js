@@ -8128,9 +8128,18 @@ function posService() {
     sqlitePath: resolveConfiguredSqlitePath(),
     postgresUrl: CFG.mt5PostgresUrl,
     productVision: async (request) => {
-      // Product identity uses Google's vision model; no OCR/color-only fallback.
-      const model = String(process.env.POS_PRODUCT_AI_MODEL || "").trim() || resolveAiChatModelForProvider("gemini");
-      return callAiProvider({ ...request, provider: "gemini", model });
+      const { parseProductObservation } = require("../modules/pos/productVision");
+      const geminiModel = String(process.env.POS_PRODUCT_AI_MODEL || "").trim() || resolveAiChatModelForProvider("gemini");
+      const openAiModel = String(process.env.CHATGPT_WEB_OPENAI_MODEL || "").trim() || resolveAiChatModelForProvider("openai");
+      return chatDomain.runVisionFallbackChain(request, [
+        { name: "Codex", run: (input) => chatDomain.runCodexVision(input) },
+        { name: "Google Gemini", run: (input) => callAiProvider({ ...input, provider: "gemini", model: geminiModel }) },
+        { name: "ChatGPT Web/OpenAI-compatible", run: (input) => callAiProvider({ ...input, provider: "openai", model: openAiModel }) },
+        { name: "Local Ollama", run: (input) => chatDomain.runOllamaVision(input, {
+          model: String(process.env.POS_OLLAMA_VISION_MODEL || "qwen2.5vl:3b").trim(),
+          baseUrl: CFG.ollamaBaseUrl,
+        }) },
+      ], (result) => parseProductObservation(result?.rawText ?? result));
     },
     cashVision: async (request) => {
       const configuredProvider = String(process.env.POS_CASH_AI_PROVIDER || "").trim();
@@ -12620,11 +12629,11 @@ async function loadAiConfig(userId = "") {
     );
   if (!cfg.OPENAI_API_KEY)
     cfg.OPENAI_API_KEY = sanitizeRuntimeApiKey(
-      envStr(process.env.OPENAI_API_KEY),
+      envStr(process.env.CHATGPT_WEB_OPENAI_API_KEY || process.env.OPENAI_API_KEY),
     );
   if (!cfg.GEMINI_API_KEY)
     cfg.GEMINI_API_KEY = sanitizeRuntimeApiKey(
-      envStr(process.env.GEMINI_API_KEY),
+      envStr(process.env.GEMINI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY || process.env.GOOGLE_API_KEY),
     );
   if (!cfg.OLLAMA_API_KEY)
     cfg.OLLAMA_API_KEY = sanitizeRuntimeApiKey(
@@ -12951,7 +12960,7 @@ async function callAiProvider({
       : provider === "deepseek"
         ? "https://api.deepseek.com/chat/completions"
         : provider === "openai"
-          ? "https://api.openai.com/v1/chat/completions"
+          ? resolveOpenAiCompatibleEndpoint()
           : provider === "ollama"
             ? `${CFG.ollamaBaseUrl}/v1/chat/completions`
             : "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
@@ -13159,6 +13168,19 @@ async function callAiProvider({
   } finally {
     clearTimeout(timer);
   }
+}
+
+function resolveOpenAiCompatibleEndpoint() {
+  const configured = String(
+    process.env.CHATGPT_WEB_OPENAI_BASE_URL || process.env.OPENAI_API_BASE_URL || "https://api.openai.com/v1",
+  ).trim();
+  const url = new URL(configured);
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("OpenAI-compatible AI endpoint must use HTTP or HTTPS.");
+  }
+  if (url.pathname.replace(/\/+$/, "").endsWith("/chat/completions")) return url.toString();
+  url.pathname = `${url.pathname.replace(/\/+$/, "")}/chat/completions`;
+  return url.toString();
 }
 
 function normalizeAiChatMode(mode = "") {
@@ -20916,6 +20938,8 @@ async function loadApiKeySettingRecord(userId, settingName) {
 function envApiKeyCandidates(settingName = "") {
   const normalizedName = normalizeAiApiKeyName(settingName);
   const envNames = [normalizedName];
+  if (normalizedName === "GEMINI_API_KEY") envNames.unshift("GOOGLE_GEMINI_API_KEY", "GOOGLE_API_KEY");
+  if (normalizedName === "OPENAI_API_KEY") envNames.unshift("CHATGPT_WEB_OPENAI_API_KEY");
   if (normalizedName === "CLAUDE_API_KEY") envNames.unshift("ANTHROPIC_API_KEY");
   if (normalizedName === "ANTHROPIC_API_KEY") envNames.unshift("CLAUDE_API_KEY");
   const out = [];
@@ -40049,6 +40073,7 @@ const appHandler = async (req, res) => {
           archived_report_path: reportPath,
         },
         ctrader_report: report,
+        trade_evidence: Array.isArray(body?.trade_evidence) ? body.trade_evidence : [],
       });
       const completedJob = await ctraderBacktestQueueService.updateJob(
         userId,

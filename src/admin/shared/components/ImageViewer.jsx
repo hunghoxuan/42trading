@@ -1,4 +1,5 @@
 import { useState } from "react";
+import "./ImageViewer.css";
 
 function fmtSize(bytes) {
   if (!bytes || bytes === 0) return "0 B";
@@ -172,41 +173,17 @@ export default function ImageViewer({
             {/* Image preview modal */}
             {previewFile === name && (
               <div
-                style={{
-                  position: "fixed",
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  background: "rgba(0,0,0,0.85)",
-                  zIndex: 9999,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  cursor: "pointer",
-                }}
+                className="image-viewer-modal"
                 onClick={() => setPreviewFile(null)}
               >
                 <div
-                  style={{
-                    maxWidth: "90vw",
-                    maxHeight: "90vh",
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    gap: 12,
-                  }}
+                  className="image-viewer-modal__content"
                   onClick={(e) => e.stopPropagation()}
                 >
                   <img
                     src={url}
                     alt={name}
-                    style={{
-                      maxWidth: "90vw",
-                      maxHeight: "80vh",
-                      objectFit: "contain",
-                      borderRadius: 8,
-                    }}
+                    className="image-viewer-modal__image"
                   />
                   <div style={{ display: "flex", gap: 8 }}>
                     <span style={{ color: "#fff", fontSize: 11 }}>{name}</span>

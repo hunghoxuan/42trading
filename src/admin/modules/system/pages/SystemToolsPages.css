@@ -166,17 +166,33 @@
 
 .system-tool-image-modal__content {
   max-width: min(94vw, 1600px);
-  max-height: 92vh;
+  max-height: calc(92vh - 16px);
+  max-height: calc(92dvh - 16px);
 }
 
 .system-tool-image-modal__img {
   display: block;
   max-width: 100%;
-  max-height: 92vh;
+  max-height: calc(92vh - 16px);
+  max-height: calc(92dvh - 16px);
   width: auto;
   height: auto;
   border-radius: 12px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+}
+
+@media (max-width: 767px) {
+  .system-tool-image-modal {
+    padding: max(8px, env(safe-area-inset-top, 0px)) max(8px, env(safe-area-inset-right, 0px))
+      max(8px, env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-left, 0px));
+  }
+
+  .system-tool-image-modal__content,
+  .system-tool-image-modal__img {
+    max-width: 100%;
+    max-height: calc(100vh - 16px);
+    max-height: calc(100dvh - 16px);
+  }
 }
 
 .system-tool-detail__content pre,

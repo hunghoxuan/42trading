@@ -151,6 +151,7 @@ test("malformed AI responses and invalid prices fail explicitly", () => {
   assert.throws(() => parseProductObservation("not JSON"), /invalid result/);
   assert.throws(() => parseProductObservation(JSON.stringify(observedProduct({ texts: "Lifebuoy" }))), /invalid result/);
   assert.throws(() => parseProductObservation(JSON.stringify(observedProduct({ visible_price: { text: "", amount: -1 } }))), /invalid price/);
+  assert.throws(() => parseProductObservation(JSON.stringify(observedProduct({ product_name: "Unreadable", texts: [] }))), /clear identity without readable product text/);
 });
 
 test("missing AI configuration and provider failures do not fall back to old weak OCR matches", async () => {

@@ -176,6 +176,38 @@ Test combinations in rotating anchored groups:
 
 Do not exhaustively test thousands of combinations. Use a balanced or fractional-factorial subset of approximately 32–64 combinations.
 
+### Profit Control combinations (added 2026-10-23)
+
+Include Profit Control in future combination studies using the v173 implementation or a verified later build. Use the current reproduced setup as the anchor; the older DE40 example above is not a replacement for the active study's baseline. Let running backtests finish and log their results before reusing an instance. Do not sync/rebuild a cBot while tests are running, because package reloads can restart them.
+
+For each selected symbol, timeframe, strategy setup and date window, start with these four representative profiles. Preserve the baseline's Max Daily Win in all four:
+
+| Profile | Open Profit Target | Profit Lock Start | Profit Giveback |
+| --- | --- | --- | --- |
+| PC0 — baseline | None | None | None |
+| PC1 — target | _5pct | None | None |
+| PC2 — lock | None | _2pct | _1pct |
+| PC3 — target and lock | _5pct | _2pct | _1pct |
+
+These are discovery values, not recommended live settings. Treat the paired lock settings as one coherent test factor. PC1 versus PC0 isolates the target; PC2 versus PC0 isolates the lock; PC3 versus PC1 adds the lock while keeping the target fixed. Keep per-position TP, Exit Management, Trailing Method, Partial Close, risk sizing, strategy slots/logic, sessions and costs unchanged. Hold the symbol/timeframe and period fixed within this four-case comparison. Count it within the active study's approximately four representative combinations per context, not as a multiplier across every existing run. Reuse only a matching, clean baseline from the same build and effective inputs.
+
+If a context is worth further study, screen one threshold at a time: target 2%, 5%, 10%; lock start 1%, 2%, 5% with giveback fixed at 0.5%; then giveback 0.5%, 1%, 2% with start fixed at 5%. Avoid duplicate cases. Never generate an incomplete lock pair: Start and Giveback must both be None or both enabled. Do not run a Cartesian product of these lists.
+
+Max Daily Win remains an independent combination parameter. After selecting a promising target/lock profile, compare the inherited Max Daily Win against None, 2% and 5%, changing only that parameter and skipping duplicates. Rules Profile No bypasses Max Daily Win; under that profile, record it as inactive and skip these ineffective variants. The three new exit controls remain active under Rules Profile No. Keep mandatory drawdown/total-risk controls fixed and active for scored studies; do not switch Rules Profile merely to enable a profit cap.
+
+Before launch, save and read back these native properties in the effective parameter snapshot:
+
+- `MaxDailyWinPreset`
+- `OpenProfitTargetPreset`
+- `ProfitLockStartPreset`
+- `ProfitGivebackPreset`
+
+Include all four, plus Rules Profile, in the full Combination Key and duplicate check. Append `PC0`, `PC1`, `PC2` or `PC3` to readable run names, but retain exact values in the key so later threshold changes cannot collide. Record Focus Parameter = Profit Control Profile (or Max Daily Win for its isolated screen), Changed Value, control run ID, selected mode, authoritative symbol/timeframe, date range, build/checksum and all fixed settings.
+
+Log normal trade evidence plus `[ProfitControl]` EXIT/CLOSED/RETRY/WAIT events, trigger reason/time, floating profit, basket realised profit, peak and thresholds wherever emitted. Open Profit Target measures current floating net profit; the lock measures realised basket profit plus remaining floating net profit. Percent thresholds use the basket-start balance, so initial $10,000 examples do not imply fixed amounts across later baskets. Keep Max Daily Win's daily stop distinct from a target/lock basket exit, after which the bot may trade again. Mark unavailable fields explicitly; do not infer missing trigger evidence from the equity curve.
+
+Compare net profit, maximum equity drawdown, expectancy, costs, trade count and exit reasons against PC0. Validate any preferred profile on a separate untouched year/window before promotion. Add these cases to the existing hourly backtest cycle; no source rebuild is required just to change the study plan.
+
 ## Phase 4 — time robustness and walk-forward validation
 
 Test finalists over separate periods, subject to available broker tick history:

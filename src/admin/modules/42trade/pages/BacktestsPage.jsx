@@ -1900,6 +1900,7 @@ function TradeListCard({
   const strategyLabel = String(
     trade?.strategy_name || trade?.strategy_key || trade?.strategy_id || "",
   ).trim();
+  const evidence = trade?.trigger_evidence;
   return (
     <div
       role="button"
@@ -1973,6 +1974,11 @@ function TradeListCard({
             {rr != null ? `${rr.toFixed(1)}R` : ""}
           </div>
         </div>
+        {evidence ? (
+          <div className="minor-text" style={{ fontSize: 9, lineHeight: 1.2 }}>
+            {`${evidence.event || "Event"} · ${evidence.selected_side || "?"} → ${evidence.executed_side || "?"} · ${evidence.triggers?.reduce((sum, trigger) => sum + Number(trigger.against_count || 0), 0) || 0} opposing`}
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -2029,6 +2035,9 @@ export default function BacktestsPage() {
   const [ctraderJobs, setCTraderJobs] = useState([]);
   const [loadingCTraderJobs, setLoadingCTraderJobs] = useState(false);
   const [queueingCTraderBatch, setQueueingCTraderBatch] = useState(false);
+  const [manualCTraderReportFile, setManualCTraderReportFile] = useState(null);
+  const [manualCTraderEvidenceFile, setManualCTraderEvidenceFile] = useState(null);
+  const [importingCTraderReport, setImportingCTraderReport] = useState(false);
   const [ctraderBatchForm, setCTraderBatchForm] = useState({
     robot_name: "tvbridge",
     execution_mode: "cli",
@@ -3347,6 +3356,12 @@ export default function BacktestsPage() {
   const summaryTradesCount = replaySummary
     ? replaySummary.totalTrades
     : filteredSummary.totalTrades;
+  const opposingEvidenceGroup = activeSummary?.by_opposing_evidence?.find(
+    (group) => group.opposing_evidence === "Yes",
+  );
+  const candleRejectionConflictGroup = activeSummary?.by_candle_rejection_alignment?.find(
+    (group) => group.alignment === "Conflict",
+  );
   const summaryRealizedRValue = replaySummary
     ? replaySummary.totalRealizedR
     : filteredSummary.totalRealizedR;
@@ -4111,6 +4126,56 @@ export default function BacktestsPage() {
       setError(String(saveError?.message || saveError || "Failed to save backtest"));
     } finally {
       setSavingRun(false);
+    }
+  }
+
+  async function handleImportCTraderReport(event) {
+    event.preventDefault();
+    if (!manualCTraderReportFile) return;
+    setImportingCTraderReport(true);
+    setError("");
+    try {
+      const reportText = await manualCTraderReportFile.text();
+      const reportJson = reportText.trimStart().startsWith("{")
+        ? reportText
+        : new DOMParser().parseFromString(reportText, "text/html")
+            .querySelector("script#backtesting-report")?.textContent || "";
+      const report = JSON.parse(reportJson);
+      if (!report?.main || !Array.isArray(report?.history?.items)) {
+        throw new Error("Select a cTrader report.json or report.html file");
+      }
+      const evidence = [];
+      if (manualCTraderEvidenceFile) {
+        const marker = "[TradeEvidenceJson] ";
+        for (const line of (await manualCTraderEvidenceFile.text()).split(/\r?\n/u)) {
+          const markerIndex = line.indexOf(marker);
+          const jsonLine = markerIndex >= 0 ? line.slice(markerIndex + marker.length) : line.trim();
+          if (!jsonLine.startsWith("{")) continue;
+          try {
+            const record = JSON.parse(jsonLine);
+            if (record?.label && Array.isArray(record?.triggers)) evidence.push(record);
+          } catch {
+            // Native logs may include unrelated or incomplete lines.
+          }
+        }
+      }
+      const saved = await api.saveBacktest({ ctrader_report: report, trade_evidence: evidence });
+      const runId = String(saved?.run?.run_id || "");
+      await loadRuns(runId);
+      setSelectedRunDetail(saved);
+      setSelectedTradeSid(pickInitialTradeSid(saved?.trades));
+      setActiveTab("backtest");
+      if (runId) {
+        navigate(buildBacktestsDetailUrl(runId, {
+          strategyId: saved?.run?.strategy_key,
+          params: { symbol: saved?.run?.symbol, tf: saved?.run?.tf },
+          basePath: backtestsBasePath,
+        }));
+      }
+    } catch (importError) {
+      setError(String(importError?.message || importError || "Failed to import cTrader report"));
+    } finally {
+      setImportingCTraderReport(false);
     }
   }
 
@@ -5573,6 +5638,19 @@ export default function BacktestsPage() {
 
   const ctraderJobsPanel = (
     <div className="stack-layout" style={{ gap: 14 }}>
+      <ResponsivePanel title="Import cTrader report" showToggle={false} border="always" bodyClassName="stack-layout">
+        <form className="stack-layout" onSubmit={handleImportCTraderReport}>
+          <label className="minor-text">Report JSON or HTML
+            <input type="file" accept=".json,.html,application/json,text/html" onChange={(event) => setManualCTraderReportFile(event.target.files?.[0] || null)} />
+          </label>
+          <label className="minor-text">Evidence log (`log.txt` or `trade-evidence.jsonl`)
+            <input type="file" accept=".txt,.log,.jsonl,text/plain" onChange={(event) => setManualCTraderEvidenceFile(event.target.files?.[0] || null)} />
+          </label>
+          <button type="submit" className="secondary-button" disabled={!manualCTraderReportFile || importingCTraderReport}>
+            {importingCTraderReport ? "Importing..." : "Import and inspect"}
+          </button>
+        </form>
+      </ResponsivePanel>
       <ResponsivePanel
         title="cTrader Worker Queue"
         showToggle={false}
@@ -5977,6 +6055,11 @@ export default function BacktestsPage() {
                         {`$${formatNumber(summaryTotalPnlValue, 0)}`}
                       </span>
                       <span className="minor-text">{summaryRangeText}</span>
+                      {Number(activeSummary?.trade_evidence_matched || 0) > 0 ? (
+                        <span className="minor-text">
+                          {`Run evidence ${activeSummary.trade_evidence_matched}/${activeSummary.total_trades || 0} · Opposing ${opposingEvidenceGroup?.total_trades || 0} (${opposingEvidenceGroup?.losses || 0} losses) · Candle/rejection conflicts ${candleRejectionConflictGroup?.total_trades || 0} (${candleRejectionConflictGroup?.losses || 0} losses)`}
+                        </span>
+                      ) : null}
                       {summaryParamsText ? (
                         <span className="minor-text">{summaryParamsText}</span>
                       ) : null}
@@ -5992,6 +6075,28 @@ export default function BacktestsPage() {
                       </div>
                     ) : null}
                   </ResponsivePanel>
+                  {selectedTrade?.trigger_evidence ? (
+                    <ResponsivePanel
+                      headerContent="Trade evidence"
+                      showToggle={false}
+                      border="always"
+                      bodyClassName="stack-layout"
+                    >
+                      <div className="minor-text">
+                        {`${selectedTrade.trigger_evidence.event || "Event"} · signal ${selectedTrade.trigger_evidence.signal_time_utc || "?"} · selected ${selectedTrade.trigger_evidence.selected_side || "?"} · executed ${selectedTrade.trigger_evidence.executed_side || "?"} · candle/rejection ${selectedTrade.candle_rejection_alignment || "Unknown"}`}
+                      </div>
+                      {(selectedTrade.trigger_evidence.triggers || []).map((trigger, index) => (
+                        <div className="minor-text" key={`${trigger.name || "trigger"}-${index}`}>
+                          {`${trigger.family || "event"}: ${trigger.name || "?"} · against ${trigger.against_count || 0} (${trigger.against_source || "none"}) · events: ${(trigger.against_events || []).join(", ") || "none"} · proximity: ${(trigger.against_proximity || []).join(", ") || "none"} · forward: ${(trigger.forward_obstacles || []).join(", ") || "none"}`}
+                        </div>
+                      ))}
+                      {selectedTrade.trigger_evidence.opposing_triggers?.length ? (
+                        <div className="money-neg">
+                          {`Opposite direction: ${selectedTrade.trigger_evidence.opposing_triggers.map((trigger) => trigger.name).join(", ")}`}
+                        </div>
+                      ) : null}
+                    </ResponsivePanel>
+                  ) : null}
                   {resultChartLoaded && chartTimeframes.length ? (
                     <SymbolChart
                       key={`backtest-chart:${activeRun?.run_id || "run"}:${chartTimeframes.join(",")}:${resultFilterStrategy}:${resultChartLoadKey}`}
@@ -6025,8 +6130,8 @@ export default function BacktestsPage() {
                       slPrice={selectedTrade?.sl || null}
                       tpPrice={selectedTrade?.tp || null}
                       createdAt={
-                        selectedTrade?.created_at ||
                         selectedTrade?.signal_bar_time ||
+                        selectedTrade?.created_at ||
                         selectedTrade?.opened_at ||
                         null
                       }

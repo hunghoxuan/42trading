@@ -86,12 +86,38 @@ direction, symbol, timeframe, and strategy. The complete launch configuration
 remains under `run.config`. Planned SL/TP/R values are recovered from the bridge
 trade comment when present; a structured bridge trade snapshot remains the
 preferred source for these fields.
+The session grouping uses the UTC entry instant: Asia is 00:00–09:00 UTC,
+London is 08:00–17:00 Europe/London, and New York is 08:00–17:00
+America/New_York. Overlap labels include both active sessions.
 
 Native queued cTrader runs also persist `run.config.ctrader_launch` with the
 testing context and a `resolved_parameters` array. Each entry records the cBot
 parameter display name, cTrader type, effective value, and whether it came from
 an explicit override or the cBot default. Backtest History exposes this complete
 snapshot through the **All parameters** control on each cTrader run.
+
+### Trade evidence logs
+
+The `tvbridge` cBot writes one `[TradeEvidenceJson]` JSON record to cTrader's
+native `Backtesting/log.txt` after each accepted CustomTrade order. The record
+contains the order label and ticket, UTC signal/submission times, selected and
+executed sides, same-side trigger names, opposite-side triggers, opposing event
+names, nearby opposing artifacts, and forward obstacles. The readable
+`[TradeEvidence]` line remains in the native log.
+
+The CLI worker extracts these lines into `trade-evidence.jsonl` beside its
+`report.json` and sends the records with `trade_evidence` to the save API. For
+cTrader UI backtests, open **Backtests → cTrader → Import cTrader report** and
+select the native `report.html` (or `report.json`) plus the matching `log.txt`
+or `trade-evidence.jsonl`. A report can be imported alone, but it will have no
+trigger evidence. Use files from the same backtest run.
+
+42trade joins evidence to report trades using the order label, symbol, side,
+and submission time. Each matched trade exposes `trigger_evidence` and
+`candle_rejection_alignment` in its saved trade row. The run summary includes
+matched/unmatched evidence counts and win/loss/PnL breakdowns for opposing
+evidence and candle/rejection alignment. The selected trade's evidence appears
+above its chart.
 
 ## Why Backtests Live Beside Trading
 

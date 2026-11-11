@@ -27,5 +27,10 @@
   "rules": [],
   "risk": {},
   "conditions": { "symbols": [], "timeframes": [], "sessions": [], "regime_tags": [] },
-  "metadata": { "author": "42trade", "preset_scope": "ctrader", "entry_engine": "builtin" }
+  "metadata": { "author": "42trade", "preset_scope": "ctrader", "entry_engine": "builtin" },
+  "required_data": {
+    "parameters": {
+      "DrawIchimokuOverlay": "Auto"
+    }
+  }
 }

@@ -1,0 +1,79 @@
+{
+  "id": "atr_ema_pullback_v1",
+  "key": "atr_ema_pullback_v1",
+  "name": "ATR EMA Pullback V1",
+  "description": "XAUUSD M5 EMA20/50/200 pullback confirmation with relative ATR filter; execution, risk, SL/TP and exits use selected Trade Config.",
+  "engine_version": "42trade.strategy.v3",
+  "kind": "builtin",
+  "status": "active",
+  "market": {
+    "symbol": "XAUUSD",
+    "tf": "m5"
+  },
+  "required_data": {
+    "parameters": {
+      "DrawEmaOverlay": "triple_20_50_200"
+    }
+  },
+  "settings": {
+    "confluences": {
+      "bar_direction": false,
+      "volume_surge": "No",
+      "trend_bias": "No",
+      "premium_discount": "No",
+      "opposing_level_clearance": "No",
+      "ema": "No",
+      "vwap": "No",
+      "bollinger": "No",
+      "rsi": "No",
+      "stochastic": "No",
+      "macd": "No",
+      "ichimoku": "No",
+      "ichimoku_strict": "No"
+    }
+  },
+  "params": {
+    "fast_period": 20,
+    "mid_period": 50,
+    "slow_period": 200,
+    "atr_period": 14,
+    "atr_mean_period": 50,
+    "atr_relative_min": 1,
+    "pullback_bars": 5,
+    "max_candle_atr": 2
+  },
+  "indicators": [
+    {
+      "id": "ema20",
+      "type": "ema",
+      "source": "close",
+      "length": 20
+    },
+    {
+      "id": "ema50",
+      "type": "ema",
+      "source": "close",
+      "length": 50
+    },
+    {
+      "id": "ema200",
+      "type": "ema",
+      "source": "close",
+      "length": 200
+    },
+    {
+      "id": "atr14",
+      "type": "atr",
+      "length": 14
+    }
+  ],
+  "rules": [],
+  "metadata": {
+    "implementation": "ctrader_native",
+    "preset_scope": "ctrader",
+    "atr_smoothing": "SMA of true range; shared native ATR cache",
+    "execution_config": "Shared Trade Config; no strategy-owned order, sizing or exit overrides"
+  },
+  "risk": {},
+  "auto_exit": null
+}

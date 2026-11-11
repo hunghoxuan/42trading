@@ -5,6 +5,8 @@ const aiChatContext = require("./aiChatContext");
 const aiGateway = require("./aiGateway");
 const chatStore = require("./chatStore");
 const codexBridge = require("./codexBridge");
+const codexVision = require("./codexVision");
+const ollamaVision = require("./ollamaVision");
 
 module.exports = {
   ...aiChat,
@@ -12,9 +14,13 @@ module.exports = {
   ...aiGateway,
   ...chatStore,
   ...codexBridge,
+  ...codexVision,
+  ...ollamaVision,
   aiChat,
   aiChatContext,
   aiGateway,
   chatStore,
   codexBridge,
+  codexVision,
+  ollamaVision,
 };

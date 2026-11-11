@@ -121,12 +121,24 @@ function parseTradeComment(comment = "") {
 }
 
 function classifyUtcSession(unixSeconds) {
-  if (!Number.isFinite(Number(unixSeconds))) return "Unknown";
-  const hour = new Date(Number(unixSeconds) * 1000).getUTCHours();
-  if (hour >= 0 && hour < 8) return "Asian";
-  if (hour >= 8 && hour < 13) return "London";
-  if (hour >= 13 && hour < 17) return "London+NY";
-  if (hour >= 17 && hour < 22) return "New York";
+  if (unixSeconds == null || !Number.isFinite(Number(unixSeconds)) || Number(unixSeconds) <= 0) return "Unknown";
+  const instant = new Date(Number(unixSeconds) * 1000);
+  const utcHour = instant.getUTCHours();
+  const regionHour = (timeZone) => Number(new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    hour: "2-digit",
+    hourCycle: "h23",
+  }).format(instant));
+  const asia = utcHour >= 0 && utcHour < 9;
+  const londonHour = regionHour("Europe/London");
+  const newYorkHour = regionHour("America/New_York");
+  const london = londonHour >= 8 && londonHour < 17;
+  const newYork = newYorkHour >= 8 && newYorkHour < 17;
+  if (london && newYork) return "London+NY";
+  if (asia && london) return "Asian+London";
+  if (asia) return "Asian";
+  if (london) return "London";
+  if (newYork) return "New York";
   return "Off-session";
 }
 
@@ -251,6 +263,49 @@ function normalizeCTraderTrade(rawTrade = {}, context = {}) {
   };
 }
 
+function attachTradeEvidence(trades, evidenceRecords) {
+  const records = (Array.isArray(evidenceRecords) ? evidenceRecords : [])
+    .filter((record) => record && typeof record === "object" && Array.isArray(record.triggers));
+  const matchedRecords = new Set();
+  const usedFallback = new Set();
+  let matchedTrades = 0;
+  for (const trade of trades) {
+    const openedAt = timestampToMilliseconds(trade.opened_at);
+    const candidates = records.map((record, index) => {
+      if (String(record.symbol || "").toUpperCase() !== trade.symbol) return null;
+      if (String(record.executed_side || "").toUpperCase() !== trade.action) return null;
+      const submittedAt = timestampToMilliseconds(record.submitted_time_utc);
+      const gap = openedAt == null || submittedAt == null ? Infinity : openedAt - submittedAt;
+      const labelMatches = Boolean(trade.label && record.label && trade.label === record.label);
+      if (!labelMatches && usedFallback.has(index)) return null;
+      if (!labelMatches && (gap < -120000 || gap > 120000)) return null;
+      if (labelMatches && (gap < -120000 || gap > 7 * 86400000)) return null;
+      return { record, index, score: (labelMatches ? 0 : 1e12) + Math.abs(gap) };
+    }).filter(Boolean);
+    candidates.sort((left, right) => left.score - right.score);
+    if (!candidates.length) continue;
+    const best = candidates[0];
+    matchedRecords.add(best.index);
+    matchedTrades += 1;
+    if (best.score >= 1e12) usedFallback.add(best.index);
+    trade.trigger_evidence = best.record;
+    trade.signal_bar_time = timestampToIso(best.record.signal_time_utc) || trade.signal_bar_time;
+    const selected = best.record.triggers;
+    const opposite = Array.isArray(best.record.opposing_triggers) ? best.record.opposing_triggers : [];
+    const isCandle = (trigger) => String(trigger.family || "").toLowerCase() === "candle";
+    const isRejection = (trigger) => String(trigger.family || "").toLowerCase() === "structure" &&
+      /(?:^|\.)x?r(?:\.|$)|rejection/iu.test(`${trigger.name || ""} ${trigger.option || ""}`);
+    trade.candle_rejection_alignment =
+      (selected.some(isCandle) && opposite.some(isRejection)) ||
+      (selected.some(isRejection) && opposite.some(isCandle))
+        ? "Conflict"
+        : selected.some(isCandle) && selected.some(isRejection)
+          ? "Aligned"
+          : "Unknown";
+  }
+  return { matched: matchedTrades, unmatched: records.length - matchedRecords.size };
+}
+
 function summarizeTradeGroup(trades = [], groupField = "key") {
   const totalTrades = trades.length;
   const wins = trades.filter((trade) => Number(trade?.pnl_realized || 0) > 0).length;
@@ -317,6 +372,7 @@ function normalizeCTraderBacktestPayload(payload = {}) {
       tf,
     }),
   );
+  const evidenceMatch = attachTradeEvidence(trades, payload?.trade_evidence);
   const winningTrades = finiteNumber(
     statistics?.winningTrades?.all,
     trades.filter((trade) => trade.result === "win").length,
@@ -388,6 +444,13 @@ function normalizeCTraderBacktestPayload(payload = {}) {
     by_symbol: groupTrades(trades, "symbol", (trade) => trade.symbol),
     by_timeframe: groupTrades(trades, "tf", (trade) => trade.tf),
     by_strategy: groupTrades(trades, "strategy_key", (trade) => trade.strategy_key),
+    trade_evidence_matched: evidenceMatch.matched,
+    trade_evidence_unmatched: evidenceMatch.unmatched,
+    by_opposing_evidence: groupTrades(trades.filter((trade) => trade.trigger_evidence), "opposing_evidence", (trade) =>
+      trade.trigger_evidence.triggers.some((trigger) => Number(trigger.against_count || 0) > 0) ||
+      trade.trigger_evidence.opposing_triggers?.length ? "Yes" : "No"),
+    by_candle_rejection_alignment: groupTrades(trades.filter((trade) => trade.trigger_evidence), "alignment", (trade) =>
+      trade.candle_rejection_alignment),
   };
   const summary = {
     ...(payload?.summary && typeof payload.summary === "object" ? payload.summary : {}),
@@ -423,6 +486,7 @@ function normalizeCTraderBacktestPayload(payload = {}) {
 }
 
 module.exports = {
+  classifyUtcSession,
   findCTraderReport,
   normalizeCTraderBacktestPayload,
   normalizeCTraderTimeframe,

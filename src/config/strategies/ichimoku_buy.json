@@ -1,0 +1,58 @@
+{
+  "id": "ichimoku_buy",
+  "key": "ichimoku_buy",
+  "name": "ichimoku_buy",
+  "description": "BUY-only variant of ichimoku; opposite detected and executed directions are rejected. Uses the same native indicator implementation.",
+  "engine_version": "42trade.strategy.v3",
+  "kind": "custom",
+  "status": "active",
+  "auto_exit": {
+    "id": "chikou_historical_price_cross",
+    "description": "Exit a long when Chikou crosses below the historical candle 26 bars back; exit a short when Chikou crosses above it.",
+    "evaluate_on": "closed_bar",
+    "timeframe": "strategy",
+    "long_when": {
+      "fn": "chikou_crosses_below_historical_price",
+      "args": [
+        26
+      ]
+    },
+    "short_when": {
+      "fn": "chikou_crosses_above_historical_price",
+      "args": [
+        26
+      ]
+    }
+  },
+  "market": {
+    "symbol": "",
+    "tf": ""
+  },
+  "settings": {
+    "trade_config": {
+      "sl": "ichimoku_cloud_edge_atr_buffer"
+    }
+  },
+  "params": {},
+  "indicators": [],
+  "rules": [],
+  "risk": {},
+  "conditions": {
+    "symbols": [],
+    "timeframes": [],
+    "sessions": [],
+    "regime_tags": []
+  },
+  "metadata": {
+    "author": "42trade",
+    "preset_scope": "ctrader",
+    "entry_engine": "builtin",
+    "direction": "BUY",
+    "base_strategy": "ichimoku"
+  },
+  "required_data": {
+    "parameters": {
+      "DrawIchimokuOverlay": "Auto"
+    }
+  }
+}

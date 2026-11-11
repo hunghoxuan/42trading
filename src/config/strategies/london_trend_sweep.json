@@ -74,5 +74,32 @@
     "author": "42trade research",
     "preset_scope": "ctrader_and_42trade",
     "validation": "2026-08-25 through 2026-09-24 cTrader M15, chronological 60/40 split"
+  },
+  "required_data": {
+    "parameters": {
+      "DrawSweepDetections": "LTF",
+      "DrawRejectionDetections": "LTF",
+      "DrawBreakoutDetections": "LTF",
+      "DrawChochDetections": "LTF",
+      "DrawBosDetections": "LTF",
+      "ConfluenceOrderBlock": "LTF",
+      "ConfluenceFairValueGap": "LTF",
+      "ConfluenceKeyLevels": "LTF",
+      "ConfluenceSwing": "LTF",
+      "ConfluenceEqualHighLow": "LTF",
+      "ConfluenceTrendline": "LTF",
+      "ConfluenceSupply": "LTF",
+      "ConfluenceDemand": "LTF",
+      "DrawLiquidityLevels": "LTF",
+      "DrawOrderBlocks": "LTF",
+      "DrawFvgZones": "LTF",
+      "DrawKeyLevels": "LTF",
+      "DrawSupplyDemand": "LTF",
+      "DrawTrendlines": true,
+      "SwingVisuals": "LTF_9",
+      "ZoneLookback": "Bars1000",
+      "RejectionWickDominance": "_1",
+      "DrawEmaOverlay": "trend_9_21"
+    }
   }
 }

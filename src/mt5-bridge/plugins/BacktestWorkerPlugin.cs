@@ -37,6 +37,7 @@ namespace cAlgo.Plugins
                 ["mdayloss"] = "MaxDailyLossPreset",
                 ["mdaywin"] = "MaxDailyWinPreset",
                 ["mdd"] = "MaxEquityDrawdownPreset",
+                ["mloss"] = "MaxLossPreset",
                 ["mriskcbottrade"] = "MaxRiskPreset",
                 ["symbols"] = "StrategySymbols",
                 ["timeframes"] = "StrategyTimeframes",
@@ -64,11 +65,16 @@ namespace cAlgo.Plugins
                 {
                     "Custom", "FTMO_1Step", "FTMO_2Step", "The5ers_HighStakes",
                     "FundedNext_Stellar_2Step", "FundedNext_Stellar_1Step",
-                    "FundedNext_Stellar_Lite", "FTPlus_1Step_Express"
+                    "FundedNext_Stellar_Lite", "FTPlus_1Step_Express",
+                    "FTMO_Instant", "No"
                 },
+                ["SelectedFtmoPhase"] = new[] { "Auto", "Challenge", "Verification", "Account" },
+                ["SelectedFtmoAccountVariant"] = new[] { "Standard", "Swing" },
+                ["SelectedFtmoConsistencyRule"] = new[] { "Unknown", "Current", "LegacyBestDay" },
                 ["MaxDailyLossPreset"] = RiskLimitPresetNames(),
                 ["MaxDailyWinPreset"] = RiskLimitPresetNames(),
-                ["MaxEquityDrawdownPreset"] = RiskLimitPresetNames(),
+                ["MaxEquityDrawdownPreset"] = DrawdownLossPresetNames(),
+                ["MaxLossPreset"] = DrawdownLossPresetNames(),
                 ["MaxRiskPreset"] = RiskLimitPresetNames(),
                 ["StrategyOrderCount"] = new[] { "Auto", "_1", "_2", "_3", "_4", "_5" },
                 ["SelectedStrategyEntryType"] = new[]
@@ -103,6 +109,15 @@ namespace cAlgo.Plugins
                 {
                     "Off", "Trailing_Stop", "Break_Even", "Reversed_when_SL",
                     "Trailing_Stop_Reversed_when_SL", "Break_Even_Reversed_when_SL"
+                },
+                ["SelectedAdaptiveRiskMode"] = new[] { "Off", "PerChain", "BalanceRecovery" },
+                ["SelectedAdaptiveBiasMode"] = new[]
+                {
+                    "No", "Flip_AfterFirstSL_Day", "Flip_AfterSL_Unlimited",
+                    "Flip_AfterSL_1", "Flip_AfterSL_2",
+                    "Flip_AfterSL_1_Day", "Flip_AfterSL_2_Day",
+                    "Reduce_AfterSL_1", "Reduce_AfterSL_2", "Reduce_AfterSL_Unlimited",
+                    "Reduce_AfterSL_1_Day", "Reduce_AfterSL_2_Day", "Reduce_AfterSL_Unlimited_Day"
                 },
                 ["EnableLiveStrategyTrading"] = new[] { "No", "Yes", "Buy", "Sell" },
                 ["EnableStrategyDebug"] = new[] { "Yes", "No" },
@@ -528,6 +543,14 @@ namespace cAlgo.Plugins
             ordinal = -1;
             if (!KnownEnumValues.TryGetValue(parameterName ?? "", out var names))
                 return false;
+            if (string.Equals(parameterName, "SelectedAdaptiveBiasMode", StringComparison.OrdinalIgnoreCase))
+            {
+                // Existing queued jobs may still use the original names.
+                if (string.Equals(value, "Day", StringComparison.OrdinalIgnoreCase))
+                    value = "Flip_AfterFirstSL_Day";
+                else if (string.Equals(value, "LatestSL", StringComparison.OrdinalIgnoreCase))
+                    value = "Flip_AfterSL_Unlimited";
+            }
             if (string.Equals(parameterName, "SelectedStrategyStopLossMode", StringComparison.OrdinalIgnoreCase))
             {
                 // Accept older jobs without changing their persisted enum ordinal.
@@ -557,6 +580,17 @@ namespace cAlgo.Plugins
                 "None", "_0_05pct", "_0_1pct", "_0_2pct", "_0_5pct", "_1pct", "_2pct", "_3pct",
                 "_4pct", "_5pct", "_10pct", "_15pct", "_20pct", "_25usd", "_50usd", "_100usd",
                 "_200usd", "_500usd", "_1000usd", "_2000usd"
+            };
+        }
+
+        private static string[] DrawdownLossPresetNames()
+        {
+            return new[]
+            {
+                "None", "_0_05pct", "_0_1pct", "_0_2pct", "_0_5pct", "_0_6pct", "_0_8pct",
+                "_1pct", "_1_5pct", "_2pct", "_2_5pct", "_3pct", "_4pct", "_5pct",
+                "_6pct", "_7pct", "_8pct", "_9pct", "_9_5pct", "_10pct", "_15pct",
+                "_20pct", "_25pct", "_30pct", "_35pct", "_40pct", "_45pct", "_50pct"
             };
         }
 

@@ -11,8 +11,8 @@
     "description": "Exit a long on a close below the previous 10-bar low; exit a short on a close above the previous 10-bar high.",
     "evaluate_on": "closed_bar",
     "timeframe": "strategy",
-    "long_when": { "fn": "donchian_opposite_breakout", "args": ["long", 10] },
-    "short_when": { "fn": "donchian_opposite_breakout", "args": ["short", 10] }
+    "long_when": { "fn": "donchian_opposite_breakout", "args": ["long", {"var": "params.exit_period"}] },
+    "short_when": { "fn": "donchian_opposite_breakout", "args": ["short", {"var": "params.exit_period"}] }
   },
   "market": { "symbol": "", "tf": "" },
   "settings": { "trade_config": { "sl": "donchian_middle_atr_buffer" } },
@@ -38,5 +38,13 @@
   "rules": [],
   "risk": {},
   "conditions": { "symbols": [], "timeframes": [], "sessions": [], "regime_tags": [] },
-  "metadata": { "author": "42trade", "preset_scope": "ctrader", "entry_engine": "builtin" }
+  "metadata": { "author": "42trade", "preset_scope": "ctrader", "entry_engine": "builtin" },
+  "required_data": {
+    "parameters": {
+      "DrawDonchianOverlay": "Auto",
+      "DrawIchimokuOverlay": "Auto",
+      "DrawEmaOverlay": "trend_50_200",
+      "DrawAdxMode": "Auto"
+    }
+  }
 }

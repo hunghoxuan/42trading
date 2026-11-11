@@ -75,6 +75,47 @@ export function canAccessPage(user, requestedPermission) {
   return hasPermission(user, requestedPermission);
 }
 
+export function resolveDefaultModulePath(user) {
+  if (canAccessPage(user, "pages.dashboard")) return "/trades/dashboard";
+  if (canAccessPage(user, "pages.42pay.dashboard")) return "/admin/42pay/dashboard";
+  if (canAccessPage(user, "pages.pos")) return "/admin/pos";
+  if (canAccessPage(user, "pages.spa")) return "/admin/spa";
+  if (canAccessPage(user, "pages.ai.analyze")) return "/trades/analyze";
+  if (canAccessPage(user, "pages.trades")) return "/trades/filled";
+  if (canAccessPage(user, "pages.backtests")) return "/trades/backtests";
+  if (canAccessPage(user, "pages.settings.profile")) return "/settings/profile";
+  if (canAccessPage(user, "pages.system.db_manager")) return "/system/db";
+  return "/login";
+}
+
+export function resolveLoginDestination(
+  user,
+  { returnUrl = "", selectedPosUser = false, baseUrl = "http://localhost/" } = {},
+) {
+  const defaultPath = resolveDefaultModulePath(user);
+  const standalonePosOnly = defaultPath === "/admin/pos";
+  let target = null;
+  try {
+    if (returnUrl) target = new URL(returnUrl, baseUrl);
+  } catch {
+    target = null;
+  }
+
+  const isStandalonePosTarget = target && /^\/pos\/?$/.test(target.pathname);
+  if (selectedPosUser || standalonePosOnly) {
+    if (isStandalonePosTarget) return target.href;
+    return "/admin/pos";
+  }
+
+  if (!target) return defaultPath;
+  if (isStandalonePosTarget) return defaultPath;
+
+  const baseOrigin = new URL(baseUrl).origin;
+  return target.origin === baseOrigin
+    ? `${target.pathname}${target.search}${target.hash}`
+    : target.href;
+}
+
 export function pagePermissionForPath(pathname = "") {
   const path = String(pathname || "").trim();
   const exact = (acl.pages || []).find((page) => page.to === path);

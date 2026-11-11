@@ -4,6 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const backtestService = require("./backtestService");
+const { classifyUtcSession } = require("./ctraderBacktestAdapter");
 const chartStrategyChecks = require("../../../../shared/utils/chartStrategyChecks.cjs");
 const sharedArtifactDetection = require("../../../../shared/rules-engine/features/detectArtifacts.cjs");
 const realtimeAnalysis = require("../../../../shared/rules-engine/features/realtimeAnalysis.cjs");
@@ -105,6 +106,19 @@ test("normalizes cTrader JsonReport fields for the 42trade dashboard", () => {
       },
     },
     ctrader_report: JSON.stringify(report),
+    trade_evidence: [{
+      version: 1,
+      ticket: "9",
+      label: "donchian_breakout_v1.xJAp",
+      symbol: "BTCUSD",
+      signal_time_utc: "2025-09-01T00:10:00Z",
+      submitted_time_utc: "2025-09-01T00:12:00Z",
+      event: "m5.big↑.r.sd",
+      selected_side: "BUY",
+      executed_side: "SELL",
+      triggers: [{ family: "candle", name: "m5.big↑", against_count: 1, against_source: "event", against_events: ["r↓.sd"], against_proximity: [] }],
+      opposing_triggers: [{ family: "structure", name: "m5.r↓.sd", option: "r_SupplyDemandRejection", direction: "SELL" }],
+    }],
   });
 
   assert.equal(result.run.run_id, "ctrader-test-run");
@@ -124,6 +138,9 @@ test("normalizes cTrader JsonReport fields for the 42trade dashboard", () => {
   assert.equal(result.summary.monthly[0].month, "2025-09");
   assert.equal(result.summary.monthly[0].net, 14.55);
   assert.equal(result.summary.by_direction[0].direction, "SELL");
+  assert.equal(result.summary.trade_evidence_matched, 1);
+  assert.equal(result.summary.by_opposing_evidence[0].opposing_evidence, "Yes");
+  assert.equal(result.summary.by_candle_rejection_alignment[0].alignment, "Conflict");
 
   const trade = result.trades[0];
   assert.equal(trade.sid, "ctrader-test-run:3");
@@ -142,6 +159,9 @@ test("normalizes cTrader JsonReport fields for the 42trade dashboard", () => {
   assert.equal(trade.risk_money_planned, 13.01);
   assert.equal(trade.result, "win");
   assert.equal(trade.strategy_key, "DonchianBreakoutV1");
+  assert.equal(trade.trigger_evidence.triggers[0].against_events[0], "r↓.sd");
+  assert.equal(trade.candle_rejection_alignment, "Conflict");
+  assert.equal(trade.signal_bar_time, "2025-09-01T00:10:00.000Z");
 });
 
 test("leaves native 42trade backtest payloads unchanged", () => {
@@ -154,6 +174,16 @@ test("leaves native 42trade backtest payloads unchanged", () => {
     backtestService.__test.normalizeCTraderBacktestPayload(payload),
     payload,
   );
+});
+
+test("cTrader summary sessions follow London and New York local clocks", () => {
+  const sessionAt = (iso) => classifyUtcSession(Date.parse(iso) / 1000);
+  assert.equal(sessionAt("2026-01-12T07:30:00Z"), "Asian");
+  assert.equal(sessionAt("2026-01-12T08:30:00Z"), "Asian+London");
+  assert.equal(sessionAt("2026-01-12T12:30:00Z"), "London");
+  assert.equal(sessionAt("2026-01-12T13:30:00Z"), "London+NY");
+  assert.equal(sessionAt("2026-07-12T07:30:00Z"), "Asian+London");
+  assert.equal(sessionAt("2026-07-12T12:30:00Z"), "London+NY");
 });
 
 test("evaluateRule supports multi-timeframe BOS lookups", () => {

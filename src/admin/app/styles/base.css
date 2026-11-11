@@ -4833,6 +4833,20 @@ input[type="checkbox"]:disabled {
     gap: var(--space-sm);
 }
 
+@media (max-width: 767px) {
+    .dialog-content {
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        box-sizing: border-box;
+        width: calc(100vw - 16px);
+        max-height: calc(100vh - 16px);
+        max-height: calc(100dvh - 16px);
+        border: 1px solid var(--panel-strong-border);
+        border-radius: 14px;
+    }
+}
+
 /* === Radix Tooltip === */
 .tooltip-content {
     background: rgba(15, 23, 42, 0.98);
@@ -6543,6 +6557,19 @@ input[type="checkbox"]:disabled {
     height: 72vh;
     border: 1px solid var(--border);
     border-radius: 12px;
+}
+@media (max-width: 767px) {
+    .snapshot-modal-backdrop-v4 {
+        padding: max(8px, env(safe-area-inset-top, 0px)) max(8px, env(safe-area-inset-right, 0px))
+            max(8px, env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-left, 0px));
+    }
+    .snapshot-modal-panel-v4 {
+        box-sizing: border-box;
+        width: 100%;
+        max-height: 100%;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+    }
 }
 @media (max-width: 1280px) {
     .snapshot-builder-v3 {

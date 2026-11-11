@@ -1,6 +1,12 @@
 .mobile-fullscreen-modal {
   position: fixed;
   inset: 0;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  padding: max(8px, env(safe-area-inset-top, 0px)) max(8px, env(safe-area-inset-right, 0px))
+    max(8px, env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-left, 0px));
   /* Must stay above mobile CRUD detail dialogs (z-index: 1100). */
   z-index: 1300;
   height: 100vh;
@@ -21,6 +27,10 @@
   flex-direction: column;
   width: 100%;
   height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
   background: var(--bg);
   color: var(--text);
 }

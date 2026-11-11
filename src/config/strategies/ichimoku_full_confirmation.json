@@ -1,0 +1,22 @@
+{
+  "id": "ichimoku_full_confirmation",
+  "key": "ichimoku_full_confirmation",
+  "name": "Ichimoku Full Confirmation",
+  "engine_version": "42trade.strategy.v3",
+  "kind": "builtin",
+  "status": "active",
+  "required_data": {
+    "parameters": {
+      "DrawIchimokuOverlay": "Auto"
+    }
+  },
+  "params": {},
+  "indicators": [],
+  "rules": [],
+  "metadata": {
+    "implementation": "ctrader_native",
+    "preset_scope": "ctrader"
+  },
+  "risk": {},
+  "auto_exit": null
+}

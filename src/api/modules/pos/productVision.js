@@ -19,6 +19,12 @@ function parseProductObservation(raw) {
     || !Array.isArray(item.colors) || item.colors.length > 12 || item.colors.some((text) => typeof text !== "string" || text.length > 30)) {
     throw new Error("Product recognition returned an invalid result. Try another photo.");
   }
+  const cleanField = value => /^(?:unreadable|unknown|unknown product|not sure|not available|n\/?a|none|null)$/i.test(value.trim()) ? "" : value.trim();
+  for (const field of fields) item[field] = cleanField(item[field]);
+  item.texts = item.texts.map(cleanField).filter(Boolean);
+  if (item.identity_clear && (item.product_count !== 1 || !item.product_name || item.texts.length === 0)) {
+    throw new Error("Product recognition claimed a clear identity without readable product text.");
+  }
   let price = item.visible_price;
   if (price !== null && (!price || typeof price.text !== "string" || !price.text.trim() || price.text.length > 150
     || !(price.amount === null || Number.isFinite(price.amount) && price.amount >= 0)
@@ -124,7 +130,7 @@ function matchObservedProduct(observed, products) {
 async function recognizeProductWithAI(image, products, actor, generate) {
   imageBuffer(image);
   if (typeof generate !== "function") {
-    const error = new Error("Product AI recognition is unavailable. Configure Gemini in Settings > Providers.");
+    const error = new Error("Product AI recognition is unavailable. Configure Gemini, Codex CLI, or an OpenAI-compatible provider in Settings > Providers.");
     error.status = 503; throw error;
   }
   const [header, data] = image.split(",");

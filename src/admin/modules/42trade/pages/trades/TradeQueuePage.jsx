@@ -4,11 +4,14 @@ import PageHeader from "../../../../shared/components/PageHeader";
 import AdminPageToolbar from "../../../../shared/components/AdminPageToolbar";
 import { useConfirmDialog } from "../../../../shared/components/ConfirmDialog";
 
-const TRADE_CHAIN_MODES = ["Now", "Wait_confirm"];
+const TRADE_CHAIN_MODES = ["Now", "Wait", "WaitConfirm"];
 
 function tradeChainMode(item = {}) {
-  if (item.trade_chain_mode) return String(item.trade_chain_mode);
-  return item.entry_bar_mode === "First_bar_same_trend" ? "Wait_confirm" : "Now";
+  if (item.trade_chain_mode) {
+    const mode = String(item.trade_chain_mode);
+    return mode === "Wait_confirm" ? "Wait" : mode;
+  }
+  return item.entry_bar_mode === "First_bar_same_trend" ? "Wait" : "Now";
 }
 
 function displayTime(value) {
@@ -54,7 +57,7 @@ function queuePatch(form) {
     tf: String(form.tf || "").trim().toLowerCase(),
     trade_chain_slot: form.trade_chain_slot,
     trade_chain_mode: form.trade_chain_mode,
-    entry_bar_mode: form.trade_chain_mode === "Wait_confirm"
+    entry_bar_mode: form.trade_chain_mode === "Wait" || form.trade_chain_mode === "WaitConfirm"
       ? "First_bar_same_trend"
       : "First_bar_after_trigger",
     strategy_id: String(form.strategy_id || "").trim(),

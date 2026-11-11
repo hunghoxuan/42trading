@@ -8,7 +8,14 @@ A successful barcode decode closes the modal and shows the actual code and inven
 
 ## Product recognition
 
-An exact locally decoded barcode is tried first. Otherwise the original photo goes to the existing server AI gateway, using the signed-in user's **Gemini** provider key from Settings > Providers (or the existing server `GEMINI_API_KEY` environment variable). `POS_PRODUCT_AI_MODEL` can override the existing Gemini model default. Keys are never sent to the browser. Product photos are sent to Google for this request; they are not saved as POS entities. This does not change the cash-recognition provider configuration.
+An exact locally decoded barcode is tried first. Otherwise POS recognition uses this server-side fallback order:
+
+1. **Codex OpenAI-compatible wrapper**, when `CODEX_OPENAI_BASE_URL` is configured, using the multimodal `/chat/completions` protocol. If the wrapper is unavailable or unset, POS falls back to the local Codex CLI login in a temporary directory with the read-only sandbox. `CODEX_OPENAI_API_KEY` and `CODEX_OPENAI_MODEL` are optional wrapper settings.
+2. **Google Gemini**, using the signed-in user's Gemini key from Settings > Providers or `GEMINI_API_KEY`, `GOOGLE_GEMINI_API_KEY`, or `GOOGLE_API_KEY` from the server environment. `POS_PRODUCT_AI_MODEL` selects its model.
+3. **OpenAI-compatible API**, using the signed-in user's OpenAI key from Settings > Providers or `OPENAI_API_KEY`. To use a ChatGPT Web wrapper, set `CHATGPT_WEB_OPENAI_BASE_URL` to its OpenAI-compatible base URL and optionally set `CHATGPT_WEB_OPENAI_MODEL` and `CHATGPT_WEB_OPENAI_API_KEY`. Without that URL, this step uses the official OpenAI API; it does not connect to ChatGPT Web automatically.
+4. **Local Ollama**, using `POS_OLLAMA_VISION_MODEL` or `qwen2.5vl:3b` at `OLLAMA_BASE_URL` (default `http://127.0.0.1:11434`). It requires Ollama and the model installed locally and uses no API key.
+
+The next provider is tried when the previous provider is unavailable or returns an invalid product observation. Provider keys stay on the server. The image is sent to whichever provider handles the request; POS does not save it as an entity during recognition. This does not change the cash-recognition provider configuration.
 
 `POST /api/pos/images/recognize` accepts `{ image: dataURL }` and receives the authenticated actor. It returns:
 

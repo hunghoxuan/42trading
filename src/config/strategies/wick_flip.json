@@ -43,5 +43,8 @@
   ],
   "risk": {},
   "conditions": { "symbols": [], "timeframes": [], "sessions": [], "regime_tags": [] },
-  "metadata": { "author": "42trade", "preset_scope": "ctrader_and_42trade" }
+  "metadata": { "author": "42trade", "preset_scope": "ctrader_and_42trade" },
+  "required_data": {
+    "parameters": {}
+  }
 }
